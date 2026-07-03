@@ -12,6 +12,6 @@ with DAG(
     catchup=False,
     tags=["data-eng-lab", "scenario"],
 ) as dag:
-    # The medallion transform currently lives in the Scala/PySpark notebooks. A productionized
-    # medallion JAR is a future Phase-3 deliverable; this is a placeholder task until then.
+    # Productionized as spark-apps/nyc-taxi-medallion (dag_id nyc_taxi_medallion). This scenario
+    # placeholder demonstrates the transform via the notebooks.
     EmptyOperator(task_id="medallion_placeholder")

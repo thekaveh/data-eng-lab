@@ -1,0 +1,21 @@
+pipeline {
+  agent any
+  environment {
+    APP = 'nyc-taxi-medallion'
+    VERSION = '0.1.0'
+  }
+  stages {
+    stage('Build & Test') { steps { dir("spark-apps/${APP}") { sh 'mvn -q -B test' } } }
+    stage('Package')      { steps { dir("spark-apps/${APP}") { sh 'mvn -q -B package -DskipTests' } } }
+    stage('Publish JAR')  {
+      steps {
+        dir("spark-apps/${APP}") {
+          sh '''
+            mc alias set atlas "$MINIO_ENDPOINT" "$MINIO_ICEBERG_ACCESS_KEY" "$MINIO_ICEBERG_SECRET_KEY"
+            mc cp target/${APP}-${VERSION}.jar "atlas/${MINIO_BUCKET_ICEBERG_JARS}/${APP}/${VERSION}/app.jar"
+          '''
+        }
+      }
+    }
+  }
+}

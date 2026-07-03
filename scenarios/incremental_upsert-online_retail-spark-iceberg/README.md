@@ -26,4 +26,5 @@ via `make datasets`). Spark + Iceberg `lakehouse` catalog (Atlas A1-A4).
 Notebook execution + Scala/PySpark parity are live-gated on Atlas A1-A4. The inline seed can be replaced by
 the registered `online_retail` dataset at scale. This scenario writes to `lakehouse.silver.*`, which requires
 that namespace to exist in the Iceberg REST catalog. Run `scripts/register_iceberg.py` (creates `bronze`,
-`silver`, and `gold`) before executing this scenario standalone.
+`silver`, and `gold`) before executing this scenario standalone. The notebook's seed INSERT is not guarded;
+re-running the full notebook accumulates seed rows — drop the target table first for a clean demo.
