@@ -92,7 +92,7 @@
     },
     {
       "title": "6. Verify (code)",
-      "text": "%spark\nspark.sql(\"SELECT committed_at, snapshot_id FROM lakehouse.silver.nyc_taxi_tt.history ORDER BY committed_at\").show(false)",
+      "text": "%spark\nspark.sql(\"SELECT committed_at, snapshot_id FROM lakehouse.silver.nyc_taxi_tt.history ORDER BY committed_at\").show(false)\n// time-travel: spark.sql(\"SELECT count(*) FROM lakehouse.silver.nyc_taxi_tt VERSION AS OF <snapshot_id>\").show()\n// rollback:    spark.sql(\"CALL lakehouse.system.rollback_to_snapshot('lakehouse.silver.nyc_taxi_tt', <snapshot_id>)\").show()",
       "config": {},
       "settings": {
         "params": {},
