@@ -22,7 +22,7 @@ dev = [
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = ["./infra/**"]
+extend-exclude = ["./infra/**", "scenarios/**/jupyter/**", "scenarios/**/zeppelin/**"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
