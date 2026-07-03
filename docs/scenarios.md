@@ -93,7 +93,19 @@ Broadcast vs sort-merge join and Adaptive Query Execution on tpch.
 #### `feature_engineering-movielens-spark-iceberg`
 ML feature marts (bridges to ml-lab) on movielens.
 
-**Note:** This completes the design's **core-10** (scenarios #1–#10).
+### Advanced (Trino / streaming; A7/A9-gated)
+Advanced integration scenarios with Trino and streaming, requiring the enhanced-Atlas stack with A7 (Trino; issue #268) and/or A9 (Kafka+Spark; issue #269).
+
+#### `bi_query-tpch-trino-iceberg`
+Multi-engine BI read via Trino over Spark-written gold marts (fact/dimension tables from `star_schema`). Requires A7 (#268).
+
+#### `streaming_windows-events-spark-iceberg`
+Windowed aggregation and watermark on a Kafka stream with PySpark Structured Streaming. Requires A9 (#269).
+
+#### `cdc_streaming-online_retail-spark-iceberg`
+Streaming CDC upserts via `foreachBatch` and `MERGE INTO` on online_retail. Requires A9 (#269).
+
+**Note:** This exhausts the design's **core-10 + roadmap** scenario catalog (scenarios #1–#13).
 
 ## Status
 The scenario framework (scaffolder + verifier + parity harness) is in place. Curated scenario
