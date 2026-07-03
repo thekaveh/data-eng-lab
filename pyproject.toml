@@ -12,6 +12,7 @@ dev = [
   "boto3>=1.34",
   "requests>=2.32",
   "ruff>=0.4",
+  "moto[s3]>=5",
 ]
 
 [tool.ruff]
