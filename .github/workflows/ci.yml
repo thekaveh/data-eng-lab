@@ -36,3 +36,18 @@ jobs:
         run: |
           uv run python -c "import duckdb; c = duckdb.connect(); c.execute('INSTALL tpch'); c.execute('LOAD tpch')"
           uv run pytest -m "network" -q
+
+  maven-spark-apps:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+      - name: Unit tests (scalatest, Spark local)
+        run: mvn -q -B -f spark-apps/nyc-taxi-etl/pom.xml test
