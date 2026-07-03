@@ -1,0 +1,108 @@
+{
+  "paragraphs": [
+    {
+      "title": "1. Overview",
+      "text": "%md\n## 1. Overview",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "2. Setup",
+      "text": "%md\n## 2. Setup",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "2. Setup (code)",
+      "text": "%spark\nimport spark.implicits._\nimport org.apache.spark.sql.functions._\n// spark is pre-bound by the Atlas Zeppelin interpreter",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "3. Read",
+      "text": "%md\n## 3. Read",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "3. Read (code)",
+      "text": "%spark\nspark.sql(\"CREATE TABLE IF NOT EXISTS lakehouse.silver.gh_events_se (id string, type string, actor_login string) USING iceberg\")\nspark.sql(\"INSERT INTO lakehouse.silver.gh_events_se VALUES ('1','PushEvent','octocat')\")",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "4. Transform",
+      "text": "%md\n## 4. Transform",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "4. Transform (code)",
+      "text": "%spark\nspark.sql(\"ALTER TABLE lakehouse.silver.gh_events_se ADD COLUMN repo_name string\")\nspark.sql(\"ALTER TABLE lakehouse.silver.gh_events_se RENAME COLUMN type TO event_type\")",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "5. Write",
+      "text": "%md\n## 5. Write",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "5. Write (code)",
+      "text": "%spark\nspark.sql(\"INSERT INTO lakehouse.silver.gh_events_se VALUES ('2','WatchEvent','torvalds','linux')\")",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "6. Verify",
+      "text": "%md\n## 6. Verify",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "6. Verify (code)",
+      "text": "%spark\nspark.sql(\"SELECT id, event_type, actor_login, repo_name FROM lakehouse.silver.gh_events_se ORDER BY id\").show()",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    }
+  ],
+  "name": "schema_evolution-gh_archive-spark-iceberg",
+  "id": "schema_evolution-gh_archive-spark-iceberg",
+  "noteParams": {},
+  "config": {},
+  "info": {}
+}
