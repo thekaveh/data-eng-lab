@@ -7,9 +7,11 @@ Scala (Zeppelin) and PySpark (Jupyter) notebooks implement the same logic; a Pha
 productionizes it for Airflow.
 
 ## 1. Scenario summary
-Table-maintenance demo: measure initial data-file count, compact files to a target size, expire old
-snapshots (keeping only the latest), remove orphaned files, and verify the final file count.
-Uses `lakehouse.bronze.nyc_taxi_trips` as the maintenance target.
+Table-maintenance demo: builds a scenario-owned copy `lakehouse.silver.nyc_taxi_tm` (seeded from
+the shared bronze table, then augmented with a second snapshot), measures the initial data-file
+count, compacts files to a target size, expires all snapshots older than `current_timestamp()`
+(retaining the last 1), removes orphaned files, and verifies the final snapshot and file counts.
+Does NOT mutate the shared `lakehouse.bronze.nyc_taxi_trips`.
 
 ## 2. Why this exists
 Demonstrates Iceberg's maintenance and optimization capabilities (compaction, snapshot expiry,
@@ -32,5 +34,6 @@ Spark + Iceberg `lakehouse` catalog (Atlas A1-A4) with system procedures enabled
 Notebook execution + Scala/PySpark parity are live-gated on Atlas A1-A4. The Iceberg catalog must
 support `system.rewrite_data_files`, `system.expire_snapshots`, and `system.remove_orphan_files`.
 Run `scripts/register_iceberg.py` (creates `bronze`, `silver`, and `gold`) before executing this
-scenario standalone. Note: the demo modifies `lakehouse.bronze.nyc_taxi_trips` in place; restore
-via `batch_ingest_nyc_taxi` if needed.
+scenario standalone. Run `make datasets` to populate `lakehouse.bronze.nyc_taxi_trips` first.
+Note: the scenario creates and operates on `lakehouse.silver.nyc_taxi_tm`; the shared bronze
+table is never modified.

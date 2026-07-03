@@ -38,7 +38,7 @@
     },
     {
       "title": "3. Read (code)",
-      "text": "%spark\nspark.sql(\"SELECT count(*) AS files FROM lakehouse.bronze.nyc_taxi_trips.files\").show(false)",
+      "text": "%spark\nspark.sql(\"CREATE TABLE IF NOT EXISTS lakehouse.silver.nyc_taxi_tm AS SELECT * FROM lakehouse.bronze.nyc_taxi_trips\").show(false)\nspark.sql(\"INSERT INTO lakehouse.silver.nyc_taxi_tm SELECT * FROM lakehouse.bronze.nyc_taxi_trips WHERE passenger_count > 3\").show(false)\nspark.sql(\"SELECT count(*) AS files FROM lakehouse.silver.nyc_taxi_tm.files\").show(false)",
       "config": {},
       "settings": {
         "params": {},
@@ -56,7 +56,7 @@
     },
     {
       "title": "4. Transform (code)",
-      "text": "%spark\nspark.sql(\"CALL lakehouse.system.rewrite_data_files(table => 'lakehouse.bronze.nyc_taxi_trips', options => map('target-file-size-bytes','134217728'))\").show(false)",
+      "text": "%spark\nspark.sql(\"CALL lakehouse.system.rewrite_data_files(table => 'lakehouse.silver.nyc_taxi_tm', options => map('target-file-size-bytes','134217728'))\").show(false)",
       "config": {},
       "settings": {
         "params": {},
@@ -74,7 +74,7 @@
     },
     {
       "title": "5. Write (code)",
-      "text": "%spark\nspark.sql(\"CALL lakehouse.system.expire_snapshots(table => 'lakehouse.bronze.nyc_taxi_trips', older_than => TIMESTAMP '2000-01-01 00:00:00', retain_last => 1)\").show(false)\nspark.sql(\"CALL lakehouse.system.remove_orphan_files(table => 'lakehouse.bronze.nyc_taxi_trips')\").show(false)",
+      "text": "%spark\nspark.sql(\"CALL lakehouse.system.expire_snapshots(table => 'lakehouse.silver.nyc_taxi_tm', older_than => current_timestamp(), retain_last => 1)\").show(false)\nspark.sql(\"CALL lakehouse.system.remove_orphan_files(table => 'lakehouse.silver.nyc_taxi_tm')\").show(false)",
       "config": {},
       "settings": {
         "params": {},
@@ -92,7 +92,7 @@
     },
     {
       "title": "6. Verify (code)",
-      "text": "%spark\nspark.sql(\"SELECT count(*) AS files FROM lakehouse.bronze.nyc_taxi_trips.files\").show(false)",
+      "text": "%spark\nspark.sql(\"SELECT count(*) AS snapshots FROM lakehouse.silver.nyc_taxi_tm.snapshots\").show(false)\nspark.sql(\"SELECT count(*) AS files FROM lakehouse.silver.nyc_taxi_tm.files\").show(false)",
       "config": {},
       "settings": {
         "params": {},

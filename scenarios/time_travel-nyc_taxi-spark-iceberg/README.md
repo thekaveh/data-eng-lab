@@ -33,3 +33,5 @@ exist in the Iceberg REST catalog.
 Run `scripts/register_iceberg.py` (creates `bronze`, `silver`, and `gold`) before executing this
 scenario standalone. Note: `lakehouse.silver.nyc_taxi_tt` is dropped at the end of the Verify
 section (or manually, e.g., `DROP TABLE IF EXISTS lakehouse.silver.nyc_taxi_tt`).
+The `VERSION AS OF` and `rollback_to_snapshot` lines in the Verify cell are commented examples;
+replace `<snapshot_id>` with a concrete id from the history query above before un-commenting.

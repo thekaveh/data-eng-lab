@@ -74,7 +74,7 @@
     },
     {
       "title": "5. Write (code)",
-      "text": "%spark\nspark.sql(\"ALTER TABLE lakehouse.silver.nyc_taxi_tt CREATE BRANCH audit\").show(false)",
+      "text": "%spark\nspark.sql(\"ALTER TABLE lakehouse.silver.nyc_taxi_tt CREATE BRANCH IF NOT EXISTS audit\").show(false)",
       "config": {},
       "settings": {
         "params": {},
