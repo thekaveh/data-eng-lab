@@ -29,3 +29,5 @@ Notebook execution + Scala/PySpark parity are live-gated on Atlas A1-A4. This sc
 `lakehouse.gold.*`, which requires that namespace to exist in the Iceberg REST catalog. Run
 `scripts/register_iceberg.py` (creates `bronze`, `silver`, and `gold`) before executing this scenario
 standalone. Iceberg row-level UPDATE is an SQL extension; ensure `iceberg.sql.extensions` is enabled.
+The notebook's seed INSERT is not guarded; re-running the full notebook accumulates seed rows — drop the
+target table first for a clean demo.
