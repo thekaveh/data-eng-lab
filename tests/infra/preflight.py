@@ -2,7 +2,6 @@
 """Infra preflight — Layer 1 (existence & initialization). Fail-loud stack doctor."""
 from __future__ import annotations
 
-import shutil
 import sys
 from collections import namedtuple
 from pathlib import Path
@@ -20,7 +19,10 @@ def run_layer1(services, docker_ok: bool) -> list[Result]:
             results.append(Result(svc.name, "blocked", "docker unavailable — root cause upstream"))
             continue
         ok, detail = svc.init_check()
-        results.append(Result(svc.name, "pass" if ok else "fail", detail))
+        if not ok and detail in ("<docker-error>", "<docker-timeout>"):
+            results.append(Result(svc.name, "blocked", detail))
+        else:
+            results.append(Result(svc.name, "pass" if ok else "fail", detail))
     return results
 
 
@@ -39,9 +41,9 @@ def render_matrix(results: list[Result]) -> str:
 def main() -> int:
     # Make this file's directory importable whether run as a script or imported.
     sys.path.insert(0, str(Path(__file__).resolve().parent))
-    from manifest import EXPECTED_SERVICES
+    from manifest import EXPECTED_SERVICES, daemon_ok
 
-    docker_ok = shutil.which("docker") is not None
+    docker_ok = daemon_ok()
     results = run_layer1(EXPECTED_SERVICES, docker_ok)
     print(render_matrix(results))
     return 1 if any(r.status == "fail" for r in results) else 0

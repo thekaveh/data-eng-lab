@@ -6,8 +6,7 @@ source "$HERE/lib.sh"
 
 INFRA_DIR="${INFRA_DIR:-$ROOT/infra}"
 ENV_FILE="$INFRA_DIR/.env"
-PROJECT_NAME="${PROJECT_NAME:-$(envval PROJECT_NAME "$ENV_FILE")}"
-PROJECT_NAME="${PROJECT_NAME:-data-eng-lab}"
+PROJECT_NAME="$(resolve_project_name "$ENV_FILE")"
 
 MINIO_USER="$(envval MINIO_ROOT_USER "$ENV_FILE")"
 MINIO_PASS="$(envval MINIO_ROOT_PASSWORD "$ENV_FILE")"

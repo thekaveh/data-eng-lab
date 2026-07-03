@@ -33,3 +33,44 @@ def test_set_env_default_does_not_overwrite(tmp_path: Path):
     _run(f'set_env_default KEEP theirs "{env}"', tmp_path)
     assert "KEEP=mine" in env.read_text()
     assert "KEEP=theirs" not in env.read_text()
+
+
+def test_set_env_default_appends_when_absent(tmp_path: Path):
+    env = tmp_path / ".env"
+    env.write_text("")
+    _run(f'set_env_default NEW_KEY value "{env}"', tmp_path)
+    assert "NEW_KEY=value" in env.read_text()
+
+
+def test_resolve_project_name_prefers_exported(tmp_path: Path):
+    env = tmp_path / ".env"
+    env.write_text("PROJECT_NAME=from-file\n")
+    out = _run(f'export PROJECT_NAME=from-shell; resolve_project_name "{env}"', tmp_path)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "from-shell"
+
+
+def test_resolve_project_name_from_env_file(tmp_path: Path):
+    env = tmp_path / ".env"
+    env.write_text("PROJECT_NAME=custom-proj\n")
+    out = _run(f'unset PROJECT_NAME; resolve_project_name "{env}"', tmp_path)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "custom-proj"
+
+
+def test_resolve_project_name_defaults(tmp_path: Path):
+    out = _run('unset PROJECT_NAME; resolve_project_name ""', tmp_path)
+    assert out.returncode == 0, out.stderr
+    assert out.stdout.strip() == "data-eng-lab"
+
+
+def test_wait_healthy_succeeds_when_probe_reports_ready(tmp_path: Path):
+    script = 'ready_probe() { echo "Up 3s (healthy)"; }; export HEALTH_PROBE=ready_probe; wait_healthy svc1'
+    out = _run(script, tmp_path)
+    assert out.returncode == 0, out.stderr
+
+
+def test_wait_healthy_times_out_when_never_ready(tmp_path: Path):
+    script = 'down_probe() { echo ""; }; export HEALTH_PROBE=down_probe; export HEALTH_TIMEOUT=0; wait_healthy svc1'
+    out = _run(script, tmp_path)
+    assert out.returncode == 1

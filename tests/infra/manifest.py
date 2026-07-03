@@ -5,10 +5,27 @@ import os
 import shutil
 import subprocess
 from collections import namedtuple
+from pathlib import Path
 
 ServiceSpec = namedtuple("ServiceSpec", "name enabled init_check")
 
-PROJECT = os.environ.get("PROJECT_NAME", "data-eng-lab")
+
+def _resolve_project() -> str:
+    """PROJECT_NAME precedence: env var > infra/.env > default (mirrors the shell harness)."""
+    env_val = os.environ.get("PROJECT_NAME")
+    if env_val:
+        return env_val
+    env_file = Path(__file__).resolve().parents[2] / "infra" / ".env"
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if line.startswith("PROJECT_NAME="):
+                val = line.split("=", 1)[1].strip()
+                if val:
+                    return val
+    return "data-eng-lab"
+
+
+PROJECT = _resolve_project()
 
 
 def _truthy(var: str) -> bool:
@@ -33,6 +50,17 @@ def _container_status(service: str) -> str:
     return out.stdout.strip().splitlines()[0] if out.stdout.strip() else ""
 
 
+def daemon_ok() -> bool:
+    """True only if the Docker daemon is reachable (not merely the binary present)."""
+    if not shutil.which("docker"):
+        return False
+    try:
+        out = subprocess.run(["docker", "info"], capture_output=True, text=True, timeout=5)
+    except subprocess.TimeoutExpired:
+        return False
+    return out.returncode == 0
+
+
 def _up(service: str):
     status = _container_status(service)
     ok = ("healthy" in status) or status.startswith("Up")
@@ -45,6 +73,9 @@ def _minio_ready():
     return ok, detail
 
 
+# Note: the data-eng track also starts weaviate and neo4j-graph-db, but they are
+# incidental to the lakehouse path and are not gated here; add them (with verified
+# compose service names) in Phase 1 if preflight should assert them.
 # Base data-eng services always expected; A1/A5/A9/A7 services gated until enabled.
 EXPECTED_SERVICES = [
     ServiceSpec("minio", True, _minio_ready),

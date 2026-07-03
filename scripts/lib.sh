@@ -11,6 +11,21 @@ envval() {
   grep -E "^${key}=" "$file" | tail -n1 | cut -d= -f2-
 }
 
+# resolve_project_name [ENV_FILE] -> effective Docker project name.
+# Precedence: exported $PROJECT_NAME > PROJECT_NAME in ENV_FILE > default 'data-eng-lab'.
+resolve_project_name() {
+  local env_file="${1:-}"
+  if [ -n "${PROJECT_NAME:-}" ]; then
+    printf '%s' "$PROJECT_NAME"
+    return 0
+  fi
+  local from_env=""
+  if [ -n "$env_file" ] && [ -f "$env_file" ]; then
+    from_env="$(envval PROJECT_NAME "$env_file")"
+  fi
+  printf '%s' "${from_env:-data-eng-lab}"
+}
+
 # set_env KEY VALUE FILE -> idempotent upsert (replaces existing or appends).
 set_env() {
   local key="$1" value="$2" file="$3"

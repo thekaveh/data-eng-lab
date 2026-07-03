@@ -18,7 +18,7 @@ def _check_naming(root: Path, cfg: dict) -> list[Finding]:
     findings: list[Finding] = []
     regex = re.compile(cfg["scenario_name_regex"])
     for name in cfg.get("active_scenario_dirs", []):
-        if not regex.match(name):
+        if not regex.fullmatch(name):
             findings.append(Finding("scenario.naming", "error",
                                     f"scenario dir '{name}' violates naming convention"))
     return findings
@@ -52,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
 
     root = args.root.resolve()
     cfg_path = args.config or (root / "scripts" / "verify_repo_config.yaml")
-    cfg = yaml.safe_load(cfg_path.read_text())
+    cfg = yaml.safe_load(cfg_path.read_text(encoding="utf-8"))
 
     findings = run_checks(root, cfg)
     errors = [f for f in findings if f.severity == "error"]

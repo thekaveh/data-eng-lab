@@ -14,7 +14,7 @@ mkdir -p "$SLOT_DIR"
 ln -sf "../../../../compose/data-eng-lab.yml" "$SLOT_DIR/compose.yml"
 
 log "injecting config into $ENV_FILE"
-set_env         PROJECT_NAME     data-eng-lab                     "$ENV_FILE"
+set_env         PROJECT_NAME     "$(resolve_project_name "$ENV_FILE")" "$ENV_FILE"
 set_env         ICEBERG_REST_URI http://iceberg-rest:8181         "$ENV_FILE"
 set_env_default BRAND_NAME       "data-eng-lab"                   "$ENV_FILE"
 

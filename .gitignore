@@ -14,3 +14,6 @@ datasets/generated/
 **/runs/
 # preflight/report artifacts
 .preflight/
+# never commit any env file with secrets
+.env
+*.env
