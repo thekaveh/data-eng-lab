@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+.coverage
+htmlcov/
+.DS_Store
+# local data (never committed)
+datasets/raw/
+datasets/generated/
+**/data/
+**/runs/
+# preflight/report artifacts
+.preflight/
