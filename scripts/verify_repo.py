@@ -24,6 +24,14 @@ def _discover_scenarios(root: Path) -> list[str]:
     )
 
 
+def _discover_spark_apps(root: Path) -> list[str]:
+    base = root / "spark-apps"
+    if not base.is_dir():
+        return []
+    return sorted(p.name for p in base.iterdir()
+                  if p.is_dir() and not p.name.startswith((".", "_")))
+
+
 def _check_scenarios(root: Path, cfg: dict) -> list[Finding]:
     findings: list[Finding] = []
     regex = re.compile(cfg["scenario_name_regex"])
@@ -62,6 +70,18 @@ def _check_scenarios(root: Path, cfg: dict) -> list[Finding]:
     return findings
 
 
+def _check_spark_apps(root: Path, cfg: dict) -> list[Finding]:
+    findings: list[Finding] = []
+    required = cfg.get("spark_app_required_files", [])
+    for name in _discover_spark_apps(root):
+        adir = root / "spark-apps" / name
+        for rel in required:
+            if not (adir / rel).exists():
+                findings.append(Finding("spark_app.files", "error",
+                                        f"spark-app '{name}' is missing '{rel}'"))
+    return findings
+
+
 def _check_dataset_registry(root: Path, cfg: dict) -> list[Finding]:
     import importlib.util  # noqa: PLC0415
 
@@ -83,7 +103,7 @@ def _check_dataset_registry(root: Path, cfg: dict) -> list[Finding]:
     return [Finding("dataset.registry", "error", msg) for msg in schema.validate_registry(doc)]
 
 
-CHECKS = [_check_scenarios, _check_dataset_registry]
+CHECKS = [_check_scenarios, _check_spark_apps, _check_dataset_registry]
 
 
 def run_checks(root: Path, cfg: dict) -> list[Finding]:

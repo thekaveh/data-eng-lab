@@ -12,7 +12,7 @@ See the design spec: [`docs/superpowers/specs/2026-07-02-data-eng-lab-design.md`
 - `infra/` — Atlas platform (git submodule; never edited)
 - `compose/` — the single compose overlay merged into Atlas
 - `scenarios/` — flat scenario folders (Zeppelin Scala + Jupyter PySpark [+ DAG]); see [`docs/scenarios.md`](docs/scenarios.md)
-- `spark-apps/` — Maven Scala Spark projects (+ Jenkinsfile + DAG)
+- `spark-apps/` — Maven Scala Spark projects (+ Jenkinsfile + DAG); see [`docs/spark-apps.md`](docs/spark-apps.md)
 - `datasets/` — dataset registry + downloader
 - `scripts/` — bootstrap & tooling
 - `tests/` — comprehensive tiered tests (incl. `tests/infra/` preflight)

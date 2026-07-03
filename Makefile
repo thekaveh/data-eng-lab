@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
-.PHONY: help setup up down datasets verify test preflight lint fmt new-scenario
+.PHONY: help setup up down datasets verify test preflight lint fmt new-scenario build-apps
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-12s %s\n",$$1,$$2}'
@@ -37,3 +37,6 @@ fmt: ## Auto-format Python
 
 new-scenario: ## Scaffold a scenario folder: make new-scenario NAME=pattern-dataset-engine-format
 	uv run python scripts/new_scenario.py $(NAME) --root .
+
+build-apps: ## Build (test + shade) the Maven Spark apps
+	mvn -q -B -f spark-apps/nyc-taxi-etl/pom.xml package
