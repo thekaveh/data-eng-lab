@@ -22,7 +22,8 @@ def test_creates_symlink_and_env(tmp_path: Path):
 
     slot = infra / "services" / "_user" / "data-eng-lab" / "compose.yml"
     assert slot.is_symlink(), "overlay symlink not created"
-    assert slot.resolve() == (ROOT / "compose" / "data-eng-lab.yml").resolve()
+    # Relative, portable link (rag-showcase pattern): 4 levels up to <repo>/compose.
+    assert os.readlink(slot) == "../../../../compose/data-eng-lab.yml"
 
     env_text = (infra / ".env").read_text()
     assert "PROJECT_NAME=data-eng-lab" in env_text

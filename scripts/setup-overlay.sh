@@ -11,7 +11,7 @@ SLOT_DIR="$INFRA_DIR/services/_user/data-eng-lab"
 log "linking overlay into Atlas user slot: $SLOT_DIR"
 mkdir -p "$SLOT_DIR"
 # Relative link so it resolves the same on any checkout: slot -> repo compose file.
-ln -sf "$ROOT/compose/data-eng-lab.yml" "$SLOT_DIR/compose.yml"
+ln -sf "../../../../compose/data-eng-lab.yml" "$SLOT_DIR/compose.yml"
 
 log "injecting config into $ENV_FILE"
 set_env         PROJECT_NAME     data-eng-lab                     "$ENV_FILE"
