@@ -11,7 +11,9 @@ PROJECT_NAME="$(resolve_project_name "$ENV_FILE")"
 
 MINIO_USER="$(envval MINIO_ROOT_USER "$ENV_FILE")"
 MINIO_PASS="$(envval MINIO_ROOT_PASSWORD "$ENV_FILE")"
-BUCKETS=(landing lakehouse jars checkpoints lakehouse-test)
+# Atlas's minio-init creates landing/lakehouse/jars/checkpoints (iceberg service account).
+# We only add our integration-test bucket here.
+BUCKETS=(lakehouse-test)
 
 # Default: a transient mc container on the Atlas network, aliased to the in-network MinIO.
 # Overridable via MC_CMD (used by tests and by callers that already have mc configured).

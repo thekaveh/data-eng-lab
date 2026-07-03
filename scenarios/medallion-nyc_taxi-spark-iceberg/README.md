@@ -21,3 +21,6 @@ Spark + Iceberg `lakehouse` catalog (Atlas A1-A4).
 ## 6. Known issues & caveats
 Notebook execution + Scala/PySpark parity are live-gated on Atlas A1-A4. The `trip_date` column
 must exist on the bronze table (added during ingest).
+This scenario writes to `lakehouse.silver.*` and `lakehouse.gold.*`, which require those namespaces
+to exist in the Iceberg REST catalog. Run `scripts/register_iceberg.py` (creates `bronze`, `silver`,
+and `gold`) before executing this scenario standalone.

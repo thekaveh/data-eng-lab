@@ -19,14 +19,15 @@ log "2/6 launching Atlas data-eng track"
 # Non-interactive; backgrounded to avoid the start.py 'logs -f' block (see Atlas reuse notes).
 ATLAS_START="cd \"$INFRA_DIR\" && ./start.sh --track data-eng --no-tui \
   --spark-source container --zeppelin-source container --airflow-source container \
-  --minio-source container --jupyterhub-source container"
+  --minio-source container --jupyterhub-source container \
+  --iceberg-rest-source container --jenkins-source container"
 # shellcheck disable=SC2294  # intentional backgrounded eval of a pre-built command string
 if [ "$DRY_RUN" = 1 ]; then echo "+ $ATLAS_START &"; else eval "$ATLAS_START" & fi
 
 log "3/6 waiting for core services to be healthy"
 PROJECT_NAME="$(resolve_project_name "$INFRA_DIR/.env")"
 export PROJECT_NAME
-run "wait_healthy minio spark-master spark-connect airflow-webserver zeppelin jupyterhub"
+run "wait_healthy minio iceberg-rest spark-master spark-connect airflow-webserver zeppelin jupyterhub"
 
 log "4/6 creating buckets"
 run "\"$HERE/create_buckets.sh\""
