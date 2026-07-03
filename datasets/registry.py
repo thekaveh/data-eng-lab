@@ -1,7 +1,6 @@
 """Load and resolve datasets/registry.yaml."""
 from __future__ import annotations
 
-import importlib.util
 import sys
 import types
 from dataclasses import dataclass
@@ -9,20 +8,14 @@ from pathlib import Path
 
 import yaml
 
-# Workaround for importlib.util.exec_module compatibility with @dataclass decorators
-# When loaded via importlib with a custom module name, sys.modules might not have the
-# module registered before class definitions. Create a placeholder module entry first.
+from datasets.schema import validate_registry
+
+# Register module in sys.modules before @dataclass decorator runs
+# (needed for importlib.util.exec_module compatibility with @dataclass)
 if __name__ not in sys.modules:
     _placeholder = types.ModuleType(__name__)
     _placeholder.__file__ = __file__
     sys.modules[__name__] = _placeholder
-
-# Load schema by path to support importlib-loaded test harness
-_schema_path = Path(__file__).resolve().parent / "schema.py"
-_spec = importlib.util.spec_from_file_location("_schema_local", _schema_path)
-_schema_module = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(_schema_module)
-validate_registry = _schema_module.validate_registry
 
 
 @dataclass(frozen=True)
@@ -78,6 +71,6 @@ def resolve_scale(ds: Dataset, scale: str) -> ScalePlan:
     )
 
 
-# Sync module definitions with sys.modules entry (for importlib.util.exec_module compat)
+# Sync module definitions with sys.modules entry
 if __name__ in sys.modules:
     sys.modules[__name__].__dict__.update(globals())
