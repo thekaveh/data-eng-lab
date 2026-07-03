@@ -365,6 +365,7 @@ dev = [
     { name = "pytest-cov" },
     { name = "pyyaml" },
     { name = "requests" },
+    { name = "responses" },
     { name = "ruff" },
 ]
 
@@ -378,6 +379,7 @@ dev = [
     { name = "pytest-cov", specifier = ">=5" },
     { name = "pyyaml", specifier = ">=6" },
     { name = "requests", specifier = ">=2.32" },
+    { name = "responses", specifier = ">=0.25" },
     { name = "ruff", specifier = ">=0.4" },
 ]
 
