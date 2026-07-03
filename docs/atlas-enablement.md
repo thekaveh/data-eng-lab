@@ -102,7 +102,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 **Delivered shape:**
 - Zeppelin uses **standalone `spark.master=spark://spark-master:7077` (client mode)**, NOT Spark Connect (`spark.remote`).
-  - Rationale: Spark 4 rejects mixing Connect and standalone master in a single interpreter; the seeded JDBC interpreter uses Connect for `%jdbc` but the default `%spark` Scala uses the standalone master for notebook data locality.
+  - Rationale: Spark 4 rejects mixing Connect and standalone master in a single interpreter; the default `%spark` Scala uses the standalone master for notebook data locality.
   - **Implication:** Zeppelin notebooks author against a private Spark session (per notebook), not the shared Connect server. This is acceptable for development scenarios and decouples Zeppelin from the Connect server's fixed classpath.
 - Interpreter auto-seeded at provision via Zeppelin REST API; JDBC + S3A properties included.
 - **Deviation:** No Spark Connect bridging in Zeppelin. Authors should use Jupyter (Connect + PySpark) for shared-session scenarios.
@@ -123,7 +123,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 **Delivered shape:**
 - Base: `jenkins/jenkins:lts-jdk21` with Maven + `mc` + JCasC + plugin set (pipeline, git, config-as-code, job-dsl).
-- Port: `JENKINS_PORT=8080` (+ agent `50000`).
+- Port: `JENKINS_PORT=63080` (host-published; container-internal port is `8080`). Agent port `50000`.
 - Credentials: auto-generated `JENKINS_ADMIN_PASSWORD` + MinIO endpoint + creds pre-configured.
 - Source-toggled: `JENKINS_SOURCE` flag (default `disabled`).
 - **Scope:** Atlas provides server + JCasC seam only. No job definitions shipped; `data-eng-lab` injects via `jenkins/seed-job.sh` (JCasC/Job-DSL).

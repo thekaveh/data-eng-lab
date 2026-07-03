@@ -24,7 +24,7 @@ default_args = {
 
 spark_conf = {
     "spark.master": os.environ.get("SPARK_MASTER_URL", "spark://spark-master:7077"),
-    "spark.app.name": "atlas-airflow-lakehouse-smoke",
+    "spark.app.name": "nyc-taxi-etl",
     "spark.cores.max": "1",
     "spark.executor.memory": "1g",
     "spark.driver.memory": "1g",

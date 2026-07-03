@@ -67,7 +67,7 @@ uv run python scripts/register_iceberg.py
 ```
 
 **What it does:**
-- Connects to the Iceberg REST catalog at `http://iceberg-rest:8181` (inferred from `.env`).
+- Connects to the Iceberg REST catalog at `http://localhost:${ICEBERG_REST_PORT:-63020}` (the host-side address; inferred from `.env`).
 - Creates namespaces: `bronze`, `silver`, `gold` (idempotent).
 - Optionally creates a test table under `bronze` to confirm write path.
 
@@ -222,7 +222,7 @@ Seeding Jenkins job definitions...
 
 #### Step 2: Trigger the build
 
-Via Jenkins UI (at `http://localhost:8080`, or from `.env` JENKINS_PORT):
+Via Jenkins UI (at `http://localhost:${JENKINS_PORT:-63080}`, or from `.env` JENKINS_PORT):
 1. Navigate to the `nyc-taxi-etl-build` job.
 2. Click **Build Now**.
 3. Monitor the build log; it should:
@@ -341,7 +341,7 @@ If all above pass, the Atlas enablement is **validated for production use** and 
 ### Service X is not reachable
 
 - **Iceberg REST (port 63020):** Check that `iceberg-rest-source` is enabled. Verify Supabase Postgres is running (`docker ps | grep supabase`). If not, re-run `start-all.sh` with `--iceberg-rest-source container`.
-- **Jenkins (port 8080):** Check `JENKINS_SOURCE` is enabled. Verify the Jenkins container has sufficient memory (Jenkins needs 1GB+).
+- **Jenkins (host port ${JENKINS_PORT:-63080}):** Check `JENKINS_SOURCE` is enabled. Verify the Jenkins container has sufficient memory (Jenkins needs 1GB+).
 - **JupyterHub (port 8000):** Check the JupyterHub container logs: `docker logs $(docker ps -q -f "name=jupyterhub")`.
 
 ### Spark Connect times out
