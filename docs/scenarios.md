@@ -78,6 +78,21 @@ CDC/upsert pattern with `MERGE INTO` for idempotent inserts and updates on onlin
 #### `scd2-online_retail-spark-iceberg`
 Slowly Changing Dimension Type 2 (effective_from/to, is_current) on online_retail.
 
+### Roadmap analytics scenarios (Spark; delivered-Atlas only)
+All scenarios in this group require only the delivered Atlas (Spark 4.1.2 + Iceberg 1.11.0), `scripts/register_iceberg.py` for namespace registration, and `make datasets` for landing data.
+
+#### `data_quality-nyc_taxi-spark-iceberg`
+Validation, quarantine table, and metrics on nyc_taxi.
+
+#### `sessionization-gh_archive-spark-iceberg`
+Window functions and gap-based sessions on gh_archive.
+
+#### `join_optimization-tpch-spark-iceberg`
+Broadcast vs sort-merge join and Adaptive Query Execution on tpch.
+
+#### `feature_engineering-movielens-spark-iceberg`
+ML feature marts (bridges to ml-lab) on movielens.
+
 **Note:** This completes the design's **core-10** (scenarios #1–#10).
 
 ## Status
