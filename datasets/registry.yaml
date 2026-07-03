@@ -1,0 +1,70 @@
+version: 1
+datasets:
+  nyc_taxi:
+    description: "NYC TLC yellow taxi trips (columnar analytical, time-partitioned)"
+    format: parquet
+    license: "NYC TLC — public"
+    landing_prefix: nyc_taxi
+    fetch: { kind: http }
+    scales:
+      tiny:
+        urls:
+          - "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-01.parquet"
+      small:
+        urls:
+          - "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-01.parquet"
+          - "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-02.parquet"
+          - "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-03.parquet"
+      medium:
+        urls:
+          - "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-01.parquet"
+          - "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-02.parquet"
+          - "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-03.parquet"
+          - "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-04.parquet"
+          - "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-05.parquet"
+          - "https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-06.parquet"
+  gh_archive:
+    description: "GH Archive hourly GitHub events (semi-structured JSON; also the streaming source)"
+    format: json.gz
+    license: "GH Archive — public"
+    landing_prefix: gh_archive
+    fetch: { kind: http }
+    scales:
+      tiny:
+        urls: ["https://data.gharchive.org/2023-01-01-0.json.gz"]
+      small:
+        urls:
+          - "https://data.gharchive.org/2023-01-01-0.json.gz"
+          - "https://data.gharchive.org/2023-01-01-1.json.gz"
+          - "https://data.gharchive.org/2023-01-01-2.json.gz"
+      medium:
+        urls:
+          - "https://data.gharchive.org/2023-01-01-0.json.gz"
+          - "https://data.gharchive.org/2023-01-01-1.json.gz"
+          - "https://data.gharchive.org/2023-01-01-2.json.gz"
+          - "https://data.gharchive.org/2023-01-01-3.json.gz"
+          - "https://data.gharchive.org/2023-01-01-4.json.gz"
+          - "https://data.gharchive.org/2023-01-01-5.json.gz"
+  movielens:
+    description: "MovieLens ratings + movies (joins, feature engineering)"
+    format: csv
+    license: "GroupLens — research use; downloaded, not redistributed"
+    landing_prefix: movielens
+    fetch: { kind: http, unzip: true }
+    scales:
+      tiny:
+        urls: ["https://files.grouplens.org/datasets/movielens/ml-latest-small.zip"]
+      small:
+        urls: ["https://files.grouplens.org/datasets/movielens/ml-latest-small.zip"]
+      medium:
+        urls: ["https://files.grouplens.org/datasets/movielens/ml-25m.zip"]
+  tpch:
+    description: "TPC-H benchmark, DuckDB-generated (star schema, joins, SQL)"
+    format: parquet
+    license: "TPC-H spec; generated data is unrestricted"
+    landing_prefix: tpch
+    fetch: { kind: tpch }
+    scales:
+      tiny: { sf: 0.01 }
+      small: { sf: 1 }
+      medium: { sf: 10 }

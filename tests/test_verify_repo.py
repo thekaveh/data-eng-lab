@@ -29,3 +29,13 @@ def test_missing_declared_dir_flags_error(tmp_path: Path):
            "scenario_name_regex": r"^[a-z0-9_]+-[a-z0-9_]+-[a-z0-9_]+-[a-z0-9_]+$"}
     findings = verify_repo.run_checks(tmp_path, cfg)
     assert any(f.severity == "error" and "exists" in f.check for f in findings), findings
+
+
+def test_registry_check_flags_invalid_registry(tmp_path: Path):
+    # a repo root with a broken registry produces a dataset.registry error.
+    # (schema.py is loaded from THIS repo relative to verify_repo.py, so no monkeypatch needed.)
+    (tmp_path / "datasets").mkdir()
+    (tmp_path / "datasets" / "registry.yaml").write_text("version: 2\ndatasets: {}\n")
+    cfg = {"active_scenario_dirs": [], "scenario_name_regex": r"^x$"}
+    findings = verify_repo.run_checks(tmp_path, cfg)
+    assert any(f.check == "dataset.registry" and f.severity == "error" for f in findings), findings
