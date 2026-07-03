@@ -27,7 +27,7 @@ if [ "$DRY_RUN" = 1 ]; then echo "+ $ATLAS_START &"; else eval "$ATLAS_START" & 
 log "3/6 waiting for core services to be healthy"
 PROJECT_NAME="$(resolve_project_name "$INFRA_DIR/.env")"
 export PROJECT_NAME
-run "wait_healthy minio spark-master spark-connect airflow-webserver zeppelin jupyterhub"
+run "wait_healthy minio iceberg-rest spark-master spark-connect airflow-webserver zeppelin jupyterhub"
 
 log "4/6 creating buckets"
 run "\"$HERE/create_buckets.sh\""

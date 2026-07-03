@@ -68,8 +68,7 @@ uv run python scripts/register_iceberg.py
 
 **What it does:**
 - Connects to the Iceberg REST catalog at `http://localhost:${ICEBERG_REST_PORT:-63020}` (the host-side address; inferred from `.env`).
-- Creates namespaces: `bronze`, `silver`, `gold` (idempotent).
-- Optionally creates a test table under `bronze` to confirm write path.
+- Creates the `bronze`, `silver`, and `gold` namespaces (idempotent — safe to re-run).
 
 **Expected output:**
 ```
@@ -77,7 +76,6 @@ Registering namespaces in Iceberg REST catalog...
 ✓ Namespace 'bronze' created
 ✓ Namespace 'silver' created
 ✓ Namespace 'gold' created
-✓ Test table created: lakehouse.bronze.test_registration
 ```
 
 ### 2.3 Preflight Layer 1 (connectivity)
@@ -127,7 +125,7 @@ RUN_INFRA=1 uv run pytest -m infra -q
 
 Launch a notebook scenario in Zeppelin:
 
-1. Navigate to Zeppelin UI: `http://localhost:8080` (or from `.env` ZEPPELIN_PORT).
+1. Navigate to Zeppelin UI: `http://localhost:${ZEPPELIN_PORT}` (the host port from `infra/.env`, slot-allocated — not 8080).
 2. Create a new Scala `%spark` notebook named `test-bronze-read`.
 3. Add paragraphs:
    ```scala
@@ -166,7 +164,7 @@ Launch a notebook scenario in Zeppelin:
 
 Launch a notebook scenario in JupyterHub:
 
-1. Navigate to JupyterHub: `http://localhost:8000` (or from `.env` JUPYTER_PORT).
+1. Navigate to JupyterHub: `http://localhost:${JUPYTERHUB_PORT}` (the host port from `infra/.env`, slot-allocated — not 8000).
 2. Log in with credentials from `.env` (typically `jupyter` user, password auto-generated).
 3. Create a new Python notebook named `test-silver-write`.
 4. Add cells:
@@ -202,9 +200,13 @@ Build and publish the `nyc-taxi-etl` Spark application via Jenkins.
 
 #### Step 1: Seed the Jenkins job (one-time)
 
-From the repo root, run the seed script:
+From the repo root, first export the required environment variables, then run the seed script:
 
 ```bash
+# Source the slot-allocated env (Jenkins credentials + port live here)
+source infra/.env
+# Or export individually:
+# export JENKINS_ADMIN_USER JENKINS_ADMIN_PASSWORD JENKINS_PORT
 bash jenkins/seed-job.sh
 ```
 
@@ -247,21 +249,32 @@ docker exec -it $(docker ps -q -f "name=minio") mc cat minio/jars/nyc-taxi-etl/0
 
 Run the end-to-end lakehouse pipeline via Airflow.
 
-1. Navigate to Airflow UI: `http://localhost:8080` (Airflow port, not Jenkins—check `.env` for `AIRFLOW_PORT`).
-2. Find the `nyc_taxi_etl` DAG (auto-discovered from `dags/` mount).
-3. Manually trigger the DAG (or check auto-scheduling from the DAG definition).
-4. Monitor the run:
-   - **Task 1:** `load_nyc_taxi_csv` — reads `data/nyc_taxi_2024.csv` into `s3a://landing/nyc_taxi_trips/`.
-   - **Task 2:** `spark_submit_to_bronze` — runs the Scala JAR (`s3a://jars/nyc-taxi-etl/0.1.0/app.jar`) on the Spark cluster with `--deploy-mode cluster`, reads from `landing`, writes to `lakehouse.bronze.nyc_taxi_trips`.
-   - **Task 3:** `check_bronze_table` — validates the table exists and has rows.
+#### Prerequisites
+
+- The `nyc-taxi-etl` JAR must already be published to `s3a://jars/nyc-taxi-etl/0.1.0/app.jar` via Jenkins (§3.4 above).
+- Landing-zone Parquet data must be present in MinIO. Populate it with:
+  ```bash
+  uv run python scripts/download_datasets.py
+  ```
+  This seeds `s3a://landing/nyc_taxi/` with the NYC taxi Parquet files consumed by the ETL.
+
+#### Running the DAG
+
+1. Navigate to Airflow UI: `http://localhost:${AIRFLOW_PORT}` (the host port from `infra/.env`, slot-allocated — not 8080).
+2. Find the `nyc_taxi_etl` DAG (dag_id `nyc_taxi_etl`, auto-discovered from the `spark-apps/` DAG mount).
+3. Manually trigger the DAG (click **Trigger DAG**) or wait for the `@daily` schedule.
+4. The DAG has a **single task**: `submit_nyc_taxi_etl` — a `SparkSubmitOperator` that:
+   - Submits `s3a://jars/nyc-taxi-etl/0.1.0/app.jar` to the Spark standalone cluster in cluster deploy-mode.
+   - Passes the full `spark.sql.catalog.lakehouse.*` configuration so the driver finds the Iceberg REST catalog.
+   - Reads Parquet from `s3a://landing/nyc_taxi/`.
+   - Writes to `lakehouse.bronze.nyc_taxi_trips`.
 
 **Expected output:**
 - DAG run completes with status **Success**.
-- Spark driver logs show:
+- Spark driver logs (in the Spark History UI or Airflow task logs) show:
   ```
-  [spark-submit] ... Reading nyc_taxi_trips from s3a://landing/nyc_taxi_trips/ ...
+  [spark-submit] ... Reading from s3a://landing/nyc_taxi/ ...
   [spark-submit] ... Writing to iceberg table lakehouse.bronze.nyc_taxi_trips ...
-  [spark-submit] ... Written 100000 rows to bronze (example) ...
   ```
 - Verify the table in Spark (via Zeppelin or Jupyter):
   ```scala
@@ -342,7 +355,7 @@ If all above pass, the Atlas enablement is **validated for production use** and 
 
 - **Iceberg REST (port 63020):** Check that `iceberg-rest-source` is enabled. Verify Supabase Postgres is running (`docker ps | grep supabase`). If not, re-run `start-all.sh` with `--iceberg-rest-source container`.
 - **Jenkins (host port ${JENKINS_PORT:-63080}):** Check `JENKINS_SOURCE` is enabled. Verify the Jenkins container has sufficient memory (Jenkins needs 1GB+).
-- **JupyterHub (port 8000):** Check the JupyterHub container logs: `docker logs $(docker ps -q -f "name=jupyterhub")`.
+- **JupyterHub (`${JUPYTERHUB_PORT}` from `infra/.env`):** Check the JupyterHub container logs: `docker logs $(docker ps -q -f "name=jupyterhub")`.
 
 ### Spark Connect times out
 
