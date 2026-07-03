@@ -31,6 +31,23 @@ A medallion lakehouse (Bronze → Silver → Gold) transformation of NYC taxi da
 
 Both notebooks implement multi-layer transformations with matching logic. Execution and parity validation are live-gated on the enhanced-Atlas stack (A1–A4).
 
+### `federated_query-nyc_taxi-trino-iceberg`
+A federated query scenario using Trino to query Iceberg tables in the lakehouse. Contains:
+- Trino %jdbc notebook section
+- Trino client query (Python)
+- Airflow DAG (`dag.py`)
+
+Both interfaces execute equivalent federated queries against `lakehouse.bronze.nyc_taxi_trips` and `lakehouse.gold.nyc_taxi_daily_trino`. Execution and parity validation are live-gated on the enhanced-Atlas stack (A7, Atlas issue #268).
+
+### `streaming_ingest-events-spark-iceberg`
+A streaming ingestion pipeline for events data via Redpanda into Iceberg. Contains:
+- Scala Spark Structured Streaming notebook (`zeppelin/notebook.zpln`)
+- PySpark Structured Streaming notebook (`jupyter/notebook.ipynb`)
+- Redpanda producer
+- Airflow DAG (`dag.py`)
+
+Both notebooks implement Structured Streaming with matching logic, consuming from topic `events` and writing to `lakehouse.bronze.events`. Execution and cross-language parity validation are live-gated on the enhanced-Atlas stack (A9, Atlas issue #269).
+
 ## Status
 The scenario framework (scaffolder + verifier + parity harness) is in place. Curated scenario
 notebooks are authored now; their execution and cross-language parity validation are live-gated
