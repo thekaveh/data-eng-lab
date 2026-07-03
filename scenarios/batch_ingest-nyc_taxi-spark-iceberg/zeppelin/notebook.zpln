@@ -20,7 +20,7 @@
     },
     {
       "title": "2. Setup (code)",
-      "text": "%spark\n// spark is pre-bound by the Atlas Zeppelin interpreter\nspark.version",
+      "text": "%spark\nimport spark.implicits._\nimport org.apache.spark.sql.functions._\n// spark is pre-bound by the Atlas Zeppelin interpreter (Spark Connect + lakehouse catalog)",
       "config": {},
       "settings": {
         "params": {},
@@ -38,7 +38,7 @@
     },
     {
       "title": "3. Read (code)",
-      "text": "%spark\n// val df = spark.read.parquet(\"s3a://landing/nyc_taxi/\")",
+      "text": "%spark\nval raw = spark.read.parquet(\"s3a://landing/nyc_taxi/\")\nraw.printSchema()",
       "config": {},
       "settings": {
         "params": {},
@@ -56,7 +56,7 @@
     },
     {
       "title": "4. Transform (code)",
-      "text": "%spark\n// TODO (Phase 2b): scenario transform",
+      "text": "%spark\nval bronze = raw\n  .where($\"tpep_pickup_datetime\".isNotNull && ($\"passenger_count\" > 0))\n  .withColumn(\"trip_date\", to_date($\"tpep_pickup_datetime\"))",
       "config": {},
       "settings": {
         "params": {},
@@ -74,7 +74,7 @@
     },
     {
       "title": "5. Write (code)",
-      "text": "%spark\n// df.writeTo(\"lakehouse.bronze.nyc_taxi\").using(\"iceberg\").createOrReplace()",
+      "text": "%spark\nbronze.writeTo(\"lakehouse.bronze.nyc_taxi_trips\").using(\"iceberg\").createOrReplace()",
       "config": {},
       "settings": {
         "params": {},
@@ -92,7 +92,7 @@
     },
     {
       "title": "6. Verify (code)",
-      "text": "%spark\n// spark.table(\"lakehouse.bronze.nyc_taxi\").count()",
+      "text": "%spark\nspark.table(\"lakehouse.bronze.nyc_taxi_trips\").count()",
       "config": {},
       "settings": {
         "params": {},
