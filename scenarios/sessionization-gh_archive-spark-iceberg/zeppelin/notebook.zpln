@@ -92,7 +92,7 @@
     },
     {
       "title": "6. Verify (code)",
-      "text": "%spark\nspark.sql(\"SELECT actor_login, max(session_id) + 1 AS sessions FROM lakehouse.silver.gh_sessions GROUP BY actor_login ORDER BY sessions DESC\").show(false)",
+      "text": "%spark\nspark.sql(\"SELECT actor_login, count(distinct session_id) AS sessions FROM lakehouse.silver.gh_sessions GROUP BY actor_login ORDER BY sessions DESC\").show(false)",
       "config": {},
       "settings": {
         "params": {},
