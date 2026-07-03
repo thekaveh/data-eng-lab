@@ -11,7 +11,10 @@ dev = [
   "pyyaml>=6",
   "boto3>=1.34",
   "requests>=2.32",
+  "responses>=0.25",
   "ruff>=0.4",
+  "moto[s3]>=5",
+  "duckdb>=1.0",
 ]
 
 [tool.ruff]
@@ -27,4 +30,5 @@ testpaths = ["tests"]
 addopts = "-ra"
 markers = [
   "infra: requires a live Atlas data-eng stack (deselect with -m 'not infra')",
+  "network: hits the network (e.g. DuckDB tpch extension fetch); deselect with -m 'not network'",
 ]

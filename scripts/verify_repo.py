@@ -33,7 +33,28 @@ def _check_declared_dirs_exist(root: Path, cfg: dict) -> list[Finding]:
     return findings
 
 
-CHECKS = [_check_naming, _check_declared_dirs_exist]
+def _check_dataset_registry(root: Path, cfg: dict) -> list[Finding]:
+    import importlib.util  # noqa: PLC0415
+
+    reg = root / "datasets" / "registry.yaml"
+    if not reg.exists():
+        return []  # registry is optional until Phase 1a lands
+    # Load this repo's schema.py BY PATH relative to verify_repo.py's own location, so it
+    # works no matter how the verifier is invoked (sys.path[0] is scripts/, not the repo root).
+    schema_path = Path(__file__).resolve().parent.parent / "datasets" / "schema.py"
+    if not schema_path.exists():
+        return [Finding("dataset.registry", "error", "registry.yaml present but datasets/schema.py missing")]
+    spec = importlib.util.spec_from_file_location("_dataset_schema", schema_path)
+    schema = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(schema)
+    try:
+        doc = yaml.safe_load(reg.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        return [Finding("dataset.registry", "error", f"registry.yaml is not valid YAML: {exc}")]
+    return [Finding("dataset.registry", "error", msg) for msg in schema.validate_registry(doc)]
+
+
+CHECKS = [_check_naming, _check_declared_dirs_exist, _check_dataset_registry]
 
 
 def run_checks(root: Path, cfg: dict) -> list[Finding]:
