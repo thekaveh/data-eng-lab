@@ -42,6 +42,8 @@ def _check_dataset_registry(root: Path, cfg: dict) -> list[Finding]:
     # Load this repo's schema.py BY PATH relative to verify_repo.py's own location, so it
     # works no matter how the verifier is invoked (sys.path[0] is scripts/, not the repo root).
     schema_path = Path(__file__).resolve().parent.parent / "datasets" / "schema.py"
+    if not schema_path.exists():
+        return [Finding("dataset.registry", "error", "registry.yaml present but datasets/schema.py missing")]
     spec = importlib.util.spec_from_file_location("_dataset_schema", schema_path)
     schema = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(schema)

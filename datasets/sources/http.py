@@ -1,11 +1,16 @@
 """HTTP source fetcher: download raw dataset files (with optional unzip) to a local dir."""
 from __future__ import annotations
 
+import shutil
 import zipfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
 import requests
+
+if TYPE_CHECKING:
+    from datasets.registry import ScalePlan
 
 
 def _download(url: str, dest: Path) -> Path:
@@ -27,13 +32,13 @@ def _unzip(path: Path, dest: Path) -> list[Path]:
                 continue
             target = dest / Path(member).name  # flatten
             with z.open(member) as src, open(target, "wb") as out:
-                out.write(src.read())
+                shutil.copyfileobj(src, out)
             extracted.append(target)
     path.unlink()  # drop the zip once extracted
     return extracted
 
 
-def fetch_http(plan, dest: Path) -> list[Path]:
+def fetch_http(plan: ScalePlan, dest: Path) -> list[Path]:
     dest.mkdir(parents=True, exist_ok=True)
     files: list[Path] = []
     for url in plan.urls:

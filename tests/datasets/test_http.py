@@ -9,8 +9,6 @@ import responses
 from datasets import registry as reg
 from datasets.sources import http
 
-ROOT = Path(__file__).resolve().parents[2]
-
 
 def _plan(urls, unzip=False):
     ds = reg.Dataset("d", "d", "csv", "l", "d", "http", unzip, {"tiny": {"urls": urls}})

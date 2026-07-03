@@ -14,12 +14,14 @@ TPCH_TABLES = [
 def generate_tpch(sf: float, dest: Path) -> list[Path]:
     dest.mkdir(parents=True, exist_ok=True)
     con = duckdb.connect()
-    con.execute("INSTALL tpch; LOAD tpch;")
-    con.execute(f"CALL dbgen(sf={sf})")
-    out: list[Path] = []
-    for table in TPCH_TABLES:
-        target = dest / f"{table}.parquet"
-        con.execute(f"COPY {table} TO '{target.as_posix()}' (FORMAT PARQUET)")
-        out.append(target)
-    con.close()
-    return out
+    try:
+        con.execute("INSTALL tpch; LOAD tpch;")
+        con.execute(f"CALL dbgen(sf={sf})")
+        out: list[Path] = []
+        for table in TPCH_TABLES:
+            target = dest / f"{table}.parquet"
+            con.execute(f"COPY {table} TO '{target.as_posix()}' (FORMAT PARQUET)")
+            out.append(target)
+        return out
+    finally:
+        con.close()

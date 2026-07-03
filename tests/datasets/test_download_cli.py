@@ -40,3 +40,24 @@ def test_run_uploads_http_dataset(tmp_path: Path, monkeypatch):
     n2 = cli.run(REG, infra_dir=tmp_path, scale="tiny", only=["nyc_taxi"],
                  force=False, dry_run=False, client=client)
     assert n2 == 0
+
+
+@mock_aws
+def test_run_skips_fetch_when_objects_present(tmp_path, monkeypatch):
+    from urllib.parse import urlparse
+
+    client = boto3.client("s3", region_name="us-east-1")
+    client.create_bucket(Bucket="landing")
+    ds = cli.load_registry(REG)["nyc_taxi"]
+    plan = cli.resolve_scale(ds, "tiny")
+    for url in plan.urls:
+        key = f"{ds.landing_prefix}/{Path(urlparse(url).path).name}"
+        client.put_object(Bucket="landing", Key=key, Body=b"x")
+
+    def boom(*a, **k):
+        raise AssertionError("fetch_http must not run when all objects already exist")
+
+    monkeypatch.setattr(cli, "fetch_http", boom)
+    n = cli.run(REG, infra_dir=tmp_path, scale="tiny", only=["nyc_taxi"],
+                force=False, dry_run=False, client=client)
+    assert n == 0

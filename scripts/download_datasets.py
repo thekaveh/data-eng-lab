@@ -18,6 +18,18 @@ from datasets.sources.tpch import generate_tpch  # noqa: E402
 BUCKET = "landing"
 
 
+def _expected_keys(plan):
+    """Object keys knowable BEFORE fetching (None when only known post-download, e.g. unzip)."""
+    ds = plan.dataset
+    if ds.kind == "http" and not ds.unzip:
+        from urllib.parse import urlparse
+        return [f"{ds.landing_prefix}/{Path(urlparse(u).path).name}" for u in plan.urls]
+    if ds.kind == "tpch":
+        from datasets.sources.tpch import TPCH_TABLES
+        return [f"{ds.landing_prefix}/{t}.parquet" for t in TPCH_TABLES]
+    return None
+
+
 def plan_uploads(datasets: dict, scale: str, only: list[str] | None) -> list[tuple[str, str]]:
     names = [n for n in datasets if (not only or n in only)]
     return [(n, scale) for n in names]
@@ -46,6 +58,10 @@ def run(registry_path, infra_dir, scale, only, force, dry_run, client=None) -> i
     for name, sc in pairs:
         ds = datasets[name]
         plan = resolve_scale(ds, sc)
+        expected = _expected_keys(plan)
+        if not force and expected is not None and all(object_exists(client, BUCKET, k) for k in expected):
+            print(f"= skip {name} @ {sc} (all {len(expected)} object(s) already present)")
+            continue
         with tempfile.TemporaryDirectory() as tmp:
             files = _fetch_files(plan, Path(tmp))
             for f in files:
@@ -69,7 +85,8 @@ def main(argv=None) -> int:
     ap.add_argument("--infra-dir", default=str(ROOT / "infra"))
     args = ap.parse_args(argv)
     n = run(args.registry, args.infra_dir, args.scale, args.only, args.force, args.dry_run)
-    print(f"\nlanded {n} object(s) into s3://{BUCKET}")
+    if not args.dry_run:
+        print(f"\nlanded {n} object(s) into s3://{BUCKET}")
     return 0
 
 

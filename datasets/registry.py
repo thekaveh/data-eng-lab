@@ -58,5 +58,5 @@ def resolve_scale(ds: Dataset, scale: str) -> ScalePlan:
         dataset=ds,
         scale=scale,
         urls=list(spec.get("urls", [])),
-        sf=spec.get("sf"),
+        sf=float(spec["sf"]) if "sf" in spec else None,
     )

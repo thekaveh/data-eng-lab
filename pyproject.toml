@@ -30,4 +30,5 @@ testpaths = ["tests"]
 addopts = "-ra"
 markers = [
   "infra: requires a live Atlas data-eng stack (deselect with -m 'not infra')",
+  "network: hits the network (e.g. DuckDB tpch extension fetch); deselect with -m 'not network'",
 ]

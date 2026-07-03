@@ -19,12 +19,18 @@ def validate_registry(doc: dict) -> list[str]:
         for field in ("description", "format", "license", "landing_prefix", "fetch", "scales"):
             if field not in ds:
                 errors.append(f"{p}: missing '{field}'")
-        kind = (ds.get("fetch") or {}).get("kind")
-        if kind not in VALID_KINDS:
-            errors.append(f"{p}: fetch.kind '{kind}' not in {sorted(VALID_KINDS)}")
-        scales = ds.get("scales") or {}
-        if not scales:
-            errors.append(f"{p}: 'scales' must define at least one tier")
+        if "fetch" in ds:
+            kind = (ds.get("fetch") or {}).get("kind")
+            if kind not in VALID_KINDS:
+                errors.append(f"{p}: fetch.kind '{kind}' not in {sorted(VALID_KINDS)}")
+        else:
+            kind = None
+        if "scales" in ds:
+            scales = ds.get("scales") or {}
+            if not scales:
+                errors.append(f"{p}: 'scales' must define at least one tier")
+        else:
+            scales = {}
         for tier, spec in scales.items():
             if kind == "http" and not spec.get("urls"):
                 errors.append(f"{p}.scales.{tier}: http datasets require a non-empty 'urls' list")
