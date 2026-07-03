@@ -1,5 +1,6 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
+.PHONY: help setup up down datasets verify test preflight lint fmt
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-12s %s\n",$$1,$$2}'
@@ -27,7 +28,7 @@ preflight: ## Infra preflight against a live stack
 
 lint: ## Lint (ruff; shell/yaml lint if installed)
 	uv run ruff check .
-	@command -v shellcheck >/dev/null && shellcheck scripts/*.sh || echo "shellcheck not installed — skipping"
+	@if command -v shellcheck >/dev/null; then shellcheck scripts/*.sh; else echo "shellcheck not installed — skipping"; fi
 
 fmt: ## Auto-format Python
 	uv run ruff format .
