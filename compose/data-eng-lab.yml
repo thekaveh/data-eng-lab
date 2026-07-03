@@ -1,0 +1,19 @@
+# data-eng-lab overlay — merged into Atlas services via services/_user/ auto-discovery.
+# Phase 0: joins the shared network and mounts our (initially empty) trees so Airflow
+# discovers DAGs recursively and datasets are available in-container. No new services yet
+# (Iceberg-REST/Jenkins/Redpanda arrive from Atlas via A1/A5/A9).
+services:
+  airflow-scheduler:
+    volumes:
+      - ../scenarios:/opt/airflow/dags/data_eng_lab_scenarios:ro
+      - ../spark-apps:/opt/airflow/dags/data_eng_lab_spark_apps:ro
+      - ../datasets:/opt/data-eng-lab/datasets:ro
+
+  airflow-dag-processor:
+    volumes:
+      - ../scenarios:/opt/airflow/dags/data_eng_lab_scenarios:ro
+      - ../spark-apps:/opt/airflow/dags/data_eng_lab_spark_apps:ro
+
+  jupyterhub:
+    volumes:
+      - ../datasets:/home/jovyan/data-eng-lab/datasets:ro
