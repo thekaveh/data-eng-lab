@@ -25,6 +25,7 @@ make up         # launch Atlas data-eng track + bootstrap buckets
 make preflight  # prove the stack is up, initialized, and integrated
 make down       # tear down
 ```
+See [`docs/datasets.md`](docs/datasets.md) for dataset landing & SCALE configuration.
 
 ## 4. Atlas contract
 This repo consumes an enhanced Atlas; required upstream enhancements are tracked in

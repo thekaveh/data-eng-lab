@@ -14,8 +14,8 @@ up: ## Launch the Atlas data-eng track + bootstrap
 down: ## Tear down (add COLD=1 to wipe volumes)
 	./scripts/stop-all.sh $(if $(COLD),--cold,)
 
-datasets: ## Download datasets into MinIO (Phase 1)
-	@echo "datasets: implemented in Phase 1"
+datasets: ## Download datasets into MinIO landing bucket (override tier with SCALE=tiny|small|medium)
+	uv run python scripts/download_datasets.py --scale $(if $(SCALE),$(SCALE),small)
 
 verify: ## Run the repo verifier
 	uv run python scripts/verify_repo.py --root .
