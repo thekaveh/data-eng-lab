@@ -29,8 +29,9 @@ See [`docs/datasets.md`](docs/datasets.md) for dataset landing & SCALE configura
 
 ## 4. Lakehouse + Atlas contract
 The lakehouse architecture is documented in [`docs/lakehouse.md`](docs/lakehouse.md).
-This repo consumes an enhanced Atlas; required upstream enhancements are tracked in
-[`docs/atlas-enablement.md`](docs/atlas-enablement.md).
+This repo consumes an enhanced Atlas. The authoritative hand-off of what we expect from Atlas —
+delivered vs. outstanding (A7 Trino, A9 Redpanda) plus per-scenario Iceberg/Spark needs — is
+[`docs/atlas-expectations.md`](docs/atlas-expectations.md) (origin ledger: [`docs/atlas-enablement.md`](docs/atlas-enablement.md)).
 
 ## 5. License
 Private / proprietary — see [`LICENSE`](LICENSE).
