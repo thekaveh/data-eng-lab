@@ -2,6 +2,8 @@
 
 **Status:** draft contract `v0.2` · **Consumer repo:** `data-eng-lab` (private) · **Target:** [`thekaveh/atlas`](https://github.com/thekaveh/atlas)
 
+> **➡️ The authoritative hand-off is now [`docs/atlas-expectations.md`](atlas-expectations.md)** — it reflects the *delivered* reality (A1–A6, A8), the outstanding A7/A9 build specs, and the Iceberg/Spark capabilities each scenario relies on. This file remains the terse A1–A9 origin ledger.
+
 > This document is a hand-off for the Atlas maintainer/worker. It enumerates the
 > infrastructure enhancements that `data-eng-lab` needs from Atlas. `data-eng-lab`
 > is a **pure downstream consumer** — it vendors Atlas as a pinned git submodule at
