@@ -147,7 +147,8 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 Deferred to Phase 5. Atlas worker is asked to implement:
 - New service `services/trino/` with an `iceberg` connector catalog pointing at `iceberg-rest`.
 - Port via slot allocator; add to the `data-eng` track.
-- `data-eng-lab` will author Trino scenarios against this assumed contract.
+- Atlas issue: [#268](https://github.com/thekaveh/atlas/issues/268)
+- `data-eng-lab` Phase 5 authors the matching scenario `federated_query-nyc_taxi-trino-iceberg` with Trino %jdbc and client interfaces (see `docs/scenarios.md`).
 
 ---
 
@@ -157,7 +158,8 @@ Deferred to Phase 5. Atlas worker is asked to implement:
 1. New service `services/redpanda/` (Kafka-API compatible broker; Redpanda image).
 2. Bake Spark Kafka connector (`spark-sql-kafka-0-10`) matching Spark 4.1 / Scala 2.13 into the Spark image.
 3. Optional CDC sub-item: Kafka Connect + Debezium for Postgres → Redpanda CDC.
-- `data-eng-lab` will author Structured Streaming scenarios against this assumed contract.
+- Atlas issue: [#269](https://github.com/thekaveh/atlas/issues/269)
+- `data-eng-lab` Phase 5 authors the matching scenario `streaming_ingest-events-spark-iceberg` with Scala and PySpark Structured Streaming interfaces (see `docs/scenarios.md`).
 
 ---
 
