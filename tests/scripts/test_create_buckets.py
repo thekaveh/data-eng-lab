@@ -4,7 +4,8 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "create_buckets.sh"
-EXPECTED = ["landing", "lakehouse", "jars", "checkpoints", "lakehouse-test"]
+# Atlas's minio-init creates landing/lakehouse/jars/checkpoints; we only provision lakehouse-test.
+EXPECTED = ["lakehouse-test"]
 
 
 def test_creates_all_expected_buckets(tmp_path: Path):
