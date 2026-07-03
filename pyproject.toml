@@ -14,6 +14,7 @@ dev = [
   "responses>=0.25",
   "ruff>=0.4",
   "moto[s3]>=5",
+  "duckdb>=1.0",
 ]
 
 [tool.ruff]
