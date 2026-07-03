@@ -20,7 +20,7 @@
     },
     {
       "title": "2. Setup (code)",
-      "text": "%spark\nimport spark.implicits._\nimport org.apache.spark.sql.functions._\n// spark is pre-bound by the Atlas Zeppelin interpreter (Spark Connect + lakehouse catalog)",
+      "text": "%spark\nimport spark.implicits._\nimport org.apache.spark.sql.functions._\n// spark pre-bound (Spark Connect + lakehouse catalog)",
       "config": {},
       "settings": {
         "params": {},
@@ -38,7 +38,7 @@
     },
     {
       "title": "3. Read (code)",
-      "text": "%spark\nval raw = spark.read.parquet(\"s3a://landing/nyc_taxi/\")\nraw.printSchema()",
+      "text": "%spark\nval bronze = spark.table(\"lakehouse.bronze.nyc_taxi_trips\")",
       "config": {},
       "settings": {
         "params": {},
@@ -56,7 +56,7 @@
     },
     {
       "title": "4. Transform (code)",
-      "text": "%spark\nval bronze = raw\n  .where($\"tpep_pickup_datetime\".isNotNull && ($\"passenger_count\" > 0))\n  .withColumn(\"trip_date\", to_date($\"tpep_pickup_datetime\"))",
+      "text": "%spark\nval silver = bronze.dropDuplicates(\"tpep_pickup_datetime\", \"tpep_dropoff_datetime\")\nval gold = silver.groupBy($\"trip_date\")\n  .agg(count(\"*\").as(\"trips\"), avg($\"fare_amount\").as(\"avg_fare\"))",
       "config": {},
       "settings": {
         "params": {},
@@ -74,7 +74,7 @@
     },
     {
       "title": "5. Write (code)",
-      "text": "%spark\nbronze.writeTo(\"lakehouse.bronze.nyc_taxi_trips\").using(\"iceberg\").createOrReplace()",
+      "text": "%spark\nsilver.writeTo(\"lakehouse.silver.nyc_taxi_trips\").using(\"iceberg\").createOrReplace()\ngold.writeTo(\"lakehouse.gold.nyc_taxi_daily\").using(\"iceberg\").createOrReplace()",
       "config": {},
       "settings": {
         "params": {},
@@ -92,7 +92,7 @@
     },
     {
       "title": "6. Verify (code)",
-      "text": "%spark\nspark.table(\"lakehouse.bronze.nyc_taxi_trips\").count()",
+      "text": "%spark\nspark.table(\"lakehouse.gold.nyc_taxi_daily\").orderBy($\"trip_date\").show()",
       "config": {},
       "settings": {
         "params": {},
@@ -100,8 +100,8 @@
       }
     }
   ],
-  "name": "batch_ingest-nyc_taxi-spark-iceberg",
-  "id": "batch_ingest-nyc_taxi-spark-iceberg",
+  "name": "medallion-nyc_taxi-spark-iceberg",
+  "id": "medallion-nyc_taxi-spark-iceberg",
   "noteParams": {},
   "config": {},
   "info": {}
