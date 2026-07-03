@@ -308,9 +308,20 @@ def readme_text(name: str) -> str:
     return f"# {name}\n\n> Scaffolded scenario. Fill the notebook logic in Phase 2b.\n\n{body}"
 
 
-def _spark_cell(section: str) -> str:
+def _scala_cell(section: str) -> str:
+    # Zeppelin `%spark` paragraphs are SCALA — use Scala placeholders.
     return {
-        "2. Setup": 'spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()',
+        "2. Setup": "// spark is pre-bound by the Atlas Zeppelin interpreter\nspark.version",
+        "3. Read": '// val df = spark.read.parquet("s3a://landing/nyc_taxi/")',
+        "4. Transform": "// TODO (Phase 2b): scenario transform",
+        "5. Write": '// df.writeTo("lakehouse.bronze.nyc_taxi").using("iceberg").createOrReplace()',
+        "6. Verify": '// spark.table("lakehouse.bronze.nyc_taxi").count()',
+    }.get(section, "// TODO (Phase 2b)")
+
+
+def _py_cell(section: str) -> str:
+    # Jupyter cells are PySpark (Python).
+    return {
         "3. Read": 'df = spark.read.parquet("s3a://landing/nyc_taxi/")',
         "4. Transform": "# TODO (Phase 2b): scenario transform",
         "5. Write": '# df.writeTo("lakehouse.bronze.nyc_taxi").using("iceberg").createOrReplace()',
@@ -323,8 +334,7 @@ def zeppelin_notebook(name: str) -> dict:
     for sec in NB_SECTIONS:
         paragraphs.append({"title": sec, "text": f"%md\n## {sec}", "config": {}, "settings": {"params": {}, "forms": {}}})
         if sec != "1. Overview":
-            code = "from org.apache.spark.sql import SparkSession" if sec == "2. Setup" else _spark_cell(sec)
-            paragraphs.append({"title": f"{sec} (code)", "text": f"%spark\n{code}",
+            paragraphs.append({"title": f"{sec} (code)", "text": f"%spark\n{_scala_cell(sec)}",
                                "config": {}, "settings": {"params": {}, "forms": {}}})
     return {"paragraphs": paragraphs, "name": name, "id": name, "noteParams": {}, "config": {}, "info": {}}
 
@@ -339,7 +349,7 @@ def jupyter_notebook(name: str) -> nbformat.NotebookNode:
                 "from pyspark.sql import SparkSession\n"
                 'spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()'))
         elif sec != "1. Overview":
-            nb.cells.append(nbformat.v4.new_code_cell(_spark_cell(sec)))
+            nb.cells.append(nbformat.v4.new_code_cell(_py_cell(sec)))
     nb.metadata["language_info"] = {"name": "python"}
     return nb
 
