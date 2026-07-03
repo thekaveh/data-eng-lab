@@ -22,7 +22,7 @@ def test_creates_all_expected_buckets(tmp_path: Path):
     out = subprocess.run(["bash", str(SCRIPT)], cwd=ROOT, env=env, capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
 
-    calls = rec.read_text()
+    lines = rec.read_text().splitlines()
     for bucket in EXPECTED:
-        assert bucket in calls, f"bucket '{bucket}' not created; calls:\n{calls}"
-    assert "--ignore-existing" in calls, "bucket creation must be idempotent"
+        assert any(f"local/{bucket}" in ln and "--ignore-existing" in ln for ln in lines), \
+            f"bucket '{bucket}' not created with --ignore-existing; calls:\n{rec.read_text()}"
