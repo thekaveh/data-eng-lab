@@ -44,7 +44,9 @@ def test_probe_receives_exec_fn():
         captured["rc"], captured["out"] = exec_fn("jupyterhub", ["echo", "hi"])
         return captured["rc"] == 0, captured["out"]
 
-    fake_exec = lambda container, argv: (0, f"{container}:{' '.join(argv)}")
+    def fake_exec(container, argv):
+        return (0, f"{container}:{' '.join(argv)}")
+
     res = layer2.run_layer2([layer2.Edge("e", True, probe)], exec_fn=fake_exec, docker_ok=True)
     assert res[0].status == "pass"
     assert captured["out"] == "jupyterhub:echo hi"
@@ -53,3 +55,12 @@ def test_probe_receives_exec_fn():
 def test_render_matrix_contains_status():
     out = layer2.render_matrix([layer2.Result("a", "pass", "ok")])
     assert "a" in out and "PASS" in out
+
+
+def test_probe_exception_is_fail():
+    def boom(exec_fn):
+        raise RuntimeError("kaboom")
+
+    res = layer2.run_layer2([layer2.Edge("e", True, boom)], exec_fn=lambda c, a: (0, ""), docker_ok=True)
+    assert res[0].status == "fail"
+    assert "kaboom" in res[0].detail

@@ -13,16 +13,17 @@ from collections import namedtuple
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from preflight import Result, render_matrix as _render  # noqa: E402
+from preflight import Result  # noqa: E402
+from preflight import render_matrix as _render
 
 Edge = namedtuple("Edge", "name enabled probe")
 
 
 def default_exec(container: str, argv: list[str]) -> tuple[int, str]:
     """Run `docker exec <container> <argv...>`; return (rc, combined stdout+stderr)."""
-    import os
+    from manifest import _resolve_project
 
-    project = os.environ.get("PROJECT_NAME", "data-eng-lab")
+    project = _resolve_project()
     full = ["docker", "exec", f"{project}-{container}", *argv]
     try:
         out = subprocess.run(full, capture_output=True, text=True, timeout=120)

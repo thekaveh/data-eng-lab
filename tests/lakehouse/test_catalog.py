@@ -20,6 +20,8 @@ def test_catalog_config_from_env(tmp_path: Path):
     assert cfg["s3.endpoint"] == "http://localhost:64093"
     assert cfg["s3.access-key-id"] == "minioadmin"
     assert cfg["s3.path-style-access"] == "true"
+    assert cfg["warehouse"] == "s3a://lakehouse/"
+    assert cfg["s3.secret-access-key"] == "secret"
 
 
 def test_catalog_config_missing_port_raises(tmp_path: Path):
