@@ -1,10 +1,14 @@
 import importlib.util
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location("verify_repo", ROOT / "scripts" / "verify_repo.py")
 verify_repo = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(verify_repo)
+
+
+NB_SECS = ["1. Overview", "2. Setup", "3. Read", "4. Transform", "5. Write", "6. Verify"]
 
 
 def _make_valid_scenario(root: Path, name: str = "batch_ingest-nyc_taxi-spark-iceberg"):
@@ -14,8 +18,11 @@ def _make_valid_scenario(root: Path, name: str = "batch_ingest-nyc_taxi-spark-ic
     sections = ["1. Scenario summary", "2. Why this exists", "3. What's in the notebooks",
                 "4. How to run", "5. Data & dependencies", "6. Known issues & caveats"]
     (d / "README.md").write_text("# t\n\n" + "\n".join(f"## {s}\n\ntext\n" for s in sections))
-    (d / "zeppelin" / "notebook.zpln").write_text('{"paragraphs": []}')
-    (d / "jupyter" / "notebook.ipynb").write_text('{"cells": [], "nbformat": 4, "nbformat_minor": 5}')
+    nb_marker = " ".join(f"## {s}" for s in NB_SECS)
+    (d / "zeppelin" / "notebook.zpln").write_text(json.dumps({"paragraphs": [], "_sections": nb_marker}))
+    (d / "jupyter" / "notebook.ipynb").write_text(
+        json.dumps({"cells": [], "nbformat": 4, "nbformat_minor": 5, "_sections": nb_marker})
+    )
     return d
 
 
@@ -24,6 +31,7 @@ CFG = {
     "scenario_required_files": ["README.md", "zeppelin/notebook.zpln", "jupyter/notebook.ipynb"],
     "scenario_readme_sections": ["1. Scenario summary", "2. Why this exists", "3. What's in the notebooks",
                                  "4. How to run", "5. Data & dependencies", "6. Known issues & caveats"],
+    "notebook_sections": ["1. Overview", "2. Setup", "3. Read", "4. Transform", "5. Write", "6. Verify"],
 }
 
 
@@ -58,6 +66,13 @@ def test_invalid_notebook_json_flags_error(tmp_path: Path):
     (d / "zeppelin" / "notebook.zpln").write_text("{not json")
     findings = verify_repo.run_checks(tmp_path, CFG)
     assert any(f.check == "scenario.notebook_json" and f.severity == "error" for f in findings), findings
+
+
+def test_missing_notebook_section_flags_error(tmp_path: Path):
+    d = _make_valid_scenario(tmp_path)
+    (d / "zeppelin" / "notebook.zpln").write_text('{"paragraphs": []}')  # no section markers
+    findings = verify_repo.run_checks(tmp_path, CFG)
+    assert any(f.check == "scenario.notebook_sections" and f.severity == "error" for f in findings), findings
 
 
 def test_no_scenarios_dir_is_ok(tmp_path: Path):

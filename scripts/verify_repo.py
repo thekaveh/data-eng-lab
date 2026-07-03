@@ -25,12 +25,11 @@ def _discover_scenarios(root: Path) -> list[str]:
 
 
 def _check_scenarios(root: Path, cfg: dict) -> list[Finding]:
-    import json as _json
-
     findings: list[Finding] = []
     regex = re.compile(cfg["scenario_name_regex"])
     required = cfg.get("scenario_required_files", [])
     sections = cfg.get("scenario_readme_sections", [])
+    nb_sections = cfg.get("notebook_sections", [])
     for name in _discover_scenarios(root):
         sdir = root / "scenarios" / name
         if not regex.fullmatch(name):
@@ -49,11 +48,17 @@ def _check_scenarios(root: Path, cfg: dict) -> list[Finding]:
                                             f"scenario '{name}' README missing section '## {sec}'"))
         for rel in required:
             if rel.endswith((".zpln", ".ipynb")) and (sdir / rel).exists():
+                raw = (sdir / rel).read_text(encoding="utf-8")
                 try:
-                    _json.loads((sdir / rel).read_text(encoding="utf-8"))
+                    json.loads(raw)
                 except Exception as exc:  # noqa: BLE001
                     findings.append(Finding("scenario.notebook_json", "error",
                                             f"scenario '{name}' file '{rel}' is not valid JSON: {exc}"))
+                    continue
+                for sec in nb_sections:
+                    if f"## {sec}" not in raw:
+                        findings.append(Finding("scenario.notebook_sections", "error",
+                                                f"scenario '{name}' notebook '{rel}' missing section '## {sec}'"))
     return findings
 
 

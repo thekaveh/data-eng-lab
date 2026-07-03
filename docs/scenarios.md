@@ -11,7 +11,7 @@ uv run python scripts/verify_repo.py --root .   # validates structure
 ```
 Then fill the notebook sections (`1. Overview` … `6. Verify`) with the scenario's Scala/PySpark logic.
 The **Scala and PySpark notebooks must produce equivalent output** — Phase 2b captures a snapshot of
-each and compares them with `tests/scenarios/parity.py`.
+each and compares them with `tables_equivalent` in `tests/scenarios/parity.py`.
 
 ## Status
 The scenario framework (scaffolder + verifier + parity harness) is in place; the curated scenario

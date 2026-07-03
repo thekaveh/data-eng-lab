@@ -24,39 +24,41 @@ def readme_text(name: str) -> str:
     return f"# {name}\n\n> Scaffolded scenario. Fill the notebook logic in Phase 2b.\n\n{body}"
 
 
-def _scala_cell(section: str) -> str:
+def _scala_cell(section: str, dataset: str) -> str:
     # Zeppelin `%spark` paragraphs are SCALA — use Scala placeholders.
     return {
         "2. Setup": "// spark is pre-bound by the Atlas Zeppelin interpreter\nspark.version",
-        "3. Read": '// val df = spark.read.parquet("s3a://landing/nyc_taxi/")',
+        "3. Read": f'// val df = spark.read.parquet("s3a://landing/{dataset}/")',
         "4. Transform": "// TODO (Phase 2b): scenario transform",
-        "5. Write": '// df.writeTo("lakehouse.bronze.nyc_taxi").using("iceberg").createOrReplace()',
-        "6. Verify": '// spark.table("lakehouse.bronze.nyc_taxi").count()',
+        "5. Write": f'// df.writeTo("lakehouse.bronze.{dataset}").using("iceberg").createOrReplace()',
+        "6. Verify": f'// spark.table("lakehouse.bronze.{dataset}").count()',
     }.get(section, "// TODO (Phase 2b)")
 
 
-def _py_cell(section: str) -> str:
+def _py_cell(section: str, dataset: str) -> str:
     # Jupyter cells are PySpark (Python).
     return {
-        "3. Read": 'df = spark.read.parquet("s3a://landing/nyc_taxi/")',
+        "3. Read": f'df = spark.read.parquet("s3a://landing/{dataset}/")',
         "4. Transform": "# TODO (Phase 2b): scenario transform",
-        "5. Write": '# df.writeTo("lakehouse.bronze.nyc_taxi").using("iceberg").createOrReplace()',
-        "6. Verify": '# spark.table("lakehouse.bronze.nyc_taxi").count()',
+        "5. Write": f'# df.writeTo("lakehouse.bronze.{dataset}").using("iceberg").createOrReplace()',
+        "6. Verify": f'# spark.table("lakehouse.bronze.{dataset}").count()',
     }.get(section, "# TODO (Phase 2b)")
 
 
 def zeppelin_notebook(name: str) -> dict:
+    dataset = name.split("-")[1]
     paragraphs = []
     for sec in NB_SECTIONS:
         paragraphs.append({"title": sec, "text": f"%md\n## {sec}", "config": {},
                            "settings": {"params": {}, "forms": {}}})
         if sec != "1. Overview":
-            paragraphs.append({"title": f"{sec} (code)", "text": f"%spark\n{_scala_cell(sec)}",
+            paragraphs.append({"title": f"{sec} (code)", "text": f"%spark\n{_scala_cell(sec, dataset)}",
                                "config": {}, "settings": {"params": {}, "forms": {}}})
     return {"paragraphs": paragraphs, "name": name, "id": name, "noteParams": {}, "config": {}, "info": {}}
 
 
 def jupyter_notebook(name: str) -> nbformat.NotebookNode:
+    dataset = name.split("-")[1]
     nb = nbformat.v4.new_notebook()
     nb.cells.append(nbformat.v4.new_markdown_cell(f"# {name}"))
     for sec in NB_SECTIONS:
@@ -64,10 +66,12 @@ def jupyter_notebook(name: str) -> nbformat.NotebookNode:
         if sec == "2. Setup":
             nb.cells.append(nbformat.v4.new_code_cell(
                 "from pyspark.sql import SparkSession\n"
+                "\n"
                 'spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()'))
         elif sec != "1. Overview":
-            nb.cells.append(nbformat.v4.new_code_cell(_py_cell(sec)))
+            nb.cells.append(nbformat.v4.new_code_cell(_py_cell(sec, dataset)))
     nb.metadata["language_info"] = {"name": "python"}
+    nb.metadata["kernelspec"] = {"name": "python3", "display_name": "Python 3"}
     return nb
 
 
@@ -88,7 +92,8 @@ def scaffold(root: Path, name: str, with_dag: bool = True) -> Path:
     (d / "zeppelin").mkdir(parents=True)
     (d / "jupyter").mkdir(parents=True)
     (d / "README.md").write_text(readme_text(name), encoding="utf-8")
-    (d / "zeppelin" / "notebook.zpln").write_text(json.dumps(zeppelin_notebook(name), indent=2), encoding="utf-8")
+    zpln_text = json.dumps(zeppelin_notebook(name), indent=2) + "\n"
+    (d / "zeppelin" / "notebook.zpln").write_text(zpln_text, encoding="utf-8")
     nbformat.write(jupyter_notebook(name), str(d / "jupyter" / "notebook.ipynb"))
     if with_dag:
         (d / "dag.py").write_text(_dag_text(name), encoding="utf-8")
