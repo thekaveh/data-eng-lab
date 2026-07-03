@@ -1,3 +1,20 @@
-# Single edit point for repo structure verification. Phases add keys here.
+# Single edit point for repo-structure verification.
 scenario_name_regex: "^[a-z0-9_]+-[a-z0-9_]+-[a-z0-9_]+-[a-z0-9_]+$"
-active_scenario_dirs: []   # populated as scenarios land (Phase 2+)
+scenario_required_files:
+  - README.md
+  - zeppelin/notebook.zpln
+  - jupyter/notebook.ipynb
+scenario_readme_sections:
+  - "1. Scenario summary"
+  - "2. Why this exists"
+  - "3. What's in the notebooks"
+  - "4. How to run"
+  - "5. Data & dependencies"
+  - "6. Known issues & caveats"
+notebook_sections:
+  - "1. Overview"
+  - "2. Setup"
+  - "3. Read"
+  - "4. Transform"
+  - "5. Write"
+  - "6. Verify"

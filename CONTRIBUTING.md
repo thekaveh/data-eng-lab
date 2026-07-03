@@ -8,6 +8,9 @@
 5. Against a live stack: `make preflight` and relevant `make test-int` must pass.
 6. Open a PR — one concern per PR.
 
+## Adding a scenario
+See [`docs/scenarios.md`](docs/scenarios.md) for the step-by-step recipe.
+
 ## Conventions
 - Never edit `infra/` (the Atlas submodule).
 - Scenario folders: `[pattern]-[dataset]-[engine]-[format]`, flat under `scenarios/`.

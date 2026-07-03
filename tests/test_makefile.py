@@ -2,7 +2,7 @@ import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-TARGETS = ["setup", "up", "down", "datasets", "verify", "test", "preflight", "lint", "fmt"]
+TARGETS = ["setup", "up", "down", "datasets", "verify", "test", "preflight", "lint", "fmt", "new-scenario"]
 
 
 def test_all_targets_defined():
@@ -15,3 +15,8 @@ def test_all_targets_defined():
 def test_datasets_target_runs_downloader():
     text = subprocess.run(["make", "-npq"], cwd=ROOT, capture_output=True, text=True).stdout
     assert "download_datasets.py" in text, "make datasets should call the downloader"
+
+
+def test_new_scenario_target_runs_scaffolder():
+    text = subprocess.run(["make", "-npq"], cwd=ROOT, capture_output=True, text=True).stdout
+    assert "new_scenario.py" in text

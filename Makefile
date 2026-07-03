@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
-.PHONY: help setup up down datasets verify test preflight lint fmt
+.PHONY: help setup up down datasets verify test preflight lint fmt new-scenario
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-12s %s\n",$$1,$$2}'
@@ -34,3 +34,6 @@ lint: ## Lint (ruff; shell/yaml lint if installed)
 fmt: ## Auto-format Python
 	uv run ruff format .
 	uv run ruff check --fix .
+
+new-scenario: ## Scaffold a scenario folder: make new-scenario NAME=pattern-dataset-engine-format
+	uv run python scripts/new_scenario.py $(NAME) --root .

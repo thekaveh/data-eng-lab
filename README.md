@@ -11,7 +11,7 @@ See the design spec: [`docs/superpowers/specs/2026-07-02-data-eng-lab-design.md`
 ## 2. Repository layout
 - `infra/` — Atlas platform (git submodule; never edited)
 - `compose/` — the single compose overlay merged into Atlas
-- `scenarios/` — flat scenario folders (Zeppelin Scala + Jupyter PySpark [+ DAG])
+- `scenarios/` — flat scenario folders (Zeppelin Scala + Jupyter PySpark [+ DAG]); see [`docs/scenarios.md`](docs/scenarios.md)
 - `spark-apps/` — Maven Scala Spark projects (+ Jenkinsfile + DAG)
 - `datasets/` — dataset registry + downloader
 - `scripts/` — bootstrap & tooling
