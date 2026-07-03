@@ -27,7 +27,8 @@ make down       # tear down
 ```
 See [`docs/datasets.md`](docs/datasets.md) for dataset landing & SCALE configuration.
 
-## 4. Atlas contract
+## 4. Lakehouse + Atlas contract
+The lakehouse architecture is documented in [`docs/lakehouse.md`](docs/lakehouse.md).
 This repo consumes an enhanced Atlas; required upstream enhancements are tracked in
 [`docs/atlas-enablement.md`](docs/atlas-enablement.md).
 

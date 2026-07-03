@@ -35,7 +35,8 @@ log "5/6 registering Iceberg medallion namespaces"
 export ICEBERG_REST_ENABLED=true
 run "uv run python \"$ROOT/scripts/register_iceberg.py\""
 
-log "6/6 preflight (stack doctor)"
+log "6/6 preflight (stack doctor: layer 1 + layer 2)"
 run "uv run python \"$ROOT/tests/infra/preflight.py\""
+run "uv run python \"$ROOT/tests/infra/layer2.py\""
 
 log "data-eng-lab is up. Consoles: see 'cd infra && ./start.sh --list-tracks' / infra/.env for ports."
