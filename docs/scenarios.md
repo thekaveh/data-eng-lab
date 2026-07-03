@@ -32,5 +32,6 @@ A medallion lakehouse (Bronze → Silver → Gold) transformation of NYC taxi da
 Both notebooks implement multi-layer transformations with matching logic. Execution and parity validation are live-gated on the enhanced-Atlas stack (A1–A4).
 
 ## Status
-The scenario framework (scaffolder + verifier + parity harness) is in place; the curated scenario
-notebooks are authored in Phase 2b (once the Atlas lakehouse — A1–A4 — is live).
+The scenario framework (scaffolder + verifier + parity harness) is in place. Curated scenario
+notebooks are authored now; their execution and cross-language parity validation are live-gated
+on the enhanced-Atlas lakehouse (A1–A4).
