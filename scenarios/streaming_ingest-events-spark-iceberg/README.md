@@ -33,6 +33,6 @@ created by `scripts/register_iceberg.py`. `producer.py` requires `kafka-python`.
 ## 6. Known issues & caveats
 Live-gated on Atlas A9 (Redpanda) / issue #269 — notebooks cannot be executed until the
 Redpanda service is wired into the stack. The streaming query runs indefinitely;
-call `query.awaitTermination()` (Scala) or `query.awaitTermination()` (PySpark) to block.
+call `query.awaitTermination()` to block (same call in Scala and PySpark).
 The DAG (`streaming_ingest_events`) is an EmptyOperator placeholder — Structured Streaming
 is long-running and not scheduled as a batch DAG.

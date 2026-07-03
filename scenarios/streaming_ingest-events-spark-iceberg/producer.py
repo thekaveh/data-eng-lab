@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
-import time
+from datetime import datetime, timezone
 
 from kafka import KafkaProducer  # kafka-python
 
@@ -15,8 +15,10 @@ TOPIC = "events"
 def main(count: int = 100) -> None:
     producer = KafkaProducer(bootstrap_servers=BOOTSTRAP,
                              value_serializer=lambda v: json.dumps(v).encode("utf-8"))
+    fmt = "%Y-%m-%dT%H:%M:%S"
     for i in range(count):
-        producer.send(TOPIC, {"user_id": f"u{i % 10}", "event": "click", "ts": time.time()})
+        ts = datetime.now(timezone.utc).strftime(fmt)
+        producer.send(TOPIC, {"user_id": f"u{i % 10}", "event": "click", "ts": ts})
     producer.flush()
     print(f"produced {count} events to {TOPIC}")
 

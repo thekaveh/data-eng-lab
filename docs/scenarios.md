@@ -51,4 +51,4 @@ Both notebooks implement Structured Streaming with matching logic, consuming fro
 ## Status
 The scenario framework (scaffolder + verifier + parity harness) is in place. Curated scenario
 notebooks are authored now; their execution and cross-language parity validation are live-gated
-on the enhanced-Atlas lakehouse (A1–A4).
+on the enhanced-Atlas lakehouse (A1–A4, A7 #268, A9 #269).

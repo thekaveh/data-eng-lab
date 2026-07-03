@@ -27,6 +27,7 @@ The Trino coordinator must be reachable at `trino:8080`. Trigger the
 ## 5. Data & dependencies
 Requires `lakehouse.bronze.nyc_taxi_trips` (populated by `batch_ingest-nyc_taxi-spark-iceberg`);
 Trino coordinator + Iceberg REST catalog (Atlas A5-A7, issue #268).
+The `lakehouse.gold` namespace must be created by running `scripts/register_iceberg.py` before the Write cell executes.
 
 ## 6. Known issues & caveats
 Live execution is gated on Atlas #268 (Trino coordinator integration). The `%jdbc(trino)`
