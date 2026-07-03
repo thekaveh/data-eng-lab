@@ -1,21 +1,12 @@
 """Load and resolve datasets/registry.yaml."""
 from __future__ import annotations
 
-import sys
-import types
 from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 
 from datasets.schema import validate_registry
-
-# Register module in sys.modules before @dataclass decorator runs
-# (needed for importlib.util.exec_module compatibility with @dataclass)
-if __name__ not in sys.modules:
-    _placeholder = types.ModuleType(__name__)
-    _placeholder.__file__ = __file__
-    sys.modules[__name__] = _placeholder
 
 
 @dataclass(frozen=True)
@@ -69,8 +60,3 @@ def resolve_scale(ds: Dataset, scale: str) -> ScalePlan:
         urls=list(spec.get("urls", [])),
         sf=spec.get("sf"),
     )
-
-
-# Sync module definitions with sys.modules entry
-if __name__ in sys.modules:
-    sys.modules[__name__].__dict__.update(globals())

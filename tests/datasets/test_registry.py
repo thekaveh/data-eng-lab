@@ -1,13 +1,10 @@
-import importlib.util
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[2]
-_spec = importlib.util.spec_from_file_location("dataset_registry", ROOT / "datasets" / "registry.py")
-reg = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(reg)
+from datasets import registry as reg
 
+ROOT = Path(__file__).resolve().parents[2]
 REAL = ROOT / "datasets" / "registry.yaml"
 
 
