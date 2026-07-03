@@ -1,1 +1,18 @@
-// placeholder — implemented in Task 4
+pipeline {
+  agent any
+  environment {
+    APP = 'nyc-taxi-etl'
+    VERSION = '0.1.0'
+  }
+  stages {
+    stage('Build & Test') { steps { dir("spark-apps/${APP}") { sh 'mvn -q -B test' } } }
+    stage('Package')      { steps { dir("spark-apps/${APP}") { sh 'mvn -q -B package -DskipTests' } } }
+    stage('Publish JAR')  {
+      steps {
+        dir("spark-apps/${APP}") {
+          sh 'mc cp target/${APP}-${VERSION}.jar minio/jars/${APP}/${VERSION}/app.jar'
+        }
+      }
+    }
+  }
+}
