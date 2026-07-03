@@ -44,10 +44,10 @@ jobs:
         with:
           submodules: false
           persist-credentials: false
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@c1e323688fd81a25caa38c78aa6df2d33d3e20d9  # v4
         with:
           distribution: temurin
           java-version: '17'
           cache: maven
-      - name: Unit tests (scalatest, Spark local)
-        run: mvn -q -B -f spark-apps/nyc-taxi-etl/pom.xml test
+      - name: Build + unit tests (scalatest + shade, Spark local)
+        run: mvn -q -B -f spark-apps/nyc-taxi-etl/pom.xml package

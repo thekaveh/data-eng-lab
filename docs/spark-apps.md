@@ -1,7 +1,7 @@
 # Spark apps (Maven / Scala)
 
 Production Spark jobs live in `spark-apps/<app>/` as standard Maven Scala projects: pure transforms
-(scalatest-covered, run in CI via `mvn test`), a config-driven entrypoint, a `Jenkinsfile`, and an
+(scalatest-covered, run in CI via `mvn test`), an argument-driven entrypoint, a `Jenkinsfile`, and an
 Airflow `dag.py`.
 
 ## Loop (requirement #6)
