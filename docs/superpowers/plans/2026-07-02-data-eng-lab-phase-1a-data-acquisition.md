@@ -593,25 +593,18 @@ In `pyproject.toml` `[dependency-groups] dev`, add `"responses>=0.25"`. Then `uv
 Create `tests/datasets/test_http.py`:
 
 ```python
-import importlib.util
 import io
 import zipfile
 from pathlib import Path
 
 import responses
 
+# Package imports (NOT importlib-by-path): registry.py defines frozen dataclasses, which
+# require the module to be registered in sys.modules — a by-path load breaks them.
+from datasets import registry as reg
+from datasets.sources import http
+
 ROOT = Path(__file__).resolve().parents[2]
-
-
-def _load(name, rel):
-    spec = importlib.util.spec_from_file_location(name, ROOT / rel)
-    m = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(m)
-    return m
-
-
-reg = _load("dataset_registry", "datasets/registry.py")
-http = _load("dataset_http", "datasets/sources/http.py")
 
 
 def _plan(urls, unzip=False):
