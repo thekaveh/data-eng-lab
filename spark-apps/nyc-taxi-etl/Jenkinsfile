@@ -10,7 +10,10 @@ pipeline {
     stage('Publish JAR')  {
       steps {
         dir("spark-apps/${APP}") {
-          sh 'mc cp target/${APP}-${VERSION}.jar minio/jars/${APP}/${VERSION}/app.jar'
+          sh '''
+            mc alias set atlas "$MINIO_ENDPOINT" "$MINIO_ICEBERG_ACCESS_KEY" "$MINIO_ICEBERG_SECRET_KEY"
+            mc cp target/${APP}-${VERSION}.jar "atlas/${MINIO_BUCKET_ICEBERG_JARS}/${APP}/${VERSION}/app.jar"
+          '''
         }
       }
     }
