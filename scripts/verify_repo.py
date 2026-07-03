@@ -14,22 +14,46 @@ import yaml
 Finding = namedtuple("Finding", "check severity message")
 
 
-def _check_naming(root: Path, cfg: dict) -> list[Finding]:
+def _discover_scenarios(root: Path) -> list[str]:
+    base = root / "scenarios"
+    if not base.is_dir():
+        return []
+    return sorted(
+        p.name for p in base.iterdir()
+        if p.is_dir() and not p.name.startswith((".", "_"))
+    )
+
+
+def _check_scenarios(root: Path, cfg: dict) -> list[Finding]:
+    import json as _json
+
     findings: list[Finding] = []
     regex = re.compile(cfg["scenario_name_regex"])
-    for name in cfg.get("active_scenario_dirs", []):
+    required = cfg.get("scenario_required_files", [])
+    sections = cfg.get("scenario_readme_sections", [])
+    for name in _discover_scenarios(root):
+        sdir = root / "scenarios" / name
         if not regex.fullmatch(name):
             findings.append(Finding("scenario.naming", "error",
-                                    f"scenario dir '{name}' violates naming convention"))
-    return findings
-
-
-def _check_declared_dirs_exist(root: Path, cfg: dict) -> list[Finding]:
-    findings: list[Finding] = []
-    for name in cfg.get("active_scenario_dirs", []):
-        if not (root / "scenarios" / name).is_dir():
-            findings.append(Finding("scenario.exists", "error",
-                                    f"declared scenario '{name}' has no folder under scenarios/"))
+                                    f"scenario '{name}' violates the naming convention"))
+        for rel in required:
+            if not (sdir / rel).exists():
+                findings.append(Finding("scenario.files", "error",
+                                        f"scenario '{name}' is missing '{rel}'"))
+        readme = sdir / "README.md"
+        if readme.exists():
+            text = readme.read_text(encoding="utf-8")
+            for sec in sections:
+                if f"## {sec}" not in text:
+                    findings.append(Finding("scenario.readme", "error",
+                                            f"scenario '{name}' README missing section '## {sec}'"))
+        for rel in required:
+            if rel.endswith((".zpln", ".ipynb")) and (sdir / rel).exists():
+                try:
+                    _json.loads((sdir / rel).read_text(encoding="utf-8"))
+                except Exception as exc:  # noqa: BLE001
+                    findings.append(Finding("scenario.notebook_json", "error",
+                                            f"scenario '{name}' file '{rel}' is not valid JSON: {exc}"))
     return findings
 
 
@@ -54,7 +78,7 @@ def _check_dataset_registry(root: Path, cfg: dict) -> list[Finding]:
     return [Finding("dataset.registry", "error", msg) for msg in schema.validate_registry(doc)]
 
 
-CHECKS = [_check_naming, _check_declared_dirs_exist, _check_dataset_registry]
+CHECKS = [_check_scenarios, _check_dataset_registry]
 
 
 def run_checks(root: Path, cfg: dict) -> list[Finding]:
