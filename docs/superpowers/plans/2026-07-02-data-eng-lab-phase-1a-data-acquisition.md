@@ -222,33 +222,40 @@ Extend `scripts/verify_repo.py` — add this check function and register it in `
 
 ```python
 def _check_dataset_registry(root: Path, cfg: dict) -> list[Finding]:
-    import yaml as _yaml
-
-    from datasets import schema as _schema  # noqa: PLC0415
+    import importlib.util  # noqa: PLC0415
 
     reg = root / "datasets" / "registry.yaml"
     if not reg.exists():
         return []  # registry is optional until Phase 1a lands
+    # Load this repo's schema.py BY PATH relative to verify_repo.py's own location, so it
+    # works no matter how the verifier is invoked (sys.path[0] is scripts/, not the repo root).
+    schema_path = Path(__file__).resolve().parent.parent / "datasets" / "schema.py"
+    spec = importlib.util.spec_from_file_location("_dataset_schema", schema_path)
+    schema = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(schema)
     try:
-        doc = _yaml.safe_load(reg.read_text(encoding="utf-8"))
+        doc = yaml.safe_load(reg.read_text(encoding="utf-8"))
     except Exception as exc:  # noqa: BLE001
         return [Finding("dataset.registry", "error", f"registry.yaml is not valid YAML: {exc}")]
-    return [Finding("dataset.registry", "error", msg) for msg in _schema.validate_registry(doc)]
+    return [Finding("dataset.registry", "error", msg) for msg in schema.validate_registry(doc)]
 ```
 
 Register it: change `CHECKS = [_check_naming, _check_declared_dirs_exist]` to
 `CHECKS = [_check_naming, _check_declared_dirs_exist, _check_dataset_registry]`.
 
-`verify_repo.py` must import `datasets.schema`; ensure the repo root is importable — the verifier is run as `uv run python scripts/verify_repo.py --root .` from the repo root, so add `datasets` to the path defensively at the top of `_check_dataset_registry` via the `from datasets import schema` (repo root is on `sys.path[0]` when run as a script from root). If import fails under `--root` pointing elsewhere, fall back to importing by file path (mirror the pattern already used in tests). Keep it simple: the check only runs against the real repo where `datasets/` is importable.
+The check loads `datasets/schema.py` by file path relative to `verify_repo.py`'s own location
+(`Path(__file__).parent.parent`) — so it does NOT depend on `datasets` being an importable package
+(when the verifier runs as a script, `sys.path[0]` is `scripts/`, not the repo root). It validates
+whichever `registry.yaml` lives under `--root`, against this repo's schema.
 
 Add to `tests/test_verify_repo.py`:
 
 ```python
-def test_registry_check_flags_invalid_registry(tmp_path: Path, monkeypatch):
-    # a repo root with a broken registry produces a dataset.registry error
+def test_registry_check_flags_invalid_registry(tmp_path: Path):
+    # a repo root with a broken registry produces a dataset.registry error.
+    # (schema.py is loaded from THIS repo relative to verify_repo.py, so no monkeypatch needed.)
     (tmp_path / "datasets").mkdir()
     (tmp_path / "datasets" / "registry.yaml").write_text("version: 2\ndatasets: {}\n")
-    monkeypatch.syspath_prepend(str(ROOT))  # make 'datasets.schema' importable
     cfg = {"active_scenario_dirs": [], "scenario_name_regex": r"^x$"}
     findings = verify_repo.run_checks(tmp_path, cfg)
     assert any(f.check == "dataset.registry" and f.severity == "error" for f in findings), findings
