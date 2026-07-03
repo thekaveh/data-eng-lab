@@ -1,0 +1,108 @@
+{
+  "paragraphs": [
+    {
+      "title": "1. Overview",
+      "text": "%md\n## 1. Overview",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "2. Setup",
+      "text": "%md\n## 2. Setup",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "2. Setup (code)",
+      "text": "%spark\nimport spark.implicits._\nimport org.apache.spark.sql.functions._\n// spark pre-bound (Spark Connect + lakehouse catalog)",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "3. Read",
+      "text": "%md\n## 3. Read",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "3. Read (code)",
+      "text": "%spark\nspark.sql(\"CREATE TABLE IF NOT EXISTS lakehouse.gold.dim_customer_scd2 (customer_id string, segment string, effective_from timestamp, effective_to timestamp, is_current boolean) USING iceberg\").show(false)\nspark.sql(\"INSERT INTO lakehouse.gold.dim_customer_scd2 VALUES ('C1','standard', TIMESTAMP '2023-01-01 00:00:00', NULL, true)\").show(false)\nspark.sql(\"SELECT customer_id, segment, is_current FROM lakehouse.gold.dim_customer_scd2 ORDER BY effective_from\").show(false)",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "4. Transform",
+      "text": "%md\n## 4. Transform",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "4. Transform (code)",
+      "text": "%spark\nspark.sql(\"UPDATE lakehouse.gold.dim_customer_scd2 SET effective_to = current_timestamp(), is_current = false WHERE customer_id = 'C1' AND is_current = true\").show(false)",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "5. Write",
+      "text": "%md\n## 5. Write",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "5. Write (code)",
+      "text": "%spark\nspark.sql(\"INSERT INTO lakehouse.gold.dim_customer_scd2 VALUES ('C1','premium', current_timestamp(), NULL, true)\").show(false)",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "6. Verify",
+      "text": "%md\n## 6. Verify",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "6. Verify (code)",
+      "text": "%spark\nspark.sql(\"SELECT customer_id, segment, effective_to IS NOT NULL AS closed, is_current FROM lakehouse.gold.dim_customer_scd2 ORDER BY effective_from\").show(false)",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    }
+  ],
+  "name": "scd2-online_retail-spark-iceberg",
+  "id": "scd2-online_retail-spark-iceberg",
+  "noteParams": {},
+  "config": {},
+  "info": {}
+}
