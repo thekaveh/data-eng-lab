@@ -15,12 +15,13 @@ dev = [
   "ruff>=0.4",
   "moto[s3]>=5",
   "duckdb>=1.0",
+  "pyiceberg[s3fs]>=0.7",
 ]
 
 [tool.ruff]
 line-length = 120
 target-version = "py311"
-extend-exclude = ["infra"]
+extend-exclude = ["./infra/**"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]

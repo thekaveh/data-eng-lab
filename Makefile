@@ -23,8 +23,9 @@ verify: ## Run the repo verifier
 test: ## offline: no live stack, no network
 	uv run pytest -m "not infra and not network" -q
 
-preflight: ## Infra preflight against a live stack
+preflight: ## Infra preflight (layer 1 existence + layer 2 integration) against a live stack
 	uv run python tests/infra/preflight.py
+	uv run python tests/infra/layer2.py
 
 lint: ## Lint (ruff; shell/yaml lint if installed)
 	uv run ruff check .

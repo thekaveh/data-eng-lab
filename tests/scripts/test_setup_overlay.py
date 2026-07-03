@@ -29,6 +29,7 @@ def test_creates_symlink_and_env(tmp_path: Path):
     assert "PROJECT_NAME=data-eng-lab" in env_text
     assert "ICEBERG_REST_URI=http://iceberg-rest:8181" in env_text
     assert "BRAND_NAME=data-eng-lab" in env_text
+    assert "ICEBERG_REST_ENABLED=true" in env_text
 
 
 def test_is_idempotent(tmp_path: Path):

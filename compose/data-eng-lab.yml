@@ -8,6 +8,7 @@ services:
       - ../scenarios:/opt/airflow/dags/data_eng_lab_scenarios:ro
       - ../spark-apps:/opt/airflow/dags/data_eng_lab_spark_apps:ro
       - ../datasets:/opt/data-eng-lab/datasets:ro
+      - ../tests/infra/probes:/opt/probes:ro
 
   airflow-dag-processor:
     volumes:
@@ -17,3 +18,4 @@ services:
   jupyterhub:
     volumes:
       - ../datasets:/home/jovyan/data-eng-lab/datasets:ro
+      - ../tests/infra/probes:/opt/probes:ro
