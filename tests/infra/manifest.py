@@ -18,13 +18,18 @@ def _truthy(var: str) -> bool:
 def _container_status(service: str) -> str:
     if not shutil.which("docker"):
         return ""
-    out = subprocess.run(
-        ["docker", "ps",
-         "--filter", f"label=com.docker.compose.project={PROJECT}",
-         "--filter", f"label=com.docker.compose.service={service}",
-         "--format", "{{.Status}}"],
-        capture_output=True, text=True,
-    )
+    try:
+        out = subprocess.run(
+            ["docker", "ps",
+             "--filter", f"label=com.docker.compose.project={PROJECT}",
+             "--filter", f"label=com.docker.compose.service={service}",
+             "--format", "{{.Status}}"],
+            capture_output=True, text=True, timeout=5,
+        )
+    except subprocess.TimeoutExpired:
+        return "<docker-timeout>"
+    if out.returncode != 0:
+        return "<docker-error>"
     return out.stdout.strip().splitlines()[0] if out.stdout.strip() else ""
 
 

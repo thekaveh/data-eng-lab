@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import sys
 from collections import namedtuple
+from pathlib import Path
 
 Result = namedtuple("Result", "name status detail")
 
@@ -36,7 +37,10 @@ def render_matrix(results: list[Result]) -> str:
 
 
 def main() -> int:
-    from manifest import EXPECTED_SERVICES  # local import so unit tests can inject their own
+    # Make this file's directory importable whether run as a script or imported.
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    from manifest import EXPECTED_SERVICES
+
     docker_ok = shutil.which("docker") is not None
     results = run_layer1(EXPECTED_SERVICES, docker_ok)
     print(render_matrix(results))
@@ -44,5 +48,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
     sys.exit(main())

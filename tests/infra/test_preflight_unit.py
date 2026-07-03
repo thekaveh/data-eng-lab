@@ -35,7 +35,17 @@ def test_failed_init_check_reports_fail():
     assert "buckets missing" in results[0].detail
 
 
+def test_passing_init_check_reports_pass():
+    services = [manifest.ServiceSpec("minio", enabled=True, init_check=lambda: (True, "ok"))]
+    results = preflight.run_layer1(services, docker_ok=True)
+    assert results[0].status == "pass"
+    assert results[0].detail == "ok"
+
+
 def test_render_matrix_contains_status():
     results = [preflight.Result("minio", "pass", "ok")]
     out = preflight.render_matrix(results)
-    assert "minio" in out and "pass" in out.lower()
+    assert "minio" in out
+    assert "PASS" in out
+    assert "✅" in out
+    assert "1 services" in out
