@@ -49,5 +49,8 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: maven
-      - name: Build + unit tests (scalatest + shade, Spark local)
-        run: mvn -q -B -f spark-apps/nyc-taxi-etl/pom.xml package
+      - name: Build + test all Maven Spark apps (scalatest + shade)
+        run: |
+          for pom in spark-apps/*/pom.xml; do
+            echo "::group::$pom"; mvn -q -B -f "$pom" package; echo "::endgroup::"
+          done

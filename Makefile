@@ -39,4 +39,6 @@ new-scenario: ## Scaffold a scenario folder: make new-scenario NAME=pattern-data
 	uv run python scripts/new_scenario.py $(NAME) --root .
 
 build-apps: ## Build (test + shade) the Maven Spark apps
-	mvn -q -B -f spark-apps/nyc-taxi-etl/pom.xml package
+	for pom in spark-apps/*/pom.xml; do \
+		echo "$$pom"; mvn -q -B -f "$$pom" package; \
+	done
