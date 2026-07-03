@@ -48,6 +48,27 @@ A streaming ingestion pipeline for events data via Redpanda into Iceberg. Contai
 
 Both notebooks implement Structured Streaming with matching logic, consuming from topic `events` and writing to `lakehouse.bronze.events`. Execution and cross-language parity validation are live-gated on the enhanced-Atlas stack (A9, Atlas issue #269).
 
+### Iceberg-lever & transform scenarios (Spark; delivered-Atlas only)
+All scenarios in this group require only the delivered Atlas (Spark 4.1.2 + Iceberg 1.11.0), `scripts/register_iceberg.py` for namespace registration, and `make datasets` for landing data.
+
+#### `time_travel-nyc_taxi-spark-iceberg`
+Snapshots, `VERSION AS OF`, rollback, branch/tag (Write-Audit-Publish) on nyc_taxi.
+
+#### `table_maintenance-nyc_taxi-spark-iceberg`
+Compaction, `expire_snapshots`, `remove_orphan_files` on nyc_taxi.
+
+#### `star_schema-tpch-spark-iceberg`
+Fact/dimension gold marts and dimensional modeling on tpch.
+
+#### `json_flatten-gh_archive-spark-iceberg`
+Nested JSON transformation into typed columns on gh_archive.
+
+#### `schema_evolution-gh_archive-spark-iceberg`
+Add/rename columns and read old+new data together on gh_archive.
+
+#### `streaming_ingest-gh_archive-spark-iceberg`
+File-source Structured Streaming to Iceberg with checkpoints on gh_archive.
+
 ## Status
 The scenario framework (scaffolder + verifier + parity harness) is in place. Curated scenario
 notebooks are authored now; their execution and cross-language parity validation are live-gated
