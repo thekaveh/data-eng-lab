@@ -18,3 +18,8 @@ notebook_sections:
   - "4. Transform"
   - "5. Write"
   - "6. Verify"
+spark_app_required_files:
+  - pom.xml
+  - src/main/scala
+  - Jenkinsfile
+  - dag.py

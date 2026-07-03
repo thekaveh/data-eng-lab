@@ -26,6 +26,15 @@ def _make_valid_scenario(root: Path, name: str = "batch_ingest-nyc_taxi-spark-ic
     return d
 
 
+def _make_valid_spark_app(root: Path, name: str = "nyc-taxi-etl"):
+    d = root / "spark-apps" / name
+    (d / "src" / "main" / "scala").mkdir(parents=True)
+    (d / "pom.xml").write_text("<project/>")
+    (d / "Jenkinsfile").write_text("pipeline {}")
+    (d / "dag.py").write_text("# dag\n")
+    return d
+
+
 CFG = {
     "scenario_name_regex": r"^[a-z0-9_]+-[a-z0-9_]+-[a-z0-9_]+-[a-z0-9_]+$",
     "scenario_required_files": ["README.md", "zeppelin/notebook.zpln", "jupyter/notebook.ipynb"],
@@ -33,6 +42,8 @@ CFG = {
                                  "4. How to run", "5. Data & dependencies", "6. Known issues & caveats"],
     "notebook_sections": ["1. Overview", "2. Setup", "3. Read", "4. Transform", "5. Write", "6. Verify"],
 }
+
+SPARK_CFG = dict(CFG, spark_app_required_files=["pom.xml", "src/main/scala", "Jenkinsfile", "dag.py"])
 
 
 def test_valid_scenario_passes(tmp_path: Path):
@@ -88,3 +99,21 @@ def test_registry_check_flags_invalid_registry(tmp_path: Path):
     cfg = {"scenario_name_regex": r"^x$"}
     findings = verify_repo.run_checks(tmp_path, cfg)
     assert any(f.check == "dataset.registry" and f.severity == "error" for f in findings), findings
+
+
+def test_valid_spark_app_passes(tmp_path: Path):
+    _make_valid_spark_app(tmp_path)
+    errors = [f for f in verify_repo.run_checks(tmp_path, SPARK_CFG) if f.severity == "error"]
+    assert errors == [], errors
+
+
+def test_spark_app_missing_pom_flags_error(tmp_path: Path):
+    d = _make_valid_spark_app(tmp_path)
+    (d / "pom.xml").unlink()
+    findings = verify_repo.run_checks(tmp_path, SPARK_CFG)
+    assert any(f.check == "spark_app.files" and f.severity == "error" for f in findings), findings
+
+
+def test_no_spark_apps_dir_is_ok(tmp_path: Path):
+    errors = [f for f in verify_repo.run_checks(tmp_path, SPARK_CFG) if f.severity == "error"]
+    assert errors == []
