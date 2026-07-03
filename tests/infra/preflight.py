@@ -1,0 +1,48 @@
+#!/usr/bin/env python3
+"""Infra preflight — Layer 1 (existence & initialization). Fail-loud stack doctor."""
+from __future__ import annotations
+
+import shutil
+import sys
+from collections import namedtuple
+
+Result = namedtuple("Result", "name status detail")
+
+
+def run_layer1(services, docker_ok: bool) -> list[Result]:
+    results: list[Result] = []
+    for svc in services:
+        if not svc.enabled:
+            results.append(Result(svc.name, "skipped", "disabled by manifest (A-item pending)"))
+            continue
+        if not docker_ok:
+            results.append(Result(svc.name, "blocked", "docker unavailable — root cause upstream"))
+            continue
+        ok, detail = svc.init_check()
+        results.append(Result(svc.name, "pass" if ok else "fail", detail))
+    return results
+
+
+def render_matrix(results: list[Result]) -> str:
+    icon = {"pass": "✅", "fail": "❌", "blocked": "⛔", "skipped": "⏭️"}
+    width = max((len(r.name) for r in results), default=4)
+    lines = ["Infra preflight — Layer 1 (existence & initialization)", "-" * 60]
+    for r in results:
+        lines.append(f"{icon.get(r.status,'?')} {r.name.ljust(width)}  {r.status.upper():8} {r.detail}")
+    fails = [r for r in results if r.status == "fail"]
+    lines.append("-" * 60)
+    lines.append(f"{len(results)} services · {len(fails)} FAIL")
+    return "\n".join(lines)
+
+
+def main() -> int:
+    from manifest import EXPECTED_SERVICES  # local import so unit tests can inject their own
+    docker_ok = shutil.which("docker") is not None
+    results = run_layer1(EXPECTED_SERVICES, docker_ok)
+    print(render_matrix(results))
+    return 1 if any(r.status == "fail" for r in results) else 0
+
+
+if __name__ == "__main__":
+    sys.path.insert(0, str(__import__("pathlib").Path(__file__).resolve().parent))
+    sys.exit(main())
