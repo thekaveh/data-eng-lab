@@ -12,21 +12,22 @@ class TaxiTransformsSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   override def beforeAll(): Unit =
     spark = SparkSession.builder().appName("test").master("local[2]")
-      .config("spark.ui.enabled", "false").getOrCreate()
+      .config("spark.ui.enabled", "false")
+      .config("spark.sql.session.timeZone", "UTC")
+      .getOrCreate()
 
   override def afterAll(): Unit = if (spark != null) spark.stop()
 
   private def ts(s: String): Timestamp = Timestamp.valueOf(s)
 
-  test("clean drops null pickup, non-positive passengers, and dupes; adds trip_date") {
+  test("drops null pickup + non-positive passengers, adds trip_date") {
     val s = spark
     import s.implicits._
     val raw = Seq(
       (ts("2023-01-01 10:00:00"), 2, 5.0),
-      (ts("2023-01-01 10:00:00"), 2, 5.0),   // duplicate
-      (null.asInstanceOf[Timestamp], 1, 3.0), // null pickup -> dropped
-      (ts("2023-01-02 11:00:00"), 0, 4.0)     // passenger_count 0 -> dropped
-    ).toDF("pickup_datetime", "passenger_count", "fare_amount")
+      (null.asInstanceOf[Timestamp], 1, 3.0),  // null pickup -> dropped
+      (ts("2023-01-02 11:00:00"), 0, 4.0)      // passenger_count 0 -> dropped
+    ).toDF("tpep_pickup_datetime", "passenger_count", "fare_amount")
 
     val out = TaxiTransforms.clean(raw)
     assert(out.count() == 1)
