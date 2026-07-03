@@ -1,0 +1,108 @@
+{
+  "paragraphs": [
+    {
+      "title": "1. Overview",
+      "text": "%md\n## 1. Overview",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "2. Setup",
+      "text": "%md\n## 2. Setup",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "2. Setup (code)",
+      "text": "%spark\nimport spark.implicits._\nimport org.apache.spark.sql.functions._\nimport org.apache.spark.sql.expressions.Window",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "3. Read",
+      "text": "%md\n## 3. Read",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "3. Read (code)",
+      "text": "%spark\nval raw = spark.read.json(\"s3a://landing/gh_archive\")\nval events = raw.select($\"actor.login\".as(\"actor_login\"), $\"created_at\".cast(\"timestamp\").as(\"ts\"))",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "4. Transform",
+      "text": "%md\n## 4. Transform",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "4. Transform (code)",
+      "text": "%spark\nval w = Window.partitionBy($\"actor_login\").orderBy($\"ts\")\nval gaps = events.withColumn(\"prev_ts\", lag($\"ts\", 1).over(w)).withColumn(\"new_session\", when($\"prev_ts\".isNull || (unix_timestamp($\"ts\") - unix_timestamp($\"prev_ts\")) > 1800, 1).otherwise(0))\nval sessions = gaps.withColumn(\"session_id\", sum($\"new_session\").over(w))",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "5. Write",
+      "text": "%md\n## 5. Write",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "5. Write (code)",
+      "text": "%spark\nsessions.writeTo(\"lakehouse.silver.gh_sessions\").using(\"iceberg\").createOrReplace()",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "6. Verify",
+      "text": "%md\n## 6. Verify",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "6. Verify (code)",
+      "text": "%spark\nspark.sql(\"SELECT actor_login, count(distinct session_id) AS sessions FROM lakehouse.silver.gh_sessions GROUP BY actor_login ORDER BY sessions DESC\").show(false)",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    }
+  ],
+  "name": "sessionization-gh_archive-spark-iceberg",
+  "id": "sessionization-gh_archive-spark-iceberg",
+  "noteParams": {},
+  "config": {},
+  "info": {}
+}

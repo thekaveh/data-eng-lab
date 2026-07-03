@@ -1,0 +1,108 @@
+{
+  "paragraphs": [
+    {
+      "title": "1. Overview",
+      "text": "%md\n## 1. Overview",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "2. Setup",
+      "text": "%md\n## 2. Setup",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "2. Setup (code)",
+      "text": "%spark\nimport spark.implicits._\nimport org.apache.spark.sql.functions._\n// spark pre-bound (Spark Connect + lakehouse catalog)",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "3. Read",
+      "text": "%md\n## 3. Read",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "3. Read (code)",
+      "text": "%spark\nval ratings = spark.read.option(\"header\", true).option(\"inferSchema\", true).csv(\"s3a://landing/movielens/ratings.csv\")",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "4. Transform",
+      "text": "%md\n## 4. Transform",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "4. Transform (code)",
+      "text": "%spark\nval userFeatures = ratings.groupBy($\"userId\").agg(avg($\"rating\").as(\"avg_rating\"), count(\"*\").as(\"num_ratings\"))\nval movieFeatures = ratings.groupBy($\"movieId\").agg(avg($\"rating\").as(\"movie_avg\"), count(\"*\").as(\"popularity\"))",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "5. Write",
+      "text": "%md\n## 5. Write",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "5. Write (code)",
+      "text": "%spark\nuserFeatures.writeTo(\"lakehouse.gold.ml_user_features\").using(\"iceberg\").createOrReplace()\nmovieFeatures.writeTo(\"lakehouse.gold.ml_movie_features\").using(\"iceberg\").createOrReplace()",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "6. Verify",
+      "text": "%md\n## 6. Verify",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    },
+    {
+      "title": "6. Verify (code)",
+      "text": "%spark\nspark.table(\"lakehouse.gold.ml_movie_features\").orderBy($\"popularity\".desc).show(10, false)",
+      "config": {},
+      "settings": {
+        "params": {},
+        "forms": {}
+      }
+    }
+  ],
+  "name": "feature_engineering-movielens-spark-iceberg",
+  "id": "feature_engineering-movielens-spark-iceberg",
+  "noteParams": {},
+  "config": {},
+  "info": {}
+}
