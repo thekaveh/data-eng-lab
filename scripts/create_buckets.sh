@@ -2,6 +2,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
+# shellcheck disable=SC1091  # lib.sh path is dynamic (resolved at runtime via $HERE)
 source "$HERE/lib.sh"
 
 INFRA_DIR="${INFRA_DIR:-$ROOT/infra}"
@@ -20,7 +21,7 @@ MC_CMD="${MC_CMD:-docker run --rm --network ${PROJECT_NAME}-network \
 log "creating buckets: ${BUCKETS[*]}"
 for b in "${BUCKETS[@]}"; do
   # 'local/' alias when using the default docker mc; stub ignores the alias prefix.
-  # Intentionally unquoted: MC_CMD may be a multi-word command (e.g. 'docker run ... minio/mc').
+  # shellcheck disable=SC2086  # intentionally unquoted: MC_CMD is a multi-word command string
   $MC_CMD mb --ignore-existing "local/${b}"
 done
 log "buckets ready"

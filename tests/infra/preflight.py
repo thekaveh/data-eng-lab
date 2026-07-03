@@ -34,7 +34,8 @@ def render_matrix(results: list[Result]) -> str:
         lines.append(f"{icon.get(r.status,'?')} {r.name.ljust(width)}  {r.status.upper():8} {r.detail}")
     fails = [r for r in results if r.status == "fail"]
     lines.append("-" * 60)
-    lines.append(f"{len(results)} services · {len(fails)} FAIL")
+    noun = "service" if len(results) == 1 else "services"
+    lines.append(f"{len(results)} {noun} · {len(fails)} FAIL")
     return "\n".join(lines)
 
 

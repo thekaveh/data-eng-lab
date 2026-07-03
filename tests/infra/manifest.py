@@ -73,9 +73,6 @@ def _minio_ready():
     return ok, detail
 
 
-# Note: the data-eng track also starts weaviate and neo4j-graph-db, but they are
-# incidental to the lakehouse path and are not gated here; add them (with verified
-# compose service names) in Phase 1 if preflight should assert them.
 # Base data-eng services always expected; A1/A5/A9/A7 services gated until enabled.
 EXPECTED_SERVICES = [
     ServiceSpec("minio", True, _minio_ready),
@@ -85,6 +82,8 @@ EXPECTED_SERVICES = [
     ServiceSpec("jupyterhub", True, lambda: _up("jupyterhub")),
     ServiceSpec("airflow-webserver", True, lambda: _up("airflow-webserver")),
     ServiceSpec("airflow-scheduler", True, lambda: _up("airflow-scheduler")),
+    ServiceSpec("weaviate", True, lambda: _up("weaviate")),
+    ServiceSpec("neo4j-graph-db", True, lambda: _up("neo4j-graph-db")),
     ServiceSpec("iceberg-rest", _truthy("ICEBERG_REST_ENABLED"), lambda: _up("iceberg-rest")),
     ServiceSpec("jenkins", _truthy("JENKINS_ENABLED"), lambda: _up("jenkins")),
     ServiceSpec("redpanda", _truthy("REDPANDA_ENABLED"), lambda: _up("redpanda")),

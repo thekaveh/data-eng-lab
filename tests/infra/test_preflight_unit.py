@@ -48,10 +48,16 @@ def test_render_matrix_contains_status():
     assert "minio" in out
     assert "PASS" in out
     assert "✅" in out
-    assert "1 services" in out
+    assert "1 service ·" in out
 
 
 def test_docker_error_sentinel_reports_blocked():
     services = [manifest.ServiceSpec("minio", enabled=True, init_check=lambda: (False, "<docker-error>"))]
+    results = preflight.run_layer1(services, docker_ok=True)
+    assert results[0].status == "blocked"
+
+
+def test_docker_timeout_sentinel_reports_blocked():
+    services = [manifest.ServiceSpec("minio", enabled=True, init_check=lambda: (False, "<docker-timeout>"))]
     results = preflight.run_layer1(services, docker_ok=True)
     assert results[0].status == "blocked"

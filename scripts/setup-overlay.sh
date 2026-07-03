@@ -2,6 +2,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
+# shellcheck disable=SC1091  # lib.sh path is dynamic (resolved at runtime via $HERE)
 source "$HERE/lib.sh"
 
 INFRA_DIR="${INFRA_DIR:-$ROOT/infra}"
