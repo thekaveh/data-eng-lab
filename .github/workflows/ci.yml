@@ -1,0 +1,28 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  static-and-unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: false          # base CI does not need the Atlas submodule
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@v5
+      - name: Set up Python
+        run: uv python install 3.11
+      - name: Lint
+        run: uv run ruff check .
+      - name: Verify repo structure
+        run: uv run python scripts/verify_repo.py --root .
+      - name: Unit + static tests (no live stack)
+        run: uv run pytest -m "not infra" -q
