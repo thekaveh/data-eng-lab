@@ -10,10 +10,12 @@ REAL = ROOT / "datasets" / "registry.yaml"
 
 def test_load_real_registry_has_core_datasets():
     ds = reg.load_registry(REAL)
-    assert {"nyc_taxi", "gh_archive", "movielens", "tpch"} <= set(ds)
+    assert {"nyc_taxi", "gh_archive", "movielens", "tpch", "online_retail"} <= set(ds)
     assert ds["nyc_taxi"].kind == "http"
     assert ds["tpch"].kind == "tpch"
     assert ds["movielens"].unzip is True
+    assert ds["online_retail"].kind == "http"
+    assert ds["online_retail"].unzip is True
 
 
 def test_resolve_http_scale_returns_urls():

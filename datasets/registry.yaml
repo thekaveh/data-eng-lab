@@ -58,6 +58,19 @@ datasets:
         urls: ["https://files.grouplens.org/datasets/movielens/ml-latest-small.zip"]
       medium:
         urls: ["https://files.grouplens.org/datasets/movielens/ml-25m.zip"]
+  online_retail:
+    description: "UCI Online Retail II — transactional retail invoices (upserts, SCD2, data quality)"
+    format: csv
+    license: "UCI ML Repository — CC BY 4.0"
+    landing_prefix: online_retail
+    fetch: { kind: http, unzip: true }
+    scales:
+      tiny:
+        urls: ["https://archive.ics.uci.edu/static/public/502/online+retail+ii.zip"]
+      small:
+        urls: ["https://archive.ics.uci.edu/static/public/502/online+retail+ii.zip"]
+      medium:
+        urls: ["https://archive.ics.uci.edu/static/public/502/online+retail+ii.zip"]
   tpch:
     description: "TPC-H benchmark, DuckDB-generated (star schema, joins, SQL)"
     format: parquet
