@@ -9,13 +9,13 @@ import nbformat
 NB_SECTIONS = ["1. Overview", "2. Setup", "3. Read", "4. Transform", "5. Write", "6. Verify"]
 
 
-def build_zeppelin(name: str, scala: dict) -> dict:
+def build_zeppelin(name: str, code: dict, interpreter: str = "%spark") -> dict:
     paragraphs = []
     for sec in NB_SECTIONS:
         paragraphs.append({"title": sec, "text": f"%md\n## {sec}",
                            "config": {}, "settings": {"params": {}, "forms": {}}})
         if sec != "1. Overview":
-            paragraphs.append({"title": f"{sec} (code)", "text": f"%spark\n{scala[sec]}",
+            paragraphs.append({"title": f"{sec} (code)", "text": f"{interpreter}\n{code[sec]}",
                                "config": {}, "settings": {"params": {}, "forms": {}}})
     return {"paragraphs": paragraphs, "name": name, "id": name,
             "noteParams": {}, "config": {}, "info": {}}
@@ -33,13 +33,14 @@ def build_jupyter(name: str, py: dict) -> nbformat.NotebookNode:
     return nb
 
 
-def write_scenario(root: Path, name: str, scala: dict, py: dict, dag: str, readme: str) -> Path:
+def write_scenario(root: Path, name: str, code: dict, py: dict, dag: str, readme: str,
+                   zeppelin_interpreter: str = "%spark") -> Path:
     d = Path(root) / "scenarios" / name
     (d / "zeppelin").mkdir(parents=True, exist_ok=True)
     (d / "jupyter").mkdir(parents=True, exist_ok=True)
     (d / "README.md").write_text(readme, encoding="utf-8")
-    (d / "zeppelin" / "notebook.zpln").write_text(json.dumps(build_zeppelin(name, scala), indent=2) + "\n",
-                                                  encoding="utf-8")
+    (d / "zeppelin" / "notebook.zpln").write_text(
+        json.dumps(build_zeppelin(name, code, zeppelin_interpreter), indent=2) + "\n", encoding="utf-8")
     nbformat.write(build_jupyter(name, py), str(d / "jupyter" / "notebook.ipynb"))
     (d / "dag.py").write_text(dag, encoding="utf-8")
     return d

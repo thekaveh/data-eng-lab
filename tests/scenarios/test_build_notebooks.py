@@ -19,6 +19,22 @@ def test_zeppelin_has_scala_sections():
     assert "%spark" in text and "%md" in text
 
 
+def test_zeppelin_interpreter_override():
+    z = bn.build_zeppelin("t", {s: f"SELECT {i}" for i, s in enumerate(bn.NB_SECTIONS)},
+                          interpreter="%jdbc(trino)")
+    text = json.dumps(z)
+    assert "%jdbc(trino)" in text and "%spark" not in text
+
+
+def test_write_scenario_threads_interpreter(tmp_path: Path):
+    code = {s: "SELECT 1" for s in bn.NB_SECTIONS}
+    bn.write_scenario(tmp_path, "federated_query-nyc_taxi-trino-iceberg", code, code,
+                      "# dag\n", "# r", zeppelin_interpreter="%jdbc(trino)")
+    zpln_path = (tmp_path / "scenarios" / "federated_query-nyc_taxi-trino-iceberg" / "zeppelin" /
+                 "notebook.zpln")
+    assert "%jdbc(trino)" in zpln_path.read_text()
+
+
 def test_written_scenario_passes_verifier(tmp_path: Path):
     bn.write_scenario(tmp_path, "batch_ingest-nyc_taxi-spark-iceberg", SCALA, PY, "# dag\n", "# readme")
     vspec = importlib.util.spec_from_file_location("verify_repo", ROOT / "scripts" / "verify_repo.py")
