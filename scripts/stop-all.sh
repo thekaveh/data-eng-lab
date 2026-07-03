@@ -2,6 +2,7 @@
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
+# shellcheck disable=SC1091  # lib.sh path is dynamic (resolved at runtime via $HERE)
 source "$HERE/lib.sh"
 INFRA_DIR="${INFRA_DIR:-$ROOT/infra}"
 
@@ -12,6 +13,6 @@ for a in "$@"; do
   [ "$a" = "--cold" ] && COLD="--cold"
 done
 
-CMD="cd \"$INFRA_DIR\" && ./stop.sh $COLD"
+CMD="cd \"$INFRA_DIR\" && ./stop.sh ${COLD:+--cold}"
 if [ "$DRY_RUN" = 1 ]; then echo "+ $CMD"; else eval "$CMD"; fi
 log "data-eng-lab stopped ${COLD:+(volumes wiped)}"
