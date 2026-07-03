@@ -6,13 +6,13 @@
 
 **Architecture:** The Scala **transforms** are pure `DataFrame -> DataFrame` functions, unit-tested with a local `SparkSession` via scalatest — a new **CI job** runs `mvn test` (real validation). The **entrypoint**, **Jenkinsfile**, and **dag.py** are authored against the assumed Atlas contract (A5 Jenkins, A6 Airflow-spark-submit) and are not executed in CI (they need the live stack); they compile/lint. The Python verifier gains a `_check_spark_apps` structural check.
 
-**Tech Stack:** Java 21, Maven, Scala 2.13, Spark 4.0.0 (compile `provided`; runtime is Atlas's 4.1.x — binary-compatible within 4.x), scalatest; Python verifier; GitHub Actions.
+**Tech Stack:** Java 17, Maven, Scala 2.13, Spark 4.0.0 (compile `provided`; runtime is Atlas's 4.1.x — binary-compatible within 4.x), scalatest; Python verifier; GitHub Actions.
 
 ## Global Constraints
 
 - **Never edit `infra/`.**
-- **Maven** (not sbt), **Scala 2.13**, **Spark 4.0.0** as the compile/test version via a `spark.version` pom property (Atlas runtime is 4.1.x; Spark deps are `provided` scope). Java 21 (Spark 4 needs JDK 17+).
-- **Spark-on-JDK-21 requires `--add-opens`** JVM flags for the test runner — the pom sets them in the scalatest plugin `argLine`. Without them, a local `SparkSession` throws `InaccessibleObjectException`.
+- **Maven** (not sbt), **Scala 2.13**, **Spark 4.0.0** as the compile/test version via a `spark.version` pom property (Atlas runtime is 4.1.x; Spark deps are `provided` scope). Java 17 (Spark 4 supports JDK 17; matches the local + CI toolchain).
+- **Spark-on-JDK-17 requires `--add-opens`** JVM flags for the test runner — the pom sets them in the scalatest plugin `argLine`. Without them, a local `SparkSession` throws `InaccessibleObjectException`.
 - **App layout:** `spark-apps/<app>/` with `pom.xml`, `src/main/scala/...`, `src/test/scala/...`, `Jenkinsfile`, `dag.py`, `README.md`. Transforms live in a `transforms/` package (pure, no `main`).
 - **Published JAR:** `s3a://jars/<app>/<version>/app.jar` (Jenkins step — authored/gated).
 - **CI:** a new `maven-spark-apps` job runs `mvn -q -B test` (scalatest, Spark local). The Python `static-and-unit` job is unchanged. Both become required checks on `main`.
@@ -154,7 +154,7 @@ git commit -m "feat(verify): enforce spark-app structure (pom/src/Jenkinsfile/da
   <packaging>jar</packaging>
 
   <properties>
-    <maven.compiler.release>21</maven.compiler.release>
+    <maven.compiler.release>17</maven.compiler.release>
     <scala.binary.version>2.13</scala.binary.version>
     <scala.version>2.13.14</scala.version>
     <spark.version>4.0.0</spark.version>
@@ -520,7 +520,7 @@ In `.github/workflows/ci.yml`, add a job alongside `static-and-unit`:
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '17'
           cache: maven
       - name: Unit tests (scalatest, Spark local)
         run: mvn -q -B -f spark-apps/nyc-taxi-etl/pom.xml test
@@ -593,7 +593,7 @@ git commit -m "ci(spark-apps): mvn test job + make build-apps + docs"
 
 **Spec coverage:** Maven Scala Spark app with standard conventions (Tasks 2–4 ✓); pure transforms unit-tested (Task 3 ✓, CI-verified); config-driven entrypoint (Task 4 ✓); Jenkinsfile publishing the JAR to a MinIO bucket (Task 4 ✓, gated); Airflow DAG running it via spark-submit (Task 4 ✓, gated); verifier enforcement (Task 1 ✓); CI + docs (Task 5 ✓). The full build→publish→run loop is live-gated on A5/A6; the **transforms are genuinely CI-verified now**.
 
-**Risks:** the `maven-spark-apps` CI job (Spark-on-JDK21 needs `--add-opens`; Spark 4.0.0 must resolve from Central) is the one iteration point — Task 5 explicitly iterates it to green. Spark compile version (4.0.0) vs Atlas runtime (4.1.x) is binary-compatible within 4.x (`provided` scope).
+**Risks:** the `maven-spark-apps` CI job (Spark-on-JDK17 needs `--add-opens`; Spark 4.0.0 must resolve from Central) is the one iteration point — Task 5 explicitly iterates it to green. Spark compile version (4.0.0) vs Atlas runtime (4.1.x) is binary-compatible within 4.x (`provided` scope).
 
 **Placeholder scan:** the Task-2 `Jenkinsfile`/`dag.py` stubs are explicitly fleshed out in Task 4 (a sequenced build-up, not a leftover placeholder); every step has complete, runnable content.
 
