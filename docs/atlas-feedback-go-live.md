@@ -24,6 +24,8 @@ We hit **4 Atlas-side items**. **None blocked validation** — we worked around 
 
 **Recommended order:** #1 and #2 first (they gate the Airflow→Spark **cluster-mode** path, a core data-engineering use case). #3 and #4 are polish.
 
+**Filed as Atlas tracking issues** (on the [Atlas vNext Roadmap](https://github.com/users/thekaveh/projects/3) board): #1 → [thekaveh/atlas#308](https://github.com/thekaveh/atlas/issues/308) · #2 → [thekaveh/atlas#309](https://github.com/thekaveh/atlas/issues/309) · #3 → [thekaveh/atlas#310](https://github.com/thekaveh/atlas/issues/310) · #4 → [thekaveh/atlas#311](https://github.com/thekaveh/atlas/issues/311). Once a fix lands, `data-eng-lab` removes the corresponding workaround noted under each issue below.
+
 ---
 
 ## Environment (how to reproduce the setup)
@@ -39,6 +41,8 @@ All container names below are prefixed with the compose project name (`data-eng-
 ---
 
 ## Issue 1 — [HIGH] Spark standalone master REST submission server not enabled
+
+**Atlas tracking issue:** [thekaveh/atlas#308](https://github.com/thekaveh/atlas/issues/308) (P1 · Build Now).
 
 **Symptom.** Airflow's `SparkSubmitOperator` with `deploy_mode=cluster` — the standard production pattern for orchestrating a Spark JAR from Airflow — **runs the job successfully** (the driver launches on a worker and finishes, and the output table is written) but the Airflow **task is then marked FAILED**.
 
@@ -88,6 +92,8 @@ spark.master.rest.enabled  true
 
 ## Issue 2 — [HIGH] Spark Connect server monopolizes all standalone worker cores
 
+**Atlas tracking issue:** [thekaveh/atlas#309](https://github.com/thekaveh/atlas/issues/309) (P1 · Build Now).
+
 **Symptom.** Standalone-mode Spark workloads — Airflow `spark-submit` (cluster mode) and Zeppelin `%spark` interpreter paragraphs — **queue forever in `PENDING`** and never get an executor, even though the cluster is idle from the user's perspective.
 
 **How we hit it.** Running the `batch_ingest` Scala notebook in Zeppelin, the first Spark action (`spark.read.parquet("s3a://landing/nyc_taxi/")`) sat at `PENDING` for **8+ minutes** with no progress.
@@ -130,6 +136,8 @@ spark.cores.max  2        # leave 2 cores for standalone submits / Zeppelin
 
 ## Issue 3 — [LOW] `spark-connect` container has no Docker healthcheck
 
+**Atlas tracking issue:** [thekaveh/atlas#310](https://github.com/thekaveh/atlas/issues/310) (P2 · Build Next).
+
 **Symptom.** Tooling that waits for "all core services healthy" hangs on `spark-connect` forever, because it never transitions to Docker `healthy`.
 
 **Evidence.**
@@ -160,6 +168,8 @@ healthcheck:
 ---
 
 ## Issue 4 — [LOW / DOC] Airflow 3 Task-SDK: DB-seeded connections aren't resolvable outside a task
+
+**Atlas tracking issue:** [thekaveh/atlas#311](https://github.com/thekaveh/atlas/issues/311) (P3 · Build Later).
 
 **Symptom.** Code that resolves an Airflow connection **outside a task execution context** (e.g. a health probe run via `docker exec … python probe.py`) raises `AirflowNotFoundException`, even though the connection is present in the metadata DB.
 
