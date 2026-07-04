@@ -7,6 +7,10 @@ __pycache__/
 .coverage
 htmlcov/
 .DS_Store
+# MkDocs built site
+site/
+# wiki staging dir (built by scripts/build_wiki.py, never committed)
+wiki/
 # local data (never committed)
 datasets/raw/
 datasets/generated/

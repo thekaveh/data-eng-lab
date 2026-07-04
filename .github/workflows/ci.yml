@@ -37,6 +37,19 @@ jobs:
           uv run python -c "import duckdb; c = duckdb.connect(); c.execute('INSTALL tpch'); c.execute('LOAD tpch')"
           uv run pytest -m "network" -q
 
+  docs-build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          submodules: false
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
+        with:
+          enable-cache: true
+      - name: Build docs (strict)
+        run: uv run --group dev mkdocs build --strict
+
   maven-spark-apps:
     runs-on: ubuntu-24.04
     steps:

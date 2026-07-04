@@ -17,6 +17,10 @@ dev = [
   "duckdb>=1.0",
   "pyiceberg[s3fs]>=0.7",
   "nbformat>=5.9",
+  "mkdocs-material>=9.5",
+  "mkdocs-gen-files>=0.5",
+  "mkdocs-literate-nav>=0.6",
+  "pymdown-extensions>=10.0",
 ]
 
 [tool.ruff]
