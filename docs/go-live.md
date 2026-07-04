@@ -83,27 +83,21 @@ Registering namespaces in Iceberg REST catalog...
 Run Layer 1 (L1) health checks to confirm all services are reachable:
 
 ```bash
-RUN_INFRA=1 uv run pytest tests/integration/test_preflight.py::test_l1_iceberg_rest -v
-RUN_INFRA=1 uv run pytest tests/integration/test_preflight.py::test_l1_spark_connect -v
-RUN_INFRA=1 uv run pytest tests/integration/test_preflight.py::test_l1_airflow -v
-RUN_INFRA=1 uv run pytest tests/integration/test_preflight.py::test_l1_jenkins -v
-RUN_INFRA=1 uv run pytest tests/integration/test_preflight.py::test_l1_jupyter -v
-RUN_INFRA=1 uv run pytest tests/integration/test_preflight.py::test_l1_zeppelin -v
+RUN_INFRA=1 uv run pytest tests/infra/test_preflight_live.py::test_layer1_all_pass_against_live_stack -v
 ```
 
-**Expected:** All L1 tests pass (services are reachable and respond to basic probes).
+**Expected:** All L1 service probes pass (containers healthy and responding to init checks).
 
 ### 2.4 Preflight Layer 2 (functional)
 
-Run Layer 2 (L2) tests to confirm core workflows are functional:
+Run Layer 2 (L2) tests to confirm service-to-service integration edges are functional:
 
 ```bash
-RUN_INFRA=1 uv run pytest tests/integration/test_preflight.py::test_l2_iceberg_write -v
-RUN_INFRA=1 uv run pytest tests/integration/test_preflight.py::test_l2_spark_catalog -v
-RUN_INFRA=1 uv run pytest tests/integration/test_preflight.py::test_l2_minio_access -v
+RUN_INFRA=1 uv run pytest tests/infra/test_layer2_live.py::test_layer2_matrix_all_pass -v
 ```
 
-**Expected:** L2 tests pass; tables can be written to Iceberg + MinIO, and are discoverable via Spark.
+**Expected:** All L2 edges pass: spark→minio+iceberg, jupyter→pyiceberg, airflow→minio+spark,
+zeppelin→spark, trino→lakehouse (if TRINO_ENABLED), spark→redpanda (if REDPANDA_ENABLED).
 
 ---
 
@@ -113,13 +107,26 @@ End-to-end validation of the four key user-facing paths: Zeppelin notebooks, Jup
 
 ### 3.1 Run all integration tests
 
-Execute the full infra test suite (includes L1 + L2 + smoke scenarios):
+Execute the full infra test suite (includes L1 + L2 + scenario parity):
 
 ```bash
-RUN_INFRA=1 uv run pytest -m infra -q
+RUN_INFRA=1 uv run pytest tests/infra/ tests/scenarios/ -m infra -q
 ```
 
 **Expected:** All tests pass. Output summary shows 0 failures.
+
+To run individual test modules:
+
+```bash
+# Layer 1 — service existence & initialization
+RUN_INFRA=1 uv run pytest tests/infra/test_preflight_live.py -v
+
+# Layer 2 — service-to-service integration matrix (Trino + Redpanda edges included)
+RUN_INFRA=1 uv run pytest tests/infra/test_layer2_live.py -v
+
+# Scala/PySpark parity — batch_ingest-nyc_taxi-spark-iceberg notebook equivalence
+RUN_INFRA=1 uv run pytest tests/scenarios/test_scenario_execution_live.py::test_batch_ingest_scala_pyspark_parity -v
+```
 
 ### 3.2 Zeppelin: Run a Scala Spark notebook
 
@@ -194,7 +201,31 @@ Launch a notebook scenario in JupyterHub:
    ```
    Expected output: 3 rows.
 
-### 3.4 Jenkins: Publish and trigger the Maven JAR build
+### 3.4 Scala/PySpark parity test
+
+Validate that the Scala Zeppelin notebook and the PySpark Jupyter notebook produce
+identical Iceberg table contents for the `batch_ingest-nyc_taxi-spark-iceberg` scenario:
+
+```bash
+RUN_INFRA=1 uv run pytest tests/scenarios/test_scenario_execution_live.py::test_batch_ingest_scala_pyspark_parity -v
+```
+
+**What it does:**
+1. Imports and runs `scenarios/batch_ingest-nyc_taxi-spark-iceberg/zeppelin/notebook.zpln`
+   via the Zeppelin REST API; snapshots `lakehouse.bronze.nyc_taxi_trips`.
+2. Drops the table (clean-slate for PySpark).
+3. Copies `scenarios/batch_ingest-nyc_taxi-spark-iceberg/jupyter/notebook.ipynb` into
+   the jupyterhub container via `docker cp`, executes it with papermill; snapshots again.
+4. Asserts schema, row_count, and checksum are identical between the two engines.
+
+**Expected:** Test passes with `1 passed` — schema + row_count + checksum match.
+
+**Requirements:** `ICEBERG_REST_PORT`, `MINIO_PORT`, `MINIO_ROOT_USER`,
+`MINIO_ROOT_PASSWORD`, `ZEPPELIN_PORT` (env or `infra/.env`); `PROJECT_NAME`
+(defaults to `data-eng-lab`); Docker CLI available on host; jupyterhub container
+running with `papermill` or `jupyter-nbconvert`.
+
+### 3.5 Jenkins: Publish and trigger the Maven JAR build
 
 Build and publish the `nyc-taxi-etl` Spark application via Jenkins.
 
@@ -245,13 +276,13 @@ docker exec -it $(docker ps -q -f "name=minio") mc cat minio/jars/nyc-taxi-etl/0
 # Should output a non-zero byte count (JAR size)
 ```
 
-### 3.5 Airflow: Trigger the NYC Taxi ETL DAG
+### 3.6 Airflow: Trigger the NYC Taxi ETL DAG
 
 Run the end-to-end lakehouse pipeline via Airflow.
 
 #### Prerequisites
 
-- The `nyc-taxi-etl` JAR must already be published to `s3a://jars/nyc-taxi-etl/0.1.0/app.jar` via Jenkins (§3.4 above).
+- The `nyc-taxi-etl` JAR must already be published to `s3a://jars/nyc-taxi-etl/0.1.0/app.jar` via Jenkins (§3.5 above).
 - Landing-zone Parquet data must be present in MinIO. Populate it with:
   ```bash
   uv run python scripts/download_datasets.py
@@ -283,7 +314,7 @@ Run the end-to-end lakehouse pipeline via Airflow.
   ```
   Expected output: Row count > 0.
 
-### 3.6 Trino + streaming validation (A7/A9)
+### 3.7 Trino + streaming validation (A7/A9)
 
 **Prerequisites:** Enable the Trino + Redpanda sources:
 ```bash
@@ -291,7 +322,7 @@ Run the end-to-end lakehouse pipeline via Airflow.
 ./scripts/start-all.sh --iceberg-rest-source container --jenkins-source container --trino-source container --redpanda-source container
 ```
 
-#### 3.6.1 Trino: Federated query
+#### 3.7.1 Trino: Federated query
 
 Validate Trino's Iceberg connector and CTAS capability:
 
@@ -331,7 +362,7 @@ Validate Trino's Iceberg connector and CTAS capability:
      ```
    - Expected output: Row count tuple.
 
-#### 3.6.2 Redpanda + Structured Streaming
+#### 3.7.2 Redpanda + Structured Streaming
 
 Validate Redpanda broker and Spark Kafka connector:
 
@@ -429,9 +460,10 @@ A successful go-live run should satisfy:
 3. ✅ **Phase 3:**
    - Zeppelin notebook runs Scala Spark queries; tables persist in MinIO.
    - Jupyter notebook runs PySpark + PyIceberg; Spark Connect is auto-configured.
+   - `test_batch_ingest_scala_pyspark_parity` passes — Scala (Zeppelin) and PySpark (Jupyter) produce identical schema + row_count + checksum for `lakehouse.bronze.nyc_taxi_trips`.
    - Jenkins successfully builds and publishes the Maven JAR to MinIO.
    - Airflow DAG completes; `lakehouse.bronze.nyc_taxi_trips` has rows.
-   - **(NEW A7/A9)** Trino `%trino` interpreter reads/writes Iceberg via CTAS; Redpanda broker accepts Kafka reads; Spark Kafka connector streams to Iceberg + checkpoint.
+   - **(A7/A9)** Trino `%trino` interpreter reads/writes Iceberg via CTAS; Redpanda broker accepts Kafka reads; Spark Kafka connector streams to Iceberg + checkpoint.
 4. ✅ **Phase 4:** No blocking manual setup (JDBC interpreter optional).
 
 If all above pass, the Atlas enablement is **validated for production use** and the lakehouse is ready for full scenario execution (including Trino multi-engine + Redpanda streaming).
