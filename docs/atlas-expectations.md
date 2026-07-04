@@ -21,7 +21,7 @@
 | **A8** | `data-eng` track membership | ✅ delivered (#250) | — |
 | **A9** | **Redpanda (Kafka API) + Spark kafka connector** | ✅ **delivered** | — |
 
-**Key takeaway:** A1–A9 are now live. **The full scenario catalog can execute** (Spark + Iceberg + Trino + Kafka streaming). See ["Delivered deviations"](#delivered-deviations) for the `%trino` interpreter name and topic-seeding notes.
+**Key takeaway:** A1–A9 are now live. **The full scenario catalog can execute** (Spark + Iceberg + Trino + Kafka streaming). See ["Delivered deviations"](#2-delivered-deviations-from-our-a7a9-asks) for the `%trino` interpreter name and topic-seeding notes.
 
 ---
 
