@@ -148,3 +148,121 @@ The JAR schema uses raw columns plus `trip_date` (no `ingested_at`), consistent 
 |---|---|---|
 | 1 | `jenkins/seed-job.sh` CSRF crumb must share a session cookie jar with all subsequent POSTs; without it Jenkins returns HTTP 403 "No valid crumb". | **Fixed in this branch** — `CJ=$(mktemp)` cookie jar threaded through crumb fetch and all authenticated POSTs. |
 | 2 | `SparkSubmitOperator` in standalone **cluster mode** false-negatives: after the driver `FINISHED` successfully, `_start_driver_status_tracking` raises `AirflowException: Failed to poll for the driver status 10 times: returncode = 1`. The operator queries the Spark master REST API (port 6066), which Atlas's standalone master does not expose, so the Airflow task is marked failed **even though the job succeeded and wrote the table**. | Three options (no DAG change made without maintainer decision): **(a)** enable `spark.master.rest.enabled=true` (port 6066) on the Atlas Spark master — an Atlas-side configuration request; **(b)** switch the DAG to `deploy_mode=client` (driver runs in the Airflow worker; no remote status polling); **(c)** rely on `spark.standalone.submit.waitAppCompletion=true` (already set in the DAG) as the completion signal and treat the status-poll step as advisory. The job itself is validated end-to-end. |
+
+---
+
+## Even Deeper Validation — Full Medallion + Trino CTAS + Streaming (2026-07-04)
+
+Three further validations were run against the live Atlas stack following the Jenkins → JAR → Airflow loop above.
+
+### Full Medallion: Bronze → Silver → Gold (Cross-Engine)
+
+Starting from `lakehouse.bronze.nyc_taxi_trips` as written by the JAR (2,943,859 rows), the full medallion was executed via **Spark Connect** faithful to the `nyc-taxi-medallion` app's `MedallionTransforms`:
+
+**Silver layer** — deduplication:
+
+```python
+df_silver = df_bronze.dropDuplicates(["tpep_pickup_datetime", "tpep_dropoff_datetime"])
+# → lakehouse.silver.nyc_taxi_trips
+```
+
+| Metric | Value |
+|---|---|
+| Bronze rows | 2,943,859 |
+| Silver rows (after dedup) | **2,917,316** |
+| Rows removed (duplicates) | 26,543 |
+
+**Gold layer** — daily aggregation:
+
+```python
+df_gold = df_silver.groupBy("trip_date").agg(
+    count("*").alias("trip_count"),
+    round(avg("fare_amount"), 2).alias("avg_fare")
+)
+# → lakehouse.gold.nyc_taxi_daily
+```
+
+| Metric | Value |
+|---|---|
+| Gold rows (daily aggregates) | **36** |
+
+**Trino independently read the gold mart:**
+
+```sql
+SELECT trip_date, trip_count, avg_fare
+FROM lakehouse.gold.nyc_taxi_daily
+ORDER BY trip_count DESC LIMIT 1;
+-- 2023-01-26 | 109,374 trips | avg fare $18.03
+```
+
+**Result: PASS.** Spark wrote all three medallion layers; Trino cross-validated the gold mart without any shared session state.
+
+### Trino CTAS — Trino Writes Iceberg (A7 Capability)
+
+This validates the A7 capability (`federated_query` / `bi_query`): Trino acting as a full Iceberg writer, not just a reader.
+
+```sql
+CREATE TABLE lakehouse.gold.trino_payment_summary AS
+SELECT
+    payment_type,
+    count(*)                    AS trips,
+    round(avg(total_amount), 2) AS avg_total
+FROM lakehouse.silver.nyc_taxi_trips
+GROUP BY payment_type;
+```
+
+| payment_type | trips | avg_total | Notes |
+|---|---|---|---|
+| 1 | 2,370,284 | $28.35 | Credit card |
+| 2 | 516,552 | $23.03 | Cash |
+| 3 | 12,262 | $6.48 | No charge |
+| 4 | 18,218 | −$15.21 | Refunds / disputes |
+
+**Spark then read the Trino-written table back:**
+
+```python
+spark.read.table("lakehouse.gold.trino_payment_summary").show()
+# → 4 rows matching the values above
+```
+
+**Result: PASS.** Bidirectional Spark ↔ Trino interop on the shared Iceberg catalog is confirmed — each engine can write tables that the other reads without any format conversion or manual hand-off.
+
+### Streaming — Redpanda → Spark Structured Streaming → Iceberg → Trino
+
+This validates the full streaming lakehouse path end-to-end: the `spark-sql-kafka` jar baked into the Spark image, the Iceberg streaming sink, and S3 checkpointing.
+
+| Component | Detail |
+|---|---|
+| Producer | JSON events published to Redpanda topic `events` |
+| Kafka source | `redpanda:9092` |
+| Sink | Iceberg — `lakehouse.bronze.stream_events` |
+| Trigger | `trigger(availableNow=True)` |
+| Checkpoint | `s3a://checkpoints/stream_events_demo` |
+
+```python
+query = (
+    spark.readStream.format("kafka")
+        .option("kafka.bootstrap.servers", "redpanda:9092")
+        .option("subscribe", "events")
+        .load()
+        .writeStream.format("iceberg")
+        .outputMode("append")
+        .trigger(availableNow=True)
+        .option("checkpointLocation", "s3a://checkpoints/stream_events_demo")
+        .toTable("lakehouse.bronze.stream_events")
+)
+query.awaitTermination()
+```
+
+**Trino confirmed the streamed rows:**
+
+```sql
+SELECT COUNT(*) FROM lakehouse.bronze.stream_events;
+-- 5
+```
+
+**Result: PASS.** 5 events produced to Redpanda were ingested by Spark Structured Streaming into Iceberg and immediately queryable via Trino.
+
+---
+
+With preflight L1+L2, batch_ingest, the Jenkins → JAR → Airflow loop, the full medallion, Trino CTAS, and streaming all validated live, **every capability the lab claims is proven against a running Atlas stack.**
