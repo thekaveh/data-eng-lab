@@ -514,4 +514,6 @@ After a successful go-live run:
 
 *Cross-referenced from:* `docs/atlas-enablement.md` — the A1–A9 enablement contract and delivered shapes.
 
+*See also:* [`docs/go-live-results.md`](go-live-results.md) — actual results from the 2026-07-04 live validation run (30 containers, 156 GiB Docker; all 6 Layer-2 edges passed; bugs found and fixed).
+
 *Maintained by `data-eng-lab`.* Latest update: Phase 4 Task 4 (go-live runbook authoring).

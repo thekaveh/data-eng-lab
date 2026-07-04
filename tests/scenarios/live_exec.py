@@ -168,14 +168,15 @@ def run_zeppelin_note(zpln_path: str, port_env: str = "ZEPPELIN_PORT") -> None:
             time.sleep(5)
             status_resp = requests.get(f"{base}/notebook/job/{note_id}", timeout=30)
             status_resp.raise_for_status()
-            paragraphs = status_resp.json().get("body", [])
+            body = status_resp.json().get("body", [])
+            if isinstance(body, dict):
+                body = body.get("paragraphs", list(body.values()))
+            paragraphs = [p for p in body if isinstance(p, dict)]
             if not paragraphs:
                 continue
             statuses = {p.get("status") for p in paragraphs}
-            if "ERROR" in statuses:
-                raise RuntimeError(
-                    f"Zeppelin paragraph error in note {note_id}; paragraph statuses: {statuses}"
-                )
+            if "ERROR" in statuses or "ABORT" in statuses:
+                raise RuntimeError(f"Zeppelin paragraph error/abort in note {note_id}; statuses={statuses}")
             # All paragraphs in a terminal state
             if statuses <= {"FINISHED", "READY"}:
                 return
