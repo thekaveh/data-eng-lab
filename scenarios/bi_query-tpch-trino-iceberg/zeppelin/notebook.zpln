@@ -20,7 +20,7 @@
     },
     {
       "title": "2. Setup (code)",
-      "text": "%jdbc(trino)\n-- %jdbc(trino) is pre-bound to the Atlas Trino coordinator (catalog: lakehouse)",
+      "text": "%trino\n-- %trino is pre-bound to the Atlas Trino coordinator (catalog: lakehouse)",
       "config": {},
       "settings": {
         "params": {},
@@ -38,7 +38,7 @@
     },
     {
       "title": "3. Read (code)",
-      "text": "%jdbc(trino)\nSELECT * FROM lakehouse.gold.fct_orders LIMIT 10",
+      "text": "%trino\nSELECT * FROM lakehouse.gold.fct_orders LIMIT 10",
       "config": {},
       "settings": {
         "params": {},
@@ -56,7 +56,7 @@
     },
     {
       "title": "4. Transform (code)",
-      "text": "%jdbc(trino)\nSELECT c.c_mktsegment, sum(f.revenue) AS revenue, sum(f.line_count) AS lines\nFROM lakehouse.gold.fct_orders f\nJOIN lakehouse.gold.dim_customer c ON f.o_custkey = c.c_custkey\nGROUP BY c.c_mktsegment ORDER BY revenue DESC",
+      "text": "%trino\nSELECT c.c_mktsegment, sum(f.revenue) AS revenue, sum(f.line_count) AS lines\nFROM lakehouse.gold.fct_orders f\nJOIN lakehouse.gold.dim_customer c ON f.o_custkey = c.c_custkey\nGROUP BY c.c_mktsegment ORDER BY revenue DESC",
       "config": {},
       "settings": {
         "params": {},
@@ -74,7 +74,7 @@
     },
     {
       "title": "5. Write (code)",
-      "text": "%jdbc(trino)\nCREATE TABLE IF NOT EXISTS lakehouse.gold.bi_segment_revenue AS\nSELECT c.c_mktsegment, sum(f.revenue) AS revenue\nFROM lakehouse.gold.fct_orders f\nJOIN lakehouse.gold.dim_customer c ON f.o_custkey = c.c_custkey\nGROUP BY c.c_mktsegment",
+      "text": "%trino\nCREATE TABLE IF NOT EXISTS lakehouse.gold.bi_segment_revenue AS\nSELECT c.c_mktsegment, sum(f.revenue) AS revenue\nFROM lakehouse.gold.fct_orders f\nJOIN lakehouse.gold.dim_customer c ON f.o_custkey = c.c_custkey\nGROUP BY c.c_mktsegment",
       "config": {},
       "settings": {
         "params": {},
@@ -92,7 +92,7 @@
     },
     {
       "title": "6. Verify (code)",
-      "text": "%jdbc(trino)\nSELECT count(*) FROM lakehouse.gold.bi_segment_revenue",
+      "text": "%trino\nSELECT count(*) FROM lakehouse.gold.bi_segment_revenue",
       "config": {},
       "settings": {
         "params": {},

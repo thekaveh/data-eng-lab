@@ -283,6 +283,94 @@ Run the end-to-end lakehouse pipeline via Airflow.
   ```
   Expected output: Row count > 0.
 
+### 3.6 Trino + streaming validation (A7/A9)
+
+**Prerequisites:** Enable the Trino + Redpanda sources:
+```bash
+# If not already enabled, re-launch with both sources
+./scripts/start-all.sh --iceberg-rest-source container --jenkins-source container --trino-source container --redpanda-source container
+```
+
+#### 3.6.1 Trino: Federated query
+
+Validate Trino's Iceberg connector and CTAS capability:
+
+1. **Via Zeppelin `%trino` interpreter:**
+   - Zeppelin UI → Create a new notebook named `test-trino-federated`.
+   - Add a paragraph:
+     ```
+     %trino
+     SELECT COUNT(*) FROM lakehouse.bronze.nyc_taxi_trips
+     ```
+   - Expected output: Row count > 0 (from the Airflow DAG run above).
+
+   - Add another paragraph to test CTAS:
+     ```
+     %trino
+     CREATE TABLE lakehouse.gold.nyc_taxi_sample AS
+     SELECT * FROM lakehouse.bronze.nyc_taxi_trips LIMIT 100
+     ```
+   - Expected: Table created in the `gold` namespace.
+
+2. **Via Jupyter + Python Trino client:**
+   - JupyterHub → New Python notebook named `test-trino-jupyter`.
+   - Cell:
+     ```python
+     from trino.dbapi import connect
+     
+     conn = connect(
+         host="localhost",
+         port=63029,  # or read from os.getenv("TRINO_PORT")
+         user="atlas",
+         catalog="lakehouse",
+         schema="bronze"
+     )
+     cursor = conn.cursor()
+     cursor.execute("SELECT COUNT(*) FROM nyc_taxi_trips")
+     print(cursor.fetchone())
+     ```
+   - Expected output: Row count tuple.
+
+#### 3.6.2 Redpanda + Structured Streaming
+
+Validate Redpanda broker and Spark Kafka connector:
+
+1. **Seed a Redpanda topic (if not already seeded):**
+   ```bash
+   # Run the producer (auto-creates the 'events' topic if not present)
+   uv run python scenarios/streaming_ingest-events-spark-iceberg/producer.py
+   ```
+   This will publish sample events to `redpanda:9092` topic `events`.
+
+2. **Via Zeppelin `%spark` — Structured Streaming read:**
+   - Zeppelin UI → Create a notebook named `test-streaming-read`.
+   - Paragraph (reads from Redpanda, writes to Iceberg + checkpoint):
+     ```scala
+     %spark
+     spark.readStream
+       .format("kafka")
+       .option("kafka.bootstrap.servers", "redpanda:9092")
+       .option("subscribe", "events")
+       .option("startingOffsets", "earliest")
+       .load()
+       .select(col("value").cast("string") as "json_value")
+       .writeStream
+       .format("iceberg")
+       .option("path", "s3a://lakehouse/bronze/streaming_test")
+       .option("checkpointLocation", "s3a://checkpoints/streaming_test")
+       .mode("append")
+       .start()
+     ```
+   - Expected: Stream starts, events flow in, checkpoint stored in MinIO.
+
+3. **Run automated live tests:**
+   ```bash
+   RUN_INFRA=1 uv run pytest tests/scenarios/test_trino_query_live.py tests/scenarios/test_streaming_live.py -v
+   ```
+   - Expected: Both test modules pass (or skip if `RUN_INFRA=0`).
+   - `test_trino_query_live.py` validates: Trino connectivity, Iceberg catalog read/write via CTAS.
+   - `test_streaming_live.py` validates: Redpanda connectivity, `readStream.format("kafka")`, Iceberg write + checkpoint.
+
 ---
 
 ## Phase 4: Manual Steps
@@ -343,9 +431,10 @@ A successful go-live run should satisfy:
    - Jupyter notebook runs PySpark + PyIceberg; Spark Connect is auto-configured.
    - Jenkins successfully builds and publishes the Maven JAR to MinIO.
    - Airflow DAG completes; `lakehouse.bronze.nyc_taxi_trips` has rows.
+   - **(NEW A7/A9)** Trino `%trino` interpreter reads/writes Iceberg via CTAS; Redpanda broker accepts Kafka reads; Spark Kafka connector streams to Iceberg + checkpoint.
 4. ✅ **Phase 4:** No blocking manual setup (JDBC interpreter optional).
 
-If all above pass, the Atlas enablement is **validated for production use** and the lakehouse is ready for Phase 5 (Trino + Redpanda scenarios).
+If all above pass, the Atlas enablement is **validated for production use** and the lakehouse is ready for full scenario execution (including Trino multi-engine + Redpanda streaming).
 
 ---
 

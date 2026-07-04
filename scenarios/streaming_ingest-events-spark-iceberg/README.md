@@ -31,6 +31,7 @@ Iceberg connectors; `lakehouse` Iceberg REST catalog (Atlas A1-A4); `bronze` nam
 created by `scripts/register_iceberg.py`. `producer.py` requires `kafka-python`.
 
 ## 6. Known issues & caveats
+Atlas seeds only the `atlas_stream_events` demo topic; this scenario's topic (`events`) is auto-created on first produce — run `producer.py` first, or add the topic to `REDPANDA_DEMO_TOPICS` in `infra/.env`.
 Live-gated on Atlas A9 (Redpanda) / issue #269 — notebooks cannot be executed until the
 Redpanda service is wired into the stack. The streaming query runs indefinitely;
 call `query.awaitTermination()` to block (same call in Scala and PySpark).
