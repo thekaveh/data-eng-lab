@@ -21,4 +21,5 @@ Demonstrates windowed aggregation with watermark on a Kafka stream — the aggre
 Requires Redpanda broker at `redpanda:9092` (Atlas A9 / issue #269); Spark with Kafka + Iceberg connectors; `lakehouse` Iceberg REST catalog (Atlas A1-A4); `gold` namespace. Producer from `streaming_ingest-events-spark-iceberg/producer.py` generates synthetic events to the `events` topic.
 
 ## 6. Known issues & caveats
+Atlas seeds only the `atlas_stream_events` demo topic; this scenario's topic (`events`) is auto-created on first produce — run `producer.py` first, or add the topic to `REDPANDA_DEMO_TOPICS` in `infra/.env`.
 Live-gated on Atlas A9 (Redpanda) / issue #269 — notebooks cannot be executed until the Redpanda service is wired into the stack. Produce events first via `streaming_ingest-events-spark-iceberg/producer.py`. Checkpoints at `s3a://checkpoints/event_windows`. Append mode emits only closed windows (after watermark passes); call `query.awaitTermination()` to block. The DAG (`streaming_windows_events`) is an EmptyOperator placeholder — Structured Streaming is long-running and not scheduled as a batch DAG.

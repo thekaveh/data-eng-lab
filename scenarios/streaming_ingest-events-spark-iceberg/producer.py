@@ -3,12 +3,14 @@ Live-gated: requires Atlas Redpanda (issue #269). Run: python producer.py [count
 from __future__ import annotations
 
 import json
+import os
 import sys
 from datetime import datetime, timezone
 
 from kafka import KafkaProducer  # kafka-python
 
-BOOTSTRAP = "localhost:9092"  # host-published Redpanda; in-cluster use redpanda:9092
+# Host-published Redpanda: localhost:$REDPANDA_KAFKA_PORT (default 63010). In-cluster use redpanda:9092.
+BOOTSTRAP = os.environ.get("REDPANDA_BOOTSTRAP") or f"localhost:{os.environ.get('REDPANDA_KAFKA_PORT', '63010')}"
 TOPIC = "events"
 
 

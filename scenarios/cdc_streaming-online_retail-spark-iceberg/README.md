@@ -21,4 +21,5 @@ Demonstrates streaming CDC upserts using Kafka + Spark Structured Streaming + Ic
 Requires Redpanda broker at `redpanda:9092` (Atlas A9 / issue #269); Spark with Kafka + Iceberg connectors; `lakehouse` Iceberg REST catalog (Atlas A1-A4); `silver` namespace. Producer must emit JSON with schema `{invoice, stock_code, quantity, price}` to the `online_retail_cdc` topic.
 
 ## 6. Known issues & caveats
+Atlas seeds only the `atlas_stream_events` demo topic; this scenario's topic (`online_retail_cdc`) is auto-created on first produce — run `producer.py` first, or add the topic to `REDPANDA_DEMO_TOPICS` in `infra/.env`.
 Live-gated on Atlas A9 (Redpanda) / issue #269 — notebooks cannot be executed until the Redpanda service is wired into the stack. Produce CDC events to the `online_retail_cdc` topic before running. Checkpoints at `s3a://checkpoints/online_retail_cdc`. The MERGE SQL is identical to the batch `incremental_upsert-online_retail` scenario — this is its streaming form. The DAG (`cdc_streaming_online_retail`) is an EmptyOperator placeholder — Structured Streaming is long-running and not scheduled as a batch DAG.

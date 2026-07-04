@@ -12,6 +12,7 @@ def test_events_topic_reachable():
     exercised by scenario notebooks.
     """
     from kafka import KafkaAdminClient  # gated import
-    admin = KafkaAdminClient(bootstrap_servers=os.environ.get("REDPANDA_BOOTSTRAP", "localhost:9092"))
+    bootstrap = os.environ.get("REDPANDA_BOOTSTRAP") or f"localhost:{os.environ.get('REDPANDA_KAFKA_PORT', '63010')}"
+    admin = KafkaAdminClient(bootstrap_servers=bootstrap)
     topics = admin.list_topics()
     assert isinstance(topics, list)  # broker reachable + metadata fetched (topic auto-created on first produce)
