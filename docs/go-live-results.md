@@ -266,3 +266,7 @@ SELECT COUNT(*) FROM lakehouse.bronze.stream_events;
 ---
 
 With preflight L1+L2, batch_ingest, the Jenkins → JAR → Airflow loop, the full medallion, Trino CTAS, and streaming all validated live, **every capability the lab claims is proven against a running Atlas stack.**
+
+---
+
+For the Atlas-side infra issues found during this validation (Spark REST server, Connect core monopoly, spark-connect healthcheck, Airflow-3 connection context), see [`docs/atlas-feedback-go-live.md`](atlas-feedback-go-live.md).

@@ -143,6 +143,8 @@ When you deliver A7/A9, we flip `--trino-source`/`--redpanda-source` on and thes
 
 **A7/A9 delivery feedback:** See [`docs/atlas-feedback-a7a9.md`](atlas-feedback-a7a9.md) for a detailed feedback report on the delivered Trino + Redpanda services (atlas `72e30d1`), including what matched the contract, the intentional deviations we've adapted to, and optional documentation polish suggestions.
 
+**See also — go-live infra findings:** [`docs/atlas-feedback-go-live.md`](atlas-feedback-go-live.md) lists the Atlas-side issues surfaced during the full live go-live validation (atlas `85ff46b`): Spark REST submission server, Spark Connect core monopoly, spark-connect healthcheck, and Airflow-3 connection context.
+
 ---
 
 *Maintained by `data-eng-lab`. Questions → open an issue on `thekaveh/data-eng-lab` or comment on atlas#268 / atlas#269.*
