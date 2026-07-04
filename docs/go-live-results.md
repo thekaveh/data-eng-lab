@@ -96,3 +96,55 @@ Phases 1 and 2 of the go-live runbook are fully validated. All six Layer-2 integ
 ---
 
 *See also:* [Go-Live Runbook](go-live.md) | [Atlas Enablement Contract](atlas-enablement.md)
+
+---
+
+## Deeper Validation — Scenario + Jenkins → JAR → Airflow Loop (2026-07-04)
+
+### batch_ingest End-to-End (Cross-Engine)
+
+Executed via Spark Connect (`sc://spark-connect:15002`, run inside jupyterhub):
+
+- Read `s3a://landing/nyc_taxi/` — **3,066,766 rows, 19 columns**.
+- Applied transformations (added `trip_date`, `ingested_at` columns).
+- Wrote partitioned Iceberg table `lakehouse.bronze.nyc_taxi_trips`.
+
+Trino independently queried the same table:
+
+```sql
+SELECT COUNT(*) FROM lakehouse.bronze.nyc_taxi_trips;
+-- 3,066,766
+SELECT trip_date, COUNT(*) AS cnt
+FROM lakehouse.bronze.nyc_taxi_trips
+GROUP BY trip_date ORDER BY cnt DESC LIMIT 1;
+-- 2023-01-26 | 114,877
+```
+
+**Result: PASS.** Write-with-one-engine / read-with-another on the shared Iceberg table is proven.
+
+### Cluster Resource Note
+
+The Spark Connect server holds all 4 standalone cores (`coresused 4/4`), which starves standalone-mode jobs (the Zeppelin interpreter and Airflow `spark-submit`). For the Airflow test, `spark-connect` was temporarily stopped to free cores, then restarted. On a 4-core cluster, Spark-Connect and standalone-submit workloads contend; a real deployment wants more worker cores or capped `spark.cores.max` on Connect.
+
+### Jenkins → JAR → Airflow Loop
+
+| Step | Result |
+|---|---|
+| `jenkins/seed-job.sh` — job seeded, SCM clones repo, runs `spark-apps/nyc-taxi-etl/Jenkinsfile` | PASS |
+| Jenkins Build #1 (`mvn test + package + publish`, ~100 s) | SUCCESS |
+| `jars/nyc-taxi-etl/0.1.0/app.jar` (7.4 KiB) published to MinIO | PASS |
+| Airflow `nyc_taxi_etl` DAG triggered, `SparkSubmitOperator` (`deploy_mode=cluster`, `spark://spark-master:7077`) | TRIGGERED |
+| Driver ran on a worker to `FINISHED` | PASS |
+| `NycTaxiEtl` JAR wrote **2,943,859 cleaned rows** (raw 3.07 M filtered to 2.94 M) to `lakehouse.bronze.nyc_taxi_trips` | PASS |
+| Iceberg snapshot confirmed: `committed_at 2026-07-04 12:40:08 UTC`, `operation=overwrite`, `total-records=2,943,859` | PASS |
+
+The JAR schema uses raw columns plus `trip_date` (no `ingested_at`), consistent with the Scala implementation.
+
+**Result: FUNCTIONALLY PROVEN end-to-end.** The full pipeline — source → build → publish → submit → Iceberg write — executed successfully.
+
+### Findings from This Pass
+
+| # | Finding | Resolution |
+|---|---|---|
+| 1 | `jenkins/seed-job.sh` CSRF crumb must share a session cookie jar with all subsequent POSTs; without it Jenkins returns HTTP 403 "No valid crumb". | **Fixed in this branch** — `CJ=$(mktemp)` cookie jar threaded through crumb fetch and all authenticated POSTs. |
+| 2 | `SparkSubmitOperator` in standalone **cluster mode** false-negatives: after the driver `FINISHED` successfully, `_start_driver_status_tracking` raises `AirflowException: Failed to poll for the driver status 10 times: returncode = 1`. The operator queries the Spark master REST API (port 6066), which Atlas's standalone master does not expose, so the Airflow task is marked failed **even though the job succeeded and wrote the table**. | Three options (no DAG change made without maintainer decision): **(a)** enable `spark.master.rest.enabled=true` (port 6066) on the Atlas Spark master — an Atlas-side configuration request; **(b)** switch the DAG to `deploy_mode=client` (driver runs in the Airflow worker; no remote status polling); **(c)** rely on `spark.standalone.submit.waitAppCompletion=true` (already set in the DAG) as the completion signal and treat the status-poll step as advisory. The job itself is validated end-to-end. |
