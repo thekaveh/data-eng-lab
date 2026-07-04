@@ -109,7 +109,9 @@ def test_redpanda_edge_probe_uses_exec_fn():
     assert calls, "exec_fn was never called"
     container, argv = calls[0]
     assert container == "spark-master"
-    assert "probe_kafka.py" in " ".join(argv)
+    assert argv[0] == "python3"
+    assert argv[1] == "-c"
+    assert "redpanda" in argv[2] and "9092" in argv[2]
 
 
 def test_trino_edge_probe_fails_on_nonzero_rc():
