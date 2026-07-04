@@ -20,7 +20,7 @@
     },
     {
       "title": "2. Setup (code)",
-      "text": "%jdbc(trino)\n-- %jdbc(trino) is pre-bound to the Atlas Trino coordinator (catalog: lakehouse)",
+      "text": "%trino\n-- %trino is pre-bound to the Atlas Trino coordinator (catalog: lakehouse)",
       "config": {},
       "settings": {
         "params": {},
@@ -38,7 +38,7 @@
     },
     {
       "title": "3. Read (code)",
-      "text": "%jdbc(trino)\nSELECT * FROM lakehouse.bronze.nyc_taxi_trips LIMIT 10",
+      "text": "%trino\nSELECT * FROM lakehouse.bronze.nyc_taxi_trips LIMIT 10",
       "config": {},
       "settings": {
         "params": {},
@@ -56,7 +56,7 @@
     },
     {
       "title": "4. Transform (code)",
-      "text": "%jdbc(trino)\nSELECT trip_date, count(*) AS trips, avg(fare_amount) AS avg_fare\nFROM lakehouse.bronze.nyc_taxi_trips\nGROUP BY trip_date ORDER BY trip_date",
+      "text": "%trino\nSELECT trip_date, count(*) AS trips, avg(fare_amount) AS avg_fare\nFROM lakehouse.bronze.nyc_taxi_trips\nGROUP BY trip_date ORDER BY trip_date",
       "config": {},
       "settings": {
         "params": {},
@@ -74,7 +74,7 @@
     },
     {
       "title": "5. Write (code)",
-      "text": "%jdbc(trino)\nCREATE TABLE IF NOT EXISTS lakehouse.gold.nyc_taxi_daily_trino AS\nSELECT trip_date, count(*) AS trips, avg(fare_amount) AS avg_fare\nFROM lakehouse.bronze.nyc_taxi_trips GROUP BY trip_date",
+      "text": "%trino\nCREATE TABLE IF NOT EXISTS lakehouse.gold.nyc_taxi_daily_trino AS\nSELECT trip_date, count(*) AS trips, avg(fare_amount) AS avg_fare\nFROM lakehouse.bronze.nyc_taxi_trips GROUP BY trip_date",
       "config": {},
       "settings": {
         "params": {},
@@ -92,7 +92,7 @@
     },
     {
       "title": "6. Verify (code)",
-      "text": "%jdbc(trino)\nSELECT count(*) FROM lakehouse.gold.nyc_taxi_daily_trino",
+      "text": "%trino\nSELECT count(*) FROM lakehouse.gold.nyc_taxi_daily_trino",
       "config": {},
       "settings": {
         "params": {},
