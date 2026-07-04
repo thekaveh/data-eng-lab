@@ -15,6 +15,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from preflight import Result  # noqa: E402
 from preflight import render_matrix as _render
+from probes.probe_kafka import probe as _probe_kafka  # noqa: E402
+from probes.probe_trino import probe as _probe_trino  # noqa: E402
 
 Edge = namedtuple("Edge", "name enabled probe")
 
@@ -91,12 +93,16 @@ def _zeppelin_probe(exec_fn):
 
 
 ICEBERG_ON = _truthy("ICEBERG_REST_ENABLED")
+TRINO_ON = _truthy("TRINO_ENABLED")
+REDPANDA_ON = _truthy("REDPANDA_ENABLED")
 
 EDGES = [
     Edge("spark->minio+iceberg", ICEBERG_ON, _run_in("jupyterhub", "/opt/probes/probe_spark.py")),
     Edge("jupyter->pyiceberg", ICEBERG_ON, _run_in("jupyterhub", "/opt/probes/probe_pyiceberg.py")),
     Edge("airflow->minio+spark", True, _run_in("airflow-scheduler", "/opt/probes/probe_airflow.py")),
     Edge("zeppelin->spark", True, _zeppelin_probe),
+    Edge("trino->lakehouse", TRINO_ON, _probe_trino),
+    Edge("spark->redpanda", REDPANDA_ON, _probe_kafka),
 ]
 
 
