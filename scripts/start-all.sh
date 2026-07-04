@@ -20,7 +20,8 @@ log "2/6 launching Atlas data-eng track"
 ATLAS_START="cd \"$INFRA_DIR\" && ./start.sh --track data-eng --no-tui \
   --spark-source container --zeppelin-source container --airflow-source container \
   --minio-source container --jupyterhub-source container \
-  --iceberg-rest-source container --jenkins-source container"
+  --iceberg-rest-source container --jenkins-source container \
+  --trino-source container --redpanda-source container"
 # shellcheck disable=SC2294  # intentional backgrounded eval of a pre-built command string
 if [ "$DRY_RUN" = 1 ]; then echo "+ $ATLAS_START &"; else eval "$ATLAS_START" & fi
 
