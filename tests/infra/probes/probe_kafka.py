@@ -15,13 +15,31 @@ _BROKER_HOST = "redpanda"
 _BROKER_PORT = 9092
 _JAR_GLOB = "/opt/spark/jars/spark-sql-kafka-0-10_2.13-*.jar"
 
+# Inline script executed via `python3 -c` inside the spark-master container.
+# No mounted probe file or 'python' alias required — works with stock Spark images.
+_INLINE = """\
+import socket, glob, sys
+try:
+    s = socket.create_connection(('redpanda', 9092), timeout=2)
+    s.close()
+except OSError as e:
+    print(f'TCP redpanda:9092 unreachable: {e}', file=sys.stderr)
+    sys.exit(1)
+jars = glob.glob('/opt/spark/jars/spark-sql-kafka-0-10_2.13-*.jar')
+if not jars:
+    print('kafka jar missing: /opt/spark/jars/spark-sql-kafka-0-10_2.13-*.jar', file=sys.stderr)
+    sys.exit(1)
+print(f'OK tcp=redpanda:9092 jar={jars[0].split("/")[-1]}')
+"""
+
 
 def probe(exec_fn):
     """Layer-2 probe: exec into spark-master to check Redpanda reachability + Kafka jar.
 
+    Runs an inline python3 script so no mounted file path or 'python' alias is required.
     Returns (ok: bool, message: str).
     """
-    rc, out = exec_fn("spark-master", ["python", "/opt/probes/probe_kafka.py"])
+    rc, out = exec_fn("spark-master", ["python3", "-c", _INLINE])
     tail = out.strip().splitlines()[-1] if out.strip() else f"rc={rc}"
     return rc == 0, tail
 
