@@ -4,6 +4,7 @@ Uses mkdocs-gen-files to copy README content into the docs virtual filesystem
 and mkdocs-literate-nav to drive navigation from a generated SUMMARY.md.
 """
 
+import re
 from pathlib import Path
 
 import mkdocs_gen_files
@@ -12,6 +13,15 @@ REPO_ROOT = Path(__file__).parent.parent
 
 SCENARIO_DIRS = sorted((REPO_ROOT / "scenarios").iterdir())
 APP_DIRS = sorted((REPO_ROOT / "spark-apps").iterdir())
+
+
+def _h1_label(readme: Path) -> str | None:
+    """Return the first H1 heading text from *readme*, or None if absent."""
+    for line in readme.read_text(encoding="utf-8").splitlines():
+        m = re.match(r"^#\s+(.+)", line)
+        if m:
+            return m.group(1).strip()
+    return None
 
 
 def _write_page(src_readme: Path, dest_path: str) -> None:
@@ -23,7 +33,7 @@ def _write_page(src_readme: Path, dest_path: str) -> None:
 
 
 # ── Scenarios ─────────────────────────────────────────────────────────────────
-scenario_pages: list[str] = []
+scenario_entries: list[tuple[str, str]] = []  # (nav_label, dest_path)
 for scenario_dir in SCENARIO_DIRS:
     readme = scenario_dir / "README.md"
     if not readme.exists():
@@ -31,10 +41,11 @@ for scenario_dir in SCENARIO_DIRS:
     name = scenario_dir.name
     dest = f"scenarios/{name}.md"
     _write_page(readme, dest)
-    scenario_pages.append(dest)
+    label = _h1_label(readme) or name
+    scenario_entries.append((label, dest))
 
 # ── Spark apps ────────────────────────────────────────────────────────────────
-app_pages: list[str] = []
+app_entries: list[tuple[str, str]] = []  # (nav_label, dest_path)
 for app_dir in APP_DIRS:
     readme = app_dir / "README.md"
     if not readme.exists():
@@ -42,7 +53,8 @@ for app_dir in APP_DIRS:
     name = app_dir.name
     dest = f"spark-apps/{name}.md"
     _write_page(readme, dest)
-    app_pages.append(dest)
+    label = _h1_label(readme) or name
+    app_entries.append((label, dest))
 
 # ── SUMMARY.md (literate-nav) ─────────────────────────────────────────────────
 summary_lines: list[str] = [
@@ -50,12 +62,12 @@ summary_lines: list[str] = [
     "- [Getting started](getting-started.md)\n",
     "- Scenarios:\n",
 ]
-for page in scenario_pages:
-    summary_lines.append(f"    - [{Path(page).stem}]({page})\n")
+for label, page in scenario_entries:
+    summary_lines.append(f"    - [{label}]({page})\n")
 
 summary_lines.append("- Spark apps:\n")
-for page in app_pages:
-    summary_lines.append(f"    - [{Path(page).stem}]({page})\n")
+for label, page in app_entries:
+    summary_lines.append(f"    - [{label}]({page})\n")
 
 summary_lines += [
     "- Lakehouse & Atlas:\n",

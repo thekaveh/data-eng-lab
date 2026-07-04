@@ -1,4 +1,5 @@
 site_name: data-eng-lab
+site_url: https://thekaveh.github.io/data-eng-lab/
 site_description: >-
   An Iceberg-lakehouse-on-MinIO data-engineering lab on the Atlas platform —
   Scala/PySpark scenarios, Maven Spark apps, and the full medallion.

@@ -50,7 +50,7 @@ make up
 This runs `./scripts/start-all.sh`, which:
 
 1. Pulls and starts all Atlas containers (Spark, Trino, MinIO, Iceberg REST catalog, Airflow, Jenkins, Zeppelin, JupyterHub, Redpanda).
-2. Bootstraps MinIO buckets (`landing`, `lakehouse`, `artifacts`).
+2. Bootstraps MinIO buckets (`landing`, `lakehouse`, `jars`, `checkpoints`).
 3. Registers Iceberg namespaces (`bronze`, `silver`, `gold`) via `scripts/register_iceberg.py`.
 
 !!! tip "Full Atlas stack (Trino + Redpanda)"
