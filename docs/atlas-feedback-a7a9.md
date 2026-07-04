@@ -68,3 +68,20 @@ For a fair picture — the large majority landed exactly as requested:
 A7 + A9 complete the full A1–A9 contract. The delivery is high-fidelity; the only *substantive* divergence (A1, `%trino`) is a deliberate, documented Atlas choice that we've adopted. Items in **B** and **C** are optional documentation polish. **No Atlas fixes are required for `data-eng-lab` to go live** once the stack is launched.
 
 *Thanks — issues #268 and #269 can be closed as delivered. Questions → comment on those issues or ping `data-eng-lab`.*
+
+---
+
+## F. Resolution — Atlas `#281` "Clarify Trino and Redpanda consumer docs" (verified 2026-07-03)
+
+Atlas addressed the actionable items in **PR #281** (atlas `85ff46b`); we re-pinned to it. Verified against the diff:
+
+| Item | Status |
+|---|---|
+| **B1** — Redpanda demo-topic default | ✅ **Resolved.** `services/redpanda/README.md` now instructs downstream to set `REDPANDA_DEMO_TOPICS=<...>` and gives our exact example `REDPANDA_DEMO_TOPICS=events,online_retail_cdc`, plus a note that `dev-container` auto-create covers producer-first flows. |
+| **C1** — Redpanda broker env var names | ✅ **Resolved.** README documents `REDPANDA_BROKERS`/`SPARK_KAFKA_BOOTSTRAP_SERVERS=redpanda:9092` (in-net) and "host-side clients should use `localhost:${REDPANDA_KAFKA_PORT}`." |
+| **C2** — Trino no-auth / `atlas` user | ✅ **Resolved.** `services/trino/README.md` explains there is no authenticator, `atlas` is a shared convention, any user string is accepted "until a future auth issue adds a real authenticator." |
+| **C4** — `fs.s3.enabled` spelling | ✅ **Resolved.** README notes `fs.s3.enabled=true` (Trino 482 native S3). |
+| **A1** — `%trino` vs `%jdbc(trino)` | ⚪ **Intentional (no change).** As flagged — a deliberate, documented Atlas decision; `data-eng-lab` uses `%trino`. |
+| **A2** — host ports | ⚪ **Our-side fix (not an Atlas issue).** Reconciled in data-eng-lab Phase 12. |
+
+Atlas also added `bootstrapper/tests/test_{redpanda,trino}_service.py` coverage, an "advanced Iceberg smoke suite," and an MkDocs docs site. **All feedback closed; no open items.**

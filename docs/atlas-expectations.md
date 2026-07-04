@@ -3,7 +3,7 @@
 **Audience:** the engineer(s) working on **Atlas** (`thekaveh/atlas`).
 **Purpose:** a single, authoritative statement of everything `data-eng-lab` expects from Atlas — what is already **delivered** (so you don't undo it), what is **outstanding** (with build specs), and the **Iceberg/Spark capabilities** the scenario catalog relies on. This supersedes the ad-hoc `docs/atlas-enablement.md` ledger as the hand-off reference; that file remains the terse A1–A9 status table.
 
-`data-eng-lab` consumes Atlas as a **pinned submodule** at `infra/` (currently atlas `72e30d1`) and **never edits it** — enhancements come to you as issues/PRs. Everything below was verified against atlas `72e30d1`.
+`data-eng-lab` consumes Atlas as a **pinned submodule** at `infra/` (currently atlas `85ff46b`) and **never edits it** — enhancements come to you as issues/PRs. Everything below was verified against atlas `72e30d1`, and Atlas's consumer-doc clarifications from **#281** (`85ff46b`) resolved our A7/A9 feedback (see `docs/atlas-feedback-a7a9.md` §F).
 
 ---
 
