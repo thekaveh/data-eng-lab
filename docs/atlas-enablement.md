@@ -144,24 +144,32 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## A7 — *(stretch)* Trino query engine over Iceberg REST  · P3 · **OUTSTANDING**
+## A7 — *(stretch)* Trino query engine over Iceberg REST  · P3 · **DELIVERED**
 
-Deferred to Phase 5. Atlas worker is asked to implement:
-- New service `services/trino/` with an `iceberg` connector catalog pointing at `iceberg-rest`.
-- Port via slot allocator; add to the `data-eng` track.
-- Atlas issue: [#268](https://github.com/thekaveh/atlas/issues/268)
-- `data-eng-lab` Phase 5 authors the matching scenario `federated_query-nyc_taxi-trino-iceberg` with Trino %jdbc and client interfaces (see `docs/scenarios.md`).
+**Delivered shape:**
+- Service: `trinodb/trino:482` with Iceberg REST connector pointed at the `lakehouse` catalog (`iceberg-rest:8181`).
+- Catalog: `lakehouse`; warehouse `s3://lakehouse/`; supports CTAS.
+- Port: `TRINO_PORT=63029` (host port via slot allocator); in-net `trino:8080`.
+- Zeppelin interpreter: **`%trino`** (group `jdbc`, auto-seeded; note: Atlas correctly uses interpreter name as prefix, not `%jdbc(trino)`). JDBC URL `jdbc:trino://trino:8080`, catalog `lakehouse`, user `atlas` (no auth).
+- Python client: reaches `localhost:$TRINO_PORT` from host.
+- Member of `data-eng` track; `--trino-source` flag (default `disabled`).
+- Consumers: `scenarios/federated_query-nyc_taxi-trino-iceberg/`, `bi_query-tpch-trino-iceberg` (roadmap), live tests `tests/scenarios/test_trino_query_live.py`.
+- **Deviation:** Interpreter is `%trino`, not `%jdbc(trino)` (Zeppelin 0.12.1 semantics; also no auth, user convention `atlas`). See [`docs/atlas-feedback-a7a9.md`](atlas-feedback-a7a9.md) for the full delivery feedback.
 
 ---
 
-## A9 — *(fast-follow)* Redpanda broker for streaming  · P3 · **OUTSTANDING**
+## A9 — *(fast-follow)* Redpanda broker for streaming  · P3 · **DELIVERED**
 
-Deferred to Phase 5. Atlas worker is asked to implement:
-1. New service `services/redpanda/` (Kafka-API compatible broker; Redpanda image).
-2. Bake Spark Kafka connector (`spark-sql-kafka-0-10`) matching Spark 4.1 / Scala 2.13 into the Spark image.
-3. Optional CDC sub-item: Kafka Connect + Debezium for Postgres → Redpanda CDC.
-- Atlas issue: [#269](https://github.com/thekaveh/atlas/issues/269)
-- `data-eng-lab` Phase 5 authors the matching scenario `streaming_ingest-events-spark-iceberg` with Scala and PySpark Structured Streaming interfaces (see `docs/scenarios.md`).
+**Delivered shape:**
+- Service: `redpandadata/redpanda:v26.1.12` (Kafka-API compatible broker).
+- Broker: in-net `redpanda:9092`; host port `REDPANDA_KAFKA_PORT=63010`.
+- Optional console: `REDPANDA_CONSOLE_PORT=63011`.
+- Topic seeding: `REDPANDA_DEMO_TOPICS` (default `atlas_stream_events`) creates topics at bootstrap via `rpk topic create`. Downstream can override in `.env`.
+- Spark Kafka connector: `org.apache.spark:spark-sql-kafka-0-10_2.13:4.1.2` (+ dependencies) SHA-512-verified and baked into the single Spark image (master/worker/connect/history) — `readStream.format("kafka")` works with no `--packages`.
+- Checkpoints: use existing `s3a://checkpoints/` bucket (MinIO).
+- Member of `data-eng` track; `--redpanda-source` flag (default `disabled`).
+- Consumers: `scenarios/streaming_ingest-events-spark-iceberg/`, `producer.py` (auto-creates topics), live tests `tests/scenarios/test_streaming_live.py`.
+- **Note:** Demo-topic default is only `atlas_stream_events`; projects override `REDPANDA_DEMO_TOPICS` or rely on `auto_create_topics_enabled`. See [`docs/atlas-feedback-a7a9.md`](atlas-feedback-a7a9.md) for the full delivery feedback.
 
 ---
 
