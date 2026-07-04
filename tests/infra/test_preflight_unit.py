@@ -61,3 +61,37 @@ def test_docker_timeout_sentinel_reports_blocked():
     services = [manifest.ServiceSpec("minio", enabled=True, init_check=lambda: (False, "<docker-timeout>"))]
     results = preflight.run_layer1(services, docker_ok=True)
     assert results[0].status == "blocked"
+
+
+# ---------------------------------------------------------------------------
+# Phase 13 — manifest presence for Trino (A7) + Redpanda (A9)
+# ---------------------------------------------------------------------------
+
+
+def test_trino_in_expected_services():
+    """trino ServiceSpec is declared in EXPECTED_SERVICES."""
+    names = [s.name for s in manifest.EXPECTED_SERVICES]
+    assert "trino" in names
+
+
+def test_redpanda_in_expected_services():
+    """redpanda ServiceSpec is declared in EXPECTED_SERVICES."""
+    names = [s.name for s in manifest.EXPECTED_SERVICES]
+    assert "redpanda" in names
+
+
+def test_trino_gated_by_env_flag(monkeypatch):
+    """trino ServiceSpec is disabled when TRINO_ENABLED is absent."""
+    monkeypatch.delenv("TRINO_ENABLED", raising=False)
+    # Reload manifest so _truthy() is re-evaluated.
+    fresh = _load("manifest")
+    spec = next(s for s in fresh.EXPECTED_SERVICES if s.name == "trino")
+    assert spec.enabled is False
+
+
+def test_redpanda_gated_by_env_flag(monkeypatch):
+    """redpanda ServiceSpec is disabled when REDPANDA_ENABLED is absent."""
+    monkeypatch.delenv("REDPANDA_ENABLED", raising=False)
+    fresh = _load("manifest")
+    spec = next(s for s in fresh.EXPECTED_SERVICES if s.name == "redpanda")
+    assert spec.enabled is False
