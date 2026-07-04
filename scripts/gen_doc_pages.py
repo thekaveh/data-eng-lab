@@ -75,6 +75,7 @@ summary_lines += [
     "    - [Atlas expectations](atlas-expectations.md)\n",
     "    - [Atlas enablement](atlas-enablement.md)\n",
     "    - [A7/A9 feedback](atlas-feedback-a7a9.md)\n",
+    "    - [Atlas go-live feedback](atlas-feedback-go-live.md)\n",
     "    - [Go-live runbook](go-live.md)\n",
     "- [Datasets](datasets.md)\n",
     "- [Scenario catalog](scenarios.md)\n",
