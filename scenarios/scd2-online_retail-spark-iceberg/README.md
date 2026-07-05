@@ -1,33 +1,79 @@
 # scd2-online_retail-spark-iceberg
 
-Implement Slowly Changing Dimension Type 2 (SCD2) on a customer dimension derived from online_retail.
-SCD2 tracks historical changes: when a customer's segment changes, the old row is closed (effective_to set,
-is_current=false) and a new row is opened with the new segment.
-Scala (Zeppelin) and PySpark (Jupyter) notebooks implement the same logic.
+Implements Slowly Changing Dimension Type 2 (SCD2) to track historical changes on a customer dimension, preserving full history with effective timestamps and current flags.
 
-## 1. Scenario summary
-SCD2 dimension: initial load seeds 1 row (C1, standard, active), then a segment change (premium) closes
-the old row and opens a new one. Effective_from/to timestamps + is_current flag track the change.
-Reads from Iceberg `gold.dim_customer_scd2`, writes to the same table (row-level UPDATE + INSERT).
+## 1. Overview
 
-## 2. Why this exists
-Teaches dimensional data modeling: how to maintain a slowly changing dimension that preserves historical
-context (when did the change occur?) while allowing efficient current-state lookups (is_current=true).
+This scenario demonstrates SCD2 dimensional modeling using Iceberg's row-level UPDATE and INSERT capabilities. It seeds a customer dimension, then simulates a segment change by closing the old row (setting `effective_to` and `is_current=false`) and opening a new row with the updated segment (setting a new `effective_from` and `is_current=true`).
 
-## 3. What's in the notebooks
-`zeppelin/notebook.zpln` (Scala) and `jupyter/notebook.ipynb` (PySpark), sections Overview->Verify; a `dag.py`.
+## 2. Why This Exists
 
-## 4. How to run
-Open either notebook on the Atlas stack, or trigger the `scd2_online_retail` Airflow DAG.
+SCD2 is a cornerstone of dimensional data warehousing, enabling time-travel queries on dimension changes. This scenario shows how Iceberg's native row-level UPDATE support makes SCD2 practical, allowing efficient history tracking without full table scans or partition rewrites.
 
-## 5. Data & dependencies
-Requires `lakehouse.gold.dim_customer_scd2` (can be seeded inline or via dimension load from registered
-`online_retail` dataset). Spark + Iceberg `lakehouse` catalog with row-level UPDATE support (Atlas A1-A4).
+## 3. Architecture
 
-## 6. Known issues & caveats
-Notebook execution + Scala/PySpark parity are live-gated on Atlas A1-A4. This scenario writes to
-`lakehouse.gold.*`, which requires that namespace to exist in the Iceberg REST catalog. Run
-`scripts/register_iceberg.py` (creates `bronze`, `silver`, and `gold`) before executing this scenario
-standalone. Iceberg row-level UPDATE is an SQL extension; ensure `iceberg.sql.extensions` is enabled.
-The notebook's seed INSERT is not guarded; re-running the full notebook accumulates seed rows — drop the
-target table first for a clean demo.
+```
+Online retail dimension  →  Spark (batch, SCD2 logic)  →  lakehouse.gold.dim_customer_scd2 (in-place)
+```
+
+Key components:
+- **Source:** Online retail dimension data (inline seed)
+- **Processing:** Spark (batch)
+- **Sink:** `lakehouse.gold.dim_customer_scd2` (in-place)
+- **Orchestration:** `scd2_online_retail` Airflow DAG
+
+## 4. Data Schema
+
+### 4.1 Input
+
+Source: Online retail dimension data (inline seed)
+
+| Column | Type | Notes |
+|--------|------|-------|
+| `CustomerID` | double | Customer identifier |
+| `Name` | string | Customer name |
+| `Segment` | string | Customer segment |
+
+### 4.2 Output
+
+- **Table:** `lakehouse.gold.dim_customer_scd2`
+- **Layer:** Gold
+- **Key columns:** `CustomerID`, `Name`, `Segment`, `effective_from`, `effective_to`, `is_current`
+
+## 5. Notebooks
+
+- **Zeppelin (Scala):** Sections Overview → Verify; seeds initial customer data, applies SCD2 logic for a segment change (close old row, open new row), and queries historical and current records.
+- **Jupyter (PySpark):** Sections Overview → Verify; same SCD2 logic using PySpark `when()` and DataFrame updates with `effective_from`/`effective_to`/`is_current` tracking.
+- Both languages implement identical SCD2 logic with seeding, history tracking via effective timestamps and current flags, and verification sections.
+
+## 6. How to Run
+
+1. Ensure the `gold` Iceberg namespace exists by running `scripts/register_iceberg.py`.
+2. Open either notebook on the Atlas stack and execute all sections, or trigger the Airflow DAG:
+   ```bash
+   airflow dags trigger scd2_online_retail
+   ```
+3. Verify output:
+   ```bash
+   spark-sql -e "SELECT * FROM lakehouse.gold.dim_customer_scd2"
+   ```
+
+## 7. Dependencies
+
+- **Dataset:** Online retail dimension data (inline seed)
+- **Atlas services:** A1-A4 (Spark, Iceberg, S3 catalog, lakehouse catalog)
+- **Other libraries:** None
+
+## 8. Known Issues & Caveats
+
+- Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4.
+- The `gold` namespace must exist in the Iceberg REST catalog; run `scripts/register_iceberg.py` before executing standalone.
+- Iceberg row-level UPDATE is an SQL extension; ensure `iceberg.sql.extensions` is enabled in Spark configuration.
+- The notebook's seed INSERT is not guarded; re-running the full notebook accumulates seed rows. Drop the target table first for a clean demo.
+
+## 9. See Also
+
+- [incremental_upsert-online_retail-spark-iceberg](../scenarios/incremental_upsert-online_retail-spark-iceberg/README.md)
+- [cdc_streaming-online_retail-spark-iceberg](../scenarios/cdc_streaming-online_retail-spark-iceberg/README.md)
+- [Datasets](../docs/datasets.md)
+- [Lakehouse](../docs/lakehouse.md)
