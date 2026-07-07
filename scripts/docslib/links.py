@@ -117,7 +117,13 @@ def rewrite_for_readme(target: str, current_doc_posix: str, doc_map: DocMap) -> 
     if kind == LinkKind.EXTERNAL_OTHER:
         return target
     if kind == LinkKind.DIAGRAM:
-        return target  # preserve local diagram path (e.g. architectures/foo.svg) for the in-repo README
+        # Normalize to the local-relative form used inside every in-repo README dir:
+        #   scenario README (scenarios/foo/) → scenarios/foo/architectures/foo.svg
+        #   app README (spark-apps/bar/)      → spark-apps/bar/architectures/bar.svg
+        #   root README (<repo>/)             → <repo>/architectures/overview.svg
+        # The source may carry a ``../`` prefix (docs/scenarios/foo.md → docs/architectures/foo.svg);
+        # we strip it so the path resolves to the surface-local copy made by assets.copy_assets.
+        return f"architectures/{_diagram_basename(target)}"
     # DOC_RELATIVE
     doc_posix = _resolve_doc_relative(target, current_doc_posix)
     if doc_posix in doc_map.readme:

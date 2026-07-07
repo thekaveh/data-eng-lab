@@ -45,6 +45,23 @@ def test_readme_rewrites_internal_and_localizes_diagram():
         rewrite_for_readme("https://thekaveh.github.io/data-eng-lab/", cur, m)
 
 
+def test_readme_normalizes_dotdot_prefixed_diagram_to_local_architectures():
+    # Regression: a source doc at docs/scenarios/foo.md references its diagram via
+    # ../architectures/foo.svg (resolves inside docs/). The README surface must NORMALIZE
+    # that to architectures/foo.svg so it resolves against the scenario README's own dir
+    # (scenarios/foo/architectures/foo.svg). Returning the verbatim ../-prefixed target
+    # made the in-repo README point at scenarios/architectures/... (wrong).
+    m = _map()
+    assert rewrite_for_readme("../architectures/foo.svg",
+                              "scenarios/foo-bar-baz-qux.md", m) == "architectures/foo.svg"
+    # .html diagram refs are also normalized to .svg basename
+    assert rewrite_for_readme("../architectures/foo.html",
+                              "scenarios/foo-bar-baz-qux.md", m) == "architectures/foo.svg"
+    # Root README's own diagram ref (bare, no ../) is likewise normalized.
+    assert rewrite_for_readme("architectures/overview.svg", "index.md", m) == \
+        "architectures/overview.svg"
+
+
 def test_readme_rejects_site_url():
     m = _map()
     out = rewrite_for_readme("https://thekaveh.github.io/data-eng-lab/foo/", "index.md", m)
