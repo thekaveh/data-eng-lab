@@ -29,7 +29,7 @@ The `data-eng-lab` platform runs on the Atlas Docker Compose cluster, consisting
 
 The medallion data flow runs at the bottom: bronze (raw) → silver (clean) → gold (aggregated).
 
-![Architecture](lakehouse-architecture.html)
+![Architecture](architectures/overview.svg)
 
 ---
 

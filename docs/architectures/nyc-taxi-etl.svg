@@ -1,0 +1,159 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560" font-family="'JetBrains Mono', 'Courier New', monospace">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background -->
+        <rect width="1280" height="560" fill="#0a0f1f"/>
+        <rect width="1280" height="560" fill="url(#grid)"/>
+
+        <!-- Title -->
+        <text x="640" y="40" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">nyc-taxi-etl — Spark App (CI/CD → Bronze)</text>
+        <text x="640" y="62" fill="#94a3b8" font-size="12" text-anchor="middle">Jenkins builds &amp; shades a Scala JAR → MinIO jars/ → Airflow SparkSubmitOperator → Spark cluster → Iceberg bronze</text>
+
+        <!-- ================= SECTION DIVIDER ================= -->
+        <line x1="636" y1="100" x2="636" y2="440" stroke="#334155" stroke-width="1" stroke-dasharray="4,4"/>
+        <rect x="556" y="90" width="160" height="22" rx="11" fill="#0a0f1f" stroke="#22d3ee" stroke-width="1"/>
+        <text x="636" y="105" fill="#22d3ee" font-size="10" font-weight="700" text-anchor="middle">BUILD  ▶  RUN</text>
+
+        <!-- ================= LEFT: BUILD (CI/CD) ================= -->
+        <text x="310" y="128" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Continuous Integration — Jenkins</text>
+
+        <!-- Source -->
+        <rect x="40" y="150" width="190" height="200" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="135" y="176" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Source</text>
+        <text x="135" y="196" fill="#22d3ee" font-size="9" text-anchor="middle">spark-apps/nyc-taxi-etl/</text>
+        <line x1="55" y1="212" x2="215" y2="212" stroke="#334155" stroke-width="1"/>
+        <text x="135" y="232" fill="#ffffff" font-size="9" text-anchor="middle">pom.xml</text>
+        <text x="135" y="248" fill="#94a3b8" font-size="8" text-anchor="middle">scala 2.13 · spark 4.1.2</text>
+        <text x="135" y="268" fill="#ffffff" font-size="9" text-anchor="middle">Jenkinsfile</text>
+        <text x="135" y="284" fill="#94a3b8" font-size="8" text-anchor="middle">pipeline{ … }</text>
+        <text x="135" y="304" fill="#ffffff" font-size="9" text-anchor="middle">src/main/scala</text>
+        <text x="135" y="320" fill="#22d3ee" font-size="8" text-anchor="middle">NycTaxiEtl</text>
+        <text x="135" y="340" fill="#94a3b8" font-size="8" text-anchor="middle">git push → trigger</text>
+
+        <!-- Jenkins pipeline -->
+        <rect x="260" y="150" width="240" height="280" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="380" y="176" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Jenkins</text>
+        <text x="380" y="194" fill="#94a3b8" font-size="9" text-anchor="middle">agent any · 3 stages</text>
+
+        <rect x="275" y="208" width="210" height="40" rx="5" fill="#0a0f1f" stroke="#22d3ee" stroke-width="0.8"/>
+        <text x="285" y="224" fill="#fb923c" font-size="9" font-weight="700">① Build &amp; Test</text>
+        <text x="285" y="240" fill="#ffffff" font-size="8">mvn -B test</text>
+
+        <rect x="275" y="256" width="210" height="40" rx="5" fill="#0a0f1f" stroke="#22d3ee" stroke-width="0.8"/>
+        <text x="285" y="272" fill="#fb923c" font-size="9" font-weight="700">② Package (shade)</text>
+        <text x="285" y="288" fill="#ffffff" font-size="8">mvn package -DskipTests</text>
+
+        <rect x="275" y="304" width="210" height="40" rx="5" fill="#0a0f1f" stroke="#fb923c" stroke-width="1"/>
+        <text x="285" y="320" fill="#fb923c" font-size="9" font-weight="700">③ Publish JAR</text>
+        <text x="285" y="336" fill="#ffffff" font-size="8">mc cp … app.jar</text>
+
+        <text x="380" y="366" fill="#22d3ee" font-size="9" text-anchor="middle">maven-shade-plugin</text>
+        <text x="380" y="382" fill="#94a3b8" font-size="8" text-anchor="middle">uber-jar (deps bundled)</text>
+        <text x="380" y="406" fill="#22d3ee" font-size="9" text-anchor="middle">nyc-taxi-etl-0.1.0.jar</text>
+        <text x="380" y="422" fill="#94a3b8" font-size="8" text-anchor="middle">target/</text>
+
+        <!-- Artifact registry (MinIO jars) -->
+        <rect x="530" y="200" width="95" height="180" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="577" y="226" fill="#ffffff" font-size="12" font-weight="700" text-anchor="middle">MinIO</text>
+        <text x="577" y="244" fill="#22d3ee" font-size="9" font-weight="700" text-anchor="middle">jars/</text>
+        <line x1="540" y1="258" x2="615" y2="258" stroke="#334155" stroke-width="1"/>
+        <text x="577" y="278" fill="#ffffff" font-size="8" text-anchor="middle">s3a://jars/</text>
+        <text x="577" y="294" fill="#ffffff" font-size="8" text-anchor="middle">nyc-taxi-etl/</text>
+        <text x="577" y="310" fill="#22d3ee" font-size="8" text-anchor="middle">0.1.0/app.jar</text>
+        <text x="577" y="340" fill="#94a3b8" font-size="8" text-anchor="middle">immutable</text>
+        <text x="577" y="354" fill="#94a3b8" font-size="8" text-anchor="middle">artifact</text>
+        <text x="577" y="372" fill="#22d3ee" font-size="8" text-anchor="middle">registry</text>
+
+        <!-- ================= RIGHT: RUN (Airflow → Spark → Iceberg) ================= -->
+        <text x="940" y="128" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Runtime — Orchestrate &amp; Execute</text>
+
+        <!-- Airflow DAG -->
+        <rect x="660" y="150" width="200" height="200" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="760" y="176" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Airflow</text>
+        <text x="760" y="196" fill="#22d3ee" font-size="10" font-weight="700" text-anchor="middle">DAG: nyc_taxi_etl</text>
+        <line x1="675" y1="210" x2="845" y2="210" stroke="#1e293b" stroke-width="1"/>
+        <text x="760" y="230" fill="#fb923c" font-size="9" font-weight="600" text-anchor="middle">SparkSubmitOperator</text>
+        <text x="760" y="248" fill="#ffffff" font-size="8" text-anchor="middle">task: submit_nyc_taxi_etl</text>
+        <text x="760" y="266" fill="#94a3b8" font-size="8" text-anchor="middle">schedule: @daily</text>
+        <text x="760" y="282" fill="#94a3b8" font-size="8" text-anchor="middle">deploy_mode: cluster</text>
+        <text x="760" y="298" fill="#94a3b8" font-size="8" text-anchor="middle">conn_id: spark_default</text>
+        <text x="760" y="318" fill="#22d3ee" font-size="8" text-anchor="middle">java_class:</text>
+        <text x="760" y="332" fill="#22d3ee" font-size="8" text-anchor="middle">…nyctaxi.NycTaxiEtl</text>
+
+        <!-- args banner -->
+        <rect x="660" y="360" width="200" height="44" rx="5" fill="#0a0f1f" stroke="#fb923c" stroke-width="0.8"/>
+        <text x="760" y="378" fill="#fb923c" font-size="8" font-weight="700" text-anchor="middle">application_args</text>
+        <text x="760" y="394" fill="#ffffff" font-size="8" text-anchor="middle">s3a://landing/nyc_taxi/</text>
+
+        <!-- Spark cluster -->
+        <rect x="890" y="150" width="170" height="150" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="975" y="176" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Spark Cluster</text>
+        <text x="975" y="196" fill="#94a3b8" font-size="9" text-anchor="middle">standalone</text>
+        <text x="975" y="214" fill="#22d3ee" font-size="9" font-weight="600" text-anchor="middle">spark-master:7077</text>
+        <line x1="905" y1="228" x2="1045" y2="228" stroke="#1e293b" stroke-width="1"/>
+        <text x="975" y="248" fill="#ffffff" font-size="8" text-anchor="middle">driver + executor(s)</text>
+        <text x="975" y="266" fill="#94a3b8" font-size="8" text-anchor="middle">cores.max=1 · 1g</text>
+        <text x="975" y="284" fill="#94a3b8" font-size="8" text-anchor="middle">eventLog → s3a://spark-history</text>
+
+        <!-- Iceberg REST -->
+        <rect x="890" y="320" width="170" height="84" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="975" y="346" fill="#ffffff" font-size="12" font-weight="700" text-anchor="middle">Iceberg REST</text>
+        <text x="975" y="364" fill="#ffffff" font-size="12" font-weight="700" text-anchor="middle">Catalog</text>
+        <text x="975" y="384" fill="#94a3b8" font-size="8" text-anchor="middle">iceberg-rest:8181 · lakehouse</text>
+
+        <!-- Bronze sink -->
+        <rect x="1090" y="200" width="150" height="230" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="1165" y="226" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">BRONZE</text>
+        <text x="1165" y="248" fill="#22d3ee" font-size="8" text-anchor="middle">lakehouse.bronze.</text>
+        <text x="1165" y="264" fill="#22d3ee" font-size="10" font-weight="700" text-anchor="middle">nyc_taxi_trips</text>
+        <line x1="1100" y1="280" x2="1230" y2="280" stroke="#334155" stroke-width="1"/>
+        <text x="1165" y="300" fill="#fb923c" font-size="8" font-weight="600" text-anchor="middle">SINK</text>
+        <text x="1165" y="320" fill="#ffffff" font-size="8" text-anchor="middle">Iceberg table</text>
+        <text x="1165" y="336" fill="#94a3b8" font-size="8" text-anchor="middle">ACID · snapshots</text>
+        <text x="1165" y="354" fill="#94a3b8" font-size="8" text-anchor="middle">data on lakehouse/</text>
+        <text x="1165" y="386" fill="#22d3ee" font-size="8" text-anchor="middle">parquet → Iceberg</text>
+        <text x="1165" y="402" fill="#94a3b8" font-size="8" text-anchor="middle">createOrReplace</text>
+        <text x="1165" y="420" fill="#94a3b8" font-size="8" text-anchor="middle">full reload</text>
+
+        <!-- ================= CONNECTORS ================= -->
+        <!-- source -> jenkins -->
+        <line x1="230" y1="250" x2="258" y2="250" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="244" y="244" fill="#22d3ee" font-size="8" text-anchor="middle">git</text>
+
+        <!-- jenkins -> minio jars -->
+        <line x1="500" y1="324" x2="528" y2="290" stroke="#fb923c" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="514" y="300" fill="#fb923c" font-size="8" text-anchor="middle">mc cp</text>
+
+        <!-- minio jars -> airflow (artifact pulled at submit) -->
+        <path d="M 625 290 C 645 290, 645 250, 658 250" fill="none" stroke="#22d3ee" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arrowhead)"/>
+        <text x="642" y="262" fill="#22d3ee" font-size="8" text-anchor="middle">app.jar</text>
+
+        <!-- airflow -> spark -->
+        <line x1="860" y1="225" x2="888" y2="225" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="874" y="219" fill="#22d3ee" font-size="8" text-anchor="middle">submit</text>
+
+        <!-- spark -> iceberg -->
+        <line x1="975" y1="300" x2="975" y2="318" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="998" y="312" fill="#22d3ee" font-size="8" text-anchor="start">writeTo</text>
+
+        <!-- iceberg -> bronze -->
+        <line x1="1060" y1="362" x2="1088" y2="315" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="1078" y="346" fill="#22d3ee" font-size="8" text-anchor="middle">commit</text>
+
+        <!-- ================= BOTTOM STRIP ================= -->
+        <rect x="40" y="468" width="1200" height="62" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+        <text x="70" y="494" fill="#22d3ee" font-size="11" font-weight="600">Artifact</text>
+        <text x="70" y="514" fill="#94a3b8" font-size="9">nyc-taxi-etl-0.1.0.jar (shaded uber-jar, Scala 2.13 / Spark 4.1.2)</text>
+        <text x="470" y="494" fill="#22d3ee" font-size="11" font-weight="600">Promotes scenario</text>
+        <text x="470" y="514" fill="#94a3b8" font-size="9">batch_ingest-nyc_taxi (Jupyter) → productionized Maven app</text>
+        <text x="900" y="494" fill="#22d3ee" font-size="11" font-weight="600">Verify</text>
+        <text x="900" y="514" fill="#94a3b8" font-size="9">spark.table("lakehouse.bronze.nyc_taxi_trips").count()</text>
+      </svg>
