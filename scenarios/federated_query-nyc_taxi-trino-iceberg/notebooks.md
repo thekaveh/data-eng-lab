@@ -3,29 +3,24 @@
 Auto-extracted from `jupyter/notebook.ipynb` and `zeppelin/notebook.zpln`.
 Both notebooks implement identical logic in PySpark and Scala.
 
-## 2. Section map
+## 1. Section map
 
 | Section | Scala (Zeppelin) | PySpark (Jupyter) |
 |---|---|---|
-| 1. Overview | ✓ | ✓ |
 | 2. Setup | ✓ | ✓ |
 | 3. Read | ✓ | ✓ |
 | 4. Transform | ✓ | ✓ |
 | 5. Write | ✓ | ✓ |
 | 6. Verify | ✓ | ✓ |
 
-## 3. Walkthrough
-
-### 1. Overview
-
-## 1. Overview
+## 2. Walkthrough
 
 ### 2. Setup
 
 **Scala (Zeppelin):**
 
 ```scala
-
+-- %trino is pre-bound to the Atlas Trino coordinator (catalog: lakehouse)
 ```
 
 **PySpark (Jupyter):**
@@ -39,14 +34,12 @@ def q(sql):
     return cur.fetchall()
 ```
 
-## 2. Setup
-
 ### 3. Read
 
 **Scala (Zeppelin):**
 
 ```scala
-
+SELECT * FROM lakehouse.bronze.nyc_taxi_trips LIMIT 10
 ```
 
 **PySpark (Jupyter):**
@@ -55,14 +48,14 @@ def q(sql):
 q('SELECT * FROM lakehouse.bronze.nyc_taxi_trips LIMIT 10')
 ```
 
-## 3. Read
-
 ### 4. Transform
 
 **Scala (Zeppelin):**
 
 ```scala
-
+SELECT trip_date, count(*) AS trips, avg(fare_amount) AS avg_fare
+FROM lakehouse.bronze.nyc_taxi_trips
+GROUP BY trip_date ORDER BY trip_date
 ```
 
 **PySpark (Jupyter):**
@@ -72,14 +65,14 @@ q('SELECT trip_date, count(*) AS trips, avg(fare_amount) AS avg_fare '
   'FROM lakehouse.bronze.nyc_taxi_trips GROUP BY trip_date ORDER BY trip_date')
 ```
 
-## 4. Transform
-
 ### 5. Write
 
 **Scala (Zeppelin):**
 
 ```scala
-
+CREATE TABLE IF NOT EXISTS lakehouse.gold.nyc_taxi_daily_trino AS
+SELECT trip_date, count(*) AS trips, avg(fare_amount) AS avg_fare
+FROM lakehouse.bronze.nyc_taxi_trips GROUP BY trip_date
 ```
 
 **PySpark (Jupyter):**
@@ -90,14 +83,12 @@ q('CREATE TABLE IF NOT EXISTS lakehouse.gold.nyc_taxi_daily_trino AS '
   'FROM lakehouse.bronze.nyc_taxi_trips GROUP BY trip_date')
 ```
 
-## 5. Write
-
 ### 6. Verify
 
 **Scala (Zeppelin):**
 
 ```scala
-
+SELECT count(*) FROM lakehouse.gold.nyc_taxi_daily_trino
 ```
 
 **PySpark (Jupyter):**
@@ -106,12 +97,10 @@ q('CREATE TABLE IF NOT EXISTS lakehouse.gold.nyc_taxi_daily_trino AS '
 q('SELECT count(*) FROM lakehouse.gold.nyc_taxi_daily_trino')
 ```
 
-## 6. Verify
-
-## 4. Scala / PySpark parity
+## 3. Scala / PySpark parity
 
 Both notebooks share the same numbered sections and produce identical Iceberg tables; only the language and interpreter differ.
 
-## 5. How to run
+## 4. How to run
 
 Open the scenario's `zeppelin/notebook.zpln` on the Atlas Zeppelin UI or `jupyter/notebook.ipynb` on JupyterHub, then run all paragraphs/cells top to bottom.
