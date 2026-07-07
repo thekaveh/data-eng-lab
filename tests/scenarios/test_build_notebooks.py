@@ -44,8 +44,8 @@ def test_written_scenario_passes_verifier(tmp_path: Path):
     cfg = yaml.safe_load((ROOT / "scripts" / "verify_repo_config.yaml").read_text())
     # supply a valid README so the readme-section check passes
     readme = "# t\n\n" + "\n".join(f"## {s}\n\ntext\n" for s in [
-        "1. Scenario summary", "2. Why this exists", "3. What's in the notebooks",
-        "4. How to run", "5. Data & dependencies", "6. Known issues & caveats"])
+        "1. Purpose", "2. Data Model", "3. Architecture", "4. Notebooks",
+        "5. Orchestration", "6. Usage", "7. Dependencies", "8. Known Issues & Caveats"])
     (tmp_path / "scenarios" / "batch_ingest-nyc_taxi-spark-iceberg" / "README.md").write_text(readme)
     errors = [f for f in verify.run_checks(tmp_path, cfg) if f.severity == "error"]
     assert errors == [], errors

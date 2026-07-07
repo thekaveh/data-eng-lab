@@ -1,0 +1,118 @@
+<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
+# Notebooks — star_schema-tpch-spark-iceberg
+Auto-extracted from `jupyter/notebook.ipynb` and `zeppelin/notebook.zpln`.
+Both notebooks implement identical logic in PySpark and Scala.
+
+## 2. Section map
+
+| Section | Scala (Zeppelin) | PySpark (Jupyter) |
+|---|---|---|
+| 1. Overview | ✓ | ✓ |
+| 2. Setup | ✓ | ✓ |
+| 3. Read | ✓ | ✓ |
+| 4. Transform | ✓ | ✓ |
+| 5. Write | ✓ | ✓ |
+| 6. Verify | ✓ | ✓ |
+
+## 3. Walkthrough
+
+### 1. Overview
+
+## 1. Overview
+
+### 2. Setup
+
+**Scala (Zeppelin):**
+
+```scala
+
+```
+
+**PySpark (Jupyter):**
+
+```python
+from pyspark.sql import SparkSession
+from pyspark.sql import functions as F
+
+spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
+```
+
+## 2. Setup
+
+### 3. Read
+
+**Scala (Zeppelin):**
+
+```scala
+
+```
+
+**PySpark (Jupyter):**
+
+```python
+orders = spark.read.parquet("s3a://landing/tpch/orders")
+customer = spark.read.parquet("s3a://landing/tpch/customer")
+lineitem = spark.read.parquet("s3a://landing/tpch/lineitem")
+```
+
+## 3. Read
+
+### 4. Transform
+
+**Scala (Zeppelin):**
+
+```scala
+
+```
+
+**PySpark (Jupyter):**
+
+```python
+dimCustomer = customer.select(F.col("c_custkey"), F.col("c_name"), F.col("c_nationkey"), F.col("c_mktsegment"))
+fctOrders = (orders.join(lineitem, orders["o_orderkey"] == lineitem["l_orderkey"])
+    .groupBy(F.col("o_orderkey"), F.col("o_custkey"), F.col("o_orderdate"))
+    .agg(F.sum("l_extendedprice").alias("revenue"), F.count("*").alias("line_count")))
+```
+
+## 4. Transform
+
+### 5. Write
+
+**Scala (Zeppelin):**
+
+```scala
+
+```
+
+**PySpark (Jupyter):**
+
+```python
+dimCustomer.writeTo("lakehouse.gold.dim_customer").using("iceberg").createOrReplace()
+fctOrders.writeTo("lakehouse.gold.fct_orders").using("iceberg").createOrReplace()
+```
+
+## 5. Write
+
+### 6. Verify
+
+**Scala (Zeppelin):**
+
+```scala
+
+```
+
+**PySpark (Jupyter):**
+
+```python
+spark.sql("SELECT c.c_mktsegment, sum(f.revenue) AS revenue FROM lakehouse.gold.fct_orders f JOIN lakehouse.gold.dim_customer c ON f.o_custkey = c.c_custkey GROUP BY c.c_mktsegment").show()
+```
+
+## 6. Verify
+
+## 4. Scala / PySpark parity
+
+Both notebooks share the same numbered sections and produce identical Iceberg tables; only the language and interpreter differ.
+
+## 5. How to run
+
+Open the scenario's `zeppelin/notebook.zpln` on the Atlas Zeppelin UI or `jupyter/notebook.ipynb` on JupyterHub, then run all paragraphs/cells top to bottom.

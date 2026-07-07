@@ -1,34 +1,80 @@
+<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # bi_query-tpch-trino-iceberg
 
-Query the TPC-H gold-layer marts via Trino SQL — `lakehouse.gold.fct_orders`, `lakehouse.gold.dim_customer` →
-`lakehouse.gold.bi_segment_revenue` — from both a Zeppelin `%trino` notebook and a Jupyter notebook
-using the `trino` Python client. Both surfaces run identical SQL. Live-gated on Atlas #268.
+Queries gold-layer marts via Trino SQL, demonstrating Trino as a lightweight SQL-only analytics engine over Iceberg tables produced by Spark.
 
-## 1. Scenario summary
-Multi-engine query: Trino reads Iceberg tables written by Spark in the `star_schema` scenario, joins
-`fct_orders` and `dim_customer`, and aggregates revenue by market segment — all via standard ANSI SQL.
-Demonstrates the lightweight SQL-only query path for complex analytics over the TPC-H lakehouse.
+## 1. Purpose
 
-## 2. Why this exists
-Shows Trino as a lightweight, multi-engine alternative to Spark for analytical queries on the same Iceberg
-lakehouse. The gold marts (`fct_orders`, `dim_customer`) are written by Spark; Trino reads them for BI queries.
+Trino provides a lightweight, SQL-only query path over lakehouse data that complements Spark's programmatic ETL. This scenario shows how different engines can share the same underlying Iceberg tables: analysts can query data without writing Spark code. It reads `fct_orders` and `dim_customer` from the `star_schema` scenario, joins them, aggregates revenue by market segment, and writes a summary table — demonstrating true multi-engine lakehouse architecture.
 
-## 3. What's in the notebooks
-`zeppelin/notebook.zpln` (Trino SQL via `%trino`) and `jupyter/notebook.ipynb` (same SQL via the `trino`
-Python client), both with sections Overview→Verify; a `dag.py` EmptyOperator placeholder. Sections walk through
-reading the gold tables, aggregating by market segment, writing a summary table, and verifying the result.
+## 2. Data Model
 
-## 4. How to run
-Run `star_schema-tpch-spark-iceberg` first to create the gold-layer `fct_orders` and `dim_customer` tables.
-Then open either notebook on the Atlas stack. The Trino coordinator must be reachable at `trino:8080`.
-Trigger the `bi_query_tpch` Airflow DAG once a TrinoOperator integration is added (Atlas #268).
+### 2.1 Input Source
 
-## 5. Data & dependencies
-Requires `lakehouse.gold.fct_orders` and `lakehouse.gold.dim_customer` (populated by
-`star_schema-tpch-spark-iceberg`); Trino coordinator + Iceberg REST catalog (Atlas A5-A7, issue #268).
-The `lakehouse.gold` namespace must be created by running `scripts/register_iceberg.py` before the Write cell executes.
+Source: `lakehouse.gold` tables written by the upstream `star_schema-tpch-spark-iceberg` scenario.
 
-## 6. Known issues & caveats
-Live execution is gated on Atlas #268 (Trino coordinator integration). The `%trino` interpreter is
-seeded by Atlas pointing to the Atlas Trino coordinator. `lakehouse.gold` namespace must exist
-in the Iceberg REST catalog before the Write cell runs.
+From `lakehouse.gold.fct_orders`:
+
+| Column | Type | Notes |
+|---|---|---|
+| `o_orderkey` | long | Order key |
+| `o_custkey` | long | Customer FK |
+| `o_totalprice` | double | Order total |
+
+From `lakehouse.gold.dim_customer`:
+
+| Column | Type | Notes |
+|---|---|---|
+| `c_custkey` | long | Customer PK |
+| `c_name` | string | Customer name |
+| `c_mktsegment` | string | Market segment |
+
+### 2.2 Output Tables
+
+| Table | Layer | Key Columns |
+|---|---|---|
+| `lakehouse.gold.bi_segment_revenue` | Gold | `market_segment`, `total_revenue`, `order_count` |
+
+## 3. Architecture
+
+![Architecture](architectures/bi_query-tpch-trino-iceberg.svg)
+
+Data flows from gold-layer Iceberg tables (`fct_orders`, `dim_customer`) through Trino SQL queries. The Trino coordinator connects to the Iceberg catalog, reads the gold tables, joins them, aggregates revenue by market segment, and writes the summary back to the gold layer — all via standard ANSI SQL with no Spark involvement.
+
+## 4. Notebooks
+
+- **Zeppelin (Scala, `%trino`):** Sections: Overview, Read Gold Tables, Join + Aggregate, Write Summary, Verify; identical SQL to PySpark
+- **Jupyter (Py, `trino` client):** Sections: Overview, Read Gold Tables, Join + Aggregate, Write Summary, Verify; identical SQL executed via the Trino Python client connecting to `trino:8080`
+
+Both notebooks run the same SQL queries to demonstrate cross-engine parity for analytical queries.
+
+## 5. Orchestration
+
+Airflow DAG: EmptyOperator placeholder (trigger via notebooks only until TrinoOperator integration is added, Atlas #268).
+
+## 6. Usage
+
+1. Run the prerequisite scenario: `star_schema-tpch-spark-iceberg` (creates `fct_orders` and `dim_customer`)
+2. Ensure the `gold` Iceberg namespace exists: `scripts/register_iceberg.py`
+3. Open either notebook on the Atlas stack (Trino coordinator must be reachable at `trino:8080`) and run all sections
+4. Verify:
+     ```bash
+   spark-sql -e "SELECT * FROM lakehouse.gold.bi_segment_revenue ORDER BY total_revenue DESC"
+     ```
+
+## 7. Dependencies
+
+- **Dataset:** TPC-H gold tables (`fct_orders`, `dim_customer`) from `lakehouse.gold`
+- **Atlas services:** A5-A7 (Trino, Trino coordinator, Iceberg REST catalog)
+- **Other:** `trino` Python client (Jupyter notebook)
+
+## 8. Known Issues & Caveats
+
+Live execution is gated on Atlas #268 (Trino coordinator integration). The `%trino` Zeppelin interpreter is seeded by Atlas pointing to the Trino coordinator. The `lakehouse.gold` namespace must exist before the Write query runs. Requires the upstream `star_schema-tpch-spark-iceberg` to run first.
+
+## See Also
+
+- [Upstream: star_schema-tpch-spark-iceberg](../star_schema-tpch-spark-iceberg/README.md) — Populates the gold tables this scenario queries
+- [Related: join_optimization-tpch-spark-iceberg](../join_optimization-tpch-spark-iceberg/README.md) — Another TPC-H query optimization scenario
+- [Datasets](../../README.md#datasets)
+- [Lakehouse Architecture](../../README.md#lakehouse-architecture)

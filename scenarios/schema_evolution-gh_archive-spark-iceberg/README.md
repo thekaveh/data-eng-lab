@@ -1,27 +1,74 @@
+<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # schema_evolution-gh_archive-spark-iceberg
 
-Demonstrate Iceberg schema evolution: add a new column, rename an existing column, and verify that
-existing rows show `NULL` for the new column while new rows populate all columns.
-Scala (Zeppelin) and PySpark (Jupyter) notebooks implement the same logic.
+Handles schema evolution in GitHub Archive events using Iceberg's schema evolution to accommodate evolving JSON schema with new fields over time.
 
-## 1. Scenario summary
-Schema evolution: create table with initial schema (id, type, actor_login), insert a row, add
-`repo_name` column, rename `type` to `event_type`, insert a new row, then query to show old row has
-NULL for the new columns under the evolved schema.
+## 1. Purpose
 
-## 2. Why this exists
-Demonstrates Iceberg's schema evolution capabilities: columns can be added and renamed without
-rewriting existing data, and old rows transparently show NULL for new columns.
+This scenario demonstrates Iceberg's schema evolution capabilities — a critical feature for lakehouse pipelines where source data schema changes over time. It simulates schema changes by injecting new fields into a subset of JSON data, allowing the pipeline to gracefully accept evolving schema while preserving historical records written with the original schema.
 
-## 3. What's in the notebooks
-`zeppelin/notebook.zpln` (Scala) and `jupyter/notebook.ipynb` (PySpark), sections Overview->Verify; a `dag.py`.
+## 2. Data Model
 
-## 4. How to run
-Open either notebook on the Atlas stack, or trigger the `schema_evolution_gh_archive` Airflow DAG.
+### 2.1 Input Source
 
-## 5. Data & dependencies
-Spark + Iceberg `lakehouse` catalog (Atlas A1-A4); requires `lakehouse.silver` namespace to exist.
+Source: Compressed JSON files from GitHub Archive landing zone (`s3a://landing/gh_archive/*.json.gz`), with simulated schema evolution via injected fields.
 
-## 6. Known issues & caveats
-Notebook execution + Scala/PySpark parity are live-gated on Atlas A1-A4. Run `scripts/register_iceberg.py`
-(creates `bronze`, `silver`, and `gold` namespaces) before executing this scenario standalone.
+| Column | Type | Notes |
+|---|---|---|
+| All base JSON fields | varied | Standard GitHub Archive fields |
+| Evolved fields | varied | New fields injected into subset of data to simulate schema changes |
+
+### 2.2 Output Tables
+
+| Table | Layer | Key Columns |
+|---|---|---|
+| `lakehouse.silver.github_archive_events` | Silver | All source fields; schema evolves to include new injected fields |
+
+## 3. Architecture
+
+![Architecture](architectures/schema_evolution-gh_archive-spark-iceberg.svg)
+
+GitHub Archive JSON events flow from the landing zone through Spark batch processing with Iceberg's schema evolution enabled. As new fields appear in the JSON data, Iceberg automatically extends the table schema to include them, preserving historical records that were written with the original schema. No manual ALTER TABLE is required.
+
+## 4. Notebooks
+
+- **Zeppelin (Scala):** `zeppelin/notebook.zpln` — Sections: Overview, Read JSON Base, Inject Evolved Schema, Write with Schema Evolution, Verify Schema Evolution
+- **Jupyter (PySpark):** `jupyter/notebook.ipynb` — Same sections; same schema evolution logic using PySpark
+
+Both languages implement identical schema evolution logic with base data, evolved data injection, Iceberg schema evolution, and verification.
+
+## 5. Orchestration
+
+Airflow DAG: `schema_evolution_gh_archive` — a scheduled batch DAG.
+
+## 6. Usage
+
+1. Ensure the `silver` Iceberg namespace exists: `scripts/register_iceberg.py`
+2. Populate the landing zone: `make datasets`
+3. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
+     ```bash
+     airflow dags trigger schema_evolution_gh_archive
+     ```
+4. Verify:
+     ```bash
+     spark-sql -e "DESCRIBE lakehouse.silver.github_archive_events"
+     spark-sql -e "SELECT * FROM lakehouse.silver.github_archive_events LIMIT 10"
+     ```
+
+## 7. Dependencies
+
+- **Dataset:** GitHub Archive compressed JSON from `s3a://landing/gh_archive/`
+- **Atlas services:** A1-A4 (Spark, Iceberg, S3 catalog, lakehouse catalog)
+- **Other:** Iceberg schema evolution must be enabled
+
+## 8. Known Issues & Caveats
+
+Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `silver` namespace must exist; run `scripts/register_iceberg.py` first. Schema evolution relies on Iceberg's native capabilities — ensure Iceberg configuration supports auto-schema evolution.
+
+## See Also
+
+- [Related: json_flatten-gh_archive-spark-iceberg](../json_flatten-gh_archive-spark-iceberg/README.md) — JSON field extraction (upstream)
+- [Related: sessionization-gh_archive-spark-iceberg](../sessionization-gh_archive-spark-iceberg/README.md) — Consumes flattened events
+- [Related: streaming_ingest-gh_archive-spark-iceberg](../streaming_ingest-gh_archive-spark-iceberg/README.md) — Streaming version of JSON ingest
+- [Datasets](../../README.md#datasets)
+- [Lakehouse Architecture](../../README.md#lakehouse-architecture)

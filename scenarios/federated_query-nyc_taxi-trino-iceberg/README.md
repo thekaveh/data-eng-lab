@@ -1,35 +1,58 @@
+<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # federated_query-nyc_taxi-trino-iceberg
 
-Query the NYC-taxi Iceberg lakehouse via Trino SQL — `lakehouse.bronze.nyc_taxi_trips` →
-`lakehouse.gold.nyc_taxi_daily_trino` — from both a Zeppelin `%trino` notebook and a
-Jupyter notebook using the `trino` Python client. Both surfaces run identical SQL.
-Live-gated on Atlas #268.
+Query the NYC-taxi Iceberg lakehouse via Trino SQL — `lakehouse.bronze.nyc_taxi_trips` → `lakehouse.gold.nyc_taxi_daily_trino` — from both a Zeppelin `%trino` notebook and a Jupyter notebook using the `trino` Python client. Both surfaces run identical SQL.
 
-## 1. Scenario summary
-Federated query: Trino reads Iceberg tables directly via the `lakehouse` catalog, aggregates
-NYC-taxi trips into a daily summary (`nyc_taxi_daily_trino`), and writes the result back to
-the gold layer — all via standard ANSI SQL (no Spark required).
+## 1. Purpose
 
-## 2. Why this exists
-Demonstrates the Trino-as-query-engine path over the same Iceberg lakehouse used by the
-medallion scenario, providing a lightweight SQL-only alternative to PySpark/Scala workloads.
+This scenario demonstrates Trino as a query engine over the same Iceberg lakehouse used by Spark scenarios. Trino reads Iceberg tables directly via the `lakehouse` catalog, aggregates NYC-taxi trips into a daily summary, and writes the result back to the gold layer — all via standard ANSI SQL (no Spark required). It provides a lightweight SQL-only alternative to PySpark/Scala workloads, complementing Spark's programmatic ETL with ad-hoc querying.
 
-## 3. What's in the notebooks
-`zeppelin/notebook.zpln` (Trino SQL via `%trino`) and `jupyter/notebook.ipynb`
-(same SQL via the `trino` Python client), both with sections Overview→Verify; a `dag.py`
-EmptyOperator placeholder.
+## 2. Data Model
 
-## 4. How to run
-Open either notebook on the Atlas stack (after running `batch_ingest-nyc_taxi-spark-iceberg`).
-The Trino coordinator must be reachable at `trino:8080`. Trigger the
-`federated_query_nyc_taxi` Airflow DAG once a TrinoOperator integration is added (Atlas #268).
+### 2.1 Input Source
 
-## 5. Data & dependencies
-Requires `lakehouse.bronze.nyc_taxi_trips` (populated by `batch_ingest-nyc_taxi-spark-iceberg`);
-Trino coordinator + Iceberg REST catalog (Atlas A5-A7, issue #268).
-The `lakehouse.gold` namespace must be created by running `scripts/register_iceberg.py` before the Write cell executes.
+Source: `lakehouse.bronze.nyc_taxi_trips` (populated by `batch_ingest-nyc_taxi-spark-iceberg`).
 
-## 6. Known issues & caveats
-Live execution is gated on Atlas #268 (Trino coordinator integration). The `%trino`
-interpreter is seeded by Atlas pointing to the Atlas Trino coordinator.
-`lakehouse.gold` namespace must exist in the Iceberg REST catalog before the Write cell runs.
+### 2.2 Output Tables
+
+| Table | Layer | Key Columns |
+|---|---|---|
+| `lakehouse.gold.nyc_taxi_daily_trino` | Gold | `trip_date`, `trip_count`, `avg_fare` (aggregated daily summary) |
+
+## 3. Architecture
+
+![Architecture](architectures/federated_query-nyc_taxi-trino-iceberg.svg)
+
+Data flows from the bronze Iceberg table through Trino SQL aggregation into the gold layer. Trino reads directly from the Iceberg REST catalog (same catalog as Spark), executes ANSI SQL queries for daily aggregation, and writes results back — no Spark cluster involved.
+
+## 4. Notebooks
+
+- **Zeppelin (Scala, `%trino`):** Sections: Overview → Read Bronze Table, Aggregate by Day, Write Gold Summary → Verify; identical SQL to PySpark
+- **Jupyter (Py, `trino`):** Same sections; identical SQL via the Trino Python client
+
+## 5. Orchestration
+
+Airflow DAG: EmptyOperator placeholder (trigger via notebooks; TrinoOperator integration adds scheduling, Atlas #268).
+
+## 6. Usage
+
+1. Populate bronze table: `batch_ingest-nyc_taxi-spark-iceberg` (or ensure it exists)
+2. Ensure the `gold` Iceberg namespace exists: `scripts/register_iceberg.py`
+3. Open either notebook on the Atlas stack (Trino coordinator at `trino:8080`) and run all sections
+4. Verify: `spark-sql -e "SELECT * FROM lakehouse.gold.nyc_taxi_daily_trino LIMIT 10"`
+
+## 7. Dependencies
+
+- **Dataset:** NYC Taxi trips via `lakehouse.bronze.nyc_taxi_trips`
+- **Atlas services:** A5-A7 (Trino, Trino coordinator, Iceberg REST catalog)
+- **Other:** None
+
+## 8. Known Issues & Caveats
+
+Live execution is gated on Atlas #268 (Trino coordinator integration). The `%trino` interpreter is seeded by Atlas pointing to the Trino coordinator. The `lakehouse.gold` namespace must exist in the Iceberg REST catalog before the Write cell runs.
+
+## See Also
+
+- [Upstream: batch_ingest-nyc_taxi-spark-iceberg](../batch_ingest-nyc_taxi-spark-iceberg/README.md) — Populates the bronze table
+- [Datasets](../../README.md#datasets)
+- [Lakehouse Architecture](../../README.md#lakehouse-architecture)

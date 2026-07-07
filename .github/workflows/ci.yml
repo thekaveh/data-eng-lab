@@ -49,6 +49,12 @@ jobs:
           enable-cache: true
       - name: Build docs (strict)
         run: uv run --group dev mkdocs build --strict
+      - name: Docs build --check (idempotent)
+        run: uv run --group dev python scripts/build_docs.py --root . --check
+      - name: Docs surface check
+        run: uv run --group dev python scripts/check_surfaces.py --root .
+      - name: Docs diagram check
+        run: uv run --group dev python scripts/check_diagrams.py --root .
 
   maven-spark-apps:
     runs-on: ubuntu-24.04

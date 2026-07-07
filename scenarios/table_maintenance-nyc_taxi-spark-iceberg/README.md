@@ -1,39 +1,79 @@
+<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # table_maintenance-nyc_taxi-spark-iceberg
 
-Demonstrate Iceberg table maintenance operations on NYC-taxi data: compact data files via
-`rewrite_data_files`, expire old snapshots with `expire_snapshots`, and clean orphaned files via
-`remove_orphan_files`.
-Scala (Zeppelin) and PySpark (Jupyter) notebooks implement the same logic; a Phase-3a JAR
-productionizes it for Airflow.
+Demonstrates Iceberg table maintenance operations: overwrite, VACUUM, and time travel on NYC taxi trip data.
 
-## 1. Scenario summary
-Table-maintenance demo: builds a scenario-owned copy `lakehouse.silver.nyc_taxi_tm` (seeded from
-the shared bronze table, then augmented with a second snapshot), measures the initial data-file
-count, compacts files to a target size, expires all snapshots older than `current_timestamp()`
-(retaining the last 1), removes orphaned files, and verifies the final snapshot and file counts.
-Does NOT mutate the shared `lakehouse.bronze.nyc_taxi_trips`.
+## 1. Purpose
 
-## 2. Why this exists
-Demonstrates Iceberg's maintenance and optimization capabilities (compaction, snapshot expiry,
-orphan cleanup) that are critical for production lakehouse hygiene and cost control. Essential
-for understanding table lifecycle management.
+Iceberg provides powerful table maintenance operations that are essential for production lakehouse management: time travel (querying historical table versions), overwriting data by partition (efficiently replacing bad or outdated partitions), and VACUUM (removing orphan files and cleaning up old snapshots). This scenario shows all three operations in action on real taxi trip data.
 
-## 3. What's in the notebooks
-`zeppelin/notebook.zpln` (Scala) and `jupyter/notebook.ipynb` (PySpark), sections Overview->Verify;
-a `dag.py`.
+## 2. Data Model
 
-## 4. How to run
-Open either notebook on the Atlas stack (after running `batch_ingest_nyc_taxi`), or trigger the
-`table_maintenance_nyc_taxi` Airflow DAG.
+### 2.1 Input Source
 
-## 5. Data & dependencies
-Requires `lakehouse.bronze.nyc_taxi_trips` (populated by `batch_ingest-nyc_taxi-spark-iceberg`);
-Spark + Iceberg `lakehouse` catalog (Atlas A1-A4) with system procedures enabled.
+Source: `lakehouse.bronze.nyc_taxi_trips` (populated by `batch_ingest-nyc_taxi-spark-iceberg`).
 
-## 6. Known issues & caveats
-Notebook execution + Scala/PySpark parity are live-gated on Atlas A1-A4. The Iceberg catalog must
-support `system.rewrite_data_files`, `system.expire_snapshots`, and `system.remove_orphan_files`.
-Run `scripts/register_iceberg.py` (creates `bronze`, `silver`, and `gold`) before executing this
-scenario standalone. Run `make datasets` to populate `lakehouse.bronze.nyc_taxi_trips` first.
-Note: the scenario creates and operates on `lakehouse.silver.nyc_taxi_tm`; the shared bronze
-table is never modified.
+| Column | Type | Notes |
+|---|---|---|
+| `VendorID` | double | Vendor identifier |
+| `tpep_pickup_datetime` | timestamp | Pickup timestamp |
+| `tpep_dropoff_datetime` | timestamp | Dropoff timestamp |
+| `passenger_count` | int | Number of passengers |
+| `trip_distance` | double | Trip distance in miles |
+| `fare_amount` | double | Fare amount |
+| `total_amount` | double | Total amount |
+| `PULocationID` | int | Pickup location ID |
+| `DOLocationID` | int | Dropoff location ID |
+
+### 2.2 Output Tables
+
+| Table | Layer | Key Columns |
+|---|---|---|
+| `lakehouse.silver.maintenance_demo` | Silver | Demonstrates overwrite, VACUUM, and time travel |
+
+## 3. Architecture
+
+![Architecture](architectures/table_maintenance-nyc_taxi-spark-iceberg.svg)
+
+NYC taxi trip data from the bronze table flows through Spark batch processing demonstrating three Iceberg maintenance operations: (1) partition overwrite — replacing a specific date partition with new data, (2) VACUUM — cleaning up orphan metadata and data files, and (3) time travel — querying historical versions of the table using version or timestamp.
+
+## 4. Notebooks
+
+- **Zeppelin (Scala):** `zeppelin/notebook.zpln` — Sections: Overview, Create Table with Seed Data, Apply Changes (overwrite a partition), Time Travel (query previous version), VACUUM (clean up orphan files), Verify
+- **Jupyter (PySpark):** `jupyter/notebook.ipynb` — Same sections; same maintenance operations using PySpark with `OPTION (overwritePartitions = true)`, `VACUUM`, and time travel syntax `VERSION AS OF` / `TIMESTAMP AS OF`
+
+Both languages implement identical maintenance operations: seed data insertion, partition overwrite, time travel, and VACUUM.
+
+## 5. Orchestration
+
+Airflow DAG: `table_maintenance_nyc_taxi` — a scheduled batch DAG.
+
+## 6. Usage
+
+1. Ensure the `silver` and `gold` Iceberg namespaces exist: `scripts/register_iceberg.py`
+2. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
+     ```bash
+     airflow dags trigger table_maintenance_nyc_taxi
+     ```
+3. Verify:
+     ```bash
+     spark-sql -e "SELECT COUNT(*) FROM lakehouse.silver.maintenance_demo"
+     ```
+
+## 7. Dependencies
+
+- **Dataset:** NYC taxi trip data (via `lakehouse.bronze.nyc_taxi_trips` populated by batch_ingest)
+- **Atlas services:** A1-A4 (Spark, Iceberg, S3 catalog, lakehouse catalog)
+- **Other:** Iceberg table maintenance must be enabled in configuration
+
+## 8. Known Issues & Caveats
+
+Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. Both `silver` and `gold` namespaces must exist; run `scripts/register_iceberg.py` first. VACUUM retention is set to safety minimums — do not set retention below 1008 minutes (1 day) in production. The `retainLast(1)` ensures at least one history version is always kept.
+
+## See Also
+
+- [Related: batch_ingest-nyc_taxi-spark-iceberg](../batch_ingest-nyc_taxi-spark-iceberg/README.md) — Produces the bronze source data
+- [Related: medallion-nyc_taxi-spark-iceberg](../medallion-nyc_taxi-spark-iceberg/README.md) — Full medallion pipeline
+- [Production Spark app: nyc-taxi-medallion](../../spark-apps/nyc-taxi-medallion/README.md) — Phase-3a JAR productionizes this scenario for Airflow
+- [Datasets](../../README.md#datasets)
+- [Lakehouse Architecture](../../README.md#lakehouse-architecture)

@@ -2,7 +2,7 @@
 
 **Status:** draft contract `v0.2` · **Consumer repo:** `data-eng-lab` (private) · **Target:** [`thekaveh/atlas`](https://github.com/thekaveh/atlas)
 
-> **➡️ The authoritative hand-off is now [`docs/atlas-expectations.md`](atlas-expectations.md)** — it reflects the *delivered* reality (A1–A6, A8), the outstanding A7/A9 build specs, and the Iceberg/Spark capabilities each scenario relies on. This file remains the terse A1–A9 origin ledger.
+> **➡️ The authoritative hand-off is now [`atlas-expectations.md`](atlas-expectations.md)** — it reflects the delivered reality (A1–A9, all delivered). This file remains the terse A1–A9 origin ledger.
 
 > This document is a hand-off for the Atlas maintainer/worker. It enumerates the
 > infrastructure enhancements that `data-eng-lab` needs from Atlas. `data-eng-lab`
@@ -23,7 +23,7 @@
 
 - Launches Atlas via its own machinery: `./infra/start.sh --track data-eng --no-tui …`.
 - Adds nothing to the Atlas tree except a gitignored symlink in `services/_user/data-eng-lab/compose.yml`
-  (Atlas auto-discovers `services/_user/*/compose.yml` in `bootstrapper/core/docker_manager.py`).
+   (Atlas auto-discovers `services/_user/*/compose.yml` in `bootstrapper/core/docker_manager.py`).
 - Injects config through the public `infra/.env` contract only (`PROJECT_NAME`, bucket names, catalog URI, branding).
 - Bind-mounts its own notebooks / DAGs / datasets into the existing Atlas service containers and runs
   post-launch steps via `docker exec` after health-gating (the `rag-showcase` pattern).
@@ -38,7 +38,7 @@ built by **Jenkins** and published as JARs to a MinIO bucket.
 Please implement each new capability "the Atlas way", as observed in the current tree:
 
 - **Manifest-driven services** — every service declares `services/<name>/service.yml` (env vars,
-  `secret: true` / `auto_managed: true`, `runtime_sc:` mirror) + a `services/<name>/compose.yml`
+   `secret: true` / `auto_managed: true`, `runtime_sc:` mirror) + a `services/<name>/compose.yml`
   fragment `include:`d from the root `docker-compose.yml`.
 - **Ports** — allocated as `BASE_PORT + offset` by `bootstrapper/services/topology.py`; do not hardcode host ports.
 - **Secrets** — generated into `.env` by `bootstrapper/utils/key_generator.py`; `.env.example` is **generated** (edit the manifest, not the file).
@@ -70,7 +70,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## A1 — Iceberg REST catalog service + lakehouse buckets  · P0 · **DELIVERED**
+## A1 — Iceberg REST catalog service + lakehouse buckets   · P0 · **DELIVERED**
 
 **Delivered shape:**
 - Service: `apache/iceberg-rest-fixture:1.10.1` (Postgres-JDBC layer → Supabase `iceberg` DB).
@@ -81,37 +81,37 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## A2 — Iceberg Spark runtime on the Spark image  · P0 · **DELIVERED**
+## A2 — Iceberg Spark runtime on the Spark image   · P0 · **DELIVERED**
 
 **Delivered shape:**
 - Spark version: **4.1.2** (base image `apache/spark:4.1.2`).
 - Iceberg runtime: **`iceberg-spark-runtime-4.1_2.13:1.11.0`** + `iceberg-aws-bundle-1.11.0` + `hadoop-aws-3.4.2` (all SHA-512 verified, baked at image build).
 - Default catalog config injected into Spark Connect server conf:
-  ```
-  spark.sql.catalog.lakehouse=org.apache.iceberg.spark.SparkCatalog
-  spark.sql.catalog.lakehouse.type=rest
-  spark.sql.catalog.lakehouse.uri=http://iceberg-rest:8181
-  spark.sql.catalog.lakehouse.warehouse=s3a://lakehouse/
-  spark.sql.catalog.lakehouse.io-impl=org.apache.iceberg.aws.s3.S3FileIO
-  spark.sql.catalog.lakehouse.s3.endpoint=http://minio:9000
-  spark.sql.catalog.lakehouse.s3.path-style-access=true
-  spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
-  ```
+   ```
+   spark.sql.catalog.lakehouse=org.apache.iceberg.spark.SparkCatalog
+   spark.sql.catalog.lakehouse.type=rest
+   spark.sql.catalog.lakehouse.uri=http://iceberg-rest:8181
+   spark.sql.catalog.lakehouse.warehouse=s3a://lakehouse/
+   spark.sql.catalog.lakehouse.io-impl=org.apache.iceberg.aws.s3.S3FileIO
+   spark.sql.catalog.lakehouse.s3.endpoint=http://minio:9000
+   spark.sql.catalog.lakehouse.s3.path-style-access=true
+   spark.sql.extensions=org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions
+   ```
 
 ---
 
-## A3 — Zeppelin Spark interpreter auto-seeded  · P1 · **DELIVERED, with deviation**
+## A3 — Zeppelin Spark interpreter auto-seeded   · P1 · **DELIVERED, with deviation**
 
 **Delivered shape:**
 - Zeppelin uses **standalone `spark.master=spark://spark-master:7077` (client mode)**, NOT Spark Connect (`spark.remote`).
-  - Rationale: Spark 4 rejects mixing Connect and standalone master in a single interpreter; the default `%spark` Scala uses the standalone master for notebook data locality.
-  - **Implication:** Zeppelin notebooks author against a private Spark session (per notebook), not the shared Connect server. This is acceptable for development scenarios and decouples Zeppelin from the Connect server's fixed classpath.
+   - Rationale: Spark 4 rejects mixing Connect and standalone master in a single interpreter; the default `%spark` Scala uses the standalone master for notebook data locality.
+   - **Implication:** Zeppelin notebooks author against a private Spark session (per notebook), not the shared Connect server. This is acceptable for development scenarios and decouples Zeppelin from the Connect server's fixed classpath.
 - Interpreter auto-seeded at provision via Zeppelin REST API; JDBC + S3A properties included.
 - **Deviation:** No Spark Connect bridging in Zeppelin. Authors should use Jupyter (Connect + PySpark) for shared-session scenarios.
 
 ---
 
-## A4 — Data libraries in the JupyterHub image  · P1 · **DELIVERED**
+## A4 — Data libraries in the JupyterHub image   · P1 · **DELIVERED**
 
 **Delivered shape:**
 - Libraries: `boto3`, `s3fs`, `pyiceberg[s3fs]`, `pyarrow`, `duckdb` all baked into the image.
@@ -121,7 +121,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## A5 — Jenkins CI service  · P2 · **DELIVERED**
+## A5 — Jenkins CI service   · P2 · **DELIVERED**
 
 **Delivered shape:**
 - Base: `jenkins/jenkins:lts-jdk21` with Maven + `mc` + JCasC + plugin set (pipeline, git, config-as-code, job-dsl).
@@ -133,7 +133,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## A6 — Airflow as an S3A-capable `spark-submit` client  · P1 · **DELIVERED**
+## A6 — Airflow as an S3A-capable `spark-submit` client   · P1 · **DELIVERED**
 
 **Delivered shape:**
 - Airflow image (3.2.2): `apache-spark` + `amazon` providers + `pyspark-client==4.1.2`.
@@ -144,7 +144,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## A7 — *(stretch)* Trino query engine over Iceberg REST  · P3 · **DELIVERED**
+## A7 — *(stretch)* Trino query engine over Iceberg REST   · P3 · **DELIVERED**
 
 **Delivered shape:**
 - Service: `trinodb/trino:482` with Iceberg REST connector pointed at the `lakehouse` catalog (`iceberg-rest:8181`).
@@ -154,11 +154,11 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 - Python client: reaches `localhost:$TRINO_PORT` from host.
 - Member of `data-eng` track; `--trino-source` flag (default `disabled`).
 - Consumers: `scenarios/federated_query-nyc_taxi-trino-iceberg/`, `bi_query-tpch-trino-iceberg` (roadmap), live tests `tests/scenarios/test_trino_query_live.py`.
-- **Deviation:** Interpreter is `%trino`, not `%jdbc(trino)` (Zeppelin 0.12.1 semantics; also no auth, user convention `atlas`). See [`docs/atlas-feedback-a7a9.md`](atlas-feedback-a7a9.md) for the full delivery feedback.
+- **Deviation:** Interpreter is `%trino`, not `%jdbc(trino)` (Zeppelin 0.12.1 semantics; also no auth, user convention `atlas`). See [`atlas-feedback-a7a9.md`] for the full delivery feedback.
 
 ---
 
-## A9 — *(fast-follow)* Redpanda broker for streaming  · P3 · **DELIVERED**
+## A9 — *(fast-follow)* Redpanda broker for streaming   · P3 · **DELIVERED**
 
 **Delivered shape:**
 - Service: `redpandadata/redpanda:v26.1.12` (Kafka-API compatible broker).
@@ -169,11 +169,11 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 - Checkpoints: use existing `s3a://checkpoints/` bucket (MinIO).
 - Member of `data-eng` track; `--redpanda-source` flag (default `disabled`).
 - Consumers: `scenarios/streaming_ingest-events-spark-iceberg/`, `producer.py` (auto-creates topics), live tests `tests/scenarios/test_streaming_live.py`.
-- **Note:** Demo-topic default is only `atlas_stream_events`; projects override `REDPANDA_DEMO_TOPICS` or rely on `auto_create_topics_enabled`. See [`docs/atlas-feedback-a7a9.md`](atlas-feedback-a7a9.md) for the full delivery feedback.
+- **Note:** Demo-topic default is only `atlas_stream_events`; projects override `REDPANDA_DEMO_TOPICS` or rely on `auto_create_topics_enabled`. See [`atlas-feedback-a7a9.md`] for the full delivery feedback.
 
 ---
 
-## A8 — Track membership  · P1 · **DELIVERED**
+## A8 — Track membership   · P1 · **DELIVERED**
 
 **Delivered shape:**
 - `data-eng` track members: `spark`, `airflow`, `jupyterhub`, `zeppelin`, `minio`, `iceberg-rest`, `jenkins`, `supavisor`, `weaviate`, `neo4j`.
@@ -184,7 +184,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ## Key deviations from our original assumptions
 
-1. **Namespaces not pre-seeded:** Atlas init creates the Iceberg catalog (`lakehouse`) but no namespaces (`bronze`, `silver`, `gold`). They are created at go-live by `scripts/register_iceberg.py` (host-side), a one-time setup step before live validation (see `docs/go-live.md`).
+1. **Namespaces not pre-seeded:** Atlas init creates the Iceberg catalog (`lakehouse`) but no namespaces (`bronze`, `silver`, `gold`). They are created at go-live by `scripts/register_iceberg.py` (host-side), a one-time setup step before live validation (see `go-live.md`).
 
 2. **Zeppelin uses standalone Spark, not Spark Connect:** The seeded `%spark` Scala interpreter uses `spark.master=spark://spark-master:7077` (client mode, private to the notebook session) instead of Spark Connect. Rationale: Spark 4 rejects mixing Connect and standalone in a single interpreter. PySpark users should use Jupyter (Connect + `pyspark-client`) for shared-session semantics.
 
@@ -196,8 +196,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ## Open questions for the Atlas worker
 
-1. **Iceberg × Spark 4.1.2 compatibility** — is there an Iceberg Spark runtime published for Spark 4.1
-   / Scala 2.13? If not, what Spark version should we align on? *(Blocks A2.)*
+1. **Iceberg × Spark 4.1.2 compatibility** — is there an Iceberg Spark runtime published for Spark 4.1 / Scala 2.13? If not, what Spark version should we align on? *(Blocks A2.)*
 2. **REST catalog backend** — OK to add an `iceberg` database in Supabase Postgres for a JDBC catalog,
    or do you prefer a different persistence choice?
 3. **Airflow submit path** — standalone cluster deploy mode vs. hadoop-aws-in-Airflow for client mode? *(A6.)*

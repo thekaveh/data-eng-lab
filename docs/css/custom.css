@@ -1,0 +1,43 @@
+/* Orbital theme — data-eng-lab MkDocs Material. Flat dark canvas, faint cyan corner glow, no grid. */
+
+:root{
+  --md-accent-fg-color:#22d3ee;
+  --md-accent-fg-color--transparent:#22d3ee22;
+  --md-primary-fg-color:#22d3ee;
+  --md-primary-fg-color--light:#67e8f9;
+  --md-primary-fg-color--dark:#0e7490;
+  --md-default-bg-color:#0a0f1f;
+  --md-default-fg-color:#e2e8f0;
+  --md-text-font:"Inter",system-ui,sans-serif;
+  --md-code-font:"IBM Plex Mono",monospace;
+}
+[data-md-color-scheme="default"]{
+  --md-default-bg-color:#f6f8fb;
+  --md-default-fg-color:#1e293b;
+  --md-accent-fg-color:#0e7490;
+  --md-accent-fg-color--transparent:#0e749022;
+  --md-primary-fg-color:#0e7490;
+  --md-primary-fg-color--light:#0891b2;
+  --md-primary-fg-color--dark:#155e75;
+}
+
+.md-typeset h1,.md-typeset h2,.md-typeset h3{ font-family:"Space Grotesk","Inter",sans-serif; letter-spacing:-0.01em; }
+.md-header__title{ font-family:"Space Grotesk",sans-serif; }
+.md-typeset .headerlink{ color:var(--md-accent-fg-color); }
+.md-typeset a{ color:var(--md-accent-fg-color); }
+.md-nav__item--active>.md-nav__link{ color:var(--md-accent-fg-color); }
+
+/* HUD-ish mono breadcrumbs / labels */
+.md-path{ font-family:"IBM Plex Mono",monospace; font-size:.75rem; text-transform:uppercase; letter-spacing:.06em; }
+
+/* Tables */
+.md-typeset table{ border-collapse:collapse; border-radius:8px; overflow:hidden; }
+.md-typeset th{ background:color-mix(in srgb,var(--md-accent-fg-color) 14%,transparent); color:var(--md-default-fg-color); font-family:"IBM Plex Mono",monospace; font-weight:500; letter-spacing:.02em; }
+.md-typeset td{ padding:10px 16px; }
+
+/* Code */
+.md-typeset code,.md-typeset pre{ font-family:"IBM Plex Mono",monospace; border-radius:6px; }
+.md-typeset :not(pre)>code{ background:color-mix(in srgb,var(--md-accent-fg-color) 12%,transparent); }
+
+/* Admonitions: single left rule, accent */
+.md-admonition{ border-left:3px solid var(--md-accent-fg-color)!important; box-shadow:none; }

@@ -1,37 +1,80 @@
+<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # time_travel-nyc_taxi-spark-iceberg
 
-Demonstrate Iceberg time-travel capabilities on NYC-taxi data: create snapshots via inserts, query
-historical versions with `VERSION AS OF`, explore branching (write-audit-publish), and rollback to
-earlier snapshots.
-Scala (Zeppelin) and PySpark (Jupyter) notebooks implement the same logic; a Phase-3a JAR
-productionizes it for Airflow.
+Demonstrates Iceberg time travel capabilities — querying historical table versions using `VERSION AS OF` and `TIMESTAMP AS OF` syntax — on NYC taxi trip data.
 
-## 1. Scenario summary
-Time-travel demo: create an Iceberg table snapshot, insert additional data (creating a second
-snapshot), explore historical versions, create a WAP branch for safe mutation, and demonstrate
-rollback mechanisms. Uses `lakehouse.silver.nyc_taxi_tt` as a time-travel sandbox.
+## 1. Purpose
 
-## 2. Why this exists
-Demonstrates Iceberg's core time-travel and versioning features (snapshots, VERSION AS OF, branches,
-rollback) on a familiar dataset. Essential for understanding data governance and audit trails.
+Iceberg's time travel feature is a differentiator from traditional data warehouse tables. It allows querying the table as it existed at a previous point in time, either by version number or by timestamp. This scenario demonstrates time travel on NYC taxi trip data, showing how operations like inserts, overwrites, and appends create a version history that can be queried retrospectively.
 
-## 3. What's in the notebooks
-`zeppelin/notebook.zpln` (Scala) and `jupyter/notebook.ipynb` (PySpark), sections Overview->Verify;
-a `dag.py`.
+## 2. Data Model
 
-## 4. How to run
-Open either notebook on the Atlas stack (after running `batch_ingest_nyc_taxi`), or trigger the
-`time_travel_nyc_taxi` Airflow DAG.
+### 2.1 Input Source
 
-## 5. Data & dependencies
-Requires `lakehouse.bronze.nyc_taxi_trips` (populated by `batch_ingest-nyc_taxi-spark-iceberg`);
-Spark + Iceberg `lakehouse` catalog (Atlas A1-A4).
+Source: `s3a://landing/nyc_taxi/taxi_data.csv` (local CSV seed) plus NYC Taxi Trips Parquet data.
 
-## 6. Known issues & caveats
-Notebook execution + Scala/PySpark parity are live-gated on Atlas A1-A4. The `silver` namespace must
-exist in the Iceberg REST catalog.
-Run `scripts/register_iceberg.py` (creates `bronze`, `silver`, and `gold`) before executing this
-scenario standalone. Note: `lakehouse.silver.nyc_taxi_tt` is dropped at the end of the Verify
-section (or manually, e.g., `DROP TABLE IF EXISTS lakehouse.silver.nyc_taxi_tt`).
-The `VERSION AS OF` and `rollback_to_snapshot` lines in the Verify cell are commented examples;
-replace `<snapshot_id>` with a concrete id from the history query above before un-commenting.
+| Column | Type | Notes |
+|---|---|---|
+| `VendorID` | double | Vendor identifier |
+| `tpep_pickup_datetime` | timestamp | Pickup timestamp |
+| `tpep_dropoff_datetime` | timestamp | Dropoff timestamp |
+| `passenger_count` | int | Number of passengers |
+| `trip_distance` | double | Trip distance in miles |
+| `fare_amount` | double | Fare amount |
+| `total_amount` | double | Total amount |
+| `PULocationID` | int | Pickup location ID |
+| `DOLocationID` | int | Dropoff location ID |
+
+### 2.2 Output Tables
+
+| Table | Layer | Key Columns |
+|---|---|---|
+| `lakehouse.silver.time_travel_demo` | Silver | Demonstrates time travel via version and timestamp queries |
+
+## 3. Architecture
+
+![Architecture](architectures/time_travel-nyc_taxi-spark-iceberg.svg)
+
+NYC taxi trip data flows through Spark batch processing where the table undergoes multiple write operations (inserts and overwrites). After each operation, the table acquires a new snapshot. Time travel queries then read specific historical snapshots using either `VERSION AS OF <version>` or `TIMESTAMP AS OF <timestamp>`, demonstrating point-in-time accuracy. The scenario also explores Write-Audit-Publish (WAP) branching: create a WAP branch for safe mutation, validate reads against it, then fast-forward the branch to publish — all without affecting the main branch until the changes are ready.
+
+## 4. Notebooks
+
+- **Zeppelin (Scala):** `zeppelin/notebook.zpln` — Sections: Overview, Seed Table, Apply Multiple Changes, Time Travel by Version, Time Travel by Timestamp, Verify
+- **Jupyter (PySpark):** `jupyter/notebook.ipynb` — Same sections; same time travel logic using PySpark with `VERSION AS OF` and `TIMESTAMP AS OF` syntax
+
+Both languages implement identical time travel logic with multiple write operations and version/timestamp-based historical queries.
+
+## 5. Orchestration
+
+Airflow DAG: `time_travel_nyc_taxi` — a scheduled batch DAG.
+
+## 6. Usage
+
+1. Ensure the `silver` Iceberg namespace exists: `scripts/register_iceberg.py`
+2. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
+     ```bash
+     airflow dags trigger time_travel_nyc_taxi
+     ```
+3. Verify:
+     ```bash
+     spark-sql -e "SELECT * FROM lakehouse.silver.time_travel_demo LIMIT 10"
+     ```
+
+## 7. Dependencies
+
+- **Dataset:** NYC Taxi Trips CSV Parquet from `s3a://landing/nyc_taxi/`
+- **Atlas services:** A1-A4 (Spark, Iceberg, S3 catalog, lakehouse catalog)
+- **Other:** Iceberg time travel must be enabled (default configuration)
+
+## 8. Known Issues & Caveats
+
+Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `silver` namespace must exist; run `scripts/register_iceberg.py` first. Time travel snapshots are retained based on Iceberg retention settings — old snapshots may be expired by `VACUUM`. The notebook performs multiple operations on the same table, creating multiple snapshots for time travel demonstration.
+
+## See Also
+
+- [Related: batch_ingest-nyc_taxi-spark-iceberg](../batch_ingest-nyc_taxi-spark-iceberg/README.md) — Produces the bronze source data
+- [Related: table_maintenance-nyc_taxi-spark-iceberg](../table_maintenance-nyc_taxi-spark-iceberg/README.md) — Also demonstrates time travel
+- [Related: medallion-nyc_taxi-spark-iceberg](../medallion-nyc_taxi-spark-iceberg/README.md) — Full medallion pipeline
+- [Production Spark app: nyc-taxi-medallion](../../spark-apps/nyc-taxi-medallion/README.md) — Phase-3a JAR productionizes this scenario for Airflow
+- [Datasets](../../README.md#datasets)
+- [Lakehouse Architecture](../../README.md#lakehouse-architecture)

@@ -9,7 +9,7 @@
 6. Open a PR — one concern per PR.
 
 ## Adding a scenario
-See [`docs/scenarios.md`](docs/scenarios.md) for the step-by-step recipe.
+See [`docs/scenarios/index.md`](docs/scenarios/index.md) for the step-by-step recipe.
 
 ## Conventions
 - Never edit `infra/` (the Atlas submodule).

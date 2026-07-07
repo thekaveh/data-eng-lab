@@ -1,0 +1,146 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" font-family="'JetBrains Mono', 'Courier New', monospace">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <marker id="arrowhead-grey" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#94a3b8" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background -->
+        <rect width="1280" height="720" fill="#0a0f1f"/>
+        <rect width="1280" height="720" fill="url(#grid)"/>
+
+        <!-- Title -->
+        <text x="640" y="40" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">Data Lakehouse — Medallion Architecture</text>
+        <text x="640" y="62" fill="#94a3b8" font-size="12" text-anchor="middle">MinIO storage · Iceberg REST catalog · Spark + Trino compute</text>
+
+        <!-- ================= STORAGE CONTAINER ================= -->
+        <rect x="40" y="90" width="300" height="360" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="190" y="112" fill="#22d3ee" font-size="13" font-weight="600" text-anchor="middle">Storage (MinIO, S3-compatible)</text>
+
+        <!-- landing/ -->
+        <rect x="70" y="130" width="240" height="62" rx="6" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="190" y="152" fill="#ffffff" font-size="13" font-weight="600" text-anchor="middle">landing/</text>
+        <text x="190" y="172" fill="#94a3b8" font-size="10" text-anchor="middle">Raw Parquet / CSV / JSON sources</text>
+
+        <!-- lakehouse/ -->
+        <rect x="70" y="212" width="240" height="62" rx="6" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="190" y="234" fill="#ffffff" font-size="13" font-weight="600" text-anchor="middle">lakehouse/</text>
+        <text x="190" y="254" fill="#94a3b8" font-size="10" text-anchor="middle">Iceberg data + _metadata: bronze/ silver/ gold/</text>
+
+        <!-- jars/ -->
+        <rect x="70" y="294" width="240" height="62" rx="6" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="190" y="316" fill="#ffffff" font-size="13" font-weight="600" text-anchor="middle">jars/</text>
+        <text x="190" y="336" fill="#94a3b8" font-size="10" text-anchor="middle">Spark app JARs (Jenkins-published)</text>
+
+        <!-- checkpoints/ -->
+        <rect x="70" y="376" width="240" height="62" rx="6" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="190" y="398" fill="#ffffff" font-size="13" font-weight="600" text-anchor="middle">checkpoints/</text>
+        <text x="190" y="418" fill="#94a3b8" font-size="10" text-anchor="middle">Streaming offsets</text>
+
+        <!-- ================= COMPUTE CONTAINER ================= -->
+        <rect x="470" y="90" width="340" height="360" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="640" y="112" fill="#22d3ee" font-size="13" font-weight="600" text-anchor="middle">Compute</text>
+
+        <!-- Apache Spark -->
+        <rect x="500" y="140" width="280" height="110" rx="6" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="640" y="168" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">Apache Spark</text>
+        <text x="640" y="192" fill="#94a3b8" font-size="10" text-anchor="middle">s3a://lakehouse/ — batch + structured streaming</text>
+        <text x="640" y="210" fill="#94a3b8" font-size="10" text-anchor="middle">Spark Connect :15002 · PySpark + Scala</text>
+        <text x="640" y="232" fill="#22d3ee" font-size="9" text-anchor="middle">writeTo("iceberg").createOrReplace()</text>
+
+        <!-- Trino -->
+        <rect x="500" y="280" width="280" height="110" rx="6" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="640" y="308" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">Trino</text>
+        <text x="640" y="332" fill="#94a3b8" font-size="10" text-anchor="middle">SQL BI + federated reads</text>
+        <text x="640" y="350" fill="#94a3b8" font-size="10" text-anchor="middle">CTAS · ad-hoc analytics</text>
+        <text x="640" y="372" fill="#22d3ee" font-size="9" text-anchor="middle">SELECT … FROM lakehouse.gold.*</text>
+
+        <!-- ================= CATALOG CONTAINER ================= -->
+        <rect x="900" y="90" width="340" height="360" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="1070" y="112" fill="#22d3ee" font-size="13" font-weight="600" text-anchor="middle">Catalog</text>
+
+        <!-- Iceberg REST Catalog -->
+        <rect x="930" y="140" width="280" height="110" rx="6" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="1070" y="168" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">Iceberg REST Catalog</text>
+        <text x="1070" y="192" fill="#94a3b8" font-size="10" text-anchor="middle">iceberg-rest:8181</text>
+        <text x="1070" y="210" fill="#94a3b8" font-size="10" text-anchor="middle">catalog name: lakehouse</text>
+        <text x="1070" y="232" fill="#22d3ee" font-size="9" text-anchor="middle">namespaces: bronze · silver · gold</text>
+
+        <!-- Postgres -->
+        <rect x="930" y="280" width="280" height="110" rx="6" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="1070" y="308" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">Postgres</text>
+        <text x="1070" y="332" fill="#94a3b8" font-size="10" text-anchor="middle">supabase-db:5432</text>
+        <text x="1070" y="350" fill="#94a3b8" font-size="10" text-anchor="middle">metadata backend</text>
+        <text x="1070" y="372" fill="#22d3ee" font-size="9" text-anchor="middle">schema · snapshots · branches</text>
+
+        <!-- ================= CONNECTORS (drawn over boxes) ================= -->
+        <!-- landing/ -> Spark : s3a://landing/ -->
+        <line x1="310" y1="161" x2="498" y2="180" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="404" y="158" fill="#22d3ee" font-size="9" text-anchor="middle">s3a://landing/</text>
+
+        <!-- Spark -> Iceberg REST : writeTo iceberg -->
+        <line x1="780" y1="180" x2="928" y2="180" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="854" y="172" fill="#22d3ee" font-size="9" text-anchor="middle">writeTo iceberg</text>
+
+        <!-- Iceberg REST <-> Postgres : JDBC metadata -->
+        <line x1="1070" y1="250" x2="1070" y2="278" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)" marker-start="url(#arrowhead)"/>
+        <text x="1108" y="268" fill="#22d3ee" font-size="9" text-anchor="middle">JDBC</text>
+
+        <!-- Iceberg REST -> lakehouse/ bucket : data + _metadata on MinIO (curved down-left) -->
+        <path d="M 930 235 Q 720 470 310 245" fill="none" stroke="#22d3ee" stroke-width="1.5" stroke-dasharray="6,4" marker-end="url(#arrowhead)"/>
+        <text x="600" y="455" fill="#22d3ee" font-size="9" text-anchor="middle">data + _metadata on MinIO</text>
+
+        <!-- Trino -> Iceberg REST : federated SQL read -->
+        <line x1="780" y1="335" x2="928" y2="220" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="868" y="270" fill="#22d3ee" font-size="9" text-anchor="middle">federated SQL read</text>
+
+        <!-- jars/ -> Spark : spark-submit -->
+        <line x1="310" y1="325" x2="498" y2="210" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#arrowhead-grey)"/>
+        <text x="386" y="262" fill="#94a3b8" font-size="9" text-anchor="middle">spark-submit</text>
+
+        <!-- Spark <-> checkpoints/ : streaming offsets -->
+        <path d="M 498 230 Q 405 320 310 407" fill="none" stroke="#94a3b8" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arrowhead-grey)" marker-start="url(#arrowhead-grey)"/>
+        <text x="318" y="300" fill="#94a3b8" font-size="9" text-anchor="middle">streaming offsets</text>
+
+        <!-- ================= MEDALLION TIER STRIP ================= -->
+        <text x="640" y="492" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">Medallion Pattern</text>
+
+        <!-- bronze -->
+        <rect x="70" y="510" width="320" height="150" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="230" y="538" fill="#ffffff" font-size="16" font-weight="700" text-anchor="middle">BRONZE</text>
+        <text x="230" y="560" fill="#94a3b8" font-size="10" text-anchor="middle">raw landing · minimal transform</text>
+        <text x="230" y="580" fill="#22d3ee" font-size="10" text-anchor="middle">lakehouse.bronze</text>
+        <text x="230" y="604" fill="#94a3b8" font-size="9" text-anchor="middle">field validation · full-history retention</text>
+        <text x="230" y="624" fill="#94a3b8" font-size="9" text-anchor="middle">e.g. nyc_taxi_trips, events</text>
+
+        <!-- silver -->
+        <rect x="480" y="510" width="320" height="150" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="640" y="538" fill="#ffffff" font-size="16" font-weight="700" text-anchor="middle">SILVER</text>
+        <text x="640" y="560" fill="#94a3b8" font-size="10" text-anchor="middle">dedup · validate · schema-enforce</text>
+        <text x="640" y="580" fill="#22d3ee" font-size="10" text-anchor="middle">lakehouse.silver</text>
+        <text x="640" y="604" fill="#94a3b8" font-size="9" text-anchor="middle">cleaned, standardized, enriched</text>
+        <text x="640" y="624" fill="#94a3b8" font-size="9" text-anchor="middle">e.g. nyc_taxi_trips, online_retail</text>
+
+        <!-- gold -->
+        <rect x="890" y="510" width="320" height="150" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="1050" y="538" fill="#ffffff" font-size="16" font-weight="700" text-anchor="middle">GOLD</text>
+        <text x="1050" y="560" fill="#94a3b8" font-size="10" text-anchor="middle">business marts · BI aggregations</text>
+        <text x="1050" y="580" fill="#22d3ee" font-size="10" text-anchor="middle">lakehouse.gold</text>
+        <text x="1050" y="604" fill="#94a3b8" font-size="9" text-anchor="middle">daily aggregates · star schemas</text>
+        <text x="1050" y="624" fill="#94a3b8" font-size="9" text-anchor="middle">e.g. nyc_taxi_daily, bi_segment_revenue</text>
+
+        <!-- bronze -> silver -->
+        <line x1="390" y1="585" x2="478" y2="585" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <!-- silver -> gold -->
+        <line x1="800" y1="585" x2="888" y2="585" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+        <!-- Footer note -->
+        <text x="640" y="694" fill="#475569" font-size="9" text-anchor="middle">data-eng-lab · Iceberg on MinIO · REST catalog + Postgres · Spark/Trino compute</text>
+      </svg>
