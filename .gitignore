@@ -7,6 +7,8 @@ __pycache__/
 .coverage
 htmlcov/
 .DS_Store
+# Claude Code / superpowers scratch (brainstorm mockups, SDD reports — never committed)
+.superpowers/
 # MkDocs built site
 site/
 # wiki staging dir (built by scripts/build_docs.py, never committed)
