@@ -123,7 +123,7 @@ def rewrite_for_readme(target: str, current_doc_posix: str, doc_map: DocMap) -> 
     if doc_posix in doc_map.readme:
         return _relpath_between_docs(current_doc_posix, doc_map.readme[doc_posix])
     if doc_posix in _CONCEPTS:
-        anchor = _CONCEPTS[doc_posix][0]
+        anchor = doc_map.concepts_readme_anchor[doc_posix]
         return _relpath_to_root_readme(current_doc_posix, anchor)
     sibling = _sibling_readme(doc_posix)
     if sibling:

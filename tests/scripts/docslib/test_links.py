@@ -51,6 +51,15 @@ def test_readme_rejects_site_url():
     assert out == ""  # cross-surface link dropped
 
 
+def test_custom_concept_anchor_is_honored():
+    # A caller who customizes concepts_readme_anchor must be honored on the README surface
+    # (regression: the field was previously a dead field — rewrite_for_readme read the module
+    # constant directly).
+    m = DocMap(readme={}, wiki={}, concepts_readme_anchor={"datasets.md": "my-custom-datasets"})
+    out = rewrite_for_readme("datasets.md", "scenarios/foo-bar-baz-qux.md", m)
+    assert out == "../../README.md#my-custom-datasets"
+
+
 def test_wiki_uses_wiki_links():
     m = _map()
     cur = "scenarios/batch_ingest-nyc_taxi-spark-iceberg.md"
