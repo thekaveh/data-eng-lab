@@ -40,6 +40,12 @@ def _scan(root: Path) -> list[str]:
                 findings.append(f"wiki/{f.name}: links to .io site")
             if BANNER in text:
                 findings.append(f"wiki/{f.name}: contains mirror banner")
+            # mirror the README-surface SVG check: every embedded SVG must exist locally
+            # in the wiki dir (render_wiki rewrites diagrams to bare "<name>.svg" refs).
+            for m in SVG_REF.finditer(text):
+                svg = f.parent / m.group(1)
+                if not svg.exists():
+                    findings.append(f"wiki/{f.name}: missing local SVG {m.group(1)}")
     return findings
 
 

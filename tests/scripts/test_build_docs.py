@@ -40,3 +40,25 @@ def test_check_mode_clean_after_build(tmp_path):
     assert _run(repo).returncode == 0
     chk = _run(repo, "--check")
     assert chk.returncode == 0, chk.stdout + chk.stderr
+
+
+def test_concept_diagrams_copied_to_both_surfaces(tmp_path):
+    """Concept-page diagrams (referenced by docs/*.md) must land in both
+    <repo>/architectures/ (root README surface) and wiki/ (wiki surface)."""
+    repo = tmp_path / "repo"
+    shutil.copytree(FIX, repo)
+    arch = repo / "docs" / "architectures"
+    arch.mkdir(parents=True, exist_ok=True)
+    (arch / "overview.svg").write_text("<svg/>")
+    (arch / "batch_ingest-nyc_taxi-spark-iceberg.svg").write_text("<svg/>")
+    # add a concept-page diagram ref to docs/index.md (the root-README source)
+    idx = repo / "docs" / "index.md"
+    idx.write_text(idx.read_text(encoding="utf-8")
+                   + "\n![Full-stack Lakehouse](architectures/overview.svg)\n")
+    wd = repo / "wiki"
+    r = _run(repo)
+    assert r.returncode == 0, r.stderr
+    # in-repo README surface
+    assert (repo / "architectures" / "overview.svg").exists()
+    # wiki surface
+    assert (wd / "overview.svg").exists()

@@ -47,3 +47,22 @@ def test_missing_local_svg_fails(tmp_path):
     (tmp_path / "scenarios" / "a").mkdir()
     (tmp_path / "scenarios" / "a" / "README.md").write_text("![d](architectures/a.svg)\n")
     assert cs.main(["--root", str(tmp_path)]) == 1
+
+
+def test_wiki_missing_local_svg_fails(tmp_path):
+    """A wiki page embedding a bare SVG ref with no local copy in wiki/ must fail."""
+    cs = _load()
+    (tmp_path / "README.md").write_text("ok no links\n")
+    (tmp_path / "wiki").mkdir()
+    (tmp_path / "wiki" / "Home.md").write_text("![lead](overview.svg)\n")
+    assert cs.main(["--root", str(tmp_path)]) == 1
+
+
+def test_wiki_svg_with_local_copy_passes(tmp_path):
+    """A wiki page embedding a bare SVG ref whose local copy exists must pass."""
+    cs = _load()
+    (tmp_path / "README.md").write_text("ok no links\n")
+    (tmp_path / "wiki").mkdir()
+    (tmp_path / "wiki" / "Home.md").write_text("![lead](overview.svg)\n")
+    (tmp_path / "wiki" / "overview.svg").write_text("<svg/>")
+    assert cs.main(["--root", str(tmp_path)]) == 0
