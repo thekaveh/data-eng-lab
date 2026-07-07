@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+
+{% block styles %}
+  {{ super() }}
+  <style>
+    :root{
+      --orbital-bg:#0a0f1f; --orbital-accent:#22d3ee;
+    }
+    [data-md-color-scheme="default"]{
+      --orbital-bg:#f6f8fb; --orbital-accent:#0e7490;
+    }
+    body{ background-color:var(--orbital-bg); position:relative; }
+    body::before{
+      content:""; position:fixed; inset:0; pointer-events:none; z-index:-1;
+      background:radial-gradient(circle at 88% -5%,
+        color-mix(in srgb, var(--orbital-accent) 7%, transparent) 0%, transparent 38%);
+    }
+  </style>
+{% endblock %}
+
+{% block fonts %}
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+{% endblock %}

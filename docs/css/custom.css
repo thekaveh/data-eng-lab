@@ -1,104 +1,43 @@
-/* Custom theme overrides — data-eng-lab MkDocs Material */
+/* Orbital theme — data-eng-lab MkDocs Material. Flat dark canvas, faint cyan corner glow, no grid. */
 
-/* ── Color palette ─────────────────────────────────────────────────── */
-/* Dark (default): deep-purple primary, amber accent */
-/* Light (toggle): matching palette */
-
-:root {
-   --md-accent-fg-color: #f59e0b;
-   --md-accent-fg-color--transparent: #f59e0b22;
-   --md-primary-fg-color: #4338ca;
-   --md-primary-fg-color--light: #6366f1;
-   --md-primary-fg-color--dark: #3730a3;
-   --md-default-bg-color: #0f172a;
+:root{
+  --md-accent-fg-color:#22d3ee;
+  --md-accent-fg-color--transparent:#22d3ee22;
+  --md-primary-fg-color:#22d3ee;
+  --md-primary-fg-color--light:#67e8f9;
+  --md-primary-fg-color--dark:#0e7490;
+  --md-default-bg-color:#0a0f1f;
+  --md-default-fg-color:#e2e8f0;
+  --md-text-font:"Inter",system-ui,sans-serif;
+  --md-code-font:"IBM Plex Mono",monospace;
 }
-
-[data-md-color-scheme="default"] {
-   --md-default-bg-color: #f8fafc;
-   --md-default-fg-color: #1e293b;
-   --md-accent-fg-color: #d97706;
-   --md-accent-fg-color--transparent: #d9770622;
-   --md-primary-fg-color: #4338ca;
-   --md-primary-fg-color--light: #6366f1;
-   --md-primary-fg-color--dark: #3730a3;
+[data-md-color-scheme="default"]{
+  --md-default-bg-color:#f6f8fb;
+  --md-default-fg-color:#1e293b;
+  --md-accent-fg-color:#0e7490;
+  --md-accent-fg-color--transparent:#0e749022;
+  --md-primary-fg-color:#0e7490;
+  --md-primary-fg-color--light:#0891b2;
+  --md-primary-fg-color--dark:#155e75;
 }
 
-/* ── Callouts / Admonitions ────────────────────────────────────────── */
-.md-admonition {
-  border-left: 4px solid var(--md-primary-fg-color) !important;
-}
-.md-admonition.note .md-admonition-icon {
-  background: var(--md-primary-fg-color);
-}
-.md-admonition.tip .md-admonition-icon {
-  background: #10b981;
-}
-.md-admonition.warning .md-admonition-icon {
-  background: #f59e0b;
-}
-.md-admonition.warning {
-  border-left-color: #f59e0b !important;
-}
-.md-admonition.danger .md-admonition-icon {
-  background: #ef4444;
-}
-.md-admonition.danger {
-  border-left-color: #ef4444 !important;
-}
+.md-typeset h1,.md-typeset h2,.md-typeset h3{ font-family:"Space Grotesk","Inter",sans-serif; letter-spacing:-0.01em; }
+.md-header__title{ font-family:"Space Grotesk",sans-serif; }
+.md-typeset .headerlink{ color:var(--md-accent-fg-color); }
+.md-typeset a{ color:var(--md-accent-fg-color); }
+.md-nav__item--active>.md-nav__link{ color:var(--md-accent-fg-color); }
 
-/* ── Tables ────────────────────────────────────────────────────────── */
-.md-typeset table {
-  border-collapse: collapse;
-  border-radius: 8px;
-  overflow: hidden;
-}
-.md-typeset th {
-  background-color: var(--md-primary-fg-color) !important;
-  color: var(--md-default-bg-color) !important;
-  font-weight: 600;
-  letter-spacing: 0.025em;
-  text-transform: none;
-  padding: 12px 16px;
-}
-.md-typeset td {
-  padding: 10px 16px;
-  vertical-align: top;
-}
-.md-typeset table:not(.highlighttable) {
-  box-shadow: 0 1px 3px #00000022;
-}
+/* HUD-ish mono breadcrumbs / labels */
+.md-path{ font-family:"IBM Plex Mono",monospace; font-size:.75rem; text-transform:uppercase; letter-spacing:.06em; }
 
-[data-md-color-scheme="default"] .md-typeset table:not(.highlighttable) {
-  box-shadow: 0 1px 3px rgba(0,0,0,0.12);
-}
+/* Tables */
+.md-typeset table{ border-collapse:collapse; border-radius:8px; overflow:hidden; }
+.md-typeset th{ background:color-mix(in srgb,var(--md-accent-fg-color) 14%,transparent); color:var(--md-default-fg-color); font-family:"IBM Plex Mono",monospace; font-weight:500; letter-spacing:.02em; }
+.md-typeset td{ padding:10px 16px; }
 
-/* ── Cards / Grids ─────────────────────────────────────────────────── */
-.md-typeset .grid {
-  gap: 1rem;
-}
-.md-typeset .grid > .card {
-  border-radius: 8px;
-  border: 1px solid var(--md-code-border-color, #2d3748);
-  transition: border-color 0.2s, box-shadow 0.2s;
-  overflow: hidden;
-}
-.md-typeset .grid > .card:hover {
-  border-color: var(--md-primary-fg-color--light);
-  box-shadow: 0 2px 8px #00000033;
-}
+/* Code */
+.md-typeset code,.md-typeset pre{ font-family:"IBM Plex Mono",monospace; border-radius:6px; }
+.md-typeset :not(pre)>code{ background:color-mix(in srgb,var(--md-accent-fg-color) 12%,transparent); }
 
-/* ── Link styling ──────────────────────────────────────────────────── */
-.md-typeset a {
-  text-decoration: none;
-}
-.md-typeset a:hover {
-  text-decoration: underline;
-}
-
-/* ── Code blocks ───────────────────────────────────────────────────── */
-.md-typeset code {
-  border-radius: 4px;
-}
-.md-typeset pre {
-  border-radius: 8px;
-}
+/* Admonitions: single left rule, accent */
+.md-admonition{ border-left:3px solid var(--md-accent-fg-color)!important; box-shadow:none; }
