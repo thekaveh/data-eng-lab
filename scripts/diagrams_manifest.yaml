@@ -1,0 +1,169 @@
+# Declarative inputs for architecture-diagram generation (Task 11) + checks.
+# Every diagram is a landscape SVG written to docs/architectures/<output>.
+# Count: overview + lakehouse + 19 scenarios + 2 apps = 23 entries.
+orientation: landscape
+diagrams:
+  - name: overview
+    title: "Full-stack lakehouse"
+    kind: overview
+    output: overview.svg
+    sources:
+      - docs/index.md
+      - docs/lakehouse.md
+  - name: lakehouse
+    title: "Medallion flow"
+    kind: lakehouse
+    output: lakehouse.svg
+    sources:
+      - docs/lakehouse.md
+
+  # --- 19 scenarios (one per scenarios/<name>/) ---
+  - name: batch_ingest-nyc_taxi-spark-iceberg
+    title: "Batch ingest (NYC taxi)"
+    kind: scenario
+    output: batch_ingest-nyc_taxi-spark-iceberg.svg
+    sources:
+      - scenarios/batch_ingest-nyc_taxi-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/batch_ingest-nyc_taxi-spark-iceberg/dag.py
+  - name: bi_query-tpch-trino-iceberg
+    title: "BI query (TPCH via Trino)"
+    kind: scenario
+    output: bi_query-tpch-trino-iceberg.svg
+    sources:
+      - scenarios/bi_query-tpch-trino-iceberg/jupyter/notebook.ipynb
+      - scenarios/bi_query-tpch-trino-iceberg/dag.py
+  - name: cdc_streaming-online_retail-spark-iceberg
+    title: "CDC streaming (online retail)"
+    kind: scenario
+    output: cdc_streaming-online_retail-spark-iceberg.svg
+    sources:
+      - scenarios/cdc_streaming-online_retail-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/cdc_streaming-online_retail-spark-iceberg/dag.py
+  - name: data_quality-nyc_taxi-spark-iceberg
+    title: "Data quality (NYC taxi)"
+    kind: scenario
+    output: data_quality-nyc_taxi-spark-iceberg.svg
+    sources:
+      - scenarios/data_quality-nyc_taxi-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/data_quality-nyc_taxi-spark-iceberg/dag.py
+  - name: feature_engineering-movielens-spark-iceberg
+    title: "Feature engineering (MovieLens)"
+    kind: scenario
+    output: feature_engineering-movielens-spark-iceberg.svg
+    sources:
+      - scenarios/feature_engineering-movielens-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/feature_engineering-movielens-spark-iceberg/dag.py
+  - name: federated_query-nyc_taxi-trino-iceberg
+    title: "Federated query (NYC taxi via Trino)"
+    kind: scenario
+    output: federated_query-nyc_taxi-trino-iceberg.svg
+    sources:
+      - scenarios/federated_query-nyc_taxi-trino-iceberg/jupyter/notebook.ipynb
+      - scenarios/federated_query-nyc_taxi-trino-iceberg/dag.py
+  - name: incremental_upsert-online_retail-spark-iceberg
+    title: "Incremental upsert (online retail)"
+    kind: scenario
+    output: incremental_upsert-online_retail-spark-iceberg.svg
+    sources:
+      - scenarios/incremental_upsert-online_retail-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/incremental_upsert-online_retail-spark-iceberg/dag.py
+  - name: join_optimization-tpch-spark-iceberg
+    title: "Join optimization (TPCH)"
+    kind: scenario
+    output: join_optimization-tpch-spark-iceberg.svg
+    sources:
+      - scenarios/join_optimization-tpch-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/join_optimization-tpch-spark-iceberg/dag.py
+  - name: json_flatten-gh_archive-spark-iceberg
+    title: "JSON flatten (GH archive)"
+    kind: scenario
+    output: json_flatten-gh_archive-spark-iceberg.svg
+    sources:
+      - scenarios/json_flatten-gh_archive-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/json_flatten-gh_archive-spark-iceberg/dag.py
+  - name: medallion-nyc_taxi-spark-iceberg
+    title: "Medallion (NYC taxi)"
+    kind: scenario
+    output: medallion-nyc_taxi-spark-iceberg.svg
+    sources:
+      - scenarios/medallion-nyc_taxi-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/medallion-nyc_taxi-spark-iceberg/dag.py
+  - name: scd2-online_retail-spark-iceberg
+    title: "SCD2 (online retail)"
+    kind: scenario
+    output: scd2-online_retail-spark-iceberg.svg
+    sources:
+      - scenarios/scd2-online_retail-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/scd2-online_retail-spark-iceberg/dag.py
+  - name: schema_evolution-gh_archive-spark-iceberg
+    title: "Schema evolution (GH archive)"
+    kind: scenario
+    output: schema_evolution-gh_archive-spark-iceberg.svg
+    sources:
+      - scenarios/schema_evolution-gh_archive-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/schema_evolution-gh_archive-spark-iceberg/dag.py
+  - name: sessionization-gh_archive-spark-iceberg
+    title: "Sessionization (GH archive)"
+    kind: scenario
+    output: sessionization-gh_archive-spark-iceberg.svg
+    sources:
+      - scenarios/sessionization-gh_archive-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/sessionization-gh_archive-spark-iceberg/dag.py
+  - name: star_schema-tpch-spark-iceberg
+    title: "Star schema (TPCH)"
+    kind: scenario
+    output: star_schema-tpch-spark-iceberg.svg
+    sources:
+      - scenarios/star_schema-tpch-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/star_schema-tpch-spark-iceberg/dag.py
+  - name: streaming_ingest-events-spark-iceberg
+    title: "Streaming ingest (events)"
+    kind: scenario
+    output: streaming_ingest-events-spark-iceberg.svg
+    sources:
+      - scenarios/streaming_ingest-events-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/streaming_ingest-events-spark-iceberg/dag.py
+  - name: streaming_ingest-gh_archive-spark-iceberg
+    title: "Streaming ingest (GH archive)"
+    kind: scenario
+    output: streaming_ingest-gh_archive-spark-iceberg.svg
+    sources:
+      - scenarios/streaming_ingest-gh_archive-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/streaming_ingest-gh_archive-spark-iceberg/dag.py
+  - name: streaming_windows-events-spark-iceberg
+    title: "Streaming windows (events)"
+    kind: scenario
+    output: streaming_windows-events-spark-iceberg.svg
+    sources:
+      - scenarios/streaming_windows-events-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/streaming_windows-events-spark-iceberg/dag.py
+  - name: table_maintenance-nyc_taxi-spark-iceberg
+    title: "Table maintenance (NYC taxi)"
+    kind: scenario
+    output: table_maintenance-nyc_taxi-spark-iceberg.svg
+    sources:
+      - scenarios/table_maintenance-nyc_taxi-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/table_maintenance-nyc_taxi-spark-iceberg/dag.py
+  - name: time_travel-nyc_taxi-spark-iceberg
+    title: "Time travel (NYC taxi)"
+    kind: scenario
+    output: time_travel-nyc_taxi-spark-iceberg.svg
+    sources:
+      - scenarios/time_travel-nyc_taxi-spark-iceberg/jupyter/notebook.ipynb
+      - scenarios/time_travel-nyc_taxi-spark-iceberg/dag.py
+
+  # --- 2 apps (one per spark-apps/<name>/) ---
+  - name: nyc-taxi-etl
+    title: "NYC taxi ETL (Spark app)"
+    kind: app
+    output: nyc-taxi-etl.svg
+    sources:
+      - spark-apps/nyc-taxi-etl/pom.xml
+      - spark-apps/nyc-taxi-etl/Jenkinsfile
+  - name: nyc-taxi-medallion
+    title: "NYC taxi medallion (Spark app)"
+    kind: app
+    output: nyc-taxi-medallion.svg
+    sources:
+      - spark-apps/nyc-taxi-medallion/pom.xml
+      - spark-apps/nyc-taxi-medallion/Jenkinsfile
