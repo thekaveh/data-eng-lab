@@ -79,7 +79,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
 | What | Count |
 |------|-------|
-| Scenario notebooks (Scala + PySpark pairs) | 19 |
+| Scenario notebooks (Scala + PySpark pairs) | 19 (14 batch, 4 streaming, 1 hybrid) |
 | CI-verified Maven Spark apps | 2 |
 | Curated datasets | 5 |
 | Atlas enablement items (A1–A9) | 9 |
@@ -110,6 +110,34 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 | [json_flatten-gh_archive-spark-iceberg](scenarios/json_flatten-gh_archive-spark-iceberg.md) | Spark | Silver | GH Archive |
 | [sessionization-gh_archive-spark-iceberg](scenarios/sessionization-gh_archive-spark-iceberg.md) | Spark | Silver | GH Archive |
 | [incremental_upsert-online_retail-spark-iceberg](scenarios/incremental_upsert-online_retail-spark-iceberg.md) | Spark | Silver | Online Retail |
+
+---
+
+## Scenarios by Category
+
+**Batch Ingestion** — `batch_ingest`
+
+**Medallion Pipeline** — `medallion`
+
+**Data Quality** — `data_quality`
+
+**Schema & Maintenance** — `schema_evolution`, `time_travel`, `table_maintenance`
+
+**Streaming** — `streaming_ingest` (events + gh_archive), `streaming_windows`, `cdc_streaming`
+
+**BI & Queries** — `federated_query`, `bi_query`
+
+**Join Optimization** — `join_optimization`
+
+**Dimensional Modeling** — `star_schema`
+
+**Feature Engineering** — `feature_engineering`
+
+**SCD** — `scd2`
+
+**JSON Processing** — `json_flatten`
+
+**Session Analysis** — `sessionization`
 
 ---
 

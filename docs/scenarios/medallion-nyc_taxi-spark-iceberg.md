@@ -76,5 +76,6 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. All t
 
 - [Related: batch_ingest-nyc_taxi-spark-iceberg](./batch_ingest-nyc_taxi-spark-iceberg.md) — Produces the bronze source table
 - [Related: data_quality-nyc_taxi-spark-iceberg](./data_quality-nyc_taxi-spark-iceberg.md) — Quality checks on ingested data
+- [Production Spark app: nyc-taxi-medallion](../spark-apps/nyc-taxi-medallion.md) — Phase-3a JAR productionizes this scenario for Airflow
 - [Datasets](../datasets.md)
 - [Lakehouse Architecture](../lakehouse.md)

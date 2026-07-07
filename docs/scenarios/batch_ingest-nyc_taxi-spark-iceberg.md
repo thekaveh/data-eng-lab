@@ -85,5 +85,6 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `
 - [Related: data_quality-nyc_taxi-spark-iceberg](./data_quality-nyc_taxi-spark-iceberg.md) — Quality checks on ingested data
 - [Related: medallion-nyc_taxi-spark-iceberg](./medallion-nyc_taxi-spark-iceberg.md) — Medallion transforms downstream
 - [Related: time_travel-nyc_taxi-spark-iceberg](./time_travel-nyc_taxi-spark-iceberg.md) — Iceberg time travel on ingested tables
+- [Production Spark app: nyc-taxi-etl](../spark-apps/nyc-taxi-etl.md) — Phase-3a JAR productionizes this scenario for Airflow
 - [Datasets](../datasets.md)
 - [Lakehouse Architecture](../lakehouse.md)
