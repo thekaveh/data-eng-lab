@@ -13,8 +13,8 @@ import nbformat
 NAME_RE = re.compile(r"^[a-z0-9_]+-[a-z0-9_]+-[a-z0-9_]+-[a-z0-9_]+$")
 
 README_SECTIONS = [
-    "1. Scenario summary", "2. Why this exists", "3. What's in the notebooks",
-    "4. How to run", "5. Data & dependencies", "6. Known issues & caveats",
+    "1. Purpose", "2. Data Model", "3. Architecture", "4. Notebooks",
+    "5. Orchestration", "6. Usage", "7. Dependencies", "8. Known Issues & Caveats",
 ]
 NB_SECTIONS = ["1. Overview", "2. Setup", "3. Read", "4. Transform", "5. Write", "6. Verify"]
 

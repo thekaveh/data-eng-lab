@@ -15,8 +15,8 @@ def _make_valid_scenario(root: Path, name: str = "batch_ingest-nyc_taxi-spark-ic
     d = root / "scenarios" / name
     (d / "zeppelin").mkdir(parents=True)
     (d / "jupyter").mkdir(parents=True)
-    sections = ["1. Scenario summary", "2. Why this exists", "3. What's in the notebooks",
-                "4. How to run", "5. Data & dependencies", "6. Known issues & caveats"]
+    sections = ["1. Purpose", "2. Data Model", "3. Architecture", "4. Notebooks",
+                "5. Orchestration", "6. Usage", "7. Dependencies", "8. Known Issues & Caveats"]
     (d / "README.md").write_text("# t\n\n" + "\n".join(f"## {s}\n\ntext\n" for s in sections))
     nb_marker = " ".join(f"## {s}" for s in NB_SECS)
     (d / "zeppelin" / "notebook.zpln").write_text(json.dumps({"paragraphs": [], "_sections": nb_marker}))
@@ -38,8 +38,8 @@ def _make_valid_spark_app(root: Path, name: str = "nyc-taxi-etl"):
 CFG = {
     "scenario_name_regex": r"^[a-z0-9_]+-[a-z0-9_]+-[a-z0-9_]+-[a-z0-9_]+$",
     "scenario_required_files": ["README.md", "zeppelin/notebook.zpln", "jupyter/notebook.ipynb"],
-    "scenario_readme_sections": ["1. Scenario summary", "2. Why this exists", "3. What's in the notebooks",
-                                 "4. How to run", "5. Data & dependencies", "6. Known issues & caveats"],
+    "scenario_readme_sections": ["1. Purpose", "2. Data Model", "3. Architecture", "4. Notebooks",
+                                 "5. Orchestration", "6. Usage", "7. Dependencies", "8. Known Issues & Caveats"],
     "notebook_sections": ["1. Overview", "2. Setup", "3. Read", "4. Transform", "5. Write", "6. Verify"],
 }
 
@@ -67,7 +67,7 @@ def test_missing_notebook_flags_error(tmp_path: Path):
 
 def test_missing_readme_section_flags_error(tmp_path: Path):
     d = _make_valid_scenario(tmp_path)
-    (d / "README.md").write_text("# t\n\n## 1. Scenario summary\n\ntext\n")  # only 1 of 6
+    (d / "README.md").write_text("# t\n\n## 1. Purpose\n\ntext\n")  # only 1 of 8
     findings = verify_repo.run_checks(tmp_path, CFG)
     assert any(f.check == "scenario.readme" and f.severity == "error" for f in findings), findings
 
