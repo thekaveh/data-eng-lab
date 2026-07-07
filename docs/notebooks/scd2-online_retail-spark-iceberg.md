@@ -4,17 +4,17 @@ Both notebooks implement identical logic in PySpark and Scala.
 
 ## 1. Section map
 
-| Section | Scala (Zeppelin) | PySpark (Jupyter) |
+| Subsection | Scala (Zeppelin) | PySpark (Jupyter) |
 |---|---|---|
-| 2. Setup | ✓ | ✓ |
-| 3. Read | ✓ | ✓ |
-| 4. Transform | ✓ | ✓ |
-| 5. Write | ✓ | ✓ |
-| 6. Verify | ✓ | ✓ |
+| 2.1 Setup | ✓ | ✓ |
+| 2.2 Read | ✓ | ✓ |
+| 2.3 Transform | ✓ | ✓ |
+| 2.4 Write | ✓ | ✓ |
+| 2.5 Verify | ✓ | ✓ |
 
 ## 2. Walkthrough
 
-### 2. Setup
+### 2.1 Setup
 
 **Scala (Zeppelin):**
 
@@ -33,7 +33,7 @@ spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
 # lakehouse catalog pre-configured
 ```
 
-### 3. Read
+### 2.2 Read
 
 **Scala (Zeppelin):**
 
@@ -51,7 +51,7 @@ spark.sql("INSERT INTO lakehouse.gold.dim_customer_scd2 VALUES ('C1','standard',
 spark.sql("SELECT customer_id, segment, is_current FROM lakehouse.gold.dim_customer_scd2 ORDER BY effective_from").show(truncate=False)
 ```
 
-### 4. Transform
+### 2.3 Transform
 
 **Scala (Zeppelin):**
 
@@ -65,7 +65,7 @@ spark.sql("UPDATE lakehouse.gold.dim_customer_scd2 SET effective_to = current_ti
 spark.sql("UPDATE lakehouse.gold.dim_customer_scd2 SET effective_to = current_timestamp(), is_current = false WHERE customer_id = 'C1' AND is_current = true").show(truncate=False)
 ```
 
-### 5. Write
+### 2.4 Write
 
 **Scala (Zeppelin):**
 
@@ -79,7 +79,7 @@ spark.sql("INSERT INTO lakehouse.gold.dim_customer_scd2 VALUES ('C1','premium', 
 spark.sql("INSERT INTO lakehouse.gold.dim_customer_scd2 VALUES ('C1','premium', current_timestamp(), NULL, true)").show(truncate=False)
 ```
 
-### 6. Verify
+### 2.5 Verify
 
 **Scala (Zeppelin):**
 

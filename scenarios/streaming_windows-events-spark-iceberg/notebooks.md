@@ -5,17 +5,17 @@ Both notebooks implement identical logic in PySpark and Scala.
 
 ## 1. Section map
 
-| Section | Scala (Zeppelin) | PySpark (Jupyter) |
+| Subsection | Scala (Zeppelin) | PySpark (Jupyter) |
 |---|---|---|
-| 2. Setup | ✓ | ✓ |
-| 3. Read | ✓ | ✓ |
-| 4. Transform | ✓ | ✓ |
-| 5. Write | ✓ | ✓ |
-| 6. Verify | ✓ | ✓ |
+| 2.1 Setup | ✓ | ✓ |
+| 2.2 Read | ✓ | ✓ |
+| 2.3 Transform | ✓ | ✓ |
+| 2.4 Write | ✓ | ✓ |
+| 2.5 Verify | ✓ | ✓ |
 
 ## 2. Walkthrough
 
-### 2. Setup
+### 2.1 Setup
 
 **Scala (Zeppelin):**
 
@@ -35,7 +35,7 @@ from pyspark.sql.types import StringType, StructType, TimestampType
 spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
 ```
 
-### 3. Read
+### 2.2 Read
 
 **Scala (Zeppelin):**
 
@@ -53,7 +53,7 @@ raw = spark.readStream.format("kafka").option("kafka.bootstrap.servers","redpand
 events = raw.select(F.from_json(F.col("value").cast("string"), schema).alias("e")).select("e.*")
 ```
 
-### 4. Transform
+### 2.3 Transform
 
 **Scala (Zeppelin):**
 
@@ -67,7 +67,7 @@ val windows = events.withWatermark("ts", "10 minutes").groupBy(window($"ts", "5 
 windows = events.withWatermark("ts", "10 minutes").groupBy(F.window("ts", "5 minutes"), F.col("event")).count()
 ```
 
-### 5. Write
+### 2.4 Write
 
 **Scala (Zeppelin):**
 
@@ -83,7 +83,7 @@ query = windows.writeStream.format("iceberg").outputMode("append").option("check
 # query.awaitTermination()
 ```
 
-### 6. Verify
+### 2.5 Verify
 
 **Scala (Zeppelin):**
 

@@ -5,17 +5,17 @@ Both notebooks implement identical logic in PySpark and Scala.
 
 ## 1. Section map
 
-| Section | Scala (Zeppelin) | PySpark (Jupyter) |
+| Subsection | Scala (Zeppelin) | PySpark (Jupyter) |
 |---|---|---|
-| 2. Setup | ✓ | ✓ |
-| 3. Read | ✓ | ✓ |
-| 4. Transform | ✓ | ✓ |
-| 5. Write | ✓ | ✓ |
-| 6. Verify | ✓ | ✓ |
+| 2.1 Setup | ✓ | ✓ |
+| 2.2 Read | ✓ | ✓ |
+| 2.3 Transform | ✓ | ✓ |
+| 2.4 Write | ✓ | ✓ |
+| 2.5 Verify | ✓ | ✓ |
 
 ## 2. Walkthrough
 
-### 2. Setup
+### 2.1 Setup
 
 **Scala (Zeppelin):**
 
@@ -34,7 +34,7 @@ def q(sql):
     return cur.fetchall()
 ```
 
-### 3. Read
+### 2.2 Read
 
 **Scala (Zeppelin):**
 
@@ -48,7 +48,7 @@ SELECT * FROM lakehouse.gold.fct_orders LIMIT 10
 q('SELECT * FROM lakehouse.gold.fct_orders LIMIT 10')
 ```
 
-### 4. Transform
+### 2.3 Transform
 
 **Scala (Zeppelin):**
 
@@ -68,7 +68,7 @@ q('SELECT c.c_mktsegment, sum(f.revenue) AS revenue, sum(f.line_count) AS lines 
   'GROUP BY c.c_mktsegment ORDER BY revenue DESC')
 ```
 
-### 5. Write
+### 2.4 Write
 
 **Scala (Zeppelin):**
 
@@ -90,7 +90,7 @@ q('CREATE TABLE IF NOT EXISTS lakehouse.gold.bi_segment_revenue AS '
   'GROUP BY c.c_mktsegment')
 ```
 
-### 6. Verify
+### 2.5 Verify
 
 **Scala (Zeppelin):**
 

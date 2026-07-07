@@ -5,17 +5,17 @@ Both notebooks implement identical logic in PySpark and Scala.
 
 ## 1. Section map
 
-| Section | Scala (Zeppelin) | PySpark (Jupyter) |
+| Subsection | Scala (Zeppelin) | PySpark (Jupyter) |
 |---|---|---|
-| 2. Setup | ✓ | ✓ |
-| 3. Read | ✓ | ✓ |
-| 4. Transform | ✓ | ✓ |
-| 5. Write | ✓ | ✓ |
-| 6. Verify | ✓ | ✓ |
+| 2.1 Setup | ✓ | ✓ |
+| 2.2 Read | ✓ | ✓ |
+| 2.3 Transform | ✓ | ✓ |
+| 2.4 Write | ✓ | ✓ |
+| 2.5 Verify | ✓ | ✓ |
 
 ## 2. Walkthrough
 
-### 2. Setup
+### 2.1 Setup
 
 **Scala (Zeppelin):**
 
@@ -33,7 +33,7 @@ from pyspark.sql import SparkSession
 spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
 ```
 
-### 3. Read
+### 2.2 Read
 
 **Scala (Zeppelin):**
 
@@ -51,7 +51,7 @@ spark.sql("INSERT INTO lakehouse.silver.nyc_taxi_tm SELECT * FROM lakehouse.bron
 spark.sql("SELECT count(*) AS files FROM lakehouse.silver.nyc_taxi_tm.files").show(truncate=False)
 ```
 
-### 4. Transform
+### 2.3 Transform
 
 **Scala (Zeppelin):**
 
@@ -65,7 +65,7 @@ spark.sql("CALL lakehouse.system.rewrite_data_files(table => 'lakehouse.silver.n
 spark.sql("CALL lakehouse.system.rewrite_data_files(table => 'lakehouse.silver.nyc_taxi_tm', options => map('target-file-size-bytes','134217728'))").show(truncate=False)
 ```
 
-### 5. Write
+### 2.4 Write
 
 **Scala (Zeppelin):**
 
@@ -81,7 +81,7 @@ spark.sql("CALL lakehouse.system.expire_snapshots(table => 'lakehouse.silver.nyc
 spark.sql("CALL lakehouse.system.remove_orphan_files(table => 'lakehouse.silver.nyc_taxi_tm')").show(truncate=False)
 ```
 
-### 6. Verify
+### 2.5 Verify
 
 **Scala (Zeppelin):**
 
