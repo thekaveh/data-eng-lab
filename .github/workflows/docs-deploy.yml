@@ -6,7 +6,6 @@ on:
     paths:
       - "docs/**"
       - "mkdocs.yml"
-      - "scripts/gen_doc_pages.py"
       - "scenarios/**/README.md"
       - "spark-apps/**/README.md"
       - "README.md"
@@ -33,7 +32,9 @@ jobs:
           submodules: false
           persist-credentials: false
 
-      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
+        with:
+          enable-cache: true
 
       - run: uv run --group dev mkdocs build --strict
 

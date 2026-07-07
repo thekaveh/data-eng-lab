@@ -1,0 +1,169 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560" font-family="'JetBrains Mono', 'Courier New', monospace">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background -->
+        <rect width="1280" height="560" fill="#0a0f1f"/>
+        <rect width="1280" height="560" fill="url(#grid)"/>
+
+        <!-- Title -->
+        <text x="640" y="40" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">nyc-taxi-medallion — Spark App (CI/CD → Bronze → Silver → Gold)</text>
+        <text x="640" y="62" fill="#94a3b8" font-size="12" text-anchor="middle">Jenkins shades the Scala JAR → MinIO jars/ → Airflow → Spark cluster executes the medallion refinement bronze → silver → gold</text>
+
+        <!-- ================= SECTION DIVIDER ================= -->
+        <line x1="636" y1="100" x2="636" y2="440" stroke="#334155" stroke-width="1" stroke-dasharray="4,4"/>
+        <rect x="556" y="90" width="160" height="22" rx="11" fill="#0a0f1f" stroke="#22d3ee" stroke-width="1"/>
+        <text x="636" y="105" fill="#22d3ee" font-size="10" font-weight="700" text-anchor="middle">BUILD  ▶  RUN</text>
+
+        <!-- ================= LEFT: BUILD (CI/CD) ================= -->
+        <text x="310" y="128" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Continuous Integration — Jenkins</text>
+
+        <!-- Source -->
+        <rect x="40" y="150" width="190" height="200" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="135" y="176" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Source</text>
+        <text x="135" y="196" fill="#22d3ee" font-size="9" text-anchor="middle">spark-apps/nyc-taxi-medallion/</text>
+        <line x1="55" y1="212" x2="215" y2="212" stroke="#334155" stroke-width="1"/>
+        <text x="135" y="232" fill="#ffffff" font-size="9" text-anchor="middle">pom.xml</text>
+        <text x="135" y="248" fill="#94a3b8" font-size="8" text-anchor="middle">scala 2.13 · spark 4.1.2</text>
+        <text x="135" y="268" fill="#ffffff" font-size="9" text-anchor="middle">Jenkinsfile</text>
+        <text x="135" y="284" fill="#94a3b8" font-size="8" text-anchor="middle">pipeline{ … }</text>
+        <text x="135" y="304" fill="#ffffff" font-size="9" text-anchor="middle">src/main/scala</text>
+        <text x="135" y="320" fill="#22d3ee" font-size="8" text-anchor="middle">NycTaxiMedallion</text>
+        <text x="135" y="340" fill="#94a3b8" font-size="8" text-anchor="middle">git push → trigger</text>
+
+        <!-- Jenkins pipeline -->
+        <rect x="250" y="150" width="240" height="280" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="370" y="176" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Jenkins</text>
+        <text x="370" y="194" fill="#94a3b8" font-size="9" text-anchor="middle">agent any · 3 stages</text>
+
+        <rect x="265" y="208" width="210" height="40" rx="5" fill="#0a0f1f" stroke="#22d3ee" stroke-width="0.8"/>
+        <text x="275" y="224" fill="#fb923c" font-size="9" font-weight="700">① Build &amp; Test</text>
+        <text x="275" y="240" fill="#ffffff" font-size="8">mvn -B test</text>
+
+        <rect x="265" y="256" width="210" height="40" rx="5" fill="#0a0f1f" stroke="#22d3ee" stroke-width="0.8"/>
+        <text x="275" y="272" fill="#fb923c" font-size="9" font-weight="700">② Package (shade)</text>
+        <text x="275" y="288" fill="#ffffff" font-size="8">mvn package -DskipTests</text>
+
+        <rect x="265" y="304" width="210" height="40" rx="5" fill="#0a0f1f" stroke="#fb923c" stroke-width="1"/>
+        <text x="275" y="320" fill="#fb923c" font-size="9" font-weight="700">③ Publish JAR</text>
+        <text x="275" y="336" fill="#ffffff" font-size="8">mc cp … app.jar</text>
+
+        <text x="370" y="366" fill="#22d3ee" font-size="9" text-anchor="middle">maven-shade-plugin</text>
+        <text x="370" y="382" fill="#94a3b8" font-size="8" text-anchor="middle">uber-jar (deps bundled)</text>
+        <text x="370" y="406" fill="#22d3ee" font-size="9" text-anchor="middle">nyc-taxi-medallion-0.1.0.jar</text>
+        <text x="370" y="422" fill="#94a3b8" font-size="8" text-anchor="middle">target/</text>
+
+        <!-- Artifact registry (MinIO jars) -->
+        <rect x="510" y="200" width="100" height="180" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="560" y="226" fill="#ffffff" font-size="12" font-weight="700" text-anchor="middle">MinIO</text>
+        <text x="560" y="244" fill="#22d3ee" font-size="9" font-weight="700" text-anchor="middle">jars/</text>
+        <line x1="520" y1="258" x2="600" y2="258" stroke="#334155" stroke-width="1"/>
+        <text x="560" y="278" fill="#ffffff" font-size="8" text-anchor="middle">s3a://jars/</text>
+        <text x="560" y="294" fill="#ffffff" font-size="8" text-anchor="middle">nyc-taxi-medallion/</text>
+        <text x="560" y="310" fill="#22d3ee" font-size="8" text-anchor="middle">0.1.0/app.jar</text>
+        <text x="560" y="340" fill="#94a3b8" font-size="8" text-anchor="middle">immutable</text>
+        <text x="560" y="354" fill="#94a3b8" font-size="8" text-anchor="middle">artifact</text>
+        <text x="560" y="372" fill="#22d3ee" font-size="8" text-anchor="middle">registry</text>
+
+        <!-- ================= RIGHT: RUN (Airflow → Spark → Medallion) ================= -->
+        <text x="940" y="128" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Runtime — Orchestrate &amp; Refine</text>
+
+        <!-- Airflow DAG -->
+        <rect x="650" y="150" width="180" height="180" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="740" y="176" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Airflow</text>
+        <text x="740" y="196" fill="#22d3ee" font-size="10" font-weight="700" text-anchor="middle">DAG: nyc_taxi_medallion</text>
+        <line x1="665" y1="210" x2="815" y2="210" stroke="#1e293b" stroke-width="1"/>
+        <text x="740" y="230" fill="#fb923c" font-size="9" font-weight="600" text-anchor="middle">SparkSubmitOperator</text>
+        <text x="740" y="248" fill="#ffffff" font-size="8" text-anchor="middle">task: submit_…_medallion</text>
+        <text x="740" y="266" fill="#94a3b8" font-size="8" text-anchor="middle">schedule: @daily</text>
+        <text x="740" y="282" fill="#94a3b8" font-size="8" text-anchor="middle">deploy_mode: cluster</text>
+        <text x="740" y="302" fill="#22d3ee" font-size="8" text-anchor="middle">java_class:</text>
+        <text x="740" y="316" fill="#22d3ee" font-size="8" text-anchor="middle">…medallion.NycTaxiMedallion</text>
+
+        <!-- args banner -->
+        <rect x="650" y="340" width="180" height="40" rx="5" fill="#0a0f1f" stroke="#fb923c" stroke-width="0.8"/>
+        <text x="740" y="358" fill="#fb923c" font-size="8" font-weight="700" text-anchor="middle">application_args</text>
+        <text x="740" y="374" fill="#ffffff" font-size="8" text-anchor="middle">lakehouse.bronze.nyc_taxi_trips</text>
+
+        <!-- Spark cluster -->
+        <rect x="860" y="180" width="160" height="180" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="940" y="206" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Spark Cluster</text>
+        <text x="940" y="224" fill="#94a3b8" font-size="9" text-anchor="middle">standalone</text>
+        <text x="940" y="244" fill="#22d3ee" font-size="9" font-weight="600" text-anchor="middle">spark-master:7077</text>
+        <line x1="875" y1="258" x2="1005" y2="258" stroke="#1e293b" stroke-width="1"/>
+        <text x="940" y="278" fill="#ffffff" font-size="8" text-anchor="middle">executes medallion</text>
+        <text x="940" y="296" fill="#94a3b8" font-size="8" text-anchor="middle">bronze → silver → gold</text>
+        <text x="940" y="318" fill="#22d3ee" font-size="8" text-anchor="middle">Iceberg REST catalog</text>
+        <text x="940" y="332" fill="#94a3b8" font-size="8" text-anchor="middle">iceberg-rest:8181</text>
+        <text x="940" y="350" fill="#94a3b8" font-size="8" text-anchor="middle">lakehouse/</text>
+
+        <!-- ================= MEDALLION FLOW (vertical bronze→silver→gold) ================= -->
+        <rect x="1050" y="120" width="200" height="310" rx="10" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="1150" y="140" fill="#22d3ee" font-size="11" font-weight="600" text-anchor="middle">Medallion Refinement</text>
+
+        <!-- bronze (input) -->
+        <rect x="1070" y="152" width="160" height="62" rx="6" fill="#1e293b" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="1150" y="172" fill="#ffffff" font-size="11" font-weight="700" text-anchor="middle">BRONZE</text>
+        <text x="1150" y="188" fill="#22d3ee" font-size="8" text-anchor="middle">bronze.nyc_taxi_trips</text>
+        <text x="1150" y="204" fill="#94a3b8" font-size="8" text-anchor="middle">input (from nyc-taxi-etl)</text>
+
+        <!-- arrow bronze -> silver -->
+        <line x1="1150" y1="214" x2="1150" y2="232" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="1158" y="226" fill="#fb923c" font-size="8" text-anchor="start">dropDuplicates</text>
+
+        <!-- silver -->
+        <rect x="1070" y="234" width="160" height="62" rx="6" fill="#334155" stroke="#22d3ee" stroke-width="1.2"/>
+        <text x="1150" y="254" fill="#ffffff" font-size="11" font-weight="700" text-anchor="middle">SILVER</text>
+        <text x="1150" y="270" fill="#22d3ee" font-size="8" text-anchor="middle">silver.nyc_taxi_trips</text>
+        <text x="1150" y="286" fill="#94a3b8" font-size="8" text-anchor="middle">dedup + enrich</text>
+
+        <!-- arrow silver -> gold -->
+        <line x1="1150" y1="296" x2="1150" y2="314" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="1158" y="308" fill="#fb923c" font-size="8" text-anchor="start">groupBy + agg</text>
+
+        <!-- gold -->
+        <rect x="1070" y="316" width="160" height="62" rx="6" fill="#1e293b" stroke="#fb923c" stroke-width="1.2"/>
+        <text x="1150" y="336" fill="#ffffff" font-size="11" font-weight="700" text-anchor="middle">GOLD</text>
+        <text x="1150" y="352" fill="#22d3ee" font-size="8" text-anchor="middle">gold.nyc_taxi_daily</text>
+        <text x="1150" y="368" fill="#94a3b8" font-size="8" text-anchor="middle">BI-ready daily metrics</text>
+
+        <text x="1150" y="402" fill="#22d3ee" font-size="8" text-anchor="middle">writeTo( silver, gold )</text>
+        <text x="1150" y="416" fill="#94a3b8" font-size="8" text-anchor="middle">createOrReplace</text>
+
+        <!-- ================= CONNECTORS ================= -->
+        <!-- source -> jenkins -->
+        <line x1="230" y1="250" x2="248" y2="250" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="239" y="244" fill="#22d3ee" font-size="8" text-anchor="middle">git</text>
+
+        <!-- jenkins -> minio jars -->
+        <line x1="490" y1="324" x2="508" y2="290" stroke="#fb923c" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="499" y="300" fill="#fb923c" font-size="8" text-anchor="middle">mc cp</text>
+
+        <!-- minio jars -> airflow (artifact pulled at submit) -->
+        <path d="M 610 290 C 630 290, 630 240, 648 240" fill="none" stroke="#22d3ee" stroke-width="1.5" stroke-dasharray="5,4" marker-end="url(#arrowhead)"/>
+        <text x="629" y="256" fill="#22d3ee" font-size="8" text-anchor="middle">app.jar</text>
+
+        <!-- airflow -> spark -->
+        <line x1="830" y1="240" x2="858" y2="240" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="844" y="234" fill="#22d3ee" font-size="8" text-anchor="middle">submit</text>
+
+        <!-- spark -> medallion (executes the refinement) -->
+        <path d="M 1020 270 C 1038 270, 1042 183, 1068 183" fill="none" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="1048" y="222" fill="#22d3ee" font-size="8" text-anchor="middle">read bronze</text>
+
+        <!-- ================= BOTTOM STRIP ================= -->
+        <rect x="40" y="468" width="1200" height="62" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+        <text x="70" y="494" fill="#22d3ee" font-size="11" font-weight="600">Artifact</text>
+        <text x="70" y="514" fill="#94a3b8" font-size="9">nyc-taxi-medallion-0.1.0.jar (shaded uber-jar, Scala 2.13 / Spark 4.1.2)</text>
+        <text x="470" y="494" fill="#22d3ee" font-size="11" font-weight="600">Promotes scenario</text>
+        <text x="470" y="514" fill="#94a3b8" font-size="9">medallion-nyc_taxi (Jupyter) → productionized Maven app</text>
+        <text x="900" y="494" fill="#22d3ee" font-size="11" font-weight="600">Verify</text>
+        <text x="900" y="514" fill="#94a3b8" font-size="9">spark.table("lakehouse.gold.nyc_taxi_daily").count()</text>
+      </svg>

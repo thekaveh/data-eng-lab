@@ -1,32 +1,71 @@
+<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # join_optimization-tpch-spark-iceberg
 
-Optimize TPCH query performance using broadcast joins and Adaptive Query Execution (AQE).
-Joins the `orders` and `customer` dimensions with a broadcast strategy, then aggregates revenue
-by market segment. Demonstrates how Spark's AQE automatically selects efficient join strategies.
+Optimizes Spark join strategies for large-scale TPCH data with Iceberg table partitions, exploring broadcast joins, sort-merge joins, and bucket joins for different data sizes.
 
-## 1. Scenario summary
-Broadcast join on TPCH orders ↔ customer (on `o_custkey` = `c_custkey`), group by market segment,
-aggregate total revenue and order count. Reads from S3 parquet, writes aggregated mart to Iceberg `lakehouse.gold.tpch_segment_revenue`.
+## 1. Purpose
 
-## 2. Why this exists
-Teaches broadcast vs sort-merge join strategies and shows AQE in action. The `.explain()` output
-demonstrates Spark's physical plan optimization (BroadcastHashJoin), and the SCALE knob can tune
-broadcast threshold behavior.
+Performance optimization of join operations is a critical concern in data engineering. This scenario demonstrates three join optimization techniques with Spark and Iceberg on TPCH data: (1) broadcast joins for small tables, (2) sort-merge joins for large tables, and (3) bucket-aware joins where both tables are bucketed on the join key. It compares performance characteristics and shows when each strategy is most effective.
 
-## 3. What's in the notebooks
-`zeppelin/notebook.zpln` (Scala) and `jupyter/notebook.ipynb` (PySpark), sections Overview->Verify;
-a `dag.py` placeholder.
+## 2. Data Model
 
-## 4. How to run
-Open either notebook on the Atlas stack (after ensuring TPCH datasets are available),
-or trigger the `join_optimization_tpch` Airflow DAG.
+### 2.1 Input Source
 
-## 5. Data & dependencies
-Requires `s3a://landing/tpch/orders` and `s3a://landing/tpch/customer` parquet datasets;
-Spark + Iceberg `lakehouse` catalog (Atlas A1-A4).
+Source: `s3a://landing/tpch/*.parquet` (TPCH dataset downloaded via `make datasets`).
 
-## 6. Known issues & caveats
-Notebook execution + Scala/PySpark parity are live-gated on Atlas A1-A4. This scenario writes to
-`lakehouse.gold.tpch_segment_revenue`, which requires the `gold` namespace to exist in the Iceberg
-REST catalog. Run `scripts/register_iceberg.py` (creates `bronze`, `silver`, and `gold`) and
-`make datasets` before executing this scenario standalone.
+| Column | Type | Source |
+|---|---|---|
+| Various TPCH columns | varied | tpch tables (lineitem, orders, customer, supplier, etc.) |
+
+### 2.2 Output Tables
+
+| Table | Layer | Key Columns |
+|---|---|---|
+| `lakehouse.silver.tpch_joined_optimized` | Silver | TPCH joins optimized with broadcast, sort-merge, and bucket strategies |
+
+## 3. Architecture
+
+![Architecture](architectures/join_optimization-tpch-spark-iceberg.svg)
+
+TPCH parquets flow from S3 landing zone into Spark for join optimization demonstration. Multiple join strategies (broadcast, sort-merge, bucket) are applied to TPCH tables, with performance comparison output showing which strategy is optimal for each data size and join key configuration.
+
+## 4. Notebooks
+
+- **Zeppelin (Scala):** `zeppelin/notebook.zpln` — Sections: Overview, Read TPCH Tables, Broadcast Join (small table), Sort-Merge Join (large tables), Bucket Join (bucketed tables), Compare Performance, Verify
+- **Jupyter (PySpark):** `jupyter/notebook.ipynb` — Same sections; same join optimization logic using PySpark with `hint("broadcast")`, default sort-merge, and bucket configuration
+
+Both languages implement identical join optimization approaches with multiple strategies and performance comparison sections.
+
+## 5. Orchestration
+
+Airflow DAG: `join_optimization_tpch` — a scheduled batch DAG.
+
+## 6. Usage
+
+1. Ensure the `silver` Iceberg namespace exists: `scripts/register_iceberg.py`
+2. Populate the landing zone: `make datasets`
+3. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
+     ```bash
+     airflow dags trigger join_optimization_tpch
+     ```
+4. Verify:
+     ```bash
+     spark-sql -e "SELECT COUNT(*) FROM lakehouse.silver.tpch_joined_optimized"
+     ```
+
+## 7. Dependencies
+
+- **Dataset:** TPCH dataset from `s3a://landing/tpch/`
+- **Atlas services:** A1-A4 (Spark, Iceberg, S3 catalog, lakehouse catalog)
+- **Other:** None
+
+## 8. Known Issues & Caveats
+
+Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `silver` namespace must exist; run `scripts/register_iceberg.py` first. Performance comparison results are illustrative and depend on data volume and cluster configuration. Bucket joins require both tables to be bucketed on the join key.
+
+## See Also
+
+- [Related: bi_query-tpch-trino-iceberg](../bi_query-tpch-trino-iceberg/README.md) — BI queries on TPCH
+- [Related: bi_query-tpch-trino-iceberg](../bi_query-tpch-trino-iceberg/README.md) — Trino/SQL queries on TPCH gold marts
+- [Datasets](../../README.md#datasets)
+- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
