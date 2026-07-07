@@ -40,6 +40,8 @@ s3a://landing/nyc_taxi/*.parquet
     └─────────────────────────────┘
 ```
 
+![Architecture](architectures/nyc-taxi-etl.html)
+
 - **GitHub → Jenkins:** SCM poll or webhook triggers the pipeline.
 - **Jenkins CI:** runs `mvn test` then `mvn package`, producing a shaded JAR.
 - **MinIO:** JAR is published to `s3a://jars/nyc-taxi-etl/0.1.0/nyc-taxi-etl.jar`.
@@ -117,6 +119,7 @@ s3a://landing/nyc_taxi/*.parquet
 ## 8. See Also
 
 - [Spark apps overview](./index.md)
-- [Lakehouse Design](../lakehouse.md)
+- [Related scenario: batch_ingest-nyc_taxi-spark-iceberg](../scenarios/batch_ingest-nyc_taxi-spark-iceberg.md) — Produces the bronze table this app consumes
+- [Related scenario: medallion-nyc_taxi-spark-iceberg](../scenarios/medallion-nyc_taxi-spark-iceberg.md) — Also consumes the bronze table
+- [Lakehouse Architecture](../lakehouse.md)
 - [Datasets](../datasets.md)
-- [Scenario: batch ingest](../../scenarios/batch_ingest-nyc_taxi-spark-iceberg/README.md)

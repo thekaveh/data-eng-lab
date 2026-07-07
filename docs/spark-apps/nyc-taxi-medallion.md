@@ -44,6 +44,8 @@ lakehouse.bronze.nyc_taxi_trips
     └──────────────────┘          └──────────────────────┘
 ```
 
+![Architecture](architectures/nyc-taxi-medallion.html)
+
 - **Iceberg bronze → Jenkins:** SCM poll triggers the pipeline; Spark reads from the bronze layer.
 - **Jenkins CI:** runs `mvn test` (ScalaTest) then `mvn package`, producing a shaded JAR.
 - **MinIO:** JAR is published to `s3a://jars/nyc-taxi-medallion/0.1.0/nyc-taxi-medallion.jar`.
@@ -143,7 +145,8 @@ lakehouse.bronze.nyc_taxi_trips
 ## 8. See Also
 
 - [Spark apps overview](./index.md)
-- [Lakehouse Design](../lakehouse.md)
-- [Datasets](../datasets.md)
 - [nyc-taxi-etl](./nyc-taxi-etl.md)
-- [Scenario: medallion pipeline](../../scenarios/medallion-nyc_taxi-spark-iceberg/README.md)
+- [Related scenario: medallion-nyc_taxi-spark-iceberg](../scenarios/medallion-nyc_taxi-spark-iceberg.md) — Notebook prototype of this app
+- [Related scenario: batch_ingest-nyc_taxi-spark-iceberg](../scenarios/batch_ingest-nyc_taxi-spark-iceberg.md) — Populates the bronze table this app reads from
+- [Lakehouse Architecture](../lakehouse.md)
+- [Datasets](../datasets.md)
