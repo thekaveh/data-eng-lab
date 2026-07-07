@@ -46,7 +46,7 @@ Source: TPC-H Parquet datasets in S3 (`s3a://landing/tpch/`), downloaded via `ma
 
 ## 3. Architecture
 
-![Architecture](architectures/star_schema-tpch-spark-iceberg.html)
+![Architecture](../architectures/star_schema-tpch-spark-iceberg.svg)
 
 Data flows from three Parquet tables in S3 (`orders`, `customer`, `lineitem`) through Spark batch processing. Orders are joined with lineitems on order key, then joined with customers on customer key. The result produces two gold-layer Iceberg tables: a dimension table (`dim_customer`) and a fact table (`fct_orders`), forming a star schema.
 

@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" font-family="'JetBrains Mono', 'Courier New', monospace">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <marker id="arrowhead-bcast" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#f59e0b" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background -->
+        <rect width="1280" height="640" fill="#0a0f1f"/>
+        <rect width="1280" height="640" fill="url(#grid)"/>
+
+        <!-- Title -->
+        <text x="640" y="38" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">join optimization — TPC-H broadcast join (Spark + AQE → Iceberg gold)</text>
+        <text x="640" y="60" fill="#94a3b8" font-size="12" text-anchor="middle">broadcast(customer) hint → BroadcastHashJoin · AQE coalesces partitions · .explain() inspects the physical plan · aggregate by market segment</text>
+
+        <!-- ================= S3 SOURCES ================= -->
+        <rect x="30" y="100" width="240" height="420" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="150" y="122" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">S3 Landing — TPC-H</text>
+
+        <!-- orders (large, scanned & shuffled) -->
+        <rect x="50" y="150" width="200" height="130" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="150" y="174" fill="#ffffff" font-size="14" font-weight="700" text-anchor="middle">orders</text>
+        <text x="150" y="190" fill="#94a3b8" font-size="9" text-anchor="middle">s3a://landing/tpch/orders</text>
+        <line x1="70" y1="200" x2="230" y2="200" stroke="#334155" stroke-width="1"/>
+        <text x="150" y="218" fill="#ffffff" font-size="9" text-anchor="middle">o_orderkey · o_custkey</text>
+        <text x="150" y="234" fill="#ffffff" font-size="9" text-anchor="middle">o_totalprice · o_orderstatus</text>
+        <text x="150" y="262" fill="#22d3ee" font-size="9" text-anchor="middle">LARGE — scanned</text>
+
+        <!-- customer (small, broadcast) -->
+        <rect x="50" y="310" width="200" height="130" rx="8" fill="#1e293b" stroke="#f59e0b" stroke-width="1.8"/>
+        <text x="150" y="334" fill="#ffffff" font-size="14" font-weight="700" text-anchor="middle">customer</text>
+        <text x="150" y="350" fill="#94a3b8" font-size="9" text-anchor="middle">s3a://landing/tpch/customer</text>
+        <line x1="70" y1="360" x2="230" y2="360" stroke="#334155" stroke-width="1"/>
+        <text x="150" y="378" fill="#ffffff" font-size="9" text-anchor="middle">c_custkey · c_mktsegment</text>
+        <text x="150" y="394" fill="#ffffff" font-size="9" text-anchor="middle">c_name</text>
+        <text x="150" y="422" fill="#f59e0b" font-size="9" font-weight="600" text-anchor="middle">SMALL → broadcast()</text>
+
+        <!-- ================= SPARK EXECUTOR / JOIN ================= -->
+        <rect x="310" y="100" width="600" height="420" rx="14" fill="rgba(34, 211, 238, 0.06)" stroke="#22d3ee" stroke-width="2"/>
+        <text x="610" y="126" fill="#22d3ee" font-size="14" font-weight="700" text-anchor="middle">Apache Spark — broadcast join + AQE</text>
+
+        <!-- broadcast distribution row -->
+        <rect x="335" y="150" width="550" height="96" rx="8" fill="#334155" stroke="#f59e0b" stroke-width="1.5"/>
+        <text x="610" y="172" fill="#f59e0b" font-size="11" font-weight="700" text-anchor="middle">BroadcastExchange — customer dim → ALL executors</text>
+        <text x="610" y="190" fill="#ffffff" font-size="10" text-anchor="middle">joined = orders.join(F.broadcast(customer),</text>
+        <text x="610" y="206" fill="#ffffff" font-size="10" text-anchor="middle">                   F.col("o_custkey") == F.col("c_custkey"))</text>
+        <text x="610" y="226" fill="#94a3b8" font-size="9" text-anchor="middle">small side hashed in-memory on driver, shipped to every executor (no shuffle of orders)</text>
+
+        <!-- executors receiving broadcast -->
+        <rect x="345" y="262" width="160" height="48" rx="6" fill="#1e293b" stroke="#f59e0b" stroke-width="1"/>
+        <text x="425" y="282" fill="#ffffff" font-size="10" font-weight="600" text-anchor="middle">executor 1</text>
+        <text x="425" y="298" fill="#f59e0b" font-size="9" text-anchor="middle">BroadcastHashJoin</text>
+        <rect x="520" y="262" width="160" height="48" rx="6" fill="#1e293b" stroke="#f59e0b" stroke-width="1"/>
+        <text x="600" y="282" fill="#ffffff" font-size="10" font-weight="600" text-anchor="middle">executor 2</text>
+        <text x="600" y="298" fill="#f59e0b" font-size="9" text-anchor="middle">BroadcastHashJoin</text>
+        <rect x="695" y="262" width="160" height="48" rx="6" fill="#1e293b" stroke="#f59e0b" stroke-width="1"/>
+        <text x="775" y="282" fill="#ffffff" font-size="10" font-weight="600" text-anchor="middle">executor N</text>
+        <text x="775" y="298" fill="#f59e0b" font-size="9" text-anchor="middle">BroadcastHashJoin</text>
+
+        <!-- .explain() physical-plan panel -->
+        <rect x="335" y="328" width="270" height="170" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="470" y="350" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">.explain() — physical plan</text>
+        <line x1="355" y1="360" x2="585" y2="360" stroke="#334155" stroke-width="1"/>
+        <text x="355" y="378" fill="#f59e0b" font-size="9">*(1) HashAggregate(keys=[],</text>
+        <text x="355" y="392" fill="#f59e0b" font-size="9">    functions=[sum,count])</text>
+        <text x="355" y="408" fill="#ffffff" font-size="9">+- *(2) Project [o_totalprice,</text>
+        <text x="355" y="422" fill="#ffffff" font-size="9">     c_mktsegment]</text>
+        <text x="355" y="438" fill="#22d3ee" font-size="9">   +- *(2) BroadcastHashJoin</text>
+        <text x="355" y="452" fill="#94a3b8" font-size="9">      [o_custkey],[c_custkey],</text>
+        <text x="355" y="466" fill="#94a3b8" font-size="9">      Inner, BuildRight</text>
+        <text x="355" y="482" fill="#ffffff" font-size="9">      :- *(1) Scan orders</text>
+        <text x="355" y="494" fill="#f59e0b" font-size="9">      :  +- BroadcastExchange</text>
+
+        <!-- AQE + aggregate panel -->
+        <rect x="615" y="328" width="270" height="170" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="750" y="350" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">AQE + aggregate</text>
+        <line x1="635" y1="360" x2="865" y2="360" stroke="#334155" stroke-width="1"/>
+        <text x="750" y="378" fill="#f59e0b" font-size="9" text-anchor="middle">spark.sql.adaptive.enabled = true</text>
+        <text x="750" y="394" fill="#94a3b8" font-size="9" text-anchor="middle">runtime coalesce partitions</text>
+        <line x1="635" y1="408" x2="865" y2="408" stroke="#334155" stroke-width="1"/>
+        <text x="750" y="428" fill="#ffffff" font-size="9" text-anchor="middle">mart = joined.groupBy(</text>
+        <text x="750" y="442" fill="#ffffff" font-size="9" text-anchor="middle">  "c_mktsegment").agg(</text>
+        <text x="750" y="456" fill="#ffffff" font-size="9" text-anchor="middle">    sum("o_totalprice")→revenue,</text>
+        <text x="750" y="470" fill="#ffffff" font-size="9" text-anchor="middle">    count("*")→orders)</text>
+        <text x="750" y="488" fill="#22d3ee" font-size="9" text-anchor="middle">revenue by market segment</text>
+
+        <!-- ================= GOLD OUTPUT ================= -->
+        <rect x="940" y="100" width="310" height="420" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="1095" y="122" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Gold Output</text>
+
+        <rect x="960" y="200" width="270" height="220" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.8"/>
+        <text x="1095" y="226" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">GOLD MART</text>
+        <text x="1095" y="250" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">tpch_segment_revenue</text>
+        <text x="1095" y="268" fill="#94a3b8" font-size="9" text-anchor="middle">lakehouse.gold.tpch_segment_revenue</text>
+        <line x1="980" y1="280" x2="1210" y2="280" stroke="#334155" stroke-width="1"/>
+        <text x="1095" y="300" fill="#ffffff" font-size="9" text-anchor="middle">c_mktsegment</text>
+        <text x="1095" y="318" fill="#ffffff" font-size="9" text-anchor="middle">revenue (sum o_totalprice)</text>
+        <text x="1095" y="336" fill="#ffffff" font-size="9" text-anchor="middle">orders (count)</text>
+        <text x="1095" y="372" fill="#22d3ee" font-size="9" text-anchor="middle">writeTo(…).createOrReplace()</text>
+        <text x="1095" y="408" fill="#94a3b8" font-size="9" text-anchor="middle">verify: orderBy(desc("revenue"))</text>
+
+        <!-- ================= CONNECTORS ================= -->
+        <!-- orders -> spark (scan) -->
+        <line x1="250" y1="200" x2="333" y2="200" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <text x="292" y="192" fill="#22d3ee" font-size="9" text-anchor="middle">scan</text>
+
+        <!-- customer -> spark (broadcast) -->
+        <line x1="250" y1="370" x2="333" y2="220" stroke="#f59e0b" stroke-width="2" marker-end="url(#arrowhead-bcast)"/>
+        <text x="292" y="330" fill="#f59e0b" font-size="9" text-anchor="middle">broadcast()</text>
+
+        <!-- broadcast distribution fan-out to executors -->
+        <path d="M 610 248 L 425 260" fill="none" stroke="#f59e0b" stroke-width="1.4" stroke-dasharray="4,3" marker-end="url(#arrowhead-bcast)"/>
+        <path d="M 610 248 L 600 260" fill="none" stroke="#f59e0b" stroke-width="1.4" stroke-dasharray="4,3" marker-end="url(#arrowhead-bcast)"/>
+        <path d="M 610 248 L 775 260" fill="none" stroke="#f59e0b" stroke-width="1.4" stroke-dasharray="4,3" marker-end="url(#arrowhead-bcast)"/>
+
+        <!-- aggregate -> gold -->
+        <line x1="887" y1="413" x2="958" y2="310" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <text x="922" y="376" fill="#22d3ee" font-size="9" text-anchor="middle">writeTo gold</text>
+
+        <!-- Orchestrator strip -->
+        <rect x="30" y="548" width="1220" height="78" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+        <text x="55" y="574" fill="#22d3ee" font-size="11" font-weight="600">Why broadcast?</text>
+        <text x="55" y="592" fill="#94a3b8" font-size="9">customer is small enough to fit in the broadcast threshold → no shuffle of the large orders table;</text>
+        <text x="55" y="608" fill="#94a3b8" font-size="9">BuildRight builds a hashed dim map shipped to every executor; AQE then coalesces the post-shuffle partitions at runtime.</text>
+        <text x="55" y="622" fill="#94a3b8" font-size="9">Airflow DAG: join_optimization_tpch (@daily). Reads S3 landing directly — no medallion intermediate.</text>
+        <text x="780" y="574" fill="#22d3ee" font-size="11" font-weight="600">Inspect before/after</text>
+        <text x="780" y="592" fill="#94a3b8" font-size="9">joined.explain() confirms BroadcastHashJoin</text>
+        <text x="780" y="608" fill="#94a3b8" font-size="9">spark.conf.get("spark.sql.adaptive.enabled")</text>
+        <text x="780" y="622" fill="#94a3b8" font-size="9">→ confirms AQE active</text>
+      </svg>
