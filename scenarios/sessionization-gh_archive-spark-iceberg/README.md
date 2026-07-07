@@ -28,7 +28,7 @@ Source: `lakehouse.silver.gh_events` (populated by the upstream `json_flatten-gh
 
 ## 3. Architecture
 
-![Architecture](../architectures/sessionization-gh_archive-spark-iceberg.svg)
+![Architecture](architectures/sessionization-gh_archive-spark-iceberg.svg)
 
 Data flows from the GitHub Events silver table through Spark batch processing. Events are partitioned by `actor_login`, ordered by timestamp, and the `LAG` window function detects gaps > 30 minutes between consecutive events. Sessions are assigned IDs via cumulative sum over gap indicators, and each output row includes the actor login and its session ID.
 

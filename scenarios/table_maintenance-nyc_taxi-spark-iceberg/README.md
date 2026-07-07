@@ -33,7 +33,7 @@ Source: `lakehouse.bronze.nyc_taxi_trips` (populated by `batch_ingest-nyc_taxi-s
 
 ## 3. Architecture
 
-![Architecture](../architectures/table_maintenance-nyc_taxi-spark-iceberg.svg)
+![Architecture](architectures/table_maintenance-nyc_taxi-spark-iceberg.svg)
 
 NYC taxi trip data from the bronze table flows through Spark batch processing demonstrating three Iceberg maintenance operations: (1) partition overwrite — replacing a specific date partition with new data, (2) VACUUM — cleaning up orphan metadata and data files, and (3) time travel — querying historical versions of the table using version or timestamp.
 

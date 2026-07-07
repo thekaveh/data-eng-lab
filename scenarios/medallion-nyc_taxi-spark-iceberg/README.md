@@ -34,7 +34,7 @@ Source: `lakehouse.bronze.nyc_taxi_trips` (populated by `batch_ingest-nyc_taxi-s
 
 ## 3. Architecture
 
-![Architecture](../architectures/medallion-nyc_taxi-spark-iceberg.svg)
+![Architecture](architectures/medallion-nyc_taxi-spark-iceberg.svg)
 
 NYC taxi trip data flows from the bronze table (raw) through Spark batch processing into the silver layer where trips are cleaned and enriched with computed columns (`trip_duration`, `start_hour`, `trip_direction`). From silver, data is aggregated into gold with daily per-location statistics including average duration, average fare, trip counts, and total revenue.
 

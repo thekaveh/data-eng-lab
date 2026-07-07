@@ -29,7 +29,7 @@ Source: `s3a://landing/gh_archive/*.json.gz` (compressed JSON files from GitHub 
 
 ## 3. Architecture
 
-![Architecture](../architectures/json_flatten-gh_archive-spark-iceberg.svg)
+![Architecture](architectures/json_flatten-gh_archive-spark-iceberg.svg)
 
 Data flows from compressed JSON files in S3 through Spark batch processing. Nested fields are extracted using dot notation (`col("actor.login")`), timestamps are cast to proper types, and the flattened result is written to an Iceberg silver table.
 

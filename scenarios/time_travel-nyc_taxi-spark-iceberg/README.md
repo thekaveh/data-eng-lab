@@ -33,7 +33,7 @@ Source: `s3a://landing/nyc_taxi/taxi_data.csv` (local CSV seed) plus NYC Taxi Tr
 
 ## 3. Architecture
 
-![Architecture](../architectures/time_travel-nyc_taxi-spark-iceberg.svg)
+![Architecture](architectures/time_travel-nyc_taxi-spark-iceberg.svg)
 
 NYC taxi trip data flows through Spark batch processing where the table undergoes multiple write operations (inserts and overwrites). After each operation, the table acquires a new snapshot. Time travel queries then read specific historical snapshots using either `VERSION AS OF <version>` or `TIMESTAMP AS OF <timestamp>`, demonstrating point-in-time accuracy. The scenario also explores Write-Audit-Publish (WAP) branching: create a WAP branch for safe mutation, validate reads against it, then fast-forward the branch to publish — all without affecting the main branch until the changes are ready.
 

@@ -42,7 +42,7 @@ Source: `s3a://landing/nyc_taxi/*.parquet` (downloaded via `make datasets`).
 
 ## 3. Architecture
 
-![Architecture](../architectures/batch_ingest-nyc_taxi-spark-iceberg.svg)
+![Architecture](architectures/batch_ingest-nyc_taxi-spark-iceberg.svg)
 
 Raw Parquet trip data flows from the S3 landing zone through Spark batch processing directly into an Iceberg bronze table in the `lakehouse.bronze` namespace, preserving the original schema and all fields without transformation.
 

@@ -1,0 +1,103 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560" font-family="'JetBrains Mono', 'Courier New', monospace">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background -->
+        <rect width="1280" height="560" fill="#0a0f1f"/>
+        <rect width="1280" height="560" fill="url(#grid)"/>
+
+        <!-- Title -->
+        <text x="640" y="40" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">streaming_ingest — GH Archive (File Stream → Spark → Iceberg)</text>
+        <text x="640" y="62" fill="#94a3b8" font-size="12" text-anchor="middle">Bronze-layer Structured Streaming ingest of JSON.gz files from object storage (no Kafka)</text>
+
+        <!-- ================= STAGE 1: SOURCE ================= -->
+        <rect x="40" y="120" width="240" height="320" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="160" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Source — Landing</text>
+
+        <rect x="70" y="170" width="180" height="240" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="160" y="200" fill="#ffffff" font-size="14" font-weight="700" text-anchor="middle">MinIO</text>
+        <text x="160" y="222" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">landing/ bucket</text>
+        <text x="160" y="252" fill="#94a3b8" font-size="10" text-anchor="middle">s3a://landing/gh_archive/</text>
+        <line x1="95" y1="270" x2="225" y2="270" stroke="#334155" stroke-width="1"/>
+        <text x="160" y="292" fill="#ffffff" font-size="10" text-anchor="middle">GitHub Archive dumps</text>
+        <text x="160" y="310" fill="#94a3b8" font-size="9" text-anchor="middle">format: JSON · gzip</text>
+        <text x="160" y="328" fill="#94a3b8" font-size="9" text-anchor="middle">new files per interval</text>
+        <text x="160" y="356" fill="#94a3b8" font-size="8" text-anchor="middle">id · type</text>
+        <text x="160" y="370" fill="#94a3b8" font-size="8" text-anchor="middle">created_at (string)</text>
+        <text x="160" y="392" fill="#22d3ee" font-size="9" text-anchor="middle">readStream.schema(json)</text>
+
+        <!-- ================= STAGE 2: PROCESS ================= -->
+        <rect x="370" y="120" width="380" height="320" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="560" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Process — Spark Structured Streaming</text>
+
+        <rect x="400" y="170" width="320" height="100" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="560" y="198" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">Structured Streaming Job</text>
+        <text x="560" y="222" fill="#94a3b8" font-size="10" text-anchor="middle">Spark Connect sc://spark-connect:15002</text>
+        <text x="560" y="244" fill="#94a3b8" font-size="10" text-anchor="middle">file source · directory scan</text>
+
+        <rect x="400" y="290" width="320" height="120" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="560" y="316" fill="#ffffff" font-size="12" font-weight="600" text-anchor="middle">Schema + Cast + Append</text>
+        <text x="560" y="338" fill="#94a3b8" font-size="9" text-anchor="middle">schema(id, type, created_at:string)</text>
+        <text x="560" y="356" fill="#94a3b8" font-size="9" text-anchor="middle">withColumn(created_at, cast timestamp)</text>
+        <text x="560" y="378" fill="#22d3ee" font-size="9" text-anchor="middle">outputMode("append")</text>
+        <text x="560" y="396" fill="#94a3b8" font-size="9" text-anchor="middle">writeStream.format("iceberg")</text>
+
+        <!-- Checkpoint node (off the stream) -->
+        <rect x="412" y="412" width="296" height="22" rx="6" fill="#0a0f1f" stroke="#fb923c" stroke-width="1"/>
+        <text x="560" y="427" fill="#fb923c" font-size="9" text-anchor="middle">checkpoint: s3a://checkpoints/gh_events_file · file-offset recovery</text>
+
+        <!-- ================= STAGE 3: CATALOG ================= -->
+        <rect x="840" y="120" width="180" height="320" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="930" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Catalog</text>
+
+        <rect x="865" y="200" width="130" height="160" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="930" y="228" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Iceberg</text>
+        <text x="930" y="248" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">REST Catalog</text>
+        <text x="930" y="276" fill="#94a3b8" font-size="9" text-anchor="middle">iceberg-rest:8181</text>
+        <text x="930" y="294" fill="#94a3b8" font-size="9" text-anchor="middle">name: lakehouse</text>
+        <text x="930" y="322" fill="#22d3ee" font-size="9" text-anchor="middle">metadata →</text>
+        <text x="930" y="338" fill="#22d3ee" font-size="9" text-anchor="middle">Postgres</text>
+
+        <!-- ================= STAGE 4: SINK ================= -->
+        <rect x="1070" y="120" width="170" height="320" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="1155" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Sink — Bronze</text>
+
+        <rect x="1085" y="180" width="140" height="200" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="1155" y="208" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">BRONZE</text>
+        <text x="1155" y="232" fill="#22d3ee" font-size="9" text-anchor="middle">lakehouse.bronze.</text>
+        <text x="1155" y="250" fill="#22d3ee" font-size="9" font-weight="600" text-anchor="middle">gh_events_stream</text>
+        <line x1="1100" y1="270" x2="1210" y2="270" stroke="#334155" stroke-width="1"/>
+        <text x="1155" y="292" fill="#94a3b8" font-size="8" text-anchor="middle">Iceberg table</text>
+        <text x="1155" y="310" fill="#94a3b8" font-size="8" text-anchor="middle">data on lakehouse/</text>
+        <text x="1155" y="328" fill="#94a3b8" font-size="8" text-anchor="middle">snapshot history</text>
+        <text x="1155" y="356" fill="#22d3ee" font-size="9" text-anchor="middle">toTable(…)</text>
+
+        <!-- ================= CONNECTORS ================= -->
+        <!-- Source -> Process -->
+        <line x1="250" y1="290" x2="398" y2="220" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="324" y="248" fill="#22d3ee" font-size="9" text-anchor="middle">JSON.gz files</text>
+
+        <!-- Process -> Catalog -->
+        <line x1="720" y1="220" x2="863" y2="270" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="792" y="236" fill="#22d3ee" font-size="9" text-anchor="middle">append stream</text>
+
+        <!-- Catalog -> Sink -->
+        <line x1="995" y1="290" x2="1083" y2="280" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="1042" y="276" fill="#22d3ee" font-size="9" text-anchor="middle">commit</text>
+
+        <!-- Orchestrator strip -->
+        <rect x="40" y="468" width="1200" height="62" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+        <text x="70" y="494" fill="#22d3ee" font-size="11" font-weight="600">Orchestration</text>
+        <text x="70" y="514" fill="#94a3b8" font-size="9">Airflow DAG: streaming_ingest_gh_archive (@daily)</text>
+        <text x="480" y="494" fill="#22d3ee" font-size="11" font-weight="600">Note</text>
+        <text x="480" y="514" fill="#94a3b8" font-size="9">file source — no Kafka broker required</text>
+        <text x="900" y="494" fill="#22d3ee" font-size="11" font-weight="600">Verify</text>
+        <text x="900" y="514" fill="#94a3b8" font-size="9">spark.table("lakehouse.bronze.gh_events_stream").count()</text>
+      </svg>

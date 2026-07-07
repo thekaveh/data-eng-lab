@@ -41,7 +41,7 @@ s3a://landing/nyc_taxi/*.parquet
     └─────────────────────────────┘
 ```
 
-![Architecture](../architectures/nyc-taxi-etl.svg)
+![Architecture](architectures/nyc-taxi-etl.svg)
 
 - **GitHub → Jenkins:** SCM poll or webhook triggers the pipeline.
 - **Jenkins CI:** runs `mvn test` then `mvn package`, producing a shaded JAR.

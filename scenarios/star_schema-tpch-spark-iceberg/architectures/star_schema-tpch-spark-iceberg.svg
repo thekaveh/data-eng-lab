@@ -1,0 +1,132 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" font-family="'JetBrains Mono', 'Courier New', monospace">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <marker id="arrowhead-dim" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#f59e0b" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background -->
+        <rect width="1280" height="640" fill="#0a0f1f"/>
+        <rect width="1280" height="640" fill="url(#grid)"/>
+
+        <!-- Title -->
+        <text x="640" y="38" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">star schema — TPC-H (Spark → Iceberg gold: dim + fact)</text>
+        <text x="640" y="60" fill="#94a3b8" font-size="12" text-anchor="middle">Dimensional modeling: 3 Parquet sources → 1 fact + 1 dimension (star join on o_custkey)</text>
+
+        <!-- ================= LANDING (S3 SOURCES) ================= -->
+        <rect x="30" y="100" width="250" height="430" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="155" y="122" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">S3 Landing — TPC-H Parquet</text>
+
+        <!-- orders -->
+        <rect x="50" y="150" width="210" height="100" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="155" y="174" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">orders</text>
+        <text x="155" y="190" fill="#94a3b8" font-size="9" text-anchor="middle">s3a://landing/tpch/orders</text>
+        <line x1="70" y1="200" x2="240" y2="200" stroke="#334155" stroke-width="1"/>
+        <text x="155" y="216" fill="#ffffff" font-size="9" text-anchor="middle">o_orderkey · o_custkey</text>
+        <text x="155" y="230" fill="#ffffff" font-size="9" text-anchor="middle">o_orderdate · o_totalprice</text>
+        <text x="155" y="244" fill="#22d3ee" font-size="9" text-anchor="middle">read.parquet(…)</text>
+
+        <!-- customer -->
+        <rect x="50" y="270" width="210" height="100" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="155" y="294" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">customer</text>
+        <text x="155" y="310" fill="#94a3b8" font-size="9" text-anchor="middle">s3a://landing/tpch/customer</text>
+        <line x1="70" y1="320" x2="240" y2="320" stroke="#334155" stroke-width="1"/>
+        <text x="155" y="336" fill="#ffffff" font-size="9" text-anchor="middle">c_custkey (PK) · c_name</text>
+        <text x="155" y="350" fill="#ffffff" font-size="9" text-anchor="middle">c_nationkey · c_mktsegment</text>
+        <text x="155" y="364" fill="#22d3ee" font-size="9" text-anchor="middle">read.parquet(…)</text>
+
+        <!-- lineitem -->
+        <rect x="50" y="390" width="210" height="100" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="155" y="414" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">lineitem</text>
+        <text x="155" y="430" fill="#94a3b8" font-size="9" text-anchor="middle">s3a://landing/tpch/lineitem</text>
+        <line x1="70" y1="440" x2="240" y2="440" stroke="#334155" stroke-width="1"/>
+        <text x="155" y="456" fill="#ffffff" font-size="9" text-anchor="middle">l_orderkey (FK)</text>
+        <text x="155" y="470" fill="#ffffff" font-size="9" text-anchor="middle">l_quantity · l_extendedprice</text>
+        <text x="155" y="484" fill="#22d3ee" font-size="9" text-anchor="middle">read.parquet(…)</text>
+
+        <!-- ================= SPARK (JOIN ENGINE) ================= -->
+        <rect x="320" y="180" width="300" height="280" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="470" y="202" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Apache Spark — dimensional build</text>
+
+        <rect x="345" y="220" width="250" height="110" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="470" y="244" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">orders ⋈ lineitem</text>
+        <text x="470" y="262" fill="#94a3b8" font-size="9" text-anchor="middle">join on o_orderkey == l_orderkey</text>
+        <line x1="365" y1="272" x2="575" y2="272" stroke="#1e293b" stroke-width="1"/>
+        <text x="470" y="290" fill="#22d3ee" font-size="9" text-anchor="middle">groupBy(o_orderkey, o_custkey, o_orderdate)</text>
+        <text x="470" y="306" fill="#ffffff" font-size="9" text-anchor="middle">.agg(sum(l_extendedprice) → revenue,</text>
+        <text x="470" y="320" fill="#ffffff" font-size="9" text-anchor="middle">      count(*) → line_count)</text>
+
+        <rect x="345" y="350" width="250" height="90" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="470" y="374" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">customer → dim select</text>
+        <text x="470" y="392" fill="#94a3b8" font-size="9" text-anchor="middle">select(c_custkey, c_name,</text>
+        <text x="470" y="406" fill="#94a3b8" font-size="9" text-anchor="middle">       c_nationkey, c_mktsegment)</text>
+        <text x="470" y="426" fill="#22d3ee" font-size="9" text-anchor="middle">project dimension columns</text>
+
+        <!-- ================= GOLD (STAR) ================= -->
+        <rect x="660" y="100" width="590" height="430" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="955" y="122" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Gold — star schema (lakehouse.gold.*)</text>
+
+        <!-- DIM (satellite, upper) -->
+        <rect x="800" y="150" width="310" height="110" rx="8" fill="#1e293b" stroke="#f59e0b" stroke-width="1.8"/>
+        <text x="955" y="174" fill="#f59e0b" font-size="11" font-weight="700" text-anchor="middle">DIMENSION</text>
+        <text x="955" y="196" fill="#ffffff" font-size="14" font-weight="700" text-anchor="middle">dim_customer</text>
+        <text x="955" y="212" fill="#94a3b8" font-size="9" text-anchor="middle">lakehouse.gold.dim_customer</text>
+        <line x1="820" y1="222" x2="1090" y2="222" stroke="#334155" stroke-width="1"/>
+        <text x="955" y="240" fill="#ffffff" font-size="9" text-anchor="middle">c_custkey (PK) · c_name · c_nationkey · c_mktsegment</text>
+        <text x="955" y="254" fill="#22d3ee" font-size="9" text-anchor="middle">writeTo(…).createOrReplace()</text>
+
+        <!-- FACT (center) -->
+        <rect x="800" y="320" width="310" height="130" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="2"/>
+        <text x="955" y="344" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">FACT (center of star)</text>
+        <text x="955" y="368" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">fct_orders</text>
+        <text x="955" y="384" fill="#94a3b8" font-size="9" text-anchor="middle">lakehouse.gold.fct_orders</text>
+        <line x1="820" y1="394" x2="1090" y2="394" stroke="#1e293b" stroke-width="1"/>
+        <text x="955" y="412" fill="#ffffff" font-size="9" text-anchor="middle">o_orderkey (PK) · o_custkey (FK → dim)</text>
+        <text x="955" y="426" fill="#ffffff" font-size="9" text-anchor="middle">o_orderdate · revenue · line_count</text>
+        <text x="955" y="442" fill="#22d3ee" font-size="9" text-anchor="middle">writeTo(…).createOrReplace()</text>
+
+        <!-- Star relationship: fact FK → dim PK -->
+        <line x1="955" y1="320" x2="955" y2="262" stroke="#f59e0b" stroke-width="1.8" stroke-dasharray="4,3" marker-end="url(#arrowhead-dim)"/>
+        <text x="968" y="294" fill="#f59e0b" font-size="9">FK o_custkey</text>
+        <text x="968" y="306" fill="#f59e0b" font-size="9">→ PK c_custkey</text>
+
+        <!-- star verify badge -->
+        <rect x="1130" y="320" width="100" height="60" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+        <text x="1180" y="342" fill="#22d3ee" font-size="9" font-weight="600" text-anchor="middle">star verify</text>
+        <text x="1180" y="358" fill="#94a3b8" font-size="8" text-anchor="middle">f ⋈ dim ON</text>
+        <text x="1180" y="370" fill="#94a3b8" font-size="8" text-anchor="middle">o_custkey</text>
+
+        <!-- ================= CONNECTORS ================= -->
+        <!-- orders -> spark join -->
+        <line x1="260" y1="200" x2="343" y2="265" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <!-- lineitem -> spark join -->
+        <line x1="260" y1="440" x2="343" y2="295" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <!-- customer -> dim select -->
+        <line x1="260" y1="320" x2="343" y2="380" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrowhead)"/>
+
+        <!-- spark join -> fact -->
+        <line x1="595" y1="300" x2="798" y2="370" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <text x="690" y="324" fill="#22d3ee" font-size="9" text-anchor="middle">fct_orders</text>
+        <!-- spark dim -> dimension -->
+        <line x1="595" y1="390" x2="798" y2="220" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <text x="690" y="300" fill="#22d3ee" font-size="9" text-anchor="middle">dim_customer</text>
+
+        <!-- Orchestrator strip -->
+        <rect x="30" y="558" width="1220" height="68" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+        <text x="55" y="584" fill="#22d3ee" font-size="11" font-weight="600">Orchestration</text>
+        <text x="55" y="602" fill="#94a3b8" font-size="9">Airflow DAG: star_schema_tpch (@daily)</text>
+        <text x="55" y="618" fill="#94a3b8" font-size="9">reads S3 landing directly — no medallion intermediate</text>
+        <text x="430" y="584" fill="#22d3ee" font-size="11" font-weight="600">Star verify query</text>
+        <text x="430" y="602" fill="#94a3b8" font-size="9">SELECT c_mktsegment, sum(f.revenue) AS revenue</text>
+        <text x="430" y="618" fill="#94a3b8" font-size="9">FROM fct_orders f JOIN dim_customer c ON f.o_custkey = c.c_custkey GROUP BY c_mktsegment</text>
+        <text x="980" y="584" fill="#22d3ee" font-size="11" font-weight="600">Downstream</text>
+        <text x="980" y="602" fill="#94a3b8" font-size="9">bi_query-tpch-trino-iceberg</text>
+        <text x="980" y="618" fill="#94a3b8" font-size="9">(Trino consumes these gold marts)</text>
+      </svg>

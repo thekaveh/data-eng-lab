@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560" font-family="'JetBrains Mono', 'Courier New', monospace">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background -->
+        <rect width="1280" height="560" fill="#0a0f1f"/>
+        <rect width="1280" height="560" fill="url(#grid)"/>
+
+        <!-- Title -->
+        <text x="640" y="40" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">sessionization — GH Archive (Spark window → Iceberg Silver)</text>
+        <text x="640" y="62" fill="#94a3b8" font-size="12" text-anchor="middle">LAG gap detection + cumulative-sum session IDs over actor_login, ordered by created_at — 30-min inactivity threshold</text>
+
+        <!-- ================= STAGE 1: SOURCE (silver.gh_events) ================= -->
+        <rect x="40" y="120" width="230" height="320" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="155" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Source — Silver</text>
+
+        <rect x="60" y="160" width="190" height="260" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="155" y="186" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">SILVER</text>
+        <text x="155" y="208" fill="#22d3ee" font-size="9" text-anchor="middle">lakehouse.silver.</text>
+        <text x="155" y="224" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">gh_events</text>
+        <line x1="75" y1="242" x2="235" y2="242" stroke="#334155" stroke-width="1"/>
+        <text x="155" y="262" fill="#fb923c" font-size="9" font-weight="600" text-anchor="middle">EVENT SCHEMA</text>
+        <text x="155" y="284" fill="#ffffff" font-size="10" text-anchor="middle">actor_login  string</text>
+        <text x="155" y="302" fill="#ffffff" font-size="10" text-anchor="middle">type         string</text>
+        <text x="155" y="320" fill="#22d3ee" font-size="10" text-anchor="middle">created_at   timestamp</text>
+        <text x="155" y="352" fill="#94a3b8" font-size="9" text-anchor="middle">flattened by</text>
+        <text x="155" y="368" fill="#94a3b8" font-size="9" text-anchor="middle">json_flatten scenario</text>
+        <text x="155" y="396" fill="#22d3ee" font-size="9" text-anchor="middle">spark.table("…gh_events")</text>
+
+        <!-- ================= STAGE 2: WINDOW TRANSFORM ================= -->
+        <rect x="300" y="120" width="470" height="320" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="535" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Transform — Spark Window Functions</text>
+
+        <!-- window definition banner -->
+        <rect x="320" y="158" width="430" height="48" rx="6" fill="#0a0f1f" stroke="#22d3ee" stroke-width="1"/>
+        <text x="535" y="178" fill="#22d3ee" font-size="10" font-weight="700" text-anchor="middle">Window w = partitionBy("actor_login").orderBy("ts")</text>
+        <text x="535" y="196" fill="#94a3b8" font-size="9" text-anchor="middle">per-actor event stream ordered chronologically</text>
+
+        <!-- step 1: LAG -->
+        <rect x="320" y="218" width="430" height="58" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="335" y="240" fill="#fb923c" font-size="10" font-weight="700">1 · LAG</text>
+        <text x="535" y="240" fill="#ffffff" font-size="10" text-anchor="middle">prev_ts = lag("ts", 1).over(w)</text>
+        <text x="535" y="260" fill="#94a3b8" font-size="9" text-anchor="middle">previous event timestamp per actor (null on first row)</text>
+
+        <!-- step 2: gap detect -->
+        <rect x="320" y="284" width="430" height="66" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="335" y="306" fill="#fb923c" font-size="10" font-weight="700">2 · GAP</text>
+        <text x="535" y="306" fill="#ffffff" font-size="10" text-anchor="middle">new_session = when(prev_ts is null</text>
+        <text x="535" y="324" fill="#ffffff" font-size="10" text-anchor="middle">  OR (ts - prev_ts) &gt; 1800s, 1).otherwise(0)</text>
+        <text x="535" y="342" fill="#94a3b8" font-size="9" text-anchor="middle">inactivity &gt; 30 min marks a new session boundary</text>
+
+        <!-- step 3: cumulative sum -->
+        <rect x="320" y="358" width="430" height="58" rx="8" fill="#1e293b" stroke="#fb923c" stroke-width="1.5"/>
+        <text x="335" y="380" fill="#fb923c" font-size="10" font-weight="700">3 · SUM</text>
+        <text x="535" y="380" fill="#ffffff" font-size="10" text-anchor="middle">session_id = sum("new_session").over(w)</text>
+        <text x="535" y="400" fill="#94a3b8" font-size="9" text-anchor="middle">running cumulative sum → monotonically increasing session id</text>
+
+        <!-- ================= STAGE 3: CATALOG ================= -->
+        <rect x="800" y="120" width="160" height="320" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="880" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Catalog</text>
+
+        <rect x="820" y="210" width="120" height="150" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="880" y="238" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Iceberg</text>
+        <text x="880" y="258" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">REST</text>
+        <text x="880" y="286" fill="#94a3b8" font-size="9" text-anchor="middle">iceberg-rest:8181</text>
+        <text x="880" y="324" fill="#22d3ee" font-size="9" text-anchor="middle">createOrReplace()</text>
+        <text x="880" y="340" fill="#22d3ee" font-size="9" text-anchor="middle">USING iceberg</text>
+
+        <!-- ================= STAGE 4: RESULT (silver.gh_sessions) ================= -->
+        <rect x="990" y="120" width="250" height="320" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="1115" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Result — Silver</text>
+
+        <rect x="1010" y="160" width="210" height="260" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="1115" y="186" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">SILVER</text>
+        <text x="1115" y="208" fill="#22d3ee" font-size="9" text-anchor="middle">lakehouse.silver.</text>
+        <text x="1115" y="224" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">gh_sessions</text>
+        <line x1="1025" y1="242" x2="1205" y2="242" stroke="#334155" stroke-width="1"/>
+        <text x="1115" y="262" fill="#fb923c" font-size="9" font-weight="600" text-anchor="middle">SESSION SCHEMA</text>
+        <text x="1115" y="284" fill="#ffffff" font-size="10" text-anchor="middle">actor_login  string</text>
+        <text x="1115" y="302" fill="#ffffff" font-size="10" text-anchor="middle">ts           timestamp</text>
+        <text x="1115" y="320" fill="#22d3ee" font-size="10" text-anchor="middle">session_id   bigint</text>
+        <text x="1115" y="352" fill="#94a3b8" font-size="9" text-anchor="middle">query-ready</text>
+        <text x="1115" y="368" fill="#94a3b8" font-size="9" text-anchor="middle">sessions per actor</text>
+        <text x="1115" y="396" fill="#22d3ee" font-size="9" text-anchor="middle">writeTo("…gh_sessions")</text>
+
+        <!-- ================= CONNECTORS ================= -->
+        <!-- source -> transform -->
+        <line x1="250" y1="290" x2="318" y2="247" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="284" y="262" fill="#22d3ee" font-size="9" text-anchor="middle">events DF</text>
+
+        <!-- transform -> catalog -->
+        <line x1="750" y1="287" x2="818" y2="285" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="784" y="278" fill="#22d3ee" font-size="9" text-anchor="middle">writeTo</text>
+
+        <!-- catalog -> result -->
+        <line x1="940" y1="285" x2="1008" y2="285" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="974" y="278" fill="#22d3ee" font-size="9" text-anchor="middle">commit</text>
+
+        <!-- ================= ORCHESTRATOR STRIP ================= -->
+        <rect x="40" y="468" width="1200" height="62" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+        <text x="70" y="494" fill="#22d3ee" font-size="11" font-weight="600">Orchestration</text>
+        <text x="70" y="514" fill="#94a3b8" font-size="9">Airflow DAG: sessionization_gh_archive (@hourly) · placeholder until productionized</text>
+        <text x="560" y="494" fill="#22d3ee" font-size="11" font-weight="600">Runtime</text>
+        <text x="560" y="514" fill="#94a3b8" font-size="9">PySpark (Jupyter) · Spark Connect sc://spark-connect:15002</text>
+        <text x="930" y="494" fill="#22d3ee" font-size="11" font-weight="600">Verify</text>
+        <text x="930" y="514" fill="#94a3b8" font-size="9">count(distinct session_id) per actor_login</text>
+      </svg>

@@ -33,7 +33,7 @@ Source: `lakehouse.bronze.nyc_taxi_trips` (the bronze table populated by `batch_
 
 ## 3. Architecture
 
-![Architecture](../architectures/data_quality-nyc_taxi-spark-iceberg.svg)
+![Architecture](architectures/data_quality-nyc_taxi-spark-iceberg.svg)
 
 NYC taxi trip data (from local CSV seed or the bronze table) flows through Spark batch processing where custom Spark SQL quality-check functions are defined and applied. The output is a quality summary showing counts of records failing various checks (null fields, negative distances, negative fares), with no downstream sink table written.
 
