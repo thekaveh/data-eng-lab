@@ -5,17 +5,17 @@ Both notebooks implement identical logic in PySpark and Scala.
 
 ## 1. Section map
 
-| Section | Scala (Zeppelin) | PySpark (Jupyter) |
+| Subsection | Scala (Zeppelin) | PySpark (Jupyter) |
 |---|---|---|
-| 2. Setup | ✓ | ✓ |
-| 3. Read | ✓ | ✓ |
-| 4. Transform | ✓ | ✓ |
-| 5. Write | ✓ | ✓ |
-| 6. Verify | ✓ | ✓ |
+| 2.1 Setup | ✓ | ✓ |
+| 2.2 Read | ✓ | ✓ |
+| 2.3 Transform | ✓ | ✓ |
+| 2.4 Write | ✓ | ✓ |
+| 2.5 Verify | ✓ | ✓ |
 
 ## 2. Walkthrough
 
-### 2. Setup
+### 2.1 Setup
 
 **Scala (Zeppelin):**
 
@@ -32,7 +32,7 @@ from pyspark.sql import SparkSession
 spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
 ```
 
-### 3. Read
+### 2.2 Read
 
 **Scala (Zeppelin):**
 
@@ -46,7 +46,7 @@ val df = spark.table("lakehouse.bronze.nyc_taxi_trips")
 df = spark.table("lakehouse.bronze.nyc_taxi_trips")
 ```
 
-### 4. Transform
+### 2.3 Transform
 
 **Scala (Zeppelin):**
 
@@ -64,7 +64,7 @@ valid = df.where(rule)
 quarantine = df.where(f"NOT ({rule}) OR fare_amount IS NULL")
 ```
 
-### 5. Write
+### 2.4 Write
 
 **Scala (Zeppelin):**
 
@@ -80,7 +80,7 @@ valid.writeTo("lakehouse.silver.nyc_taxi_clean").using("iceberg").createOrReplac
 quarantine.writeTo("lakehouse.silver.nyc_taxi_quarantine").using("iceberg").createOrReplace()
 ```
 
-### 6. Verify
+### 2.5 Verify
 
 **Scala (Zeppelin):**
 

@@ -5,17 +5,17 @@ Both notebooks implement identical logic in PySpark and Scala.
 
 ## 1. Section map
 
-| Section | Scala (Zeppelin) | PySpark (Jupyter) |
+| Subsection | Scala (Zeppelin) | PySpark (Jupyter) |
 |---|---|---|
-| 2. Setup | ✓ | ✓ |
-| 3. Read | ✓ | ✓ |
-| 4. Transform | ✓ | ✓ |
-| 5. Write | ✓ | ✓ |
-| 6. Verify | ✓ | ✓ |
+| 2.1 Setup | ✓ | ✓ |
+| 2.2 Read | ✓ | ✓ |
+| 2.3 Transform | ✓ | ✓ |
+| 2.4 Write | ✓ | ✓ |
+| 2.5 Verify | ✓ | ✓ |
 
 ## 2. Walkthrough
 
-### 2. Setup
+### 2.1 Setup
 
 **Scala (Zeppelin):**
 
@@ -34,7 +34,7 @@ from pyspark.sql import functions as F
 spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
 ```
 
-### 3. Read
+### 2.2 Read
 
 **Scala (Zeppelin):**
 
@@ -48,7 +48,7 @@ val ratings = spark.read.option("header", true).option("inferSchema", true).csv(
 ratings = spark.read.option("header", True).option("inferSchema", True).csv("s3a://landing/movielens/ratings.csv")
 ```
 
-### 4. Transform
+### 2.3 Transform
 
 **Scala (Zeppelin):**
 
@@ -64,7 +64,7 @@ userFeatures = ratings.groupBy("userId").agg(F.avg("rating").alias("avg_rating")
 movieFeatures = ratings.groupBy("movieId").agg(F.avg("rating").alias("movie_avg"), F.count("*").alias("popularity"))
 ```
 
-### 5. Write
+### 2.4 Write
 
 **Scala (Zeppelin):**
 
@@ -80,7 +80,7 @@ userFeatures.writeTo("lakehouse.gold.ml_user_features").using("iceberg").createO
 movieFeatures.writeTo("lakehouse.gold.ml_movie_features").using("iceberg").createOrReplace()
 ```
 
-### 6. Verify
+### 2.5 Verify
 
 **Scala (Zeppelin):**
 

@@ -18,6 +18,12 @@ def test_extracts_scala_and_pyspark_code_under_real_title_convention():
     assert "## 2. Walkthrough" in md
     assert "## 3. Scala / PySpark parity" in md
     assert "## 4. How to run" in md
+    # walkthrough subsections numbered HIERARCHICALLY under '## 2.' (2.1, 2.2, …),
+    # not the notebook's flat 2./3./4. used verbatim (which collided with doc sections)
+    assert "### 2.1 Setup" in md
+    assert "### 2.2 Read" in md
+    assert "### 2. Setup" not in md  # old flat form must be gone
+    assert "| 2.1 Setup |" in md     # section map cross-references the subsection
     # BOTH languages' code present — Scala ('val s = 1') was being dropped
     assert "val s = 1" in md
     assert "spark = 1" in md

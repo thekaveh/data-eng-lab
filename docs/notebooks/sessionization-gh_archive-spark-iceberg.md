@@ -4,17 +4,17 @@ Both notebooks implement identical logic in PySpark and Scala.
 
 ## 1. Section map
 
-| Section | Scala (Zeppelin) | PySpark (Jupyter) |
+| Subsection | Scala (Zeppelin) | PySpark (Jupyter) |
 |---|---|---|
-| 2. Setup | ✓ | ✓ |
-| 3. Read | ✓ | ✓ |
-| 4. Transform | ✓ | ✓ |
-| 5. Write | ✓ | ✓ |
-| 6. Verify | ✓ | ✓ |
+| 2.1 Setup | ✓ | ✓ |
+| 2.2 Read | ✓ | ✓ |
+| 2.3 Transform | ✓ | ✓ |
+| 2.4 Write | ✓ | ✓ |
+| 2.5 Verify | ✓ | ✓ |
 
 ## 2. Walkthrough
 
-### 2. Setup
+### 2.1 Setup
 
 **Scala (Zeppelin):**
 
@@ -33,7 +33,7 @@ from pyspark.sql import functions as F
 spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
 ```
 
-### 3. Read
+### 2.2 Read
 
 **Scala (Zeppelin):**
 
@@ -49,7 +49,7 @@ raw = spark.read.json("s3a://landing/gh_archive")
 events = raw.select(F.col("actor.login").alias("actor_login"), F.col("created_at").cast("timestamp").alias("ts"))
 ```
 
-### 4. Transform
+### 2.3 Transform
 
 **Scala (Zeppelin):**
 
@@ -67,7 +67,7 @@ gaps = events.withColumn("prev_ts", F.lag("ts", 1).over(w)).withColumn("new_sess
 sessions = gaps.withColumn("session_id", F.sum("new_session").over(w))
 ```
 
-### 5. Write
+### 2.4 Write
 
 **Scala (Zeppelin):**
 
@@ -81,7 +81,7 @@ sessions.writeTo("lakehouse.silver.gh_sessions").using("iceberg").createOrReplac
 sessions.writeTo("lakehouse.silver.gh_sessions").using("iceberg").createOrReplace()
 ```
 
-### 6. Verify
+### 2.5 Verify
 
 **Scala (Zeppelin):**
 

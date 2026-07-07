@@ -5,17 +5,17 @@ Both notebooks implement identical logic in PySpark and Scala.
 
 ## 1. Section map
 
-| Section | Scala (Zeppelin) | PySpark (Jupyter) |
+| Subsection | Scala (Zeppelin) | PySpark (Jupyter) |
 |---|---|---|
-| 2. Setup | ✓ | ✓ |
-| 3. Read | ✓ | ✓ |
-| 4. Transform | ✓ | ✓ |
-| 5. Write | ✓ | ✓ |
-| 6. Verify | ✓ | ✓ |
+| 2.1 Setup | ✓ | ✓ |
+| 2.2 Read | ✓ | ✓ |
+| 2.3 Transform | ✓ | ✓ |
+| 2.4 Write | ✓ | ✓ |
+| 2.5 Verify | ✓ | ✓ |
 
 ## 2. Walkthrough
 
-### 2. Setup
+### 2.1 Setup
 
 **Scala (Zeppelin):**
 
@@ -34,7 +34,7 @@ spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
 # lakehouse catalog pre-configured
 ```
 
-### 3. Read
+### 2.2 Read
 
 **Scala (Zeppelin):**
 
@@ -52,7 +52,7 @@ spark.sql("INSERT INTO lakehouse.silver.online_retail VALUES ('A1','SKU1',5,2.0)
 spark.sql("SELECT * FROM lakehouse.silver.online_retail ORDER BY invoice").show(truncate=False)
 ```
 
-### 4. Transform
+### 2.3 Transform
 
 **Scala (Zeppelin):**
 
@@ -66,7 +66,7 @@ spark.sql("CREATE OR REPLACE TEMP VIEW online_retail_updates AS SELECT * FROM VA
 spark.sql("CREATE OR REPLACE TEMP VIEW online_retail_updates AS SELECT * FROM VALUES ('A1','SKU1',10,2.0), ('A3','SKU3',1,9.0) AS t(invoice, stock_code, quantity, price)").show(truncate=False)
 ```
 
-### 5. Write
+### 2.4 Write
 
 **Scala (Zeppelin):**
 
@@ -80,7 +80,7 @@ spark.sql("MERGE INTO lakehouse.silver.online_retail t USING online_retail_updat
 spark.sql("MERGE INTO lakehouse.silver.online_retail t USING online_retail_updates s ON t.invoice = s.invoice AND t.stock_code = s.stock_code WHEN MATCHED THEN UPDATE SET t.quantity = s.quantity WHEN NOT MATCHED THEN INSERT *").show(truncate=False)
 ```
 
-### 6. Verify
+### 2.5 Verify
 
 **Scala (Zeppelin):**
 

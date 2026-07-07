@@ -4,17 +4,17 @@ Both notebooks implement identical logic in PySpark and Scala.
 
 ## 1. Section map
 
-| Section | Scala (Zeppelin) | PySpark (Jupyter) |
+| Subsection | Scala (Zeppelin) | PySpark (Jupyter) |
 |---|---|---|
-| 2. Setup | ✓ | ✓ |
-| 3. Read | ✓ | ✓ |
-| 4. Transform | ✓ | ✓ |
-| 5. Write | ✓ | ✓ |
-| 6. Verify | ✓ | ✓ |
+| 2.1 Setup | ✓ | ✓ |
+| 2.2 Read | ✓ | ✓ |
+| 2.3 Transform | ✓ | ✓ |
+| 2.4 Write | ✓ | ✓ |
+| 2.5 Verify | ✓ | ✓ |
 
 ## 2. Walkthrough
 
-### 2. Setup
+### 2.1 Setup
 
 **Scala (Zeppelin):**
 
@@ -33,7 +33,7 @@ from pyspark.sql import functions as F
 spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
 ```
 
-### 3. Read
+### 2.2 Read
 
 **Scala (Zeppelin):**
 
@@ -47,7 +47,7 @@ val bronze = spark.table("lakehouse.bronze.nyc_taxi_trips")
 bronze = spark.table("lakehouse.bronze.nyc_taxi_trips")
 ```
 
-### 4. Transform
+### 2.3 Transform
 
 **Scala (Zeppelin):**
 
@@ -65,7 +65,7 @@ gold = (silver.groupBy("trip_date")
         .agg(F.count("*").alias("trips"), F.avg("fare_amount").alias("avg_fare")))
 ```
 
-### 5. Write
+### 2.4 Write
 
 **Scala (Zeppelin):**
 
@@ -81,7 +81,7 @@ silver.writeTo("lakehouse.silver.nyc_taxi_trips").using("iceberg").createOrRepla
 gold.writeTo("lakehouse.gold.nyc_taxi_daily").using("iceberg").createOrReplace()
 ```
 
-### 6. Verify
+### 2.5 Verify
 
 **Scala (Zeppelin):**
 

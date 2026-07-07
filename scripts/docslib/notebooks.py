@@ -15,6 +15,8 @@ _TITLE_NUM = re.compile(r"^(\d+\.\s+.+)$")
 _TITLE_SUFFIX = re.compile(r"\s*\([^()]*\)\s*$")
 # A leading section-header line '## N. Section' inside notebook markdown.
 _SECTION_HEADER_LINE = re.compile(r"^#{1,6}\s+\d+\.\s+")
+# Leading notebook section number, e.g. '2. ' in '2. Setup'.
+_NUM_PREFIX = re.compile(r"^\d+\.\s+")
 
 
 def _normalize_title(title: str) -> str:
@@ -29,6 +31,11 @@ def _strip_section_headers(md: str) -> str:
     while lines and _SECTION_HEADER_LINE.match(lines[0]):
         lines.pop(0)
     return "\n".join(lines).strip()
+
+
+def _section_name(sec: str) -> str:
+    """'2. Setup' -> 'Setup' (strip the notebook's leading section number)."""
+    return _NUM_PREFIX.sub("", sec)
 
 
 def _ipython_cells(path: Path) -> list[tuple[str, str, str]]:
@@ -105,26 +112,21 @@ def extract_notebook_doc(scenario_name: str, jupyter_path: Path, zeppelin_path: 
              "Auto-extracted from `jupyter/notebook.ipynb` and `zeppelin/notebook.zpln`.\n",
              "Both notebooks implement identical logic in PySpark and Scala.\n\n",
              "## 1. Section map\n\n",
-             "| Section | Scala (Zeppelin) | PySpark (Jupyter) |\n|---|---|---|\n"]
+             "| Subsection | Scala (Zeppelin) | PySpark (Jupyter) |\n|---|---|---|\n"]
+    visible: list[tuple[str, str, str, str, str]] = []
     for sec in NOTEBOOK_SECTIONS:
         v = sections_seen.get(sec, {})
-        has_sc = "✓" if v.get("sc_code") else "—"
-        has_py = "✓" if v.get("py_code") else "—"
-        if has_sc == "—" and has_py == "—":
-            continue  # section has no code in either language (e.g. Overview)
-        lines.append(f"| {sec} | {has_sc} | {has_py} |\n")
-    lines.append("\n## 2. Walkthrough\n\n")
-    for sec in NOTEBOOK_SECTIONS:
-        v = sections_seen.get(sec)
-        if not v:
-            continue
         sc_code = v.get("sc_code", "").strip()
         py_code = v.get("py_code", "").strip()
         sc_md = _strip_section_headers(v.get("sc_md", "")).strip()
         py_md = _strip_section_headers(v.get("py_md", "")).strip()
-        if not (sc_code or py_code or sc_md or py_md):
-            continue  # nothing to show for this section
-        lines.append(f"### {sec}\n\n")
+        if sc_code or py_code or sc_md or py_md:
+            visible.append((sec, sc_code, py_code, sc_md, py_md))
+    for i, (sec, sc_code, py_code, _sc_md, _py_md) in enumerate(visible, 1):
+        lines.append(f"| 2.{i} {_section_name(sec)} | {'✓' if sc_code else '—'} | {'✓' if py_code else '—'} |\n")
+    lines.append("\n## 2. Walkthrough\n\n")
+    for i, (sec, sc_code, py_code, sc_md, py_md) in enumerate(visible, 1):
+        lines.append(f"### 2.{i} {_section_name(sec)}\n\n")
         if sc_code:
             lines.append("**Scala (Zeppelin):**\n\n```scala\n" + sc_code + "\n```\n\n")
         if py_code:

@@ -5,17 +5,17 @@ Both notebooks implement identical logic in PySpark and Scala.
 
 ## 1. Section map
 
-| Section | Scala (Zeppelin) | PySpark (Jupyter) |
+| Subsection | Scala (Zeppelin) | PySpark (Jupyter) |
 |---|---|---|
-| 2. Setup | ✓ | ✓ |
-| 3. Read | ✓ | ✓ |
-| 4. Transform | ✓ | ✓ |
-| 5. Write | ✓ | ✓ |
-| 6. Verify | ✓ | ✓ |
+| 2.1 Setup | ✓ | ✓ |
+| 2.2 Read | ✓ | ✓ |
+| 2.3 Transform | ✓ | ✓ |
+| 2.4 Write | ✓ | ✓ |
+| 2.5 Verify | ✓ | ✓ |
 
 ## 2. Walkthrough
 
-### 2. Setup
+### 2.1 Setup
 
 **Scala (Zeppelin):**
 
@@ -33,7 +33,7 @@ from pyspark.sql import SparkSession
 spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
 ```
 
-### 3. Read
+### 2.2 Read
 
 **Scala (Zeppelin):**
 
@@ -49,7 +49,7 @@ spark.sql("CREATE TABLE IF NOT EXISTS lakehouse.silver.gh_events_se (id string, 
 spark.sql("INSERT INTO lakehouse.silver.gh_events_se VALUES ('1','PushEvent','octocat')")
 ```
 
-### 4. Transform
+### 2.3 Transform
 
 **Scala (Zeppelin):**
 
@@ -65,7 +65,7 @@ spark.sql("ALTER TABLE lakehouse.silver.gh_events_se ADD COLUMN repo_name string
 spark.sql("ALTER TABLE lakehouse.silver.gh_events_se RENAME COLUMN type TO event_type")
 ```
 
-### 5. Write
+### 2.4 Write
 
 **Scala (Zeppelin):**
 
@@ -79,7 +79,7 @@ spark.sql("INSERT INTO lakehouse.silver.gh_events_se VALUES ('2','WatchEvent','t
 spark.sql("INSERT INTO lakehouse.silver.gh_events_se VALUES ('2','WatchEvent','torvalds','linux')")
 ```
 
-### 6. Verify
+### 2.5 Verify
 
 **Scala (Zeppelin):**
 
