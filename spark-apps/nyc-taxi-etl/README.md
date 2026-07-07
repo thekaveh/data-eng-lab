@@ -1,3 +1,4 @@
+<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # NYC Taxi ETL — Raw to Bronze
 
 Pure Spark application that reads raw Parquet files from the landing zone, applies quality filtering, and writes a cleaned Iceberg table at the bronze layer. This app is the first step in the lakehouse ingestion pipeline and is built by Jenkins, tested via ScalaTest, and orchestrated by Airflow.
@@ -40,7 +41,7 @@ s3a://landing/nyc_taxi/*.parquet
     └─────────────────────────────┘
 ```
 
-![Architecture](../../docs/spark-apps/architectures/nyc-taxi-etl.html)
+![Architecture](../architectures/nyc-taxi-etl.svg)
 
 - **GitHub → Jenkins:** SCM poll or webhook triggers the pipeline.
 - **Jenkins CI:** runs `mvn test` then `mvn package`, producing a shaded JAR.
@@ -118,8 +119,8 @@ s3a://landing/nyc_taxi/*.parquet
 
 ## 8. See Also
 
-- [Spark apps overview](../../docs/spark-apps/index.md)
-- [Related scenario: batch_ingest-nyc_taxi-spark-iceberg](../../docs/scenarios/batch_ingest-nyc_taxi-spark-iceberg.md) — Produces the bronze table this app consumes
-- [Related scenario: medallion-nyc_taxi-spark-iceberg](../../docs/scenarios/medallion-nyc_taxi-spark-iceberg.md) — Also consumes the bronze table
-- [Lakehouse Architecture](../../docs/lakehouse.md)
-- [Datasets](../../docs/datasets.md)
+- [Spark apps overview](../index/README.md)
+- [Related scenario: batch_ingest-nyc_taxi-spark-iceberg](../../scenarios/batch_ingest-nyc_taxi-spark-iceberg/README.md) — Produces the bronze table this app consumes
+- [Related scenario: medallion-nyc_taxi-spark-iceberg](../../scenarios/medallion-nyc_taxi-spark-iceberg/README.md) — Also consumes the bronze table
+- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../README.md#datasets)

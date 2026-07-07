@@ -1,3 +1,4 @@
+<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # streaming_ingest-gh_archive-spark-iceberg
 
 Demonstrate Iceberg ingestion via Structured Streaming with a file source: read JSON files incrementally from S3 landing, parse with schema, cast the timestamp column, and write to Iceberg with checkpoints for exactly-once semantics. No Kafka or external messaging queue required.
@@ -29,7 +30,7 @@ Checkpoint: `s3a://checkpoints/gh_events_file`
 
 ## 3. Architecture
 
-![Architecture](../../docs/scenarios/architectures/streaming_ingest-gh_archive-spark-iceberg.html)
+![Architecture](../architectures/streaming_ingest-gh_archive-spark-iceberg.svg)
 
 Data flows from `s3a://landing/gh_archive/*.json.gz` through Spark Structured Streaming with a file source. The stream reads JSON files incrementally, defines a schema to extract nested fields (`actor.login` → `actor_login`, `repo.name` → `repo_name`), casts `created_at` to timestamp, and writes to Iceberg with checkpointing for exactly-once semantics.
 
@@ -73,5 +74,5 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. This 
 
 - [Downstream: json_flatten-gh_archive-spark-iceberg](../json_flatten-gh_archive-spark-iceberg/README.md) — Also consumes GitHub Archive data
 - [Downstream: sessionization-gh_archive-spark-iceberg](../sessionization-gh_archive-spark-iceberg/README.md) — Consumes stream events
-- [Datasets](../../docs/datasets.md)
-- [Lakehouse Architecture](../../docs/lakehouse.md)
+- [Datasets](../../README.md#datasets)
+- [Lakehouse Architecture](../../README.md#lakehouse-architecture)

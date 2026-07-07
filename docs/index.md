@@ -6,7 +6,7 @@ Curated Spark scenarios in Scala (Zeppelin) and PySpark (Jupyter), orchestrated 
 
 ---
 
-## Architecture
+## 1.1 Architecture
 
 ![Full-stack Lakehouse Architecture](architectures/overview.svg)
 
@@ -21,7 +21,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
 ---
 
-## Quick navigation
+## 1.2 Quick navigation
 
 <div class="grid cards" markdown>
 
@@ -77,7 +77,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
 ---
 
-## By the numbers
+## 1.3 By the numbers
 
 | What | Count |
 |------|-------|
@@ -89,7 +89,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
 ---
 
-## Scenario catalog
+## 1.4 Scenario catalog
 
 | Scenario | Engine | Layer | Dataset |
 |---|---|---|---|
@@ -115,7 +115,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
 ---
 
-## Scenarios by Category
+## 1.5 Scenarios by Category
 
 **Batch Ingestion** — `batch_ingest`
 

@@ -1,3 +1,4 @@
+<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # streaming_windows-events-spark-iceberg
 
 Windowed aggregation with watermark on the Redpanda `events` Kafka topic, writing closed window counts to `lakehouse.gold.event_windows` (Iceberg).
@@ -28,7 +29,7 @@ Checkpoint: `s3a://checkpoints/event_windows`
 
 ## 3. Architecture
 
-![Architecture](../../docs/scenarios/architectures/streaming_windows-events-spark-iceberg.html)
+![Architecture](../architectures/streaming_windows-events-spark-iceberg.svg)
 
 Data flows from the Redpanda `events` topic through Spark Structured Streaming with `withWatermark` and `groupBy` over tumbling windows (5-minute windows, 10-minute watermark). Aggregation: counts events per event type per window. Results are written to Iceberg in append mode — only closed windows emit.
 
@@ -68,5 +69,5 @@ Atlas seeds only the `atlas_stream_events` demo topic; this scenario's topic (`e
 
 - [Upstream: streaming_ingest-events-spark-iceberg](../streaming_ingest-events-spark-iceberg/README.md) — Produces the events topic this scenario consumes
 - [Related: cdc_streaming-online_retail-spark-iceberg](../cdc_streaming-online_retail-spark-iceberg/README.md) — Another CDC/streaming scenario
-- [Datasets](../../docs/datasets.md)
-- [Lakehouse Architecture](../../docs/lakehouse.md)
+- [Datasets](../../README.md#datasets)
+- [Lakehouse Architecture](../../README.md#lakehouse-architecture)

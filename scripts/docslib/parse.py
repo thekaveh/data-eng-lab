@@ -9,6 +9,20 @@ import yaml
 from .links import DocMap
 from .model import NavItem, Page, Scenario, Section, SiteModel
 
+
+class _LenientLoader(yaml.SafeLoader):
+    """SafeLoader that ignores unknown custom tags (e.g. mkdocs'
+    ``!!python/name:material.extensions.emoji.*`` directives) instead of
+    raising. ``parse_site`` only reads ``docs_dir`` and ``nav``; mkdocs'
+    emoji/python-name tags under ``markdown_extensions`` are irrelevant here.
+    """
+
+
+# Fallback multi-constructor: any tag without a specific constructor yields None.
+# Standard YAML types (str/map/seq/...) remain handled by SafeLoader's exact
+# constructors, so this only catches unregistered custom tags.
+_LenientLoader.add_multi_constructor("", lambda loader, tag_suffix, node: None)
+
 _H = re.compile(r"^(#{1,6})\s+(.*)$")
 _NUM = re.compile(r"^(\d+(?:\.\d+)*)\.?\s+(.*)$")
 _SLUG = re.compile(r"[^a-z0-9]+")
@@ -94,7 +108,8 @@ def _walk_nav(node, docs_root: Path, counter: list[int], pages: dict[str, Page],
 
 
 def parse_site(repo_root: Path) -> SiteModel:
-    mkdocs = yaml.safe_load((repo_root / "mkdocs.yml").read_text(encoding="utf-8"))
+    mkdocs = yaml.load((repo_root / "mkdocs.yml").read_text(encoding="utf-8"),
+                       Loader=_LenientLoader)
     docs_root = repo_root / mkdocs.get("docs_dir", "docs")
     pages: dict[str, Page] = {}
     nav: list[NavItem] = []

@@ -1,3 +1,4 @@
+<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # data_quality-nyc_taxi-spark-iceberg
 
 Applies data quality checks to NYC taxi trip data using custom Spark SQL functions, counting and flagging records that fail validation rules.
@@ -32,7 +33,7 @@ Source: `lakehouse.bronze.nyc_taxi_trips` (the bronze table populated by `batch_
 
 ## 3. Architecture
 
-![Architecture](../../docs/scenarios/architectures/data_quality-nyc_taxi-spark-iceberg.html)
+![Architecture](../architectures/data_quality-nyc_taxi-spark-iceberg.svg)
 
 NYC taxi trip data (from local CSV seed or the bronze table) flows through Spark batch processing where custom Spark SQL quality-check functions are defined and applied. The output is a quality summary showing counts of records failing various checks (null fields, negative distances, negative fares), with no downstream sink table written.
 
@@ -73,5 +74,5 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The 3
 
 - [Related: batch_ingest-nyc_taxi-spark-iceberg](../batch_ingest-nyc_taxi-spark-iceberg/README.md) — Produces the source table this scenario consumes
 - [Related: medallion-nyc_taxi-spark-iceberg](../medallion-nyc_taxi-spark-iceberg/README.md) — Transform pipeline that can include quality checks
-- [Datasets](../../docs/datasets.md)
-- [Lakehouse Architecture](../../docs/lakehouse.md)
+- [Datasets](../../README.md#datasets)
+- [Lakehouse Architecture](../../README.md#lakehouse-architecture)

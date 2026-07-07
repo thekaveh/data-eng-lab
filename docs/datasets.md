@@ -2,7 +2,7 @@
 
 `data-eng-lab` lands a curated set of five standard open datasets into MinIO's `landing` bucket, driven by a declarative registry. Each dataset comes in multiple scale levels (`tiny`, `small`, `medium`) to support CI, local development, and heavier analytical workloads.
 
-## Registry
+## 4.1 Registry
 
 `datasets/registry.yaml` declares each dataset with the following properties:
 
@@ -16,7 +16,7 @@
 
 The registry is schema-validated by the repo verifier. Adding a dataset requires only a new entry in this file and a corresponding fetch function — no code change to the core pipeline is needed.
 
-## Current Datasets
+## 4.2 Current Datasets
 
 | Dataset | Shape | Format | Fetch | Scenarios |
 |---|---|---|---|---|
@@ -26,7 +26,7 @@ The registry is schema-validated by the repo verifier. Adding a dataset requires
 | `online_retail` | Transactional retail invoices | CSV | http (unzip) | incremental_upsert, scd2, cdc_streaming |
 | `tpch` | Benchmark star-schema | Parquet | tpch (DuckDB) | star_schema, join_optimization, bi_query |
 
-## Adding a Dataset
+## 4.3 Adding a Dataset
 
 1. Add an entry to `datasets/registry.yaml` with `format`, `license`, `landing_prefix`, `fetch.kind`, and `fetch.scale_params`.
 2. Add a fetch function in `scripts/download_datasets.py` if `fetch.kind` is not `http` or `tpch`.
@@ -34,7 +34,7 @@ The registry is schema-validated by the repo verifier. Adding a dataset requires
 4. Verify with `uv run python scripts/download_datasets.py --dry-run`.
 5. Create a scenario folder and write the notebooks.
 
-## Usage
+## 4.4 Usage
 
 ```bash
 make up                  # boot the Atlas data-eng track (MinIO must be running)
@@ -47,7 +47,7 @@ uv run python scripts/download_datasets.py --dry-run    # show what would be lan
 
 The downloader reads MinIO credentials and the published S3 port from `infra/.env` and is idempotent — existing objects are skipped unless `--force` is specified.
 
-## Related Scenarios by Dataset
+## 4.5 Related Scenarios by Dataset
 
 ### NYC Taxi (`nyc_taxi`)
 - [batch_ingest-nyc_taxi-spark-iceberg](scenarios/batch_ingest-nyc_taxi-spark-iceberg.md)
@@ -77,7 +77,7 @@ The downloader reads MinIO credentials and the published S3 port from `infra/.en
 - [json_flatten-gh_archive-spark-iceberg](scenarios/json_flatten-gh_archive-spark-iceberg.md)
 - [sessionization-gh_archive-spark-iceberg](scenarios/sessionization-gh_archive-spark-iceberg.md)
 
-## See Also
+## 4.6 See Also
 
 - [Scenario Catalog](scenarios/index.md)
 - [Lakehouse Architecture](lakehouse.md)

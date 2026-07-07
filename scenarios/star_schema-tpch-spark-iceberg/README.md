@@ -1,3 +1,4 @@
+<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # star_schema-tpch-spark-iceberg
 
 Builds fact and dimension tables from the TPC-H dataset using star schema dimensional modeling, creating `dim_customer` and `fct_orders` in the gold layer.
@@ -46,7 +47,7 @@ Source: TPC-H Parquet datasets in S3 (`s3a://landing/tpch/`), downloaded via `ma
 
 ## 3. Architecture
 
-![Architecture](../../docs/scenarios/architectures/star_schema-tpch-spark-iceberg.html)
+![Architecture](../architectures/star_schema-tpch-spark-iceberg.svg)
 
 Data flows from three Parquet tables in S3 (`orders`, `customer`, `lineitem`) through Spark batch processing. Orders are joined with lineitems on order key, then joined with customers on customer key. The result produces two gold-layer Iceberg tables: a dimension table (`dim_customer`) and a fact table (`fct_orders`), forming a star schema.
 
@@ -90,5 +91,5 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `
 
 - [Downstream: bi_query-tpch-trino-iceberg](../bi_query-tpch-trino-iceberg/README.md) — Queries gold marts via Trino
 - [Downstream: join_optimization-tpch-spark-iceberg](../join_optimization-tpch-spark-iceberg/README.md) — Uses gold tables for join optimization demos
-- [Datasets](../../docs/datasets.md)
-- [Lakehouse Architecture](../../docs/lakehouse.md)
+- [Datasets](../../README.md#datasets)
+- [Lakehouse Architecture](../../README.md#lakehouse-architecture)

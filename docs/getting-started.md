@@ -4,7 +4,7 @@ Get the full `data-eng-lab` stack running in five steps.
 
 ---
 
-## Prerequisites
+## 2.1 Prerequisites
 
 | Requirement | Notes |
 |-------------|-------|
@@ -16,7 +16,7 @@ Get the full `data-eng-lab` stack running in five steps.
 
 ---
 
-## Architecture
+## 2.2 Architecture
 
 The `data-eng-lab` platform runs on the Atlas Docker Compose cluster, consisting of ~30 containers across six layers:
 
@@ -33,7 +33,7 @@ The medallion data flow runs at the bottom: bronze (raw) → silver (clean) → 
 
 ---
 
-## Step 1 — Clone and initialise the submodule
+## 2.3 Step 1 — Clone and initialise the submodule
 
 ```bash
 git clone https://github.com/thekaveh/data-eng-lab.git
@@ -43,7 +43,7 @@ make setup         # git submodule update --init --recursive infra
 
 ---
 
-## Step 2 — Download datasets
+## 2.4 Step 2 — Download datasets
 
 The lab ships five curated datasets (NYC Taxi, TPC-H, Online Retail, GitHub Archive, MovieLens). Download the `small` tier (default) into the MinIO landing bucket:
 
@@ -57,7 +57,7 @@ See [Datasets](datasets.md) for the full dataset registry and scale options.
 
 ---
 
-## Step 3 — Launch the stack
+## 2.5 Step 3 — Launch the stack
 
 ```bash
 make up
@@ -81,7 +81,7 @@ This runs `./scripts/start-all.sh`, which:
 
 ---
 
-## Step 4 — Verify the stack
+## 2.6 Step 4 — Verify the stack
 
 ```bash
 make preflight     # Layer 1 (service health) + Layer 2 (integration round-trips)
@@ -93,7 +93,7 @@ A passing `make preflight` confirms end-to-end connectivity: Spark ↔ MinIO ↔
 
 ---
 
-## Step 5 — Run notebooks
+## 2.7 Step 5 — Run notebooks
 
 === "Zeppelin (Scala Spark)"
 
@@ -109,7 +109,7 @@ A passing `make preflight` confirms end-to-end connectivity: Spark ↔ MinIO ↔
 
 ---
 
-## Tear down
+## 2.8 Tear down
 
 ```bash
 make down               # stop containers, preserve volumes
@@ -118,7 +118,7 @@ make down COLD=1        # stop and wipe all volumes (full reset)
 
 ---
 
-## What next?
+## 2.9 What next?
 
 - Browse the [Scenario Catalog](scenarios/index.md) — 19 end-to-end scenarios across bronze, silver, and gold.
 - Check [Lakehouse Architecture](lakehouse.md) for the medallion design, Iceberg features, and integration matrix.

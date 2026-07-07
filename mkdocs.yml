@@ -74,44 +74,66 @@ extra_css:
    - css/custom.css
 
 nav:
-   - Home: index.md
-   - Getting Started: getting-started.md
+   - "1. Overview": index.md
+   - "2. Getting Started": getting-started.md
+   - "3. Lakehouse Architecture": lakehouse.md
+   - "4. Datasets": datasets.md
 
-   - Scenarios:
-     - Overview: scenarios/index.md
-     - batch_ingest-nyc_taxi-spark-iceberg: scenarios/batch_ingest-nyc_taxi-spark-iceberg.md
-     - bi_query-tpch-trino-iceberg: scenarios/bi_query-tpch-trino-iceberg.md
-     - cdc_streaming-online_retail-spark-iceberg: scenarios/cdc_streaming-online_retail-spark-iceberg.md
-     - data_quality-nyc_taxi-spark-iceberg: scenarios/data_quality-nyc_taxi-spark-iceberg.md
-     - feature_engineering-movielens-spark-iceberg: scenarios/feature_engineering-movielens-spark-iceberg.md
-     - federated_query-nyc_taxi-trino-iceberg: scenarios/federated_query-nyc_taxi-trino-iceberg.md
-     - incremental_upsert-online_retail-spark-iceberg: scenarios/incremental_upsert-online_retail-spark-iceberg.md
-     - join_optimization-tpch-spark-iceberg: scenarios/join_optimization-tpch-spark-iceberg.md
-     - json_flatten-gh_archive-spark-iceberg: scenarios/json_flatten-gh_archive-spark-iceberg.md
-     - medallion-nyc_taxi-spark-iceberg: scenarios/medallion-nyc_taxi-spark-iceberg.md
-     - scd2-online_retail-spark-iceberg: scenarios/scd2-online_retail-spark-iceberg.md
-     - schema_evolution-gh_archive-spark-iceberg: scenarios/schema_evolution-gh_archive-spark-iceberg.md
-     - sessionization-gh_archive-spark-iceberg: scenarios/sessionization-gh_archive-spark-iceberg.md
-     - star_schema-tpch-spark-iceberg: scenarios/star_schema-tpch-spark-iceberg.md
-     - streaming_ingest-events-spark-iceberg: scenarios/streaming_ingest-events-spark-iceberg.md
-     - streaming_ingest-gh_archive-spark-iceberg: scenarios/streaming_ingest-gh_archive-spark-iceberg.md
-     - streaming_windows-events-spark-iceberg: scenarios/streaming_windows-events-spark-iceberg.md
-     - table_maintenance-nyc_taxi-spark-iceberg: scenarios/table_maintenance-nyc_taxi-spark-iceberg.md
-     - time_travel-nyc_taxi-spark-iceberg: scenarios/time_travel-nyc_taxi-spark-iceberg.md
+   - "5. Scenarios":
+     - "5.1 Catalog": scenarios/index.md
+     - "5.2 batch_ingest-nyc_taxi-spark-iceberg": scenarios/batch_ingest-nyc_taxi-spark-iceberg.md
+     - "5.3 medallion-nyc_taxi-spark-iceberg": scenarios/medallion-nyc_taxi-spark-iceberg.md
+     - "5.4 streaming_ingest-events-spark-iceberg": scenarios/streaming_ingest-events-spark-iceberg.md
+     - "5.5 streaming_ingest-gh_archive-spark-iceberg": scenarios/streaming_ingest-gh_archive-spark-iceberg.md
+     - "5.6 streaming_windows-events-spark-iceberg": scenarios/streaming_windows-events-spark-iceberg.md
+     - "5.7 cdc_streaming-online_retail-spark-iceberg": scenarios/cdc_streaming-online_retail-spark-iceberg.md
+     - "5.8 data_quality-nyc_taxi-spark-iceberg": scenarios/data_quality-nyc_taxi-spark-iceberg.md
+     - "5.9 schema_evolution-gh_archive-spark-iceberg": scenarios/schema_evolution-gh_archive-spark-iceberg.md
+     - "5.10 star_schema-tpch-spark-iceberg": scenarios/star_schema-tpch-spark-iceberg.md
+     - "5.11 feature_engineering-movielens-spark-iceberg": scenarios/feature_engineering-movielens-spark-iceberg.md
+     - "5.12 scd2-online_retail-spark-iceberg": scenarios/scd2-online_retail-spark-iceberg.md
+     - "5.13 time_travel-nyc_taxi-spark-iceberg": scenarios/time_travel-nyc_taxi-spark-iceberg.md
+     - "5.14 table_maintenance-nyc_taxi-spark-iceberg": scenarios/table_maintenance-nyc_taxi-spark-iceberg.md
+     - "5.15 incremental_upsert-online_retail-spark-iceberg": scenarios/incremental_upsert-online_retail-spark-iceberg.md
+     - "5.16 bi_query-tpch-trino-iceberg": scenarios/bi_query-tpch-trino-iceberg.md
+     - "5.17 federated_query-nyc_taxi-trino-iceberg": scenarios/federated_query-nyc_taxi-trino-iceberg.md
+     - "5.18 join_optimization-tpch-spark-iceberg": scenarios/join_optimization-tpch-spark-iceberg.md
+     - "5.19 json_flatten-gh_archive-spark-iceberg": scenarios/json_flatten-gh_archive-spark-iceberg.md
+     - "5.20 sessionization-gh_archive-spark-iceberg": scenarios/sessionization-gh_archive-spark-iceberg.md
 
-   - Spark Apps:
-     - Overview: spark-apps/index.md
-     - nyc-taxi-etl: spark-apps/nyc-taxi-etl.md
-     - nyc-taxi-medallion: spark-apps/nyc-taxi-medallion.md
+   - "6. Notebooks":
+     - "6.1 Index": notebooks/index.md
+     - "6.2 batch_ingest-nyc_taxi-spark-iceberg": notebooks/batch_ingest-nyc_taxi-spark-iceberg.md
+     - "6.3 medallion-nyc_taxi-spark-iceberg": notebooks/medallion-nyc_taxi-spark-iceberg.md
+     - "6.4 streaming_ingest-events-spark-iceberg": notebooks/streaming_ingest-events-spark-iceberg.md
+     - "6.5 streaming_ingest-gh_archive-spark-iceberg": notebooks/streaming_ingest-gh_archive-spark-iceberg.md
+     - "6.6 streaming_windows-events-spark-iceberg": notebooks/streaming_windows-events-spark-iceberg.md
+     - "6.7 cdc_streaming-online_retail-spark-iceberg": notebooks/cdc_streaming-online_retail-spark-iceberg.md
+     - "6.8 data_quality-nyc_taxi-spark-iceberg": notebooks/data_quality-nyc_taxi-spark-iceberg.md
+     - "6.9 schema_evolution-gh_archive-spark-iceberg": notebooks/schema_evolution-gh_archive-spark-iceberg.md
+     - "6.10 star_schema-tpch-spark-iceberg": notebooks/star_schema-tpch-spark-iceberg.md
+     - "6.11 feature_engineering-movielens-spark-iceberg": notebooks/feature_engineering-movielens-spark-iceberg.md
+     - "6.12 scd2-online_retail-spark-iceberg": notebooks/scd2-online_retail-spark-iceberg.md
+     - "6.13 time_travel-nyc_taxi-spark-iceberg": notebooks/time_travel-nyc_taxi-spark-iceberg.md
+     - "6.14 table_maintenance-nyc_taxi-spark-iceberg": notebooks/table_maintenance-nyc_taxi-spark-iceberg.md
+     - "6.15 incremental_upsert-online_retail-spark-iceberg": notebooks/incremental_upsert-online_retail-spark-iceberg.md
+     - "6.16 bi_query-tpch-trino-iceberg": notebooks/bi_query-tpch-trino-iceberg.md
+     - "6.17 federated_query-nyc_taxi-trino-iceberg": notebooks/federated_query-nyc_taxi-trino-iceberg.md
+     - "6.18 join_optimization-tpch-spark-iceberg": notebooks/join_optimization-tpch-spark-iceberg.md
+     - "6.19 json_flatten-gh_archive-spark-iceberg": notebooks/json_flatten-gh_archive-spark-iceberg.md
+     - "6.20 sessionization-gh_archive-spark-iceberg": notebooks/sessionization-gh_archive-spark-iceberg.md
 
-   - Lakehouse & Atlas:
-     - Lakehouse: lakehouse.md
-     - Atlas Expectations: atlas-expectations.md
-     - Atlas Go-Live Runbook: go-live.md
-     - Atlas Go-Live Results: go-live-results.md
-     - Atlas Feedback (A7/A9): atlas-feedback-a7a9.md
-     - Atlas Go-Live Findings: atlas-feedback-go-live.md
-     - Atlas Enablement: atlas-enablement.md
+   - "7. Spark Apps":
+     - "7.1 Overview": spark-apps/index.md
+     - "7.2 nyc-taxi-etl": spark-apps/nyc-taxi-etl.md
+     - "7.3 nyc-taxi-medallion": spark-apps/nyc-taxi-medallion.md
 
-   - Datasets: datasets.md
-   - Changelog: CHANGELOG.md
+   - "8. Atlas Operations":
+     - "8.1 Atlas Expectations": atlas-expectations.md
+     - "8.2 Atlas Go-Live Runbook": go-live.md
+     - "8.3 Atlas Go-Live Results": go-live-results.md
+     - "8.4 Atlas Feedback (A7/A9)": atlas-feedback-a7a9.md
+     - "8.5 Atlas Go-Live Findings": atlas-feedback-go-live.md
+     - "8.6 Atlas Enablement": atlas-enablement.md
+
+   - "9. Changelog": CHANGELOG.md

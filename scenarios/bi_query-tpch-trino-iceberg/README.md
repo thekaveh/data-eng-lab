@@ -1,3 +1,4 @@
+<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # bi_query-tpch-trino-iceberg
 
 Queries gold-layer marts via Trino SQL, demonstrating Trino as a lightweight SQL-only analytics engine over Iceberg tables produced by Spark.
@@ -36,7 +37,7 @@ From `lakehouse.gold.dim_customer`:
 
 ## 3. Architecture
 
-![Architecture](../../docs/scenarios/architectures/bi_query-tpch-trino-iceberg.html)
+![Architecture](../architectures/bi_query-tpch-trino-iceberg.svg)
 
 Data flows from gold-layer Iceberg tables (`fct_orders`, `dim_customer`) through Trino SQL queries. The Trino coordinator connects to the Iceberg catalog, reads the gold tables, joins them, aggregates revenue by market segment, and writes the summary back to the gold layer — all via standard ANSI SQL with no Spark involvement.
 
@@ -75,5 +76,5 @@ Live execution is gated on Atlas #268 (Trino coordinator integration). The `%tri
 
 - [Upstream: star_schema-tpch-spark-iceberg](../star_schema-tpch-spark-iceberg/README.md) — Populates the gold tables this scenario queries
 - [Related: join_optimization-tpch-spark-iceberg](../join_optimization-tpch-spark-iceberg/README.md) — Another TPC-H query optimization scenario
-- [Datasets](../../docs/datasets.md)
-- [Lakehouse Architecture](../../docs/lakehouse.md)
+- [Datasets](../../README.md#datasets)
+- [Lakehouse Architecture](../../README.md#lakehouse-architecture)

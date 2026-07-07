@@ -1,3 +1,4 @@
+<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # NYC Taxi Medallion Pipeline
 
 Productionizes the medallion transform pattern for NYC taxi trip data: bronze Iceberg → silver (deduplicated) → gold (daily aggregation on trip counts and average fares). Built by Jenkins CI, orchestrated by Airflow CD.
@@ -44,7 +45,7 @@ lakehouse.bronze.nyc_taxi_trips
     └──────────────────┘          └──────────────────────┘
 ```
 
-![Architecture](../../docs/spark-apps/architectures/nyc-taxi-medallion.html)
+![Architecture](../architectures/nyc-taxi-medallion.svg)
 
 - **Iceberg bronze → Jenkins:** SCM poll triggers the pipeline; Spark reads from the bronze layer.
 - **Jenkins CI:** runs `mvn test` (ScalaTest) then `mvn package`, producing a shaded JAR.
@@ -144,9 +145,9 @@ lakehouse.bronze.nyc_taxi_trips
 
 ## 8. See Also
 
-- [Spark apps overview](../../docs/spark-apps/index.md)
-- [nyc-taxi-etl](./nyc-taxi-etl.md)
-- [Related scenario: medallion-nyc_taxi-spark-iceberg](../../docs/scenarios/medallion-nyc_taxi-spark-iceberg.md) — Notebook prototype of this app
-- [Related scenario: batch_ingest-nyc_taxi-spark-iceberg](../../docs/scenarios/batch_ingest-nyc_taxi-spark-iceberg.md) — Populates the bronze table this app reads from
-- [Lakehouse Architecture](../../docs/lakehouse.md)
-- [Datasets](../../docs/datasets.md)
+- [Spark apps overview](../index/README.md)
+- [nyc-taxi-etl](../nyc-taxi-etl/README.md)
+- [Related scenario: medallion-nyc_taxi-spark-iceberg](../../scenarios/medallion-nyc_taxi-spark-iceberg/README.md) — Notebook prototype of this app
+- [Related scenario: batch_ingest-nyc_taxi-spark-iceberg](../../scenarios/batch_ingest-nyc_taxi-spark-iceberg/README.md) — Populates the bronze table this app reads from
+- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../README.md#datasets)

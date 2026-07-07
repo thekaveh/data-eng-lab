@@ -8,7 +8,7 @@ The platform is orchestrated by Airflow, orchestrated from notebooks (Jupyter/Py
 
 ![Lakehouse Architecture](architectures/lakehouse.svg)
 
-## 1. Storage Layer
+## 3.1 Storage Layer
 
 All data persists in MinIO, an S3-compatible object storage service. MinIO provides four dedicated buckets:
 
@@ -21,7 +21,7 @@ All data persists in MinIO, an S3-compatible object storage service. MinIO provi
 
 Spark clients address storage as `s3a://lakehouse/` (S3A scheme); the REST catalog backend uses `s3://lakehouse/` (native S3).
 
-## 2. Catalog
+## 3.2 Catalog
 
 The Iceberg REST catalog (`iceberg-rest:8181`) is backed by a Supabase Postgres database. It stores table metadata (schema, partition spec, snapshots, branch info) in Postgres while the actual data lives on MinIO.
 
@@ -32,7 +32,7 @@ The Iceberg REST catalog (`iceberg-rest:8181`) is backed by a Supabase Postgres 
 
 The Iceberg REST catalog is built from `apache/iceberg-rest-fixture:1.10.1` with the Postgres JDBC driver layered onto the classpath.
 
-### 2.1 Namespaces
+### 3.2.1 Namespaces
 
 | Namespace | Purpose | Contains |
 |---|---|---|
@@ -42,27 +42,27 @@ The Iceberg REST catalog is built from `apache/iceberg-rest-fixture:1.10.1` with
 
 Namespaces are **not pre-seeded** by Atlas. They are created at bootstrap by `scripts/register_iceberg.py` (idempotent — safe to re-run). Apps may also self-create namespaces with `CREATE NAMESPACE IF NOT EXISTS`.
 
-## 3. The Medallion Pattern
+## 3.3 The Medallion Pattern
 
-### 3.1 Bronze
+### 3.3.1 Bronze
 
 The bronze layer is the raw ingestion layer. Data is loaded as-is from the landing bucket with minimal cleaning — only field-level validation (e.g. dropping rows with null fare amounts) and column addition (e.g. `trip_date`, `ingested_at`). Bronze tables preserve the full historical record and form the foundation for all downstream processing.
 
 **Examples:** `nyc_taxi_trips` (raw taxi trips), `events` (real-time Kafka stream), `gh_events` (file-source streaming), `gh_events_flattened` (flattened JSON from GH Archive).
 
-### 3.2 Silver
+### 3.3.2 Silver
 
 The silver layer applies quality rules, deduplication, and schema enforcement. Duplicate rows are removed, inconsistent fields are standardized, and new columns from schema evolution are populated — old rows receive NULLs for newly added columns, maintaining backward compatibility.
 
 **Examples:** `nyc_taxi_trips` (deduplicated and validated), `gh_events` (deduplicated events), `online_retail` (merged CDC upserts), `online_retail_cdc` (real-time CDC stream).
 
-### 3.3 Gold
+### 3.3.3 Gold
 
 The gold layer contains business-level marts and pre-aggregated metrics. These tables are optimized for BI and analytics queries, with star-schema fact/dimension tables, daily aggregations, and ML feature engineering outputs. They are consumed by Trino for SQL BI, and by ML pipelines via Spark MLlib.
 
 **Examples:** `nyc_taxi_daily` (daily trip aggregations), `bi_segment_revenue` (TPCH revenue by market segment), `ml_user_features` and `ml_movie_features` (collaborative filtering features), `order_fact` + `customer_dim` (TPCH star schema).
 
-## 4. Integration Matrix (Preflight Layer 2)
+## 3.4 Integration Matrix (Preflight Layer 2)
 
 | Client | Capabilities | Storage/Target |
 |---|---|---|
@@ -73,7 +73,7 @@ The gold layer contains business-level marts and pre-aggregated metrics. These t
 | Jenkins CI | Maven build, JAR publishing to MinIO | Publishes to `s3a://jars/` |
 | Spark → Redpanda | Structured Streaming writeStream to Kafka API topics | `redpanda:9092` topics |
 
-## 5. Bronze Smoke Test
+## 3.5 Bronze Smoke Test
 
 Validate the lakehouse is end-to-end operational:
 
@@ -83,7 +83,7 @@ uv run python scripts/bronze_smoke.py
 
 This script loads a landing dataset (NYC Taxi) into `lakehouse.bronze.*` via Spark Connect, confirming that the full path — MinIO → Spark → Iceberg catalog → MinIO data — is functional.
 
-## 6. Iceberg Features in Use
+## 3.6 Iceberg Features in Use
 
 | Feature | Scenarios That Use It |
 |---|---|
@@ -100,14 +100,14 @@ This script loads a landing dataset (NYC Taxi) into `lakehouse.bronze.*` via Spa
 | Window + watermark functions | `streaming_windows-events-spark-iceberg`, `sessionization-gh_archive-spark-iceberg` |
 | CTAS (`CREATE TABLE AS SELECT`) | `bi_query-tpch-trino-iceberg`, `federated_query-nyc_taxi-trino-iceberg` |
 
-## 7. See Also
+## 3.7 See Also
 
 - [Getting Started](getting-started.md)
 - [Atlas Expectations](atlas-expectations.md)
 - [Datasets](datasets.md)
 - [Atlas Go-Live Findings](atlas-feedback-go-live.md)
 
-## 8. Scenarios Using Lakehouse
+## 3.8 Scenarios Using Lakehouse
 
 ### Bronze-layer scenarios
 - [batch_ingest-nyc_taxi-spark-iceberg](scenarios/batch_ingest-nyc_taxi-spark-iceberg.md)
