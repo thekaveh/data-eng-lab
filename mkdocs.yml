@@ -1,68 +1,122 @@
 site_name: data-eng-lab
 site_url: https://thekaveh.github.io/data-eng-lab/
 site_description: >-
-  An Iceberg-lakehouse-on-MinIO data-engineering lab on the Atlas platform —
-  Scala/PySpark scenarios, Maven Spark apps, and the full medallion.
+  An Apache Iceberg lakehouse data engineering lab —
+   19 Spark scenarios, 2 CI-built Maven apps, Trino BI, Redpanda streaming,
+  medallion architecture on Docker Compose.
 repo_url: https://github.com/thekaveh/data-eng-lab
 repo_name: thekaveh/data-eng-lab
 docs_dir: docs
-exclude_docs: |
-  superpowers/
+exclude_docs: superpowers/
+edit_uri: blob/main/docs
 
 theme:
   name: material
+  custom_dir: docs/overrides
   palette:
-    - scheme: slate
-      primary: indigo
-      accent: blue
-      toggle:
-        icon: material/weather-night
-        name: Switch to light mode
-    - scheme: default
-      primary: indigo
-      accent: blue
-      toggle:
-        icon: material/weather-sunny
-        name: Switch to dark mode
+     - scheme: default
+       primary: indigo
+       accent: amber
+       toggle:
+         icon: material/weather-sunny
+         name: Switch to dark mode
+     - scheme: slate
+       primary: indigo
+       accent: amber
+       toggle:
+         icon: material/weather-night
+         name: Switch to light mode
   font:
     text: Inter
     code: JetBrains Mono
   features:
-    - navigation.tabs
-    - navigation.sections
-    - navigation.top
-    - navigation.tracking
-    - navigation.instant
-    - toc.follow
-    - search.suggest
-    - search.highlight
-    - content.code.copy
-    - content.code.annotate
+     - navigation.tabs
+     - navigation.sections
+     - navigation.top
+     - navigation.tracking
+     - navigation.instant
+     - toc.follow
+     - search.suggest
+     - search.highlight
+     - content.code.copy
+     - content.code.annotate
+     - content.tabs.link
   icon:
     repo: fontawesome/brands/github
 
 markdown_extensions:
-  - admonition
-  - attr_list
-  - md_in_html
-  - tables
-  - toc:
-      permalink: true
-  - pymdownx.highlight:
-      anchor_linenums: true
-  - pymdownx.inlinehilite
-  - pymdownx.superfences
-  - pymdownx.details
-  - pymdownx.tabbed:
-      alternate_style: true
-  - pymdownx.emoji:
-      emoji_index: !!python/name:material.extensions.emoji.twemoji
-      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+   - admonition
+   - attr_list
+   - md_in_html
+   - tables
+   - toc:
+       permalink: true
+   - pymdownx.highlight:
+       anchor_linenums: true
+   - pymdownx.inlinehilite
+   - pymdownx.superfences
+   - pymdownx.details
+   - pymdownx.tabbed:
+       alternate_style: true
+   - pymdownx.emoji:
+       emoji_index: !!python/name:material.extensions.emoji.twemoji
+       emoji_generator: !!python/name:material.extensions.emoji.to_svg
+   - pymdownx.critic
+   - pymdownx.caret
+   - pymdownx.keys
+   - pymdownx.mark
+   - pymdownx.tilde
 
 plugins:
-  - search
-  - gen-files:
+   - search
+   - gen-files:
       scripts:
-        - scripts/gen_doc_pages.py
-  - literate-nav:
+         - scripts/gen_doc_pages.py
+   - literate-nav:
       nav_file: SUMMARY.md
+
+extra_css:
+   - css/custom.css
+
+nav:
+   - Home: index.md
+   - Getting Started: getting-started.md
+
+   - Scenarios:
+     - Overview: scenarios/index.md
+     - batch_ingest-nyc_taxi-spark-iceberg: scenarios/batch_ingest-nyc_taxi-spark-iceberg.md
+     - bi_query-tpch-trino-iceberg: scenarios/bi_query-tpch-trino-iceberg.md
+     - cdc_streaming-online_retail-spark-iceberg: scenarios/cdc_streaming-online_retail-spark-iceberg.md
+     - data_quality-nyc_taxi-spark-iceberg: scenarios/data_quality-nyc_taxi-spark-iceberg.md
+     - feature_engineering-movielens-spark-iceberg: scenarios/feature_engineering-movielens-spark-iceberg.md
+     - federated_query-nyc_taxi-trino-iceberg: scenarios/federated_query-nyc_taxi-trino-iceberg.md
+     - incremental_upsert-online_retail-spark-iceberg: scenarios/incremental_upsert-online_retail-spark-iceberg.md
+     - join_optimization-tpch-spark-iceberg: scenarios/join_optimization-tpch-spark-iceberg.md
+     - json_flatten-gh_archive-spark-iceberg: scenarios/json_flatten-gh_archive-spark-iceberg.md
+     - medallion-nyc_taxi-spark-iceberg: scenarios/medallion-nyc_taxi-spark-iceberg.md
+     - scd2-online_retail-spark-iceberg: scenarios/scd2-online_retail-spark-iceberg.md
+     - schema_evolution-gh_archive-spark-iceberg: scenarios/schema_evolution-gh_archive-spark-iceberg.md
+     - sessionization-gh_archive-spark-iceberg: scenarios/sessionization-gh_archive-spark-iceberg.md
+     - star_schema-tpch-spark-iceberg: scenarios/star_schema-tpch-spark-iceberg.md
+     - streaming_ingest-events-spark-iceberg: scenarios/streaming_ingest-events-spark-iceberg.md
+     - streaming_ingest-gh_archive-spark-iceberg: scenarios/streaming_ingest-gh_archive-spark-iceberg.md
+     - streaming_windows-events-spark-iceberg: scenarios/streaming_windows-events-spark-iceberg.md
+     - table_maintenance-nyc_taxi-spark-iceberg: scenarios/table_maintenance-nyc_taxi-spark-iceberg.md
+     - time_travel-nyc_taxi-spark-iceberg: scenarios/time_travel-nyc_taxi-spark-iceberg.md
+
+   - Spark Apps:
+     - Overview: spark-apps/index.md
+     - nyc-taxi-etl: spark-apps/nyc-taxi-etl.md
+     - nyc-taxi-medallion: spark-apps/nyc-taxi-medallion.md
+
+   - Lakehouse & Atlas:
+     - Lakehouse: lakehouse.md
+     - Atlas Expectations: atlas-expectations.md
+     - Atlas Go-Live Runbook: go-live.md
+     - Atlas Go-Live Results: go-live-results.md
+     - Atlas Feedback (A7/A9): atlas-feedback-a7a9.md
+     - Atlas Go-Live Findings: atlas-feedback-go-live.md
+     - Atlas Enablement: atlas-enablement.md
+
+   - Datasets: datasets.md
+   - Changelog: CHANGELOG.md

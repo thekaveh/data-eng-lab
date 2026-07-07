@@ -1,0 +1,196 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Streaming Lakehouse — Streaming-Data-Engineering</title>
+     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+     <style>
+         * { margin: 0; padding: 0; box-sizing: border-box; }
+         body { font-family: 'JetBrains Mono', monospace; background: #020617; min-height: 100vh; padding: 2rem; color: white; }
+         .container { max-width: 1200px; margin: 0 auto; }
+         .header { margin-bottom: 1.5rem; }
+         .header-row { display: flex; align-items: center; gap: 10px; }
+         .pulse-dot { width: 10px; height: 10px; border-radius: 50%; background: #eab308; animation: pulse 1.5s infinite; }
+         @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+         h1 { font-size: 1.4rem; font-weight: 700; }
+         .subtitle { color: #94a3b8; font-size: 0.85rem; margin-top: 0.25rem; }
+         .diagram-container { background: #0f172a; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem; }
+         .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; }
+         .card { background: #1e293b; border-radius: 8px; padding: 1rem; }
+         .card-header { display: flex; align-items: center; gap: 8px; margin-bottom: 0.5rem; }
+         .card-dot { width: 10px; height: 10px; border-radius: 2px; }
+         .card h3 { font-size: 0.95rem; font-weight: 600; }
+         .card ul { list-style: none; color: #94a3b8; font-size: 0.75rem; }
+         .card li { margin-bottom: 0.25rem; }
+         .footer { text-align: center; margin-top: 1.5rem; color: #475569; font-size: 0.75rem; }
+     </style>
+ </head>
+ <body>
+     <div class="container">
+         <div class="header">
+             <div class="header-row">
+                 <div class="pulse-dot"></div>
+                 <h1>Streaming Lakehouse — Streaming-Data-Engineering</h1>
+             </div>
+             <p class="subtitle">Event-driven CDC pipeline: Kafka → Spark Structured Streaming → Iceberg tables</p>
+         </div>
+
+         <div class="diagram-container">
+             <svg viewBox="0 0 1000 700">
+                 <defs>
+                     <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                         <polygon points="0 0, 10 3.5, 0 7" fill="#64748b" />
+                     </marker>
+                     <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+                         <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+                     </pattern>
+                 </defs>
+
+                 <rect width="100%" height="100%" fill="url(#grid)" />
+
+                 <!-- Top row: Kafka Sources -->
+                 <text x="500" y="35" fill="white" font-size="14" font-weight="600" text-anchor="middle">CDC Source — Kafka (Redpanda)</text>
+
+                 <!-- Kafka Source 1 -->
+                 <rect x="30" y="55" width="280" height="65" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
+                 <text x="170" y="83" fill="#fbbf24" font-size="11" font-weight="600" text-anchor="middle">Kafka Source (Redpanda</text>
+                 <text x="170" y="101" fill="#94a3b8" font-size="8" text-anchor="middle">topic: online_retail_cdc</text>
+                 <text x="170" y="115" fill="#94a3b8" font-size="8" text-anchor="middle">Kafka API compatible</text>
+                 <text x="170" y="120" fill="#94a3b8" font-size="7" text-anchor="middle">(Debezium CDC → Kafka)</text>
+
+                 <!-- Arrow to Spark -->
+                 <line x1="170" y1="120" x2="170" y2="155" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+                 <line x1="170" y1="155" x2="350" y2="155" stroke="#fbbf24" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+                 <text x="250" y="150" fill="#94a3b8" font-size="8" text-anchor="middle">readStream.format("kafka")</text>
+
+                 <!-- Spark Streaming Processing -->
+                 <rect x="355" y="105" width="320" height="110" rx="8" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="2"/>
+                 <text x="515" y="133" fill="white" font-size="13" font-weight="600" text-anchor="middle">Spark Structured Streaming</text>
+
+                 <!-- Spark processing sub-components -->
+                 <rect x="370" y="143" width="290" height="65" rx="4" fill="rgba(30,41,59,0.6)" stroke="#475569" stroke-width="1"/>
+                 <text x="515" y="161" fill="#34d399" font-size="9" font-weight="600" text-anchor="middle">CDC Processing Pipeline</text>
+                 <text x="385" y="177" fill="#94a3b8" font-size="8">1. Parse JSON → CDC envelope</text>
+                 <text x="385" y="191" fill="#94a3b8" font-size="8">2. Apply schema (from_registry)</text>
+                 <text x="385" y="205" fill="#94a3b8" font-size="8">3. Extract: before, after, op, ts</text>
+                 <text x="385" y="219" fill="#94a3b8" font-size="8">4. Transform → dim/customers table schema</text>
+
+                 <!-- Arrow to Iceberg -->
+                 <line x1="515" y1="215" x2="515" y2="255" stroke="#34d399" stroke-width="2" marker-end="url(#arrowhead)"/>
+                 <text x="530" y="240" fill="#34d399" font-size="8" text-anchor="start">writeStream.format("iceberg")</text>
+
+                 <!-- Iceberg Target Tables -->
+                 <text x="515" y="270" fill="white" font-size="12" font-weight="600" text-anchor="middle">Iceberg Target Tables</text>
+
+                 <!-- CDC Raw Table -->
+                 <rect x="610" y="280" width="340" height="70" rx="6" fill="rgba(76,29,149,0.3)" stroke="#a78bfa" stroke-width="1.5"/>
+                 <text x="780" y="305" fill="#a78bfa" font-size="11" font-weight="600" text-anchor="middle">cdc_raw</text>
+                 <text x="625" y="322" fill="#94a3b8" font-size="8">source, table_name, changed_columns</text>
+                 <text x="625" y="336" fill="#94a3b8" font-size="8">before_json, after_json, op_type, ts</text>
+
+                 <!-- Arrow from CDC RAW to Delta Sink -->
+                 <line x1="780" y1="350" x2="780" y2="380" stroke="#a78bfa" stroke-width="1" stroke-dasharray="4,3"/>
+
+                 <!-- Delta Sink -->
+                 <rect x="610" y="385" width="340" height="65" rx="6" fill="rgba(251,146,60,0.2)" stroke="#fb923c" stroke-width="1.5"/>
+                 <text x="780" y="410" fill="#fb923c" font-size="11" font-weight="600" text-anchor="middle">Delta Sink</text>
+                 <text x="625" y="428" fill="#94a3b8" font-size="8">checkpointLocation = "...</text>/checkpoints/cdc_raw"</text>
+                 <text x="625" y="442" fill="#94a3b8" font-size="8">outputMode: append | trigger: availableNow</text>
+
+                 <!-- Arrow down from CDC sink to consumer -->
+                 <line x1="780" y1="450" x2="780" y2="500" stroke="#fb923c" stroke-width="1" stroke-dasharray="4,3"/>
+
+                 <!-- Consumer -->
+                 <rect x="560" y="505" width="440" height="60" rx="6" fill="rgba(59,130,246,0.2)" stroke="#3b82f6" stroke-width="1.5"/>
+                 <text x="780" y="530" fill="#93c5fd" font-size="10" font-weight="600" text-anchor="middle">Consumer</text>
+                 <text x="600" y="548" fill="#94a3b8" font-size="8">Trino queries: SELECT * FROM cdc_raw ORDER BY ts</text>
+
+                 <!-- Checkpoint section -->
+                 <text x="50" y="550" fill="white" font-size="12" font-weight="600" text-anchor="middle">Spark Streaming Features</text>
+
+                 <rect x="40" y="565" width="920" height="110" rx="6" fill="rgba(6,78,59,0.15)" stroke="#34d399" stroke-width="1"/>
+
+                 <!-- Checkpoint -->
+                 <rect x="60" y="578" width="260" height="85" rx="4" fill="rgba(30,41,59,0.5)" stroke="#34d399" stroke-width="1"/>
+                 <text x="190" y="598" fill="#34d399" font-size="9" font-weight="600" text-anchor="middle">Checkpointing</text>
+                 <text x="75" y="616" fill="#94a3b8" font-size="8">S3 checkpointLocation for</text>
+                 <text x="75" y="630" fill="#94a3b8" font-size="8">offset tracking and recovery</text>
+                 <text x="75" y="644" fill="#94a3b8" font-size="8">Enables exactly-once semantics</text>
+                 <text x="75" y="658" fill="#fbbf24" font-size="7">(on failure/resume)</text>
+
+                 <!-- Schema Registry -->
+                 <rect x="345" y="578" width="260" height="85" rx="4" fill="rgba(30,41,59,0.5)" stroke="#a78bfa" stroke-width="1"/>
+                 <text x="475" y="598" fill="#a78bfa" font-size="9" font-weight="600" text-anchor="middle">Schema Registry</text>
+                 <text x="360" y="616" fill="#94a3b8" font-size="8">avro_schema.load() pulls</text>
+                 <text x="360" y="630" fill="#94a3b8" font-size="8">schema from registry</text>
+                 <text x="360" y="644" fill="#94a3b8" font-size="8">for CDC JSON parsing</text>
+                 <text x="360" y="658" fill="#fbbf24" font-size="7">(from Kafka topic headers)</text>
+
+                 <!-- Output Mode -->
+                 <rect x="630" y="578" width="260" height="85" rx="4" fill="rgba(30,41,59,0.5)" stroke="#eab308" stroke-width="1"/>
+                 <text x="760" y="598" fill="#eab308" font-size="9" font-weight="600" text-anchor="middle">Output Modes</text>
+                 <text x="645" y="616" fill="#94a3b8" font-size="8">append: new rows only</text>
+                 <text x="645" y="630" fill="#94a3b8" font-size="8">update: changed rows</text>
+                 <text x="645" y="644" fill="#94a3b8" font-size="8">complete: aggregate tables</text>
+                 <text x="645" y="658" fill="#34d399" font-size="7">(CDC uses append)</text>
+
+                 <!-- Legend -->
+                 <text x="50" y="700" fill="white" font-size="10" font-weight="600" text-anchor="middle">Legend</text>
+                 <rect x="50" y="707" width="16" height="8" rx="4" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1"/>
+                 <text x="72" y="716" fill="#94a3b8" font-size="8">Kafka source</text>
+                 <rect x="150" y="707" width="16" height="8" rx="4" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1"/>
+                 <text x="172" y="716" fill="#94a3b8" font-size="8">Spark streaming</text>
+                 <rect x="280" y="707" width="16" height="8" rx="4" fill="rgba(76,29,149,0.3)" stroke="#a78bfa" stroke-width="1"/>
+                 <text x="302" y="716" fill="#94a3b8" font-size="8">Iceberg</text>
+                 <rect x="380" y="707" width="16" height="8" rx="4" fill="rgba(251,146,60,0.2)" stroke="#fb923c" stroke-width="1"/>
+                 <text x="402" y="716" fill="#94a3b8" font-size="8">Delta Sink</text>
+             </svg>
+         </div>
+
+         <div class="cards">
+             <div class="card">
+                 <div class="card-header">
+                     <div class="card-dot" style="background:#fbbf24"></div>
+                     <h3>Kafka Source</h3>
+                 </div>
+                 <ul>
+                     <li>• Topic: online_retail_cdc</li>
+                     <li>• Debezium CDC format (JSON)</li>
+                     <li>• schema_registry for schema</li>
+                     <li>• Kafka API compatible</li>
+                 </ul>
+             </div>
+
+             <div class="card">
+                 <div class="card-header">
+                     <div class="card-dot" style="background:#34d399"></div>
+                     <h3>Structured Streaming</h3>
+                 </div>
+                 <ul>
+                     <li>• parse CDC envelope</li>
+                     <li>• Apply schema</li>
+                     <li>• Extract before/after/op/ts</li>
+                     <li>• Transform to table schema</li>
+                 </ul>
+             </div>
+
+             <div class="card">
+                 <div class="card-header">
+                     <div class="card-dot" style="background:#a78bfa"></div>
+                     <h3>Iceberg Target</h3>
+                 </div>
+                 <ul>
+                     <li>• cdc_raw: raw CDC events</li>
+                     <li>• checkpointLocation for</li>
+                     <li>offset tracking and recovery </li>
+                     <li>• availableNow trigger for</li>
+                     <li>batch-like processing</li>
+                 </ul>
+             </div>
+         </div>
+
+         <p class="footer">data-eng-lab • Streaming Lakehouse Scenario</p>
+     </div>
+ </body>
+ </html>

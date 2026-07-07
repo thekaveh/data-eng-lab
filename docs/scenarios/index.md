@@ -92,6 +92,6 @@ Streaming scenarios require Redpanda to be running and the appropriate Kafka top
 
 ## See Also
 
-- [Spark Applications](spark-apps/index.md)
-- [Datasets](datasets.md)
-- [Lakehouse](lakehouse.md)
+- [Spark Applications](../spark-apps/index.md)
+- [Datasets](../datasets.md)
+- [Lakehouse](../lakehouse.md)

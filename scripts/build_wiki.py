@@ -93,39 +93,40 @@ def _build_guides() -> list[tuple[str, str]]:
 # ---------------------------------------------------------------------------
 
 def _build_scenarios() -> list[tuple[str, str]]:
-    scenario_dirs = sorted((REPO_ROOT / "scenarios").iterdir())
+    docs_dir = REPO_ROOT / "docs" / "scenarios"
     entries: list[tuple[str, str]] = []
-    for d in scenario_dirs:
-        readme = d / "README.md"
-        if not d.is_dir() or not readme.exists():
-            continue
-        name = d.name
+    for md_file in sorted(docs_dir.glob("*.md")):
+        if md_file.name == "index.md":
+            continue           # Skip index; it's handled separately
+        name = md_file.stem
         wiki_name = f"Scenario-{name}.md"
         dest = WIKI_DIR / wiki_name
-        title = _h1(readme) or name
+        title = _h1(md_file) or name
         section_url = SITE_URL + f"scenarios/{name}/"
-        _mirror_with_banner(readme, dest, section_url)
+        original = md_file.read_text(encoding="utf-8")
+        content = BANNER_TEMPLATE.format(url=section_url) + original
+        _write(dest, content)
         entries.append((title, wiki_name))
     return entries
-
 
 # ---------------------------------------------------------------------------
 # Spark-app pages
 # ---------------------------------------------------------------------------
 
 def _build_apps() -> list[tuple[str, str]]:
-    app_dirs = sorted((REPO_ROOT / "spark-apps").iterdir())
+    docs_dir = REPO_ROOT / "docs" / "spark-apps"
     entries: list[tuple[str, str]] = []
-    for d in app_dirs:
-        readme = d / "README.md"
-        if not d.is_dir() or not readme.exists():
+    for md_file in sorted(docs_dir.glob("*.md")):
+        if md_file.name == "index.md":
             continue
-        name = d.name
+        name = md_file.stem
         wiki_name = f"App-{name}.md"
         dest = WIKI_DIR / wiki_name
-        title = _h1(readme) or name
+        title = _h1(md_file) or name
         section_url = SITE_URL + f"spark-apps/{name}/"
-        _mirror_with_banner(readme, dest, section_url)
+        original = md_file.read_text(encoding="utf-8")
+        content = BANNER_TEMPLATE.format(url=section_url) + original
+        _write(dest, content)
         entries.append((title, wiki_name))
     return entries
 

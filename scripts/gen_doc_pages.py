@@ -1,7 +1,10 @@
-"""Generate MkDocs virtual pages from scenario/spark-app READMEs.
+"""Generate MkDocs SUMMARY.md navigation from scenario and spark-app READMEs.
 
-Uses mkdocs-gen-files to copy README content into the docs virtual filesystem
-and mkdocs-literate-nav to drive navigation from a generated SUMMARY.md.
+This script is optional because navigation is now defined explicitly in mkdocs.yml.
+Run this if nav needs to be auto-generated (e.g., after adding a new scenario).
+
+Usage:
+    python3 scripts/gen_doc_pages.py
 """
 
 import re
@@ -10,9 +13,6 @@ from pathlib import Path
 import mkdocs_gen_files
 
 REPO_ROOT = Path(__file__).parent.parent
-
-SCENARIO_DIRS = sorted((REPO_ROOT / "scenarios").iterdir())
-APP_DIRS = sorted((REPO_ROOT / "spark-apps").iterdir())
 
 
 def _h1_label(readme: Path) -> str | None:
@@ -24,63 +24,69 @@ def _h1_label(readme: Path) -> str | None:
     return None
 
 
-def _write_page(src_readme: Path, dest_path: str) -> None:
-    """Copy README content into the virtual docs filesystem."""
-    content = src_readme.read_text(encoding="utf-8")
-    with mkdocs_gen_files.open(dest_path, "w") as fh:
-        fh.write(content)
-    mkdocs_gen_files.set_edit_path(dest_path, str(src_readme.relative_to(REPO_ROOT)))
+def _nav_entry(readme: Path, dest_path: str) -> tuple[str, str] | None:
+    """Return (label, dest_path) for a README, or None if absent."""
+    label = _h1_label(readme)
+    return (label or readme.parent.name.replace("-", " ").title(), dest_path)
 
 
-# ── Scenarios ─────────────────────────────────────────────────────────────────
-scenario_entries: list[tuple[str, str]] = []  # (nav_label, dest_path)
-for scenario_dir in SCENARIO_DIRS:
-    readme = scenario_dir / "README.md"
-    if not readme.exists():
-        continue
-    name = scenario_dir.name
-    dest = f"scenarios/{name}.md"
-    _write_page(readme, dest)
-    label = _h1_label(readme) or name
-    scenario_entries.append((label, dest))
+def main():
+    scenario_entries: list[tuple[str, str]] = []
+    for scenario_dir in sorted((REPO_ROOT / "scenarios").iterdir()):
+        readme = scenario_dir / "README.md"
+        if not readme.exists():
+            continue
+        dest = f"scenarios/{scenario_dir.name}.md"
+        entry = _nav_entry(readme, dest)
+        if entry:
+            scenario_entries.append(entry)
 
-# ── Spark apps ────────────────────────────────────────────────────────────────
-app_entries: list[tuple[str, str]] = []  # (nav_label, dest_path)
-for app_dir in APP_DIRS:
-    readme = app_dir / "README.md"
-    if not readme.exists():
-        continue
-    name = app_dir.name
-    dest = f"spark-apps/{name}.md"
-    _write_page(readme, dest)
-    label = _h1_label(readme) or name
-    app_entries.append((label, dest))
+    app_entries: list[tuple[str, str]] = []
+    for app_dir in sorted((REPO_ROOT / "spark-apps").iterdir()):
+        readme = app_dir / "README.md"
+        if not readme.exists():
+            continue
+        dest = f"spark-apps/{app_dir.name}.md"
+        entry = _nav_entry(readme, dest)
+        if entry:
+            app_entries.append(entry)
 
-# ── SUMMARY.md (literate-nav) ─────────────────────────────────────────────────
-summary_lines: list[str] = [
-    "- [Home](index.md)\n",
-    "- [Getting started](getting-started.md)\n",
-    "- Scenarios:\n",
-]
-for label, page in scenario_entries:
-    summary_lines.append(f"    - [{label}]({page})\n")
+    summary_lines: list[str] = [
+        "- [Home](index.md)",
+        "- [Getting Started](getting-started.md)",
+        "",
+        "- Scenarios:",
+    ]
+    for label, page in scenario_entries:
+        indent = "    - " if len(scenario_entries) <= 25 else "      - "
+        summary_lines.append(f"{indent}[{label}]({page})")
 
-summary_lines.append("- Spark apps:\n")
-for label, page in app_entries:
-    summary_lines.append(f"    - [{label}]({page})\n")
+    summary_lines.append("")
+    summary_lines.append("- Spark Apps:")
+    for label, page in app_entries:
+        indent = "    - " if len(app_entries) <= 25 else "        - "
+        summary_lines.append(f"{indent}[{label}]({page})")
 
-summary_lines += [
-    "- Lakehouse & Atlas:\n",
-    "    - [Lakehouse](lakehouse.md)\n",
-    "    - [Atlas expectations](atlas-expectations.md)\n",
-    "    - [Atlas enablement](atlas-enablement.md)\n",
-    "    - [A7/A9 feedback](atlas-feedback-a7a9.md)\n",
-    "    - [Atlas go-live feedback](atlas-feedback-go-live.md)\n",
-    "    - [Go-live runbook](go-live.md)\n",
-    "- [Datasets](datasets.md)\n",
-    "- [Scenario catalog](scenarios.md)\n",
-    "- [Spark apps overview](spark-apps.md)\n",
-]
+    summary_lines += [
+        "",
+        "- Lakehouse & Atlas:",
+        "    - [Lakehouse](lakehouse.md)",
+        "    - [Atlas Expectations](atlas-expectations.md)",
+        "    - [Atlas Go-Live Runbook](go-live.md)",
+        "    - [Atlas Go-Live Results](go-live-results.md)",
+        "    - [Atlas Feedback (A7/A9)](atlas-feedback-a7a9.md)",
+        "    - [Atlas Go-Live Findings](atlas-feedback-go-live.md)",
+        "    - [Atlas Enablement](atlas-enablement.md)",
+        "",
+        "- [Datasets](datasets.md)",
+        "- [Changelog](CHANGELOG.md)",
+    ]
 
-with mkdocs_gen_files.open("SUMMARY.md", "w") as nav_fh:
-    nav_fh.writelines(summary_lines)
+    with mkdocs_gen_files.open("SUMMARY.md", "w") as nav_fh:
+        nav_fh.write("\n".join(summary_lines) + "\n")
+
+    print(f"SUMMARY.md written: {len(scenario_entries)} scenarios, {len(app_entries)} spark apps")
+
+
+if __name__ == "__main__":
+    main()
