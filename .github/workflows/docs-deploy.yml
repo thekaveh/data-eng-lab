@@ -5,10 +5,10 @@ on:
     branches: [main]
     paths:
       - "docs/**"
-        - "mkdocs.yml"
-        - "scripts/build_wiki.py"
-        - "scripts/render_readme.py"
-        - "scripts/gen_doc_pages.py"
+      - "mkdocs.yml"
+      - "scripts/build_wiki.py"
+      - "scripts/render_readme.py"
+      - "scripts/gen_doc_pages.py"
       - "scenarios/**/README.md"
       - "spark-apps/**/README.md"
       - "README.md"
