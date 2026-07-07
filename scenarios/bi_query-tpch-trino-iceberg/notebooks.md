@@ -3,29 +3,24 @@
 Auto-extracted from `jupyter/notebook.ipynb` and `zeppelin/notebook.zpln`.
 Both notebooks implement identical logic in PySpark and Scala.
 
-## 2. Section map
+## 1. Section map
 
-| Section | Scala (Zeppelin) | PySpark (Jupyter) |
+| Subsection | Scala (Zeppelin) | PySpark (Jupyter) |
 |---|---|---|
-| 1. Overview | ✓ | ✓ |
-| 2. Setup | ✓ | ✓ |
-| 3. Read | ✓ | ✓ |
-| 4. Transform | ✓ | ✓ |
-| 5. Write | ✓ | ✓ |
-| 6. Verify | ✓ | ✓ |
+| 2.1 Setup | ✓ | ✓ |
+| 2.2 Read | ✓ | ✓ |
+| 2.3 Transform | ✓ | ✓ |
+| 2.4 Write | ✓ | ✓ |
+| 2.5 Verify | ✓ | ✓ |
 
-## 3. Walkthrough
+## 2. Walkthrough
 
-### 1. Overview
-
-## 1. Overview
-
-### 2. Setup
+### 2.1 Setup
 
 **Scala (Zeppelin):**
 
 ```scala
-
+-- %trino is pre-bound to the Atlas Trino coordinator (catalog: lakehouse)
 ```
 
 **PySpark (Jupyter):**
@@ -39,14 +34,12 @@ def q(sql):
     return cur.fetchall()
 ```
 
-## 2. Setup
-
-### 3. Read
+### 2.2 Read
 
 **Scala (Zeppelin):**
 
 ```scala
-
+SELECT * FROM lakehouse.gold.fct_orders LIMIT 10
 ```
 
 **PySpark (Jupyter):**
@@ -55,14 +48,15 @@ def q(sql):
 q('SELECT * FROM lakehouse.gold.fct_orders LIMIT 10')
 ```
 
-## 3. Read
-
-### 4. Transform
+### 2.3 Transform
 
 **Scala (Zeppelin):**
 
 ```scala
-
+SELECT c.c_mktsegment, sum(f.revenue) AS revenue, sum(f.line_count) AS lines
+FROM lakehouse.gold.fct_orders f
+JOIN lakehouse.gold.dim_customer c ON f.o_custkey = c.c_custkey
+GROUP BY c.c_mktsegment ORDER BY revenue DESC
 ```
 
 **PySpark (Jupyter):**
@@ -74,14 +68,16 @@ q('SELECT c.c_mktsegment, sum(f.revenue) AS revenue, sum(f.line_count) AS lines 
   'GROUP BY c.c_mktsegment ORDER BY revenue DESC')
 ```
 
-## 4. Transform
-
-### 5. Write
+### 2.4 Write
 
 **Scala (Zeppelin):**
 
 ```scala
-
+CREATE TABLE IF NOT EXISTS lakehouse.gold.bi_segment_revenue AS
+SELECT c.c_mktsegment, sum(f.revenue) AS revenue
+FROM lakehouse.gold.fct_orders f
+JOIN lakehouse.gold.dim_customer c ON f.o_custkey = c.c_custkey
+GROUP BY c.c_mktsegment
 ```
 
 **PySpark (Jupyter):**
@@ -94,14 +90,12 @@ q('CREATE TABLE IF NOT EXISTS lakehouse.gold.bi_segment_revenue AS '
   'GROUP BY c.c_mktsegment')
 ```
 
-## 5. Write
-
-### 6. Verify
+### 2.5 Verify
 
 **Scala (Zeppelin):**
 
 ```scala
-
+SELECT count(*) FROM lakehouse.gold.bi_segment_revenue
 ```
 
 **PySpark (Jupyter):**
@@ -110,12 +104,10 @@ q('CREATE TABLE IF NOT EXISTS lakehouse.gold.bi_segment_revenue AS '
 q('SELECT count(*) FROM lakehouse.gold.bi_segment_revenue')
 ```
 
-## 6. Verify
-
-## 4. Scala / PySpark parity
+## 3. Scala / PySpark parity
 
 Both notebooks share the same numbered sections and produce identical Iceberg tables; only the language and interpreter differ.
 
-## 5. How to run
+## 4. How to run
 
 Open the scenario's `zeppelin/notebook.zpln` on the Atlas Zeppelin UI or `jupyter/notebook.ipynb` on JupyterHub, then run all paragraphs/cells top to bottom.

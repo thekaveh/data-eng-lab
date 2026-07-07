@@ -2,29 +2,27 @@
 Auto-extracted from `jupyter/notebook.ipynb` and `zeppelin/notebook.zpln`.
 Both notebooks implement identical logic in PySpark and Scala.
 
-## 2. Section map
+## 1. Section map
 
-| Section | Scala (Zeppelin) | PySpark (Jupyter) |
+| Subsection | Scala (Zeppelin) | PySpark (Jupyter) |
 |---|---|---|
-| 1. Overview | ✓ | ✓ |
-| 2. Setup | ✓ | ✓ |
-| 3. Read | ✓ | ✓ |
-| 4. Transform | ✓ | ✓ |
-| 5. Write | ✓ | ✓ |
-| 6. Verify | ✓ | ✓ |
+| 2.1 Setup | ✓ | ✓ |
+| 2.2 Read | ✓ | ✓ |
+| 2.3 Transform | ✓ | ✓ |
+| 2.4 Write | ✓ | ✓ |
+| 2.5 Verify | ✓ | ✓ |
 
-## 3. Walkthrough
+## 2. Walkthrough
 
-### 1. Overview
-
-## 1. Overview
-
-### 2. Setup
+### 2.1 Setup
 
 **Scala (Zeppelin):**
 
 ```scala
-
+import spark.implicits._
+import org.apache.spark.sql.functions._
+import org.apache.spark.sql.types._
+// spark is pre-bound by the Atlas Zeppelin interpreter
 ```
 
 **PySpark (Jupyter):**
@@ -37,14 +35,13 @@ from pyspark.sql.types import StringType, StructType
 spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
 ```
 
-## 2. Setup
-
-### 3. Read
+### 2.2 Read
 
 **Scala (Zeppelin):**
 
 ```scala
-
+val schema = new StructType().add("id", StringType).add("type", StringType).add("created_at", StringType)
+val stream = spark.readStream.schema(schema).json("s3a://landing/gh_archive")
 ```
 
 **PySpark (Jupyter):**
@@ -54,14 +51,12 @@ schema = StructType().add("id", StringType()).add("type", StringType()).add("cre
 stream = spark.readStream.schema(schema).json("s3a://landing/gh_archive")
 ```
 
-## 3. Read
-
-### 4. Transform
+### 2.3 Transform
 
 **Scala (Zeppelin):**
 
 ```scala
-
+val events = stream.withColumn("created_at", $"created_at".cast("timestamp"))
 ```
 
 **PySpark (Jupyter):**
@@ -70,14 +65,13 @@ stream = spark.readStream.schema(schema).json("s3a://landing/gh_archive")
 events = stream.withColumn("created_at", F.col("created_at").cast("timestamp"))
 ```
 
-## 4. Transform
-
-### 5. Write
+### 2.4 Write
 
 **Scala (Zeppelin):**
 
 ```scala
-
+val query = events.writeStream.format("iceberg").outputMode("append").option("checkpointLocation", "s3a://checkpoints/gh_events_file").toTable("lakehouse.bronze.gh_events_stream")
+// query.awaitTermination() to keep stream running
 ```
 
 **PySpark (Jupyter):**
@@ -87,14 +81,12 @@ query = events.writeStream.format("iceberg").outputMode("append").option("checkp
 # query.awaitTermination() to keep stream running
 ```
 
-## 5. Write
-
-### 6. Verify
+### 2.5 Verify
 
 **Scala (Zeppelin):**
 
 ```scala
-
+spark.table("lakehouse.bronze.gh_events_stream").count()
 ```
 
 **PySpark (Jupyter):**
@@ -103,12 +95,10 @@ query = events.writeStream.format("iceberg").outputMode("append").option("checkp
 spark.table("lakehouse.bronze.gh_events_stream").count()
 ```
 
-## 6. Verify
-
-## 4. Scala / PySpark parity
+## 3. Scala / PySpark parity
 
 Both notebooks share the same numbered sections and produce identical Iceberg tables; only the language and interpreter differ.
 
-## 5. How to run
+## 4. How to run
 
 Open the scenario's `zeppelin/notebook.zpln` on the Atlas Zeppelin UI or `jupyter/notebook.ipynb` on JupyterHub, then run all paragraphs/cells top to bottom.
