@@ -28,7 +28,7 @@ Checkpoint: `s3a://checkpoints/events`
 
 ## 3. Architecture
 
-![Architecture](architectures/streaming_ingest-events-spark-iceberg.html)
+![Architecture](../architectures/streaming_ingest-events-spark-iceberg.svg)
 
 Data flows from the Redpanda `events` topic through Spark Structured Streaming (`readStream` + `from_json` + `writeStream`) into the Iceberg bronze table. Checkpointing ensures exactly-once semantics for streaming offsets.
 

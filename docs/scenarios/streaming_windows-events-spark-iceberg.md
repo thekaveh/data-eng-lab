@@ -28,7 +28,7 @@ Checkpoint: `s3a://checkpoints/event_windows`
 
 ## 3. Architecture
 
-![Architecture](architectures/streaming_windows-events-spark-iceberg.html)
+![Architecture](../architectures/streaming_windows-events-spark-iceberg.svg)
 
 Data flows from the Redpanda `events` topic through Spark Structured Streaming with `withWatermark` and `groupBy` over tumbling windows (5-minute windows, 10-minute watermark). Aggregation: counts events per event type per window. Results are written to Iceberg in append mode — only closed windows emit.
 

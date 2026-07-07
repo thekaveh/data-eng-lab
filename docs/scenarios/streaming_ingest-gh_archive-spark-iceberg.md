@@ -29,7 +29,7 @@ Checkpoint: `s3a://checkpoints/gh_events_file`
 
 ## 3. Architecture
 
-![Architecture](architectures/streaming_ingest-gh_archive-spark-iceberg.html)
+![Architecture](../architectures/streaming_ingest-gh_archive-spark-iceberg.svg)
 
 Data flows from `s3a://landing/gh_archive/*.json.gz` through Spark Structured Streaming with a file source. The stream reads JSON files incrementally, defines a schema to extract nested fields (`actor.login` → `actor_login`, `repo.name` → `repo_name`), casts `created_at` to timestamp, and writes to Iceberg with checkpointing for exactly-once semantics.
 
