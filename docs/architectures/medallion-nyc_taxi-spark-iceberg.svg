@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="600" viewBox="0 0 1280 600" font-family="'JetBrains Mono', 'Courier New', monospace">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background -->
+        <rect width="1280" height="600" fill="#0a0f1f"/>
+        <rect width="1280" height="600" fill="url(#grid)"/>
+
+        <!-- Title -->
+        <text x="640" y="40" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">medallion — NYC Taxi (bronze → silver → gold)</text>
+        <text x="640" y="62" fill="#94a3b8" font-size="12" text-anchor="middle">Progressive refinement: raw → dedup/enrich → daily aggregate</text>
+
+        <!-- ================= BRONZE ================= -->
+        <rect x="40" y="110" width="270" height="350" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="175" y="132" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Bronze — Source</text>
+
+        <rect x="65" y="160" width="220" height="280" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="175" y="188" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">BRONZE</text>
+        <text x="175" y="214" fill="#22d3ee" font-size="10" font-weight="600" text-anchor="middle">lakehouse.bronze.</text>
+        <text x="175" y="232" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">nyc_taxi_trips</text>
+        <line x1="85" y1="252" x2="265" y2="252" stroke="#334155" stroke-width="1"/>
+        <text x="175" y="274" fill="#94a3b8" font-size="9" text-anchor="middle">raw taxi trips</text>
+        <text x="175" y="292" fill="#94a3b8" font-size="9" text-anchor="middle">populated by batch_ingest</text>
+        <text x="175" y="322" fill="#ffffff" font-size="9" text-anchor="middle">VendorID · trip_distance</text>
+        <text x="175" y="338" fill="#ffffff" font-size="9" text-anchor="middle">fare_amount · total_amount</text>
+        <text x="175" y="354" fill="#ffffff" font-size="9" text-anchor="middle">tpep_pickup/dropoff_datetime</text>
+        <text x="175" y="370" fill="#ffffff" font-size="9" text-anchor="middle">PULocationID · DOLocationID</text>
+        <text x="175" y="400" fill="#22d3ee" font-size="9" text-anchor="middle">spark.table("…bronze.nyc_taxi_trips")</text>
+
+        <!-- ================= SILVER ================= -->
+        <rect x="370" y="110" width="270" height="350" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="505" y="132" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Silver — Clean + Enrich</text>
+
+        <rect x="395" y="160" width="220" height="280" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="505" y="188" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">SILVER</text>
+        <text x="505" y="214" fill="#22d3ee" font-size="10" font-weight="600" text-anchor="middle">lakehouse.silver.</text>
+        <text x="505" y="232" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">nyc_taxi_trips</text>
+        <line x1="415" y1="252" x2="595" y2="252" stroke="#334155" stroke-width="1"/>
+        <text x="505" y="274" fill="#ffffff" font-size="9" text-anchor="middle">dropDuplicates(</text>
+        <text x="505" y="288" fill="#ffffff" font-size="9" text-anchor="middle">[pickup, dropoff])</text>
+        <text x="505" y="312" fill="#94a3b8" font-size="9" text-anchor="middle">+ computed columns:</text>
+        <text x="505" y="330" fill="#22d3ee" font-size="9" text-anchor="middle">trip_duration</text>
+        <text x="505" y="346" fill="#22d3ee" font-size="9" text-anchor="middle">start_hour</text>
+        <text x="505" y="362" fill="#22d3ee" font-size="9" text-anchor="middle">trip_direction</text>
+        <text x="505" y="398" fill="#22d3ee" font-size="9" text-anchor="middle">writeTo("…silver.nyc_taxi_trips")</text>
+
+        <!-- ================= GOLD ================= -->
+        <rect x="700" y="110" width="270" height="350" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="835" y="132" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Gold — Aggregate</text>
+
+        <rect x="725" y="160" width="220" height="280" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="835" y="188" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">GOLD</text>
+        <text x="835" y="214" fill="#22d3ee" font-size="10" font-weight="600" text-anchor="middle">lakehouse.gold.</text>
+        <text x="835" y="232" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">nyc_taxi_daily</text>
+        <line x1="745" y1="252" x2="925" y2="252" stroke="#334155" stroke-width="1"/>
+        <text x="835" y="274" fill="#ffffff" font-size="9" text-anchor="middle">groupBy("trip_date").agg(</text>
+        <text x="835" y="290" fill="#ffffff" font-size="9" text-anchor="middle">  count → trips</text>
+        <text x="835" y="306" fill="#ffffff" font-size="9" text-anchor="middle">  avg(fare) → avg_fare)</text>
+        <text x="835" y="336" fill="#94a3b8" font-size="9" text-anchor="middle">BI-ready daily metrics</text>
+        <text x="835" y="354" fill="#94a3b8" font-size="9" text-anchor="middle">consumed by Trino / BI</text>
+        <text x="835" y="398" fill="#22d3ee" font-size="9" text-anchor="middle">writeTo("…gold.nyc_taxi_daily")</text>
+
+        <!-- ================= CATALOG SIDE ================= -->
+        <rect x="1030" y="110" width="210" height="350" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="1135" y="132" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Catalog + Compute</text>
+
+        <rect x="1055" y="160" width="160" height="120" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="1135" y="190" fill="#ffffff" font-size="14" font-weight="700" text-anchor="middle">Apache Spark</text>
+        <text x="1135" y="214" fill="#94a3b8" font-size="9" text-anchor="middle">Spark Connect</text>
+        <text x="1135" y="230" fill="#94a3b8" font-size="9" text-anchor="middle">sc://…:15002</text>
+        <text x="1135" y="256" fill="#22d3ee" font-size="9" text-anchor="middle">PySpark · Scala</text>
+
+        <rect x="1055" y="300" width="160" height="120" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="1135" y="328" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Iceberg REST</text>
+        <text x="1135" y="346" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Catalog</text>
+        <text x="1135" y="372" fill="#94a3b8" font-size="9" text-anchor="middle">iceberg-rest:8181</text>
+        <text x="1135" y="390" fill="#94a3b8" font-size="9" text-anchor="middle">ACID · snapshots</text>
+        <text x="1135" y="408" fill="#94a3b8" font-size="9" text-anchor="middle">data on lakehouse/ (MinIO)</text>
+
+        <!-- ================= CONNECTORS ================= -->
+        <!-- bronze -> silver -->
+        <line x1="285" y1="300" x2="393" y2="300" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <text x="339" y="292" fill="#22d3ee" font-size="9" text-anchor="middle">dedup + enrich</text>
+
+        <!-- silver -> gold -->
+        <line x1="615" y1="300" x2="723" y2="300" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrowhead)"/>
+        <text x="669" y="292" fill="#22d3ee" font-size="9" text-anchor="middle">groupBy + agg</text>
+
+        <!-- Spark drives the transforms (dashed into silver/gold) -->
+        <path d="M 1135 280 Q 900 360 615 320" fill="none" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrowhead)"/>
+        <text x="900" y="372" fill="#94a3b8" font-size="9" text-anchor="middle">Spark executes each layer via catalog</text>
+
+        <!-- Orchestrator strip -->
+        <rect x="40" y="488" width="1200" height="82" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+        <text x="70" y="514" fill="#22d3ee" font-size="11" font-weight="600">Orchestration</text>
+        <text x="70" y="534" fill="#94a3b8" font-size="9">Airflow DAG: medallion_nyc_taxi (@daily)</text>
+        <text x="70" y="552" fill="#94a3b8" font-size="9">depends on batch_ingest (bronze populated first)</text>
+        <text x="430" y="514" fill="#22d3ee" font-size="11" font-weight="600">Productionized by</text>
+        <text x="430" y="534" fill="#94a3b8" font-size="9">spark-apps/nyc-taxi-medallion (Jenkins → jars/)</text>
+        <text x="900" y="514" fill="#22d3ee" font-size="11" font-weight="600">Verify</text>
+        <text x="900" y="534" fill="#94a3b8" font-size="9">gold.nyc_taxi_daily</text>
+        <text x="900" y="552" fill="#94a3b8" font-size="9">orderBy("trip_date").show()</text>
+      </svg>
