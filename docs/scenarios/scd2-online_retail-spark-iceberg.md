@@ -26,7 +26,7 @@ Source: Online retail dimension data (inline seed in notebooks — no external d
 
 ## 3. Architecture
 
-![Architecture](architectures/scd2-online_retail-spark-iceberg.html)
+![Architecture](../architectures/scd2-online_retail-spark-iceberg.svg)
 
 Data flows from inline seed data through Spark batch processing with SCD2 logic. The notebook seeds initial customer data, then simulates a segment change by closing the old row and opening a new row with the updated segment and effective timestamps. This demonstrates how Iceberg handles row-level updates efficiently.
 

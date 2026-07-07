@@ -1,0 +1,128 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560" font-family="'JetBrains Mono', 'Courier New', monospace">
+        <defs>
+          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
+          </marker>
+          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
+          </pattern>
+        </defs>
+
+        <!-- Background -->
+        <rect width="1280" height="560" fill="#0a0f1f"/>
+        <rect width="1280" height="560" fill="url(#grid)"/>
+
+        <!-- Title -->
+        <text x="640" y="40" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">feature_engineering — MovieLens (Spark → Iceberg Gold)</text>
+        <text x="640" y="62" fill="#94a3b8" font-size="12" text-anchor="middle">Two groupBy aggregations over ratings derive per-user and per-movie ML feature tables in Gold</text>
+
+        <!-- ================= STAGE 1: SOURCE ================= -->
+        <rect x="40" y="120" width="230" height="330" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="155" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Source — Landing</text>
+
+        <rect x="65" y="160" width="180" height="270" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="155" y="188" fill="#ffffff" font-size="14" font-weight="700" text-anchor="middle">S3 (MinIO)</text>
+        <text x="155" y="212" fill="#22d3ee" font-size="10" font-weight="600" text-anchor="middle">s3a://landing/</text>
+        <text x="155" y="228" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">movielens/ratings.csv</text>
+        <line x1="85" y1="248" x2="225" y2="248" stroke="#334155" stroke-width="1"/>
+        <text x="155" y="270" fill="#94a3b8" font-size="9" text-anchor="middle">header=true</text>
+        <text x="155" y="286" fill="#94a3b8" font-size="9" text-anchor="middle">inferSchema=true</text>
+        <line x1="85" y1="302" x2="225" y2="302" stroke="#334155" stroke-width="1"/>
+        <text x="155" y="324" fill="#ffffff" font-size="10" text-anchor="middle">userId   : int</text>
+        <text x="155" y="342" fill="#ffffff" font-size="10" text-anchor="middle">movieId  : int</text>
+        <text x="155" y="360" fill="#ffffff" font-size="10" text-anchor="middle">rating   : double</text>
+        <text x="155" y="378" fill="#ffffff" font-size="10" text-anchor="middle">timestamp: long</text>
+        <text x="155" y="410" fill="#22d3ee" font-size="9" text-anchor="middle">spark.read.csv(…)</text>
+
+        <!-- ================= STAGE 2: PROCESS (two aggregations) ================= -->
+        <rect x="330" y="120" width="400" height="330" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="530" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Process — Spark Aggregations</text>
+
+        <!-- user aggregation -->
+        <rect x="350" y="160" width="360" height="130" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="530" y="184" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">userFeatures</text>
+        <line x1="370" y1="198" x2="690" y2="198" stroke="#1e293b" stroke-width="1"/>
+        <text x="530" y="220" fill="#ffffff" font-size="10" text-anchor="middle">ratings.groupBy("userId")</text>
+        <text x="530" y="240" fill="#94a3b8" font-size="9" text-anchor="middle">avg("rating")  → avg_rating</text>
+        <text x="530" y="256" fill="#94a3b8" font-size="9" text-anchor="middle">count("*")     → num_ratings</text>
+        <text x="530" y="278" fill="#22d3ee" font-size="9" text-anchor="middle">one row per user</text>
+
+        <!-- movie aggregation -->
+        <rect x="350" y="305" width="360" height="130" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="530" y="329" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">movieFeatures</text>
+        <line x1="370" y1="343" x2="690" y2="343" stroke="#1e293b" stroke-width="1"/>
+        <text x="530" y="365" fill="#ffffff" font-size="10" text-anchor="middle">ratings.groupBy("movieId")</text>
+        <text x="530" y="385" fill="#94a3b8" font-size="9" text-anchor="middle">avg("rating")  → movie_avg</text>
+        <text x="530" y="401" fill="#94a3b8" font-size="9" text-anchor="middle">count("*")     → popularity</text>
+        <text x="530" y="423" fill="#22d3ee" font-size="9" text-anchor="middle">one row per movie</text>
+
+        <!-- ================= STAGE 3: CATALOG ================= -->
+        <rect x="800" y="120" width="180" height="330" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="890" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Catalog</text>
+
+        <rect x="825" y="210" width="130" height="150" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="890" y="238" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Iceberg</text>
+        <text x="890" y="258" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">REST Catalog</text>
+        <text x="890" y="286" fill="#94a3b8" font-size="9" text-anchor="middle">iceberg-rest:8181</text>
+        <text x="890" y="304" fill="#94a3b8" font-size="9" text-anchor="middle">name: lakehouse</text>
+        <text x="890" y="332" fill="#22d3ee" font-size="9" text-anchor="middle">createOrReplace()</text>
+        <text x="890" y="348" fill="#22d3ee" font-size="9" text-anchor="middle">USING iceberg</text>
+
+        <!-- ================= STAGE 4: SINK (two Gold tables) ================= -->
+        <rect x="1040" y="120" width="200" height="330" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
+        <text x="1140" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Sink — Gold</text>
+
+        <!-- ml_user_features -->
+        <rect x="1055" y="160" width="170" height="135" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="1140" y="184" fill="#ffffff" font-size="12" font-weight="700" text-anchor="middle">GOLD</text>
+        <text x="1140" y="206" fill="#22d3ee" font-size="9" text-anchor="middle">gold.</text>
+        <text x="1140" y="220" fill="#22d3ee" font-size="10" font-weight="700" text-anchor="middle">ml_user_features</text>
+        <line x1="1065" y1="234" x2="1215" y2="234" stroke="#334155" stroke-width="1"/>
+        <text x="1140" y="254" fill="#ffffff" font-size="9" text-anchor="middle">userId</text>
+        <text x="1140" y="270" fill="#ffffff" font-size="9" text-anchor="middle">avg_rating</text>
+        <text x="1140" y="286" fill="#ffffff" font-size="9" text-anchor="middle">num_ratings</text>
+
+        <!-- ml_movie_features -->
+        <rect x="1055" y="305" width="170" height="135" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
+        <text x="1140" y="329" fill="#ffffff" font-size="12" font-weight="700" text-anchor="middle">GOLD</text>
+        <text x="1140" y="351" fill="#22d3ee" font-size="9" text-anchor="middle">gold.</text>
+        <text x="1140" y="365" fill="#22d3ee" font-size="10" font-weight="700" text-anchor="middle">ml_movie_features</text>
+        <line x1="1065" y1="379" x2="1215" y2="379" stroke="#334155" stroke-width="1"/>
+        <text x="1140" y="399" fill="#ffffff" font-size="9" text-anchor="middle">movieId</text>
+        <text x="1140" y="415" fill="#ffffff" font-size="9" text-anchor="middle">movie_avg</text>
+        <text x="1140" y="431" fill="#ffffff" font-size="9" text-anchor="middle">popularity</text>
+
+        <!-- ================= CONNECTORS ================= -->
+        <!-- Source -> user agg -->
+        <line x1="245" y1="250" x2="348" y2="225" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="296" y="226" fill="#22d3ee" font-size="9" text-anchor="middle">ratings</text>
+
+        <!-- Source -> movie agg -->
+        <line x1="245" y1="340" x2="348" y2="370" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="296" y="364" fill="#22d3ee" font-size="9" text-anchor="middle">ratings</text>
+
+        <!-- user agg -> catalog -->
+        <line x1="710" y1="225" x2="823" y2="265" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="766" y="236" fill="#22d3ee" font-size="9" text-anchor="middle">writeTo</text>
+
+        <!-- movie agg -> catalog -->
+        <line x1="710" y1="370" x2="823" y2="305" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="766" y="352" fill="#22d3ee" font-size="9" text-anchor="middle">writeTo</text>
+
+        <!-- catalog -> ml_user_features -->
+        <path d="M 955 260 C 1000 260 1010 225 1053 225" fill="none" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+
+        <!-- catalog -> ml_movie_features -->
+        <path d="M 955 310 C 1000 310 1010 370 1053 370" fill="none" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
+        <text x="1005" y="298" fill="#22d3ee" font-size="9" text-anchor="middle">commit</text>
+
+        <!-- ================= ORCHESTRATOR STRIP ================= -->
+        <rect x="40" y="468" width="1200" height="62" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
+        <text x="70" y="494" fill="#22d3ee" font-size="11" font-weight="600">Orchestration</text>
+        <text x="70" y="514" fill="#94a3b8" font-size="9">Airflow DAG: feature_engineering_movielens (@daily) · placeholder until productionized</text>
+        <text x="560" y="494" fill="#22d3ee" font-size="11" font-weight="600">Runtime</text>
+        <text x="560" y="514" fill="#94a3b8" font-size="9">PySpark (Jupyter) · Spark Connect sc://spark-connect:15002</text>
+        <text x="930" y="494" fill="#22d3ee" font-size="11" font-weight="600">Verify</text>
+        <text x="930" y="514" fill="#94a3b8" font-size="9">orderBy(desc("popularity")).show(10)</text>
+      </svg>

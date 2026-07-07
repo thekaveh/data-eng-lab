@@ -31,7 +31,7 @@ Source: Online retail batch deltas (inline seed data + change-set batches in the
 
 ## 3. Architecture
 
-![Architecture](architectures/incremental_upsert-online_retail-spark-iceberg.html)
+![Architecture](../architectures/incremental_upsert-online_retail-spark-iceberg.svg)
 
 Data flows from inline seed data through Spark batch processing with `MERGE INTO`. The notebook seeds initial data, applies two change-set batches (one with an update, one with an insert). The same batch can be merged multiple times without duplication, demonstrating idempotent change-set application.
 

@@ -31,7 +31,7 @@ Source: `s3a://landing/movielens/ratings.csv` and `s3a://landing/movielens/movie
 
 ## 3. Architecture
 
-![Architecture](architectures/feature_engineering-movielens-spark-iceberg.html)
+![Architecture](../architectures/feature_engineering-movielens-spark-iceberg.svg)
 
 MovieLens ratings and movies data flows from S3 landing zone into Spark for feature engineering. User-level features (aggregated ratings, deviation from mean) and item-level features (average ratings, genre distributions) are computed and stored in separate Iceberg silver tables, along with raw user-item interactions for feature serving.
 
