@@ -6,32 +6,24 @@ ROOT="$(cd "$HERE/.." && pwd)"
 source "$HERE/lib.sh"
 
 INFRA_DIR="${INFRA_DIR:-$ROOT/infra}"
+MANIFEST="$ROOT/atlas.consumer.yml"
 DRY_RUN=0
 for a in "$@"; do [ "$a" = "--dry-run" ] && DRY_RUN=1; done
 
 # shellcheck disable=SC2294  # run() intentionally accepts pre-built command strings via eval
 run() { if [ "$DRY_RUN" = 1 ]; then echo "+ $*"; else eval "$@"; fi; }
 
-log "1/6 wiring overlay + .env (setup-overlay)"
-run "\"$HERE/setup-overlay.sh\""
+log "1/6 removing stale legacy overlay symlink (pre-manifest layout; _user/ now auto-launches)"
+run "rm -f \"$INFRA_DIR/services/_user/data-eng-lab/compose.yml\""
 
-log "2/6 launching Atlas data-eng track"
-# Non-interactive; backgrounded to avoid the start.py 'logs -f' block (see Atlas reuse notes).
-ATLAS_START="cd \"$INFRA_DIR\" && ./start.sh --track data-eng --no-tui \
-  --spark-source container --zeppelin-source container --airflow-source container \
-  --minio-source container --jupyterhub-source container \
-  --iceberg-rest-source container --jenkins-source container \
-  --trino-source container --redpanda-source container"
-# shellcheck disable=SC2294  # intentional backgrounded eval of a pre-built command string
-if [ "$DRY_RUN" = 1 ]; then echo "+ $ATLAS_START &"; else eval "$ATLAS_START" & fi
+log "2/6 backfilling new Atlas .env keys (additive)"
+run "cd \"$INFRA_DIR\" && ./start.sh env backfill"
 
-log "3/6 waiting for core services to be healthy"
-PROJECT_NAME="$(resolve_project_name "$INFRA_DIR/.env")"
-export PROJECT_NAME
-run "wait_healthy minio iceberg-rest spark-master spark-connect airflow-webserver zeppelin jupyterhub"
+log "3/6 consumer doctor (manifest + compose + env lints)"
+run "cd \"$INFRA_DIR\" && ./start.sh --consumer \"$MANIFEST\" doctor --format json"
 
-log "4/6 creating buckets"
-run "\"$HERE/create_buckets.sh\""
+log "4/6 launching Atlas data-eng track (detached; Atlas waits on health gates)"
+run "cd \"$INFRA_DIR\" && ./start.sh --consumer \"$MANIFEST\" --track data-eng --no-tui --detach"
 
 log "5/6 registering Iceberg medallion namespaces"
 export ICEBERG_REST_ENABLED=true
@@ -41,4 +33,4 @@ log "6/6 preflight (stack doctor: layer 1 + layer 2)"
 run "uv run python \"$ROOT/tests/infra/preflight.py\""
 run "uv run python \"$ROOT/tests/infra/layer2.py\""
 
-log "data-eng-lab is up. Consoles: see 'cd infra && ./start.sh --list-tracks' / infra/.env for ports."
+log "data-eng-lab is up. Ports: infra/.env; endpoints: (cd infra && ./start.sh endpoints export --format env)."

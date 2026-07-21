@@ -11,7 +11,8 @@ def test_start_all_dry_run_lists_plan():
                          capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     text = out.stdout + out.stderr
-    for token in ["setup-overlay", "--track data-eng", "create_buckets", "register_iceberg", "preflight", "layer2"]:
+    for token in ["env backfill", "doctor", "--consumer", "--track data-eng",
+                  "--detach", "register_iceberg", "preflight", "layer2"]:
         assert token in text, f"dry-run plan missing '{token}':\n{text}"
 
 
