@@ -74,9 +74,12 @@ with DAG(
     catchup=False,
     tags=["data-eng-lab", "scenario"],
 ) as dag:
-    # Driver status in cluster mode is polled via the Spark master REST API (:6066),
-    # which Atlas enables on the standalone master (SPARK_MASTER_OPTS, atlas#308).
-    # spark.standalone.submit.waitAppCompletion above remains the completion signal.
+    # Cluster-mode caveat (atlas#308, partially addressed): the master's REST API
+    # (:6066) is enabled upstream, but SparkSubmitHook polls driver status via the
+    # spark_default connection (port 7077, required for submission), so the poll
+    # fails after submit and can mark this task failed even when the job succeeded.
+    # spark.standalone.submit.waitAppCompletion above is the real completion signal;
+    # see docs/atlas-feedback-go-live.md ("2026-07-21 live verification").
     SparkSubmitOperator(
         task_id="submit_nyc_taxi_etl",
         conn_id="spark_default",

@@ -157,10 +157,11 @@ When all A1–A9 are delivered, we flip `--trino-source`/`--redpanda-source` on 
 
 **A7/A9 delivery feedback:** See [`atlas-feedback-a7a9.md`] for a detailed feedback report on the delivered Trino + Redpanda services (atlas `72e30d1`), including what matched the contract, the intentional deviations we've adapted to, and optional documentation polish suggestions.
 
-The four Atlas-side issues surfaced during go-live (Spark REST submission server,
-Spark Connect core monopoly, spark-connect healthcheck, Airflow-3 connection
-context — atlas#308–#311) are fixed upstream as of this pin; the corresponding
-lab workarounds were removed (see `docs/atlas-feedback-go-live.md` for the mapping).
+Of the four Atlas-side issues surfaced during go-live (atlas#308–#311): #309, #310, and #311
+are fixed upstream as of this pin and the corresponding lab workarounds were removed; #308's
+REST endpoint is enabled upstream but is not consumable by SparkSubmitOperator end-to-end,
+so the DAG caveat remains (see `docs/atlas-feedback-go-live.md` for the mapping and the
+2026-07-21 verification findings).
 
 ---
 
