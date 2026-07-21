@@ -205,7 +205,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 2. **REST catalog backend** — OK to add an `iceberg` database in Supabase Postgres for a JDBC catalog,
    or do you prefer a different persistence choice?
 3. **Airflow submit path** — standalone cluster deploy mode vs. hadoop-aws-in-Airflow for client mode? *(A6.)*
-4. **Jenkins in Atlas** — is a first-class `jenkins` service in-scope for Atlas, or would you rather
+4. *(historical — answered; A5 delivered Jenkins in-track and the `_user/` mechanism was since replaced by the consumer manifest)* **Jenkins in Atlas** — is a first-class `jenkins` service in-scope for Atlas, or would you rather
    `data-eng-lab` run Jenkins as its own `services/_user/` overlay? Either works for us; A5 assumes the
    former per the "upstream the infra" preference.
 

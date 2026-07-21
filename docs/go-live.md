@@ -313,6 +313,8 @@ Run the end-to-end lakehouse pipeline via Airflow.
    ```
    Expected output: Row count > 0.
 
+**Caveat (atlas pin `2d006cae`, 2026-07-21):** live verification found two issues that currently prevent the clean Success path: every DAG task dies at Pre-Execute pending an upstream fix (atlas#791), and even once that is fixed, the driver-status poll can mark the task failed despite a successful job — atlas#792; `spark.standalone.submit.waitAppCompletion` is the real completion signal. See `docs/atlas-feedback-go-live.md` ("2026-07-21 live verification findings").
+
 ### 3.7 Trino + streaming validation (A7/A9)
 
 **Prerequisites:** none — Trino and Redpanda are containerized by default via
@@ -497,6 +499,10 @@ If all above pass, the Atlas enablement is **validated for production use** and 
 
 - Verify the DAG file is present: `docker exec -it $(docker ps -q -f "name=airflow-webserver") ls /home/airflow/dags/`.
 - Check the DAG for syntax errors: `docker exec -it $(docker ps -q -f "name=airflow-scheduler") airflow dags test nyc_taxi_etl 2024-07-01`.
+
+### DAG task dies at Pre-Execute (supervisor ConnectionError → SIGKILL)
+
+- The Airflow 3.3.0 Execution API resolves to `localhost:8080` inside the scheduler container, which is unreachable across Atlas's scheduler/webserver split — atlas#791. No lab-side fix; awaiting the upstream compose change (`AIRFLOW__CORE__EXECUTION_API_SERVER_URL`).
 
 ---
 

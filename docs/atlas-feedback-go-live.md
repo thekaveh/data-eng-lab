@@ -4,7 +4,9 @@ Post-go-live observations from running the full `data-eng-lab` platform in a pro
 
 ## Summary
 
-All A1–A9 capabilities verified during go-live. The platform is fully operational. 19 scenarios executed with parity between Scala and PySpark notebooks where applicable.
+As of the original go-live run (2026-07-04, atlas `85ff46b`): all A1–A9 capabilities verified during go-live. The platform is fully operational. 19 scenarios executed with parity between Scala and PySpark notebooks where applicable.
+
+Status update (2026-07-21, atlas `2d006cae`): see the live-verification findings below — DAG execution is currently blocked upstream (atlas#791) and the #308 fix is partial (atlas#792).
 
 ## Key Observations
 
@@ -54,7 +56,7 @@ Cold-start verification of the consumer-manifest migration surfaced two Atlas-si
    `ConnectionError` → SIGKILL). Verified in-container: `curl http://airflow-webserver:8080/execution/`
    → 404 (reachable); `http://localhost:8080/execution/` → 000. Fix belongs in Atlas's
    airflow compose: set `AIRFLOW__CORE__EXECUTION_API_SERVER_URL=http://airflow-webserver:8080/execution/`
-   on `airflow-scheduler` and `airflow-dag-processor`.
+   on `airflow-scheduler` and `airflow-dag-processor`. Filed as [thekaveh/atlas#791](https://github.com/thekaveh/atlas/issues/791).
 
 2. **atlas#308 is not consumable by SparkSubmitHook (structural).** The REST endpoint works
    (`curl http://spark-master:6066/v1/submissions/status/<driver-id>` → `success: true`), but the
@@ -63,5 +65,6 @@ Cold-start verification of the consumer-manifest migration surfaced two Atlas-si
    both, so the legacy `spark-submit --status` path runs against 7077 and always fails.
    The lab keeps its DAG caveat and relies on `spark.standalone.submit.waitAppCompletion=true`
    as the completion signal. Resolution requires either provider support for a separate
-   status URL, a documented `deploy_mode=client` recommendation, or an Atlas-seeded second
-   connection scheme.
+   status URL, a documented `deploy_mode=client` recommendation, an Atlas-seeded second
+   connection scheme, or tolerating the post-submit poll exception lab-side given
+   `waitAppCompletion` already signals completion. Filed as [thekaveh/atlas#792](https://github.com/thekaveh/atlas/issues/792).
