@@ -1,0 +1,41 @@
+# data-eng-lab — Atlas consumer manifest.
+# Single source of truth for how this repo consumes Atlas (reusing-atlas.md §6.1).
+# Replaces the legacy scripts/setup-overlay.sh entirely: no symlink into
+# infra/services/_user/, no hand-written infra/.env keys, no --*-source wrapper
+# flags. Paths below are relative to THIS file's directory; Atlas anchors them
+# to absolute host paths at start, so the launch is machine-independent.
+name: data-eng-lab
+project_name: data-eng-lab          # Docker resource namespace (containers/volumes/network)
+profile: dev                        # deployment profile bundle (atlas#755); 'dev' aliases 'default'
+
+brand:
+  name: data-eng-lab
+  tagline: "Iceberg lakehouse patterns on the Atlas platform"
+  repo_url: "https://github.com/thekaveh/data-eng-lab"
+
+env:
+  values:
+    BASE_PORT: auto                 # durable free 100-port block, persisted; avoids 63000
+                                    # collisions with sibling Atlas stacks (atlas#751)
+    ICEBERG_REST_ENABLED: "true"    # preflight manifest gate + Atlas service enablement
+    ICEBERG_REST_URI: http://iceberg-rest:8181   # read by the spark-apps DAGs
+    # The data-eng track services, all containerized (was: ten --*-source CLI flags).
+    SPARK_SOURCE: container
+    ZEPPELIN_SOURCE: container
+    AIRFLOW_SOURCE: container
+    MINIO_SOURCE: container
+    JUPYTERHUB_SOURCE: container
+    ICEBERG_REST_SOURCE: container
+    JENKINS_SOURCE: container
+    TRINO_SOURCE: container
+    REDPANDA_SOURCE: container
+
+compose_overlays:
+  - ./compose/data-eng-lab.yml      # DAG/dataset/probe bind-mounts into Atlas services
+
+storage:
+  buckets:
+    # Atlas's minio-init owns landing/lakehouse/jars/checkpoints; we declare only
+    # the lab's scratch bucket (was: scripts/create_buckets.sh + transient mc container).
+    - name: lakehouse-test
+      bucket: lakehouse-test        # explicit name — keeps the pre-manifest bucket name
