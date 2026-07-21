@@ -31,8 +31,10 @@ All A1–A9 capabilities verified during go-live. The platform is fully operatio
 
 ## Workaround unwind (2026-07-21, atlas pin 2d006cae)
 
-All four issues below were fixed upstream (atlas#313–#316) and the corresponding
-lab-side workarounds removed:
+Three of the four issues below (#309–#311) were fixed upstream (atlas#314–#316) and the
+corresponding lab-side workarounds removed; #308's fix is only partial — the REST endpoint
+is enabled but not consumable by SparkSubmitHook, so the DAG caveat remains (see the row
+below and the 2026-07-21 findings section that follows):
 
 | Atlas issue | Upstream fix | Lab workaround removed |
 |---|---|---|
