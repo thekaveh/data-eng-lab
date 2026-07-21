@@ -21,12 +21,17 @@
 
 ## Context: how `data-eng-lab` uses Atlas
 
-- Launches Atlas via its own machinery: `./infra/start.sh --track data-eng --no-tui …`.
-- Adds nothing to the Atlas tree except a gitignored symlink in `services/_user/data-eng-lab/compose.yml`
-   (Atlas auto-discovers `services/_user/*/compose.yml` in `bootstrapper/core/docker_manager.py`).
-- Injects config through the public `infra/.env` contract only (`PROJECT_NAME`, bucket names, catalog URI, branding).
-- Bind-mounts its own notebooks / DAGs / datasets into the existing Atlas service containers and runs
-  post-launch steps via `docker exec` after health-gating (the `rag-showcase` pattern).
+data-eng-lab consumes Atlas through one committed **`atlas.consumer.yml`** at the
+repo root (Atlas's consumer contract — `infra/docs/deployment/reusing-atlas.md` §6.1).
+The manifest declares the project name, brand, env values (including `BASE_PORT: auto`
+and the nine containerized `*_SOURCE` selections), the compose overlay
+(`compose/data-eng-lab.yml`, appended to Atlas's compose invocation — no symlink into
+`infra/services/_user/`), and the `lakehouse-test` bucket (provisioned by Atlas's
+minio-init with scoped credentials). `scripts/start-all.sh` is a thin wrapper:
+stale-symlink cleanup → `env backfill` → consumer `doctor` → `start.sh --consumer
+… --track data-eng --no-tui --detach` → namespace registration → preflight.
+Atlas materializes `infra/.env` from the manifest on every start; nothing in this
+repo writes to it.
 
 The lakehouse target: **medallion architecture** (`landing` → Iceberg `bronze`/`silver`/`gold`)
 on MinIO, cataloged by an **Iceberg REST catalog**, queried from **Zeppelin (Scala Spark)**,
@@ -200,7 +205,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 2. **REST catalog backend** — OK to add an `iceberg` database in Supabase Postgres for a JDBC catalog,
    or do you prefer a different persistence choice?
 3. **Airflow submit path** — standalone cluster deploy mode vs. hadoop-aws-in-Airflow for client mode? *(A6.)*
-4. **Jenkins in Atlas** — is a first-class `jenkins` service in-scope for Atlas, or would you rather
+4. *(historical — answered; A5 delivered Jenkins in-track and the `_user/` mechanism was since replaced by the consumer manifest)* **Jenkins in Atlas** — is a first-class `jenkins` service in-scope for Atlas, or would you rather
    `data-eng-lab` run Jenkins as its own `services/_user/` overlay? Either works for us; A5 assumes the
    former per the "upstream the infra" preference.
 

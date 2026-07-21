@@ -15,9 +15,10 @@ def probe(exec_fn):
 def _get_connections():
     """Query minio_default and spark_default directly from the Airflow metadata DB.
 
-    Bypasses the Airflow-3 Task-SDK context (airflow.sdk.execution_time.context) which
-    raises AirflowNotFoundException when resolving connections outside a task execution.
-    """
+    Reading the metadata DB is the Atlas-documented way to resolve seeded
+    Connections OUTSIDE a task context (infra/services/airflow/README.md,
+    "Resolving seeded Connections outside a task", atlas#311): the Airflow-3
+    Task-SDK context raises AirflowNotFoundException there by design."""
     from airflow.models import Connection
 
     try:

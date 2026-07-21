@@ -1,7 +1,7 @@
-# data-eng-lab overlay — merged into Atlas services via services/_user/ auto-discovery.
-# Phase 0: joins the shared network and mounts our (initially empty) trees so Airflow
-# discovers DAGs recursively and datasets are available in-container. No new services yet
-# (Iceberg-REST/Jenkins/Redpanda arrive from Atlas via A1/A5/A9).
+# data-eng-lab overlay — appended to Atlas's compose invocation via the
+# compose_overlays: entry in atlas.consumer.yml (no symlink into services/_user/).
+# Relative host paths resolve against the compose project dir (infra/), so
+# ../scenarios == <repo>/scenarios. Patches existing Atlas services only.
 services:
   airflow-scheduler:
     volumes:
