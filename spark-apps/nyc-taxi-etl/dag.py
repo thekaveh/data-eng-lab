@@ -25,7 +25,6 @@ default_args = {
 spark_conf = {
     "spark.master": os.environ.get("SPARK_MASTER_URL", "spark://spark-master:7077"),
     "spark.app.name": "nyc-taxi-etl",
-    "spark.cores.max": "1",
     "spark.executor.memory": "1g",
     "spark.driver.memory": "1g",
     "spark.standalone.submit.waitAppCompletion": "true",
@@ -75,12 +74,9 @@ with DAG(
     catchup=False,
     tags=["data-eng-lab", "scenario"],
 ) as dag:
-    # NOTE (standalone cluster-mode status-tracking): in cluster deploy_mode, Airflow's
-    # SparkSubmitOperator polls the Spark master REST API (:6066) for driver status; if
-    # that endpoint is not enabled on the standalone master the task will be marked failed
-    # even when the job completed successfully.  `spark.standalone.submit.waitAppCompletion`
-    # (set in spark_conf above) is the actual completion signal.  See docs/go-live-results.md
-    # ("Deeper Validation") for the three remediation options (REST server, client mode, advisory).
+    # Driver status in cluster mode is polled via the Spark master REST API (:6066),
+    # which Atlas enables on the standalone master (SPARK_MASTER_OPTS, atlas#308).
+    # spark.standalone.submit.waitAppCompletion above remains the completion signal.
     SparkSubmitOperator(
         task_id="submit_nyc_taxi_etl",
         conn_id="spark_default",
