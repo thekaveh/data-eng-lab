@@ -21,12 +21,17 @@
 
 ## Context: how `data-eng-lab` uses Atlas
 
-- Launches Atlas via its own machinery: `./infra/start.sh --track data-eng --no-tui …`.
-- Adds nothing to the Atlas tree except a gitignored symlink in `services/_user/data-eng-lab/compose.yml`
-   (Atlas auto-discovers `services/_user/*/compose.yml` in `bootstrapper/core/docker_manager.py`).
-- Injects config through the public `infra/.env` contract only (`PROJECT_NAME`, bucket names, catalog URI, branding).
-- Bind-mounts its own notebooks / DAGs / datasets into the existing Atlas service containers and runs
-  post-launch steps via `docker exec` after health-gating (the `rag-showcase` pattern).
+data-eng-lab consumes Atlas through one committed **`atlas.consumer.yml`** at the
+repo root (Atlas's consumer contract — `infra/docs/deployment/reusing-atlas.md` §6.1).
+The manifest declares the project name, brand, env values (including `BASE_PORT: auto`
+and the nine containerized `*_SOURCE` selections), the compose overlay
+(`compose/data-eng-lab.yml`, appended to Atlas's compose invocation — no symlink into
+`infra/services/_user/`), and the `lakehouse-test` bucket (provisioned by Atlas's
+minio-init with scoped credentials). `scripts/start-all.sh` is a thin wrapper:
+stale-symlink cleanup → `env backfill` → consumer `doctor` → `start.sh --consumer
+… --track data-eng --no-tui --detach` → namespace registration → preflight.
+Atlas materializes `infra/.env` from the manifest on every start; nothing in this
+repo writes to it.
 
 The lakehouse target: **medallion architecture** (`landing` → Iceberg `bronze`/`silver`/`gold`)
 on MinIO, cataloged by an **Iceberg REST catalog**, queried from **Zeppelin (Scala Spark)**,

@@ -4,7 +4,7 @@
 
 **Purpose:** a single, authoritative statement of everything `data-eng-lab` expects from Atlas — what is already **delivered** (so you don't undo it), and the **Iceberg/Spark capabilities** the scenario catalog relies on. This supersedes the ad-hoc `atlas-enablement.md` ledger as the hand-off reference; that file remains the terse A1–A9 origin status table.
 
-`data-eng-lab` consumes Atlas as a **pinned submodule** at `infra/` (currently atlas `85ff46b`) and **never edits it** — enhancements come to you as issues/PRs. Everything below was verified against atlas `72e30d1`, and Atlas's consumer-doc clarifications from **#281** (`85ff46b`) resolved our A7/A9 feedback (see `atlas-feedback-a7a9.md` section F).
+`data-eng-lab` consumes Atlas as a **pinned submodule** at `infra/` (currently atlas `2d006cae`, v0.1.0-587) and **never edits it** — enhancements come to you as issues/PRs. Everything below was verified against atlas `72e30d1`, and Atlas's consumer-doc clarifications from **#281** (`85ff46b`) resolved our A7/A9 feedback (see `atlas-feedback-a7a9.md` section F).
 
 ---
 
@@ -157,7 +157,10 @@ When all A1–A9 are delivered, we flip `--trino-source`/`--redpanda-source` on 
 
 **A7/A9 delivery feedback:** See [`atlas-feedback-a7a9.md`] for a detailed feedback report on the delivered Trino + Redpanda services (atlas `72e30d1`), including what matched the contract, the intentional deviations we've adapted to, and optional documentation polish suggestions.
 
-**Go-live infra findings:** [`atlas-feedback-go-live.md`] lists the Atlas-side issues surfaced during the full live go-live validation (atlas `85ff46b`): Spark REST submission server, Spark Connect core monopoly, spark-connect healthcheck, and Airflow-3 connection context.
+The four Atlas-side issues surfaced during go-live (Spark REST submission server,
+Spark Connect core monopoly, spark-connect healthcheck, Airflow-3 connection
+context — atlas#308–#311) are fixed upstream as of this pin; the corresponding
+lab workarounds were removed (see `docs/atlas-feedback-go-live.md` for the mapping).
 
 ---
 

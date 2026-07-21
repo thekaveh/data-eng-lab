@@ -28,3 +28,15 @@ All A1–A9 capabilities verified during go-live. The platform is fully operatio
 - [Atlas Expectations](atlas-expectations.md) — Full delivery log
 - [Go-Live Results](go-live-results.md) — Detailed validation results
 - [Atlas Feedback A7/A9](atlas-feedback-a7a9.md) — Streaming and federated query feedback
+
+## Workaround unwind (2026-07-21, atlas pin 2d006cae)
+
+All four issues below were fixed upstream (atlas#313–#316) and the corresponding
+lab-side workarounds removed:
+
+| Atlas issue | Upstream fix | Lab workaround removed |
+|---|---|---|
+| #308 Spark master REST `:6066` | Documented REST status polling; server was already enabled (`services/spark/compose.yml` `SPARK_MASTER_OPTS`) | 6-line SparkSubmitOperator caveat comment in `spark-apps/nyc-taxi-etl/dag.py` (kept `waitAppCompletion`) |
+| #309 Spark Connect core monopoly | `SPARK_CONNECT_CORES_MAX=1` default cap | `spark.cores.max: "1"` removed from both spark-apps DAGs |
+| #310 spark-connect healthcheck | TCP healthcheck on `:15002` | consumer-side `wait_healthy` gate (Atlas `--detach` now health-gates the whole track) |
+| #311 Airflow-3 conn resolution | Documented metadata-DB read (`services/airflow/README.md`) | none required — `probe_airflow.py` docstring now cites the upstream doc |
