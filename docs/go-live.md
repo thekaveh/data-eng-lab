@@ -471,7 +471,7 @@ If all above pass, the Atlas enablement is **validated for production use** and 
 
 ### Service X is not reachable
 
-- **Iceberg REST (port 63020):** Check that `ICEBERG_REST_SOURCE: container` in `atlas.consumer.yml`'s `env.values`. Verify Supabase Postgres is running (`docker ps | grep supabase`). If not, fix the manifest and re-run `make up`.
+- **Iceberg REST (port 63020):** Check that `ICEBERG_REST_SOURCE: container` is set in `atlas.consumer.yml`'s `env.values`. Verify Supabase Postgres is running (`docker ps | grep supabase`). If not, fix the manifest and re-run `make up`.
 - **Jenkins (host port ${JENKINS_PORT:-63080}):** Check `JENKINS_SOURCE` is enabled. Verify the Jenkins container has sufficient memory (Jenkins needs 1GB+).
 - **JupyterHub (`${JUPYTERHUB_PORT}` from `infra/.env`):** Check the JupyterHub container logs: `docker logs $(docker ps -q -f "name=jupyterhub")`.
 
