@@ -63,21 +63,18 @@ See [Datasets](datasets.md) for the full dataset registry and scale options.
 make up
 ```
 
-This runs `./scripts/start-all.sh`, which:
+This runs `./scripts/start-all.sh`, a thin wrapper over Atlas's own headless commands:
 
-1. Pulls and starts all Atlas containers (Spark, Trino, MinIO, Iceberg REST catalog, Airflow, Jenkins, Zeppelin, JupyterHub, Redpanda).
-2. Bootstraps MinIO buckets (`landing`, `lakehouse`, `jars`, `checkpoints`).
-3. Registers Iceberg namespaces (`bronze`, `silver`, `gold`) via `scripts/register_iceberg.py`.
+1. Removes any stale legacy overlay symlink (pre-manifest layout).
+2. Backfills new upstream `.env` keys (additive; `env backfill`).
+3. Runs the consumer `doctor` (manifest + compose + env lints) against `atlas.consumer.yml`.
+4. Starts the full `data-eng` track detached (`start.sh --consumer … --track data-eng --no-tui --detach`) — Atlas health-gates the whole track before returning, provisions the MinIO buckets (including the `lakehouse-test` bucket declared under the manifest's `storage:` key), and materializes `infra/.env` from the manifest.
+5. Registers Iceberg namespaces (`bronze`, `silver`, `gold`) via `scripts/register_iceberg.py`.
+6. Runs preflight (Layer 1 + Layer 2).
 
-!!! tip "Full Atlas stack (Trino + Redpanda)"
-    To enable Trino and Redpanda as well:
-    ```bash
-    ./scripts/start-all.sh \
-      --iceberg-rest-source container \
-      --jenkins-source container \
-      --trino-source container \
-      --redpanda-source container
-    ```
+All nine `data-eng` services (Spark, Zeppelin, Airflow, MinIO, JupyterHub, Iceberg REST, Jenkins, Trino, Redpanda) are containerized by default — set in `atlas.consumer.yml`'s `env.values` (`*_SOURCE: container`), not passed as CLI flags. To disable one, edit the manifest and re-run `make up`.
+
+Ports are auto-allocated (`BASE_PORT: auto`) — read them from `infra/.env` or `(cd infra && ./start.sh endpoints export --format env)`.
 
 ---
 

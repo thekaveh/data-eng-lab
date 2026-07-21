@@ -11,9 +11,16 @@ This document is the playbook for **deferred live validation** of the Atlas enab
 Bring up the full data-eng stack with the new lakehouse services.
 
 ```bash
-# From repo root, enable the iceberg-rest and jenkins services
-./scripts/start-all.sh --iceberg-rest-source container --jenkins-source container
+make up
 ```
+
+`make up` runs `./scripts/start-all.sh`, a thin wrapper over Atlas's own headless
+commands: stale-symlink cleanup → `env backfill` → consumer `doctor` (manifest +
+compose + env lints against `atlas.consumer.yml`) → `start.sh --consumer … --track
+data-eng --no-tui --detach` (health-gates the whole track before returning) →
+Iceberg namespace registration → preflight (Layer 1 + Layer 2). All nine `data-eng`
+services are containerized by default via the manifest's `env.values` — no
+`--<svc>-source` CLI flags needed.
 
 This launches ~20+ containers including:
 - Spark (standalone master + worker)
@@ -39,20 +46,16 @@ This launches ~20+ containers including:
 
 Prepare the lakehouse namespaces and run preflight checks.
 
-### 2.1 Create MinIO buckets
+### 2.1 Buckets
 
-The MinIO init script creates core buckets at Atlas bootstrap (`lakehouse`, `jars`, `checkpoints`). Verify they exist:
-
-```bash
-# MinIO console should be accessible at http://localhost:9001 (or from .env MINIO_CONSOLE_PORT)
-# Log in with root credentials (MINIO_ROOT_USER / MINIO_ROOT_PASSWORD from .env)
-# Verify buckets: lakehouse, jars, checkpoints exist
-```
-
-Alternatively, verify via `mc` inside the MinIO container:
+Atlas's minio-init provisions the core buckets (`landing`, `lakehouse`, `jars`,
+`checkpoints`) at bootstrap. `atlas.consumer.yml`'s `storage:` key additionally
+declares the lab's own `lakehouse-test` scratch bucket, provisioned the same way
+with scoped credentials — nothing to run manually. Verify via `mc` inside the
+MinIO container if you want to confirm:
 
 ```bash
-docker exec -it $(docker ps -q -f "name=minio") mc ls minio/ | grep -E 'lakehouse|jars|checkpoints'
+docker exec -it $(docker ps -q -f "name=minio") mc ls minio/ | grep -E 'lakehouse|jars|checkpoints|lakehouse-test'
 ```
 
 ### 2.2 Register Iceberg namespaces
@@ -310,13 +313,14 @@ Run the end-to-end lakehouse pipeline via Airflow.
    ```
    Expected output: Row count > 0.
 
+**Caveat (atlas pin `2d006cae`, 2026-07-21):** live verification found two issues that currently prevent the clean Success path: every DAG task dies at Pre-Execute pending an upstream fix (atlas#791), and even once that is fixed, the driver-status poll can mark the task failed despite a successful job — atlas#792; `spark.standalone.submit.waitAppCompletion` is the real completion signal. See `docs/atlas-feedback-go-live.md` ("2026-07-21 live verification findings").
+
 ### 3.7 Trino + streaming validation (A7/A9)
 
-**Prerequisites:** Enable the Trino + Redpanda sources:
-```bash
-# If not already enabled, re-launch with both sources
-./scripts/start-all.sh --iceberg-rest-source container --jenkins-source container --trino-source container --redpanda-source container
-```
+**Prerequisites:** none — Trino and Redpanda are containerized by default via
+`atlas.consumer.yml`'s `env.values` (`TRINO_SOURCE: container`,
+`REDPANDA_SOURCE: container`). To disable either, edit the manifest and re-run
+`make up`.
 
 #### 3.7.1 Trino: Federated query
 
@@ -419,16 +423,15 @@ The Zeppelin init script seeds the `%spark` (Scala) interpreter but not the `%tr
     ```
 4. Save. New notebooks can now use `%jdbc` paragraphs to query the Iceberg metadata catalog.
 
-### 4.2 Enable Iceberg REST and Jenkins sources (if toggled off)
+### 4.2 Re-enable a disabled service
 
-If you started the stack with sources disabled, re-enable them for the full stack:
+All `data-eng` services are containerized by default via `atlas.consumer.yml`'s
+`env.values` (`*_SOURCE: container`). If you disabled one by editing the manifest
+to `disabled`, flip it back to `container` and re-launch:
 
 ```bash
-# Kill the current stack (optional, or restart specific containers)
-docker-compose down
-
-# Re-launch with sources enabled
-./scripts/start-all.sh --iceberg-rest-source container --jenkins-source container
+make down
+make up
 ```
 
 Then re-run Phase 2 (bootstrap) to re-register namespaces and pre-flight checks.
@@ -470,7 +473,7 @@ If all above pass, the Atlas enablement is **validated for production use** and 
 
 ### Service X is not reachable
 
-- **Iceberg REST (port 63020):** Check that `iceberg-rest-source` is enabled. Verify Supabase Postgres is running (`docker ps | grep supabase`). If not, re-run `start-all.sh` with `--iceberg-rest-source container`.
+- **Iceberg REST (port 63020):** Check that `ICEBERG_REST_SOURCE: container` is set in `atlas.consumer.yml`'s `env.values`. Verify Supabase Postgres is running (`docker ps | grep supabase`). If not, fix the manifest and re-run `make up`.
 - **Jenkins (host port ${JENKINS_PORT:-63080}):** Check `JENKINS_SOURCE` is enabled. Verify the Jenkins container has sufficient memory (Jenkins needs 1GB+).
 - **JupyterHub (`${JUPYTERHUB_PORT}` from `infra/.env`):** Check the JupyterHub container logs: `docker logs $(docker ps -q -f "name=jupyterhub")`.
 
@@ -478,6 +481,7 @@ If all above pass, the Atlas enablement is **validated for production use** and 
 
 - Ensure the Spark Connect server is running: `docker ps | grep spark-connect`.
 - Check that the Connect server's `spark.master` is pointing to the Spark standalone master: `docker logs $(docker ps -q -f "name=spark-connect") | grep "master\|spark.master"`.
+- Atlas now ships its own TCP healthcheck on `spark-connect:15002` (atlas#310) — `make up`'s `--detach` health-gates on it, so a hung Connect server blocks bring-up rather than surfacing later. If bring-up itself times out here, check the spark-connect container's health status directly: `docker inspect --format '{{.State.Health.Status}}' $(docker ps -q -f "name=spark-connect")`.
 
 ### Iceberg namespace registration fails
 
@@ -495,6 +499,10 @@ If all above pass, the Atlas enablement is **validated for production use** and 
 
 - Verify the DAG file is present: `docker exec -it $(docker ps -q -f "name=airflow-webserver") ls /home/airflow/dags/`.
 - Check the DAG for syntax errors: `docker exec -it $(docker ps -q -f "name=airflow-scheduler") airflow dags test nyc_taxi_etl 2024-07-01`.
+
+### DAG task dies at Pre-Execute (supervisor ConnectionError → SIGKILL)
+
+- The Airflow 3.3.0 Execution API resolves to `localhost:8080` inside the scheduler container, which is unreachable across Atlas's scheduler/webserver split — atlas#791. No lab-side fix; awaiting the upstream compose change (`AIRFLOW__CORE__EXECUTION_API_SERVER_URL`).
 
 ---
 

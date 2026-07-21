@@ -25,7 +25,6 @@ default_args = {
 spark_conf = {
     "spark.master": os.environ.get("SPARK_MASTER_URL", "spark://spark-master:7077"),
     "spark.app.name": "nyc-taxi-etl",
-    "spark.cores.max": "1",
     "spark.executor.memory": "1g",
     "spark.driver.memory": "1g",
     "spark.standalone.submit.waitAppCompletion": "true",
@@ -75,12 +74,12 @@ with DAG(
     catchup=False,
     tags=["data-eng-lab", "scenario"],
 ) as dag:
-    # NOTE (standalone cluster-mode status-tracking): in cluster deploy_mode, Airflow's
-    # SparkSubmitOperator polls the Spark master REST API (:6066) for driver status; if
-    # that endpoint is not enabled on the standalone master the task will be marked failed
-    # even when the job completed successfully.  `spark.standalone.submit.waitAppCompletion`
-    # (set in spark_conf above) is the actual completion signal.  See docs/go-live-results.md
-    # ("Deeper Validation") for the three remediation options (REST server, client mode, advisory).
+    # Cluster-mode caveat (atlas#308, partially addressed): the master's REST API
+    # (:6066) is enabled upstream, but SparkSubmitHook polls driver status via the
+    # spark_default connection (port 7077, required for submission), so the poll
+    # fails after submit and can mark this task failed even when the job succeeded.
+    # spark.standalone.submit.waitAppCompletion above is the real completion signal;
+    # see docs/atlas-feedback-go-live.md ("2026-07-21 live verification").
     SparkSubmitOperator(
         task_id="submit_nyc_taxi_etl",
         conn_id="spark_default",

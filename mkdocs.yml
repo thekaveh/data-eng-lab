@@ -135,5 +135,6 @@ nav:
      - "8.4 Atlas Feedback (A7/A9)": atlas-feedback-a7a9.md
      - "8.5 Atlas Go-Live Findings": atlas-feedback-go-live.md
      - "8.6 Atlas Enablement": atlas-enablement.md
+     - "8.7 Atlas Pin-Bump Runbook": atlas-pin-bump-runbook.md
 
    - "9. Changelog": CHANGELOG.md
