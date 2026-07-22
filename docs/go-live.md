@@ -280,7 +280,7 @@ Via Jenkins UI (at `http://localhost:${JENKINS_PORT:-63080}`, or from `.env` JEN
 Verify the JAR exists:
 
 ```bash
-# Via MinIO console: http://localhost:9001 → navigate to 'jars' bucket → 'nyc-taxi-etl/0.1.0/app.jar'
+# Via MinIO console: http://localhost:${MINIO_CONSOLE_PORT} (from infra/.env) → 'jars' bucket → 'nyc-taxi-etl/0.1.0/app.jar'
 # Or via mc:
 docker exec -it $(docker ps -q -f "name=minio") mc cat minio/jars/nyc-taxi-etl/0.1.0/app.jar | wc -c
 # Should output a non-zero byte count (JAR size)
@@ -358,11 +358,13 @@ Validate Trino's Iceberg connector and CTAS capability:
     - JupyterHub → New Python notebook named `test-trino-jupyter`.
     - Cell:
        ```python
+       import os
+
        from trino.dbapi import connect
 
        conn = connect(
            host="localhost",
-           port=63029,   # or read from os.getenv("TRINO_PORT")
+           port=int(os.environ["TRINO_PORT"]),   # auto-allocated; from infra/.env
            user="atlas",
            catalog="lakehouse",
            schema="bronze"
@@ -484,7 +486,7 @@ If all above pass, the Atlas enablement is **validated for production use** and 
 
 ### Service X is not reachable
 
-- **Iceberg REST (port 63020):** Check that `ICEBERG_REST_SOURCE: container` is set in `atlas.consumer.yml`'s `env.values`. Verify Supabase Postgres is running (`docker ps | grep supabase`). If not, fix the manifest and re-run `make up`.
+- **Iceberg REST (host port `${ICEBERG_REST_PORT}`, from infra/.env):** Check that `ICEBERG_REST_SOURCE: container` is set in `atlas.consumer.yml`'s `env.values`. Verify Supabase Postgres is running (`docker ps | grep supabase`). If not, fix the manifest and re-run `make up`.
 - **Jenkins (host port ${JENKINS_PORT:-63080}):** Check `JENKINS_SOURCE` is enabled. Verify the Jenkins container has sufficient memory (Jenkins needs 1GB+).
 - **JupyterHub (`${JUPYTERHUB_PORT}` from `infra/.env`):** Check the JupyterHub container logs: `docker logs $(docker ps -q -f "name=jupyterhub")`.
 
