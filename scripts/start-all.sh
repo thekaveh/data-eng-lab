@@ -26,7 +26,6 @@ log "4/6 launching Atlas data-eng track (detached; Atlas waits on health gates)"
 run "cd \"$INFRA_DIR\" && ./start.sh --consumer \"$MANIFEST\" --track data-eng --no-tui --detach"
 
 log "5/6 registering Iceberg medallion namespaces"
-export ICEBERG_REST_ENABLED=true
 run "uv run python \"$ROOT/scripts/register_iceberg.py\""
 
 log "6/6 preflight (stack doctor: layer 1 + layer 2)"

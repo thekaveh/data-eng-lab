@@ -58,12 +58,6 @@ def render_matrix(results) -> str:
                                     "Layer 2 (integration matrix)")
 
 
-def _truthy(var: str) -> bool:
-    import os
-
-    return os.environ.get(var, "").lower() in ("1", "true", "yes", "on")
-
-
 def _run_in(container: str, script_path: str):
     def probe(exec_fn):
         rc, out = exec_fn(container, ["python", script_path])
@@ -92,9 +86,13 @@ def _zeppelin_probe(exec_fn):
     return ok, f"interpreter API status={r.status_code}, spark-present={'spark' in r.text}"
 
 
-ICEBERG_ON = _truthy("ICEBERG_REST_ENABLED")
-TRINO_ON = _truthy("TRINO_ENABLED")
-REDPANDA_ON = _truthy("REDPANDA_ENABLED")
+# Gate optional edges on the Atlas `*_SOURCE` (set to `container` by
+# atlas.consumer.yml) — enabled unless explicitly `disabled` (issue #42).
+from manifest import _source_enabled  # noqa: E402
+
+ICEBERG_ON = _source_enabled("ICEBERG_REST_SOURCE")
+TRINO_ON = _source_enabled("TRINO_SOURCE")
+REDPANDA_ON = _source_enabled("REDPANDA_SOURCE")
 
 EDGES = [
     Edge("spark->minio+iceberg", ICEBERG_ON, _run_in("jupyterhub", "/opt/probes/probe_spark.py")),

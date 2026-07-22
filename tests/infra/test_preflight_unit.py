@@ -80,18 +80,74 @@ def test_redpanda_in_expected_services():
     assert "redpanda" in names
 
 
-def test_trino_gated_by_env_flag(monkeypatch):
-    """trino ServiceSpec is disabled when TRINO_ENABLED is absent."""
-    monkeypatch.delenv("TRINO_ENABLED", raising=False)
-    # Reload manifest so _truthy() is re-evaluated.
-    fresh = _load("manifest")
-    spec = next(s for s in fresh.EXPECTED_SERVICES if s.name == "trino")
-    assert spec.enabled is False
+# ---------------------------------------------------------------------------
+# Issue #42 — enablement derived from Atlas *_SOURCE (env > infra/.env),
+# not the *_ENABLED flags that nothing sets since the consumer-manifest migration.
+# ---------------------------------------------------------------------------
 
 
-def test_redpanda_gated_by_env_flag(monkeypatch):
-    """redpanda ServiceSpec is disabled when REDPANDA_ENABLED is absent."""
-    monkeypatch.delenv("REDPANDA_ENABLED", raising=False)
+def test_source_enabled_reads_infra_env_container(tmp_path, monkeypatch):
+    """A container source in the env file enables the service."""
+    monkeypatch.delenv("TRINO_SOURCE", raising=False)
+    env = tmp_path / ".env"
+    env.write_text("TRINO_SOURCE=container\n")
+    assert manifest._source_enabled("TRINO_SOURCE", env) is True
+
+
+def test_source_enabled_reads_infra_env_disabled(tmp_path, monkeypatch):
+    """An explicit 'disabled' source in the env file disables the service."""
+    monkeypatch.delenv("TRINO_SOURCE", raising=False)
+    env = tmp_path / ".env"
+    env.write_text("TRINO_SOURCE=disabled\n")
+    assert manifest._source_enabled("TRINO_SOURCE", env) is False
+
+
+def test_source_enabled_env_var_overrides_file(tmp_path, monkeypatch):
+    """The environment variable takes precedence over infra/.env (test override)."""
+    env = tmp_path / ".env"
+    env.write_text("TRINO_SOURCE=container\n")
+    monkeypatch.setenv("TRINO_SOURCE", "disabled")
+    assert manifest._source_enabled("TRINO_SOURCE", env) is False
+
+
+def test_source_enabled_absent_defaults_enabled(tmp_path, monkeypatch):
+    """Absent source (no env, no file) is treated as enabled — a live service is
+    never silently skipped; a genuinely-down one surfaces as fail/blocked."""
+    monkeypatch.delenv("TRINO_SOURCE", raising=False)
+    env = tmp_path / "missing.env"  # does not exist
+    assert manifest._source_enabled("TRINO_SOURCE", env) is True
+
+
+def test_source_enabled_reads_last_value(tmp_path, monkeypatch):
+    """Last KEY= line wins (matches the shell envval / catalog._envval convention)."""
+    monkeypatch.delenv("TRINO_SOURCE", raising=False)
+    env = tmp_path / ".env"
+    env.write_text("TRINO_SOURCE=disabled\nTRINO_SOURCE=container\n")
+    assert manifest._source_enabled("TRINO_SOURCE", env) is True
+
+
+def _spec(services, name):
+    return next(s for s in services if s.name == name)
+
+
+def test_gated_services_enabled_when_source_container(monkeypatch):
+    """trino/redpanda/jenkins/iceberg-rest are enabled when their *_SOURCE=container."""
+    for key in ("TRINO_SOURCE", "REDPANDA_SOURCE", "JENKINS_SOURCE", "ICEBERG_REST_SOURCE"):
+        monkeypatch.setenv(key, "container")
     fresh = _load("manifest")
-    spec = next(s for s in fresh.EXPECTED_SERVICES if s.name == "redpanda")
-    assert spec.enabled is False
+    for name in ("trino", "redpanda", "jenkins", "iceberg-rest"):
+        assert _spec(fresh.EXPECTED_SERVICES, name).enabled is True, name
+
+
+def test_gated_service_disabled_when_source_disabled(monkeypatch):
+    """A service is skipped only when its *_SOURCE is genuinely 'disabled'."""
+    monkeypatch.setenv("TRINO_SOURCE", "disabled")
+    fresh = _load("manifest")
+    assert _spec(fresh.EXPECTED_SERVICES, "trino").enabled is False
+
+
+def test_gated_service_env_override(monkeypatch):
+    """Env var overrides whatever infra/.env holds (redpanda forced off)."""
+    monkeypatch.setenv("REDPANDA_SOURCE", "disabled")
+    fresh = _load("manifest")
+    assert _spec(fresh.EXPECTED_SERVICES, "redpanda").enabled is False
