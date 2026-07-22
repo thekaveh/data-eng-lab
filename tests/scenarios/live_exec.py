@@ -57,6 +57,9 @@ def _rest_catalog_kwargs() -> dict:
         "s3.access-key-id": user,
         "s3.secret-access-key": password,
         "s3.path-style-access": "true",
+        # Explicit region avoids pyarrow's region-probe HeadObject 400 against MinIO
+        # and matches every other S3 client in the repo (issue #51).
+        "s3.region": _env_val("MINIO_REGION", "us-east-1"),
     }
 
 
