@@ -40,9 +40,16 @@ def test_manifest_env_values():
 
 def test_manifest_uses_host_ollama():
     """This dev machine uses the host ollama (localhost:11434); the containerized
-    CPU ollama is slow and pulls redundant models into disk (issue #58)."""
-    env = _load()["env"]["values"]
-    assert env["LLM_PROVIDER_SOURCE"] == "ollama-localhost"
+    CPU ollama is slow and pulls redundant models into disk (issue #58/#61).
+
+    Selected via the dev profile's source override (atlas#755) — the idiomatic,
+    profile-aware form — not a flat env.values key. `ollama-localhost` is
+    profile-tagged [default] in Atlas's ollama service."""
+    data = _load()
+    dev = data["profile_overrides"]["dev"]
+    assert dev["sources"]["ollama"] == "ollama-localhost"
+    # The flat env override is intentionally gone (profile is the single source).
+    assert "LLM_PROVIDER_SOURCE" not in data["env"]["values"]
 
 
 def test_manifest_overlay_paths_exist():
