@@ -22,6 +22,11 @@ dev = [
   "mkdocs-literate-nav>=0.6",
   "pymdown-extensions>=10.0",
 ]
+live = [
+    "kafka-python>=2.0,<3",
+    "pyspark-client==4.1.2",
+    "trino>=0.329",
+]
 
 [tool.ruff]
 line-length = 120

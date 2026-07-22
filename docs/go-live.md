@@ -81,6 +81,17 @@ Registering namespaces in Iceberg REST catalog...
 
 ### 2.3 Preflight Layer 1 (connectivity)
 
+> **Prerequisite for `RUN_INFRA=1` runs:** the live tests below import client
+> libraries not in the default (offline) install — `pyspark-client` (Spark
+> Connect), `kafka-python`, and `trino`. Install them once via the `live`
+> dependency group before running any `RUN_INFRA=1` command:
+>
+> ```bash
+> uv sync --group live
+> ```
+>
+> Offline CI does not install this group, so it is unaffected.
+
 Run Layer 1 (L1) health checks to confirm all services are reachable:
 
 ```bash
