@@ -45,6 +45,11 @@ make setup         # git submodule update --init --recursive infra
 
 ## 2.4 Step 2 — Download datasets
 
+> **Prerequisite:** `make datasets` uploads into the live MinIO landing bucket, so the
+> stack must be up first — run **Step 3 (`make up`)** below before this step on a fresh
+> clone, then return here. (The steps are numbered in medallion order; on first setup the
+> launch precedes the dataset load.)
+
 The lab ships five curated datasets (NYC Taxi, TPC-H, Online Retail, GitHub Archive, MovieLens). Download the `small` tier (default) into the MinIO landing bucket:
 
 ```bash

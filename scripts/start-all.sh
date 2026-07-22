@@ -17,13 +17,13 @@ log "1/6 removing stale legacy overlay symlink (pre-manifest layout; _user/ now 
 run "rm -f \"$INFRA_DIR/services/_user/data-eng-lab/compose.yml\""
 
 log "2/6 backfilling new Atlas .env keys (additive)"
-run "cd \"$INFRA_DIR\" && ./start.sh env backfill"
+run "(cd \"$INFRA_DIR\" && ./start.sh env backfill)"
 
 log "3/6 consumer doctor (manifest + compose + env lints)"
-run "cd \"$INFRA_DIR\" && ./start.sh --consumer \"$MANIFEST\" doctor --format json"
+run "(cd \"$INFRA_DIR\" && ./start.sh --consumer \"$MANIFEST\" doctor --format json)"
 
 log "4/6 launching Atlas data-eng track (detached; Atlas waits on health gates)"
-run "cd \"$INFRA_DIR\" && ./start.sh --consumer \"$MANIFEST\" --track data-eng --no-tui --detach"
+run "(cd \"$INFRA_DIR\" && ./start.sh --consumer \"$MANIFEST\" --track data-eng --no-tui --detach)"
 
 log "5/6 registering Iceberg medallion namespaces"
 run "uv run python \"$ROOT/scripts/register_iceberg.py\""

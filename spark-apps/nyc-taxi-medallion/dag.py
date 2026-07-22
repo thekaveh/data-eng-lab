@@ -74,6 +74,10 @@ with DAG(
     catchup=False,
     tags=["data-eng-lab", "scenario"],
 ) as dag:
+    # Same cluster-mode driver-status caveat as nyc-taxi-etl (atlas#308/#792): the
+    # poll can mark this task failed even when the job succeeded; waitAppCompletion
+    # is the real completion signal. See spark-apps/nyc-taxi-etl/dag.py and
+    # docs/atlas-feedback-go-live.md ("2026-07-21 live verification findings").
     SparkSubmitOperator(
         task_id="submit_nyc_taxi_medallion",
         conn_id="spark_default",

@@ -25,6 +25,7 @@ def test_manifest_identity_and_brand():
     data = _load()
     assert data["name"] == "data-eng-lab"
     assert data["project_name"] == "data-eng-lab"
+    assert data["profile"] == "dev"
     assert data["brand"]["name"] == "data-eng-lab"
 
 
