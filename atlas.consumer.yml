@@ -8,6 +8,16 @@ name: data-eng-lab
 project_name: data-eng-lab          # Docker resource namespace (containers/volumes/network)
 profile: dev                        # deployment profile bundle (atlas#755); 'dev' aliases 'default'
 
+# Per-profile source selection (atlas#755). The lab uses no LLM itself, but Atlas's
+# base backend/litellm resolve a provider — the dev profile uses the HOST ollama
+# (localhost:11434), not the slow containerized CPU ollama that pulls redundant models
+# into disk (issue #58/#61). `ollama-localhost` is profile-tagged [default] upstream, so
+# it belongs here rather than as a flat env override; a future prod profile can declare
+# its own source (e.g. ollama-container-gpu) without touching env.values.
+profile_overrides:
+  dev:
+    sources: { ollama: ollama-localhost }
+
 brand:
   name: data-eng-lab
   tagline: "Iceberg lakehouse patterns on the Atlas platform"
@@ -19,11 +29,8 @@ env:
                                     # collisions with sibling Atlas stacks (atlas#751)
     ICEBERG_REST_ENABLED: "true"    # preflight manifest gate + Atlas service enablement
     ICEBERG_REST_URI: http://iceberg-rest:8181   # read by the spark-apps DAGs
-    # The lab uses no LLM itself, but Atlas's base backend/litellm resolve a provider.
-    # Use the HOST ollama (localhost:11434), not the containerized CPU ollama — the
-    # latter is slow here and pulls redundant models into disk (issue #58).
-    LLM_PROVIDER_SOURCE: ollama-localhost
     # The data-eng track services, all containerized (was: nine --*-source CLI flags).
+    # (LLM provider source lives in profile_overrides above — it's a per-profile choice.)
     SPARK_SOURCE: container
     ZEPPELIN_SOURCE: container
     AIRFLOW_SOURCE: container
