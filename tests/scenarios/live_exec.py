@@ -61,6 +61,29 @@ def _rest_catalog_kwargs() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Identifier normalization (issue #44)
+# ---------------------------------------------------------------------------
+
+def _catalog_identifier(table: str, catalog: str = "lakehouse") -> str:
+    """Normalize a table identifier for pyiceberg's ``RestCatalog``.
+
+    Spark addresses tables with a 3-part ``<catalog>.<namespace>.<table>``
+    identifier, but pyiceberg's ``RestCatalog`` (constructed with ``name=catalog``)
+    addresses by ``<namespace>.<table>`` — the catalog is the connection, not part
+    of the wire identifier. Passing the Spark form makes pyiceberg read
+    ``lakehouse`` as the first namespace level → ``NoSuchTableError``.
+
+    Strip a leading ``<catalog>.`` selector so callers may pass either form; a
+    3-part identifier under a *different* catalog is left intact so the mismatch
+    surfaces rather than being silently mangled.
+    """
+    prefix = f"{catalog}."
+    if table.startswith(prefix) and table.count(".") >= 2:
+        return table[len(prefix):]
+    return table
+
+
+# ---------------------------------------------------------------------------
 # snapshot_table
 # ---------------------------------------------------------------------------
 
@@ -77,7 +100,7 @@ def snapshot_table(table: str) -> dict:
     from pyiceberg.catalog.rest import RestCatalog  # noqa: PLC0415
 
     catalog = RestCatalog(name="lakehouse", **_rest_catalog_kwargs())
-    tbl = catalog.load_table(table)
+    tbl = catalog.load_table(_catalog_identifier(table))
     arrow_tbl = tbl.scan().to_arrow()
 
     # Schema: sorted "name:type" strings
@@ -111,7 +134,7 @@ def drop_table(table: str) -> None:
 
     catalog = RestCatalog(name="lakehouse", **_rest_catalog_kwargs())
     try:
-        catalog.drop_table(table)
+        catalog.drop_table(_catalog_identifier(table))
     except NoSuchTableError:
         pass  # table may not exist yet on first run
 
