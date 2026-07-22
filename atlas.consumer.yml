@@ -19,6 +19,10 @@ env:
                                     # collisions with sibling Atlas stacks (atlas#751)
     ICEBERG_REST_ENABLED: "true"    # preflight manifest gate + Atlas service enablement
     ICEBERG_REST_URI: http://iceberg-rest:8181   # read by the spark-apps DAGs
+    # The lab uses no LLM itself, but Atlas's base backend/litellm resolve a provider.
+    # Use the HOST ollama (localhost:11434), not the containerized CPU ollama — the
+    # latter is slow here and pulls redundant models into disk (issue #58).
+    LLM_PROVIDER_SOURCE: ollama-localhost
     # The data-eng track services, all containerized (was: nine --*-source CLI flags).
     SPARK_SOURCE: container
     ZEPPELIN_SOURCE: container
