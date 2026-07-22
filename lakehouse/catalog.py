@@ -14,6 +14,13 @@ def _envval(key: str, env_file: Path) -> str:
     return val
 
 
+def _region(env_file: Path) -> str:
+    """MINIO_REGION: env var > infra/.env > us-east-1 (MinIO's default)."""
+    import os
+
+    return os.environ.get("MINIO_REGION") or _envval("MINIO_REGION", env_file) or "us-east-1"
+
+
 def _catalog_config(infra_dir: Path) -> dict:
     env_file = Path(infra_dir) / ".env"
     port = _envval("ICEBERG_REST_PORT", env_file)
@@ -31,6 +38,9 @@ def _catalog_config(infra_dir: Path) -> dict:
         "s3.access-key-id": user,
         "s3.secret-access-key": password,
         "s3.path-style-access": "true",
+        # Explicit region avoids pyarrow's region-probe HeadObject 400 against MinIO
+        # and matches every other S3 client in the repo (issue #51).
+        "s3.region": _region(env_file),
     }
 
 

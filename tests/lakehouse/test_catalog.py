@@ -24,6 +24,35 @@ def test_catalog_config_from_env(tmp_path: Path):
     assert cfg["s3.secret-access-key"] == "secret"
 
 
+def test_catalog_config_sets_default_region(tmp_path: Path, monkeypatch):
+    """pyiceberg's pyarrow FileIO needs an explicit s3.region against MinIO, or the
+    region-probe HeadObject can 400 (issue #51). Defaults to us-east-1 (MinIO's
+    default), matching every other S3 client in the repo."""
+    monkeypatch.delenv("MINIO_REGION", raising=False)
+    infra = _write_env(tmp_path, ICEBERG_REST_PORT="64110", MINIO_PORT="64093",
+                       MINIO_ROOT_USER="minioadmin", MINIO_ROOT_PASSWORD="secret")
+    cfg = catalog._catalog_config(infra)
+    assert cfg["s3.region"] == "us-east-1"
+
+
+def test_catalog_config_region_from_env_file(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("MINIO_REGION", raising=False)
+    infra = _write_env(tmp_path, ICEBERG_REST_PORT="64110", MINIO_PORT="64093",
+                       MINIO_ROOT_USER="minioadmin", MINIO_ROOT_PASSWORD="secret",
+                       MINIO_REGION="eu-west-2")
+    cfg = catalog._catalog_config(infra)
+    assert cfg["s3.region"] == "eu-west-2"
+
+
+def test_catalog_config_region_env_var_overrides(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("MINIO_REGION", "ap-south-1")
+    infra = _write_env(tmp_path, ICEBERG_REST_PORT="64110", MINIO_PORT="64093",
+                       MINIO_ROOT_USER="minioadmin", MINIO_ROOT_PASSWORD="secret",
+                       MINIO_REGION="eu-west-2")
+    cfg = catalog._catalog_config(infra)
+    assert cfg["s3.region"] == "ap-south-1"
+
+
 def test_catalog_config_missing_port_raises(tmp_path: Path):
     infra = _write_env(tmp_path, MINIO_PORT="64093")
     with pytest.raises(RuntimeError):
