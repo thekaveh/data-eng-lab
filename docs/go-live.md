@@ -97,7 +97,7 @@ Run Layer 2 (L2) tests to confirm service-to-service integration edges are funct
 RUN_INFRA=1 uv run pytest tests/infra/test_layer2_live.py::test_layer2_matrix_all_pass -v
 ```
 
-**Expected:** All L2 edges pass: spark→minio+iceberg, jupyter→pyiceberg, airflow→minio+spark, zeppelin→spark, trino→lakehouse (if TRINO_ENABLED), spark→redpanda (if REDPANDA_ENABLED).
+**Expected:** All L2 edges pass: spark→minio+iceberg, jupyter→pyiceberg, airflow→minio+spark, zeppelin→spark, trino→lakehouse (unless `TRINO_SOURCE=disabled`), spark→redpanda (unless `REDPANDA_SOURCE=disabled`). Optional-service edges are gated on the Atlas `*_SOURCE` values in `infra/.env` (set to `container` by `atlas.consumer.yml`), so on a default stack every edge runs.
 
 ---
 

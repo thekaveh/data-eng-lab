@@ -11,16 +11,16 @@ def _load(mod):
     return m
 
 
-def test_iceberg_edges_gated_off_when_flag_unset(monkeypatch):
-    monkeypatch.delenv("ICEBERG_REST_ENABLED", raising=False)
+def test_iceberg_edges_gated_off_when_source_disabled(monkeypatch):
+    monkeypatch.setenv("ICEBERG_REST_SOURCE", "disabled")
     layer2 = _load("layer2")
     names = {e.name: e.enabled for e in layer2.EDGES}
     assert names["spark->minio+iceberg"] is False
     assert names["airflow->minio+spark"] is True  # base edge always on
 
 
-def test_iceberg_edges_enabled_when_flag_set(monkeypatch):
-    monkeypatch.setenv("ICEBERG_REST_ENABLED", "true")
+def test_iceberg_edges_enabled_when_source_container(monkeypatch):
+    monkeypatch.setenv("ICEBERG_REST_SOURCE", "container")
     layer2 = _load("layer2")
     assert {e.name for e in layer2.EDGES if e.enabled} >= {"spark->minio+iceberg", "jupyter->pyiceberg"}
 
@@ -44,33 +44,33 @@ def test_redpanda_edge_present_in_edges():
     assert "spark->redpanda" in names
 
 
-def test_trino_edge_gated_off_when_flag_unset(monkeypatch):
-    """trino->lakehouse is disabled when TRINO_ENABLED is absent."""
-    monkeypatch.delenv("TRINO_ENABLED", raising=False)
+def test_trino_edge_gated_off_when_source_disabled(monkeypatch):
+    """trino->lakehouse is disabled only when TRINO_SOURCE is genuinely 'disabled'."""
+    monkeypatch.setenv("TRINO_SOURCE", "disabled")
     layer2 = _load("layer2")
     names = {e.name: e.enabled for e in layer2.EDGES}
     assert names["trino->lakehouse"] is False
 
 
-def test_trino_edge_enabled_when_flag_set(monkeypatch):
-    """trino->lakehouse is enabled when TRINO_ENABLED=true."""
-    monkeypatch.setenv("TRINO_ENABLED", "true")
+def test_trino_edge_enabled_when_source_container(monkeypatch):
+    """trino->lakehouse is enabled when TRINO_SOURCE=container."""
+    monkeypatch.setenv("TRINO_SOURCE", "container")
     layer2 = _load("layer2")
     names = {e.name: e.enabled for e in layer2.EDGES}
     assert names["trino->lakehouse"] is True
 
 
-def test_redpanda_edge_gated_off_when_flag_unset(monkeypatch):
-    """spark->redpanda is disabled when REDPANDA_ENABLED is absent."""
-    monkeypatch.delenv("REDPANDA_ENABLED", raising=False)
+def test_redpanda_edge_gated_off_when_source_disabled(monkeypatch):
+    """spark->redpanda is disabled only when REDPANDA_SOURCE is genuinely 'disabled'."""
+    monkeypatch.setenv("REDPANDA_SOURCE", "disabled")
     layer2 = _load("layer2")
     names = {e.name: e.enabled for e in layer2.EDGES}
     assert names["spark->redpanda"] is False
 
 
-def test_redpanda_edge_enabled_when_flag_set(monkeypatch):
-    """spark->redpanda is enabled when REDPANDA_ENABLED=true."""
-    monkeypatch.setenv("REDPANDA_ENABLED", "true")
+def test_redpanda_edge_enabled_when_source_container(monkeypatch):
+    """spark->redpanda is enabled when REDPANDA_SOURCE=container."""
+    monkeypatch.setenv("REDPANDA_SOURCE", "container")
     layer2 = _load("layer2")
     names = {e.name: e.enabled for e in layer2.EDGES}
     assert names["spark->redpanda"] is True
