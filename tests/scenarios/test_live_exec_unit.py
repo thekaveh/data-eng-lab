@@ -47,3 +47,28 @@ def test_custom_catalog_name():
 def test_silver_and_gold_namespaces():
     assert le._catalog_identifier("lakehouse.silver.orders") == "silver.orders"
     assert le._catalog_identifier("lakehouse.gold.metrics") == "gold.metrics"
+
+
+# ---------------------------------------------------------------------------
+# Issue #51 — RestCatalog kwargs must set s3.region (pyarrow region-probe 400)
+# ---------------------------------------------------------------------------
+
+def _min_env(monkeypatch, **extra):
+    """Set the four keys _rest_catalog_kwargs requires so it doesn't raise."""
+    monkeypatch.setenv("ICEBERG_REST_PORT", "64110")
+    monkeypatch.setenv("MINIO_PORT", "64093")
+    monkeypatch.setenv("MINIO_ROOT_USER", "minioadmin")
+    monkeypatch.setenv("MINIO_ROOT_PASSWORD", "secret")
+    for k, v in extra.items():
+        monkeypatch.setenv(k, v)
+
+
+def test_rest_catalog_kwargs_sets_default_region(monkeypatch):
+    monkeypatch.delenv("MINIO_REGION", raising=False)
+    _min_env(monkeypatch)
+    assert le._rest_catalog_kwargs()["s3.region"] == "us-east-1"
+
+
+def test_rest_catalog_kwargs_region_override(monkeypatch):
+    _min_env(monkeypatch, MINIO_REGION="eu-west-2")
+    assert le._rest_catalog_kwargs()["s3.region"] == "eu-west-2"
