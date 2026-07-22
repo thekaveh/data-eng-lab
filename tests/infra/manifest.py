@@ -27,9 +27,34 @@ def _resolve_project() -> str:
 
 PROJECT = _resolve_project()
 
+_INFRA_ENV = Path(__file__).resolve().parents[2] / "infra" / ".env"
+
 
 def _truthy(var: str) -> bool:
     return os.environ.get(var, "").lower() in ("1", "true", "yes", "on")
+
+
+def _env_source(key: str, env_file: Path = _INFRA_ENV) -> str:
+    """Resolve an Atlas ``*_SOURCE`` value: env var > infra/.env (last wins) > ''."""
+    val = os.environ.get(key)
+    if val is not None:
+        return val.strip()
+    if env_file.exists():
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if line.startswith(f"{key}="):
+                val = line.split("=", 1)[1].strip()  # last KEY= line wins
+    return (val or "").strip()
+
+
+def _source_enabled(key: str, env_file: Path = _INFRA_ENV) -> bool:
+    """Is the service whose Atlas source is ``key`` expected to be running?
+
+    Enabled unless the source is explicitly ``disabled`` — the consumer manifest
+    (``atlas.consumer.yml``) sets ``*_SOURCE=container`` and Atlas materializes it
+    into ``infra/.env``. An absent source defaults to enabled so a live service is
+    never silently skipped (a genuinely-down one then surfaces as fail/blocked).
+    """
+    return _env_source(key, env_file).lower() != "disabled"
 
 
 def _container_status(service: str) -> str:
@@ -73,7 +98,8 @@ def _minio_ready():
     return ok, detail
 
 
-# Base data-eng services always expected; A1/A5/A9/A7 services gated until enabled.
+# Base data-eng services always expected; optional services gated on their Atlas
+# `*_SOURCE` (set to `container` by atlas.consumer.yml) — enabled unless `disabled`.
 EXPECTED_SERVICES = [
     ServiceSpec("minio", True, _minio_ready),
     ServiceSpec("spark-master", True, lambda: _up("spark-master")),
@@ -84,8 +110,8 @@ EXPECTED_SERVICES = [
     ServiceSpec("airflow-scheduler", True, lambda: _up("airflow-scheduler")),
     ServiceSpec("weaviate", True, lambda: _up("weaviate")),
     ServiceSpec("neo4j-graph-db", True, lambda: _up("neo4j-graph-db")),
-    ServiceSpec("iceberg-rest", _truthy("ICEBERG_REST_ENABLED"), lambda: _up("iceberg-rest")),
-    ServiceSpec("jenkins", _truthy("JENKINS_ENABLED"), lambda: _up("jenkins")),
-    ServiceSpec("redpanda", _truthy("REDPANDA_ENABLED"), lambda: _up("redpanda")),
-    ServiceSpec("trino", _truthy("TRINO_ENABLED"), lambda: _up("trino")),
+    ServiceSpec("iceberg-rest", _source_enabled("ICEBERG_REST_SOURCE"), lambda: _up("iceberg-rest")),
+    ServiceSpec("jenkins", _source_enabled("JENKINS_SOURCE"), lambda: _up("jenkins")),
+    ServiceSpec("redpanda", _source_enabled("REDPANDA_SOURCE"), lambda: _up("redpanda")),
+    ServiceSpec("trino", _source_enabled("TRINO_SOURCE"), lambda: _up("trino")),
 ]
