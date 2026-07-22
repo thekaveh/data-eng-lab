@@ -27,12 +27,12 @@ def _live_exec():
 @pytest.mark.skipif(os.environ.get("RUN_INFRA") != "1",
                     reason="needs a live enhanced-Atlas stack (A1-A4)")
 def test_batch_ingest_scala_pyspark_parity():
-    """Execute both notebooks, snapshot lakehouse.bronze.nyc_taxi_trips, assert parity.
+    """Execute both notebooks, snapshot bronze.nyc_taxi_trips, assert parity.
 
     Protocol
     --------
     1. Run the Scala notebook in Zeppelin via its REST API (import / run-all / poll /
-       delete).  Snapshot ``lakehouse.bronze.nyc_taxi_trips`` → ``scala_snap``.
+       delete).  Snapshot ``bronze.nyc_taxi_trips`` (2-part pyiceberg id) → ``scala_snap``.
     2. Drop the table via pyiceberg so the PySpark run starts from a clean slate.
     3. Run the PySpark notebook inside the jupyterhub container (docker cp + papermill).
        Snapshot the table again → ``pyspark_snap``.
@@ -59,16 +59,20 @@ def test_batch_ingest_scala_pyspark_parity():
     zpln_path = scenario / "zeppelin" / "notebook.zpln"
     ipynb_path = scenario / "jupyter" / "notebook.ipynb"
 
+    # pyiceberg RestCatalog addresses tables by <namespace>.<table> (2-part);
+    # the Spark-side notebooks use the 3-part lakehouse.bronze.* form (issue #44).
+    table = "bronze.nyc_taxi_trips"
+
     # Step 1: Run Scala notebook via Zeppelin REST API
     le.run_zeppelin_note(str(zpln_path))
-    scala_snap = le.snapshot_table("lakehouse.bronze.nyc_taxi_trips")
+    scala_snap = le.snapshot_table(table)
 
     # Step 2: Drop/reset the table so PySpark writes from scratch
-    le.drop_table("lakehouse.bronze.nyc_taxi_trips")
+    le.drop_table(table)
 
     # Step 3: Run PySpark notebook inside the jupyterhub container
     le.run_jupyter_note(str(ipynb_path))
-    pyspark_snap = le.snapshot_table("lakehouse.bronze.nyc_taxi_trips")
+    pyspark_snap = le.snapshot_table(table)
 
     # Step 4: Assert schema + row_count + checksum parity
     ok, detail = parity.tables_equivalent(scala_snap, pyspark_snap)
