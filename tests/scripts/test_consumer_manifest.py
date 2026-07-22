@@ -38,6 +38,13 @@ def test_manifest_env_values():
         assert env[f"{svc}_SOURCE"] == "container", f"{svc}_SOURCE missing/wrong"
 
 
+def test_manifest_uses_host_ollama():
+    """This dev machine uses the host ollama (localhost:11434); the containerized
+    CPU ollama is slow and pulls redundant models into disk (issue #58)."""
+    env = _load()["env"]["values"]
+    assert env["LLM_PROVIDER_SOURCE"] == "ollama-localhost"
+
+
 def test_manifest_overlay_paths_exist():
     for rel in _load()["compose_overlays"]:
         assert (ROOT / rel).is_file(), f"overlay path {rel} does not exist"
