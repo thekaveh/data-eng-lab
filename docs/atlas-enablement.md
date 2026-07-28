@@ -14,6 +14,11 @@
 > The current consumer pin is `af7713ee43f71e140e57735488001bc1cfb09245` from
 > Atlas `main`. This document retains historical request context; current consumer
 > configuration lives in the parent-owned `atlas.consumer.yml`, not in Atlas source.
+> This pin includes the attempted Atlas #850 JWT repair, but the focused live
+> retest found its `AIRFLOW__API__JWT_SECRET` wiring does not configure Airflow
+> 3.3's `[api_auth] jwt_secret`; [#850](https://github.com/thekaveh/atlas/issues/850)
+> is reopened pending `AIRFLOW__API_AUTH__JWT_SECRET`. Airflow DAG acceptance and
+> promotion remain blocked, while the non-Airflow live checks remain valid.
 
 ---
 

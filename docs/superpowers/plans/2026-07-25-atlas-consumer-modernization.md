@@ -3,9 +3,12 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 > **Supersession (2026-07-28):** The original `881df596` reviewed pin was the
-> focused live-gate baseline. Atlas #850 was then fixed upstream; this plan's
-> current immutable target is `af7713ee43f71e140e57735488001bc1cfb09245`. The
-> earlier SHA remains historical evidence, not the current pin.
+> focused live-gate baseline. Atlas #850's attempted patch is included in this
+> plan's current immutable target, `af7713ee43f71e140e57735488001bc1cfb09245`,
+> but the focused retest proved it wires `AIRFLOW__API__JWT_SECRET` instead of
+> Airflow 3.3's effective `AIRFLOW__API_AUTH__JWT_SECRET`. #850 is reopened;
+> Airflow acceptance and promotion remain blocked pending a corrected reviewed
+> pin. The earlier SHA remains historical evidence, not the current pin.
 
 **Goal:** Pin Atlas at `af7713ee43f71e140e57735488001bc1cfb09245`, align this repository with the current consumer runbook, and prove the full data-eng catalog remains compatible through static checks and focused live smoke.
 
@@ -39,7 +42,7 @@
 | `scripts/start-all.sh` | Canonical consumer lifecycle and endpoint export/assertion. |
 | `tests/test_atlas_usage_contract.py` | Full catalog no-host-port guard. |
 | `.github/workflows/ci.yml` | Pinned, non-live consumer validation job. |
-| `docs` source files | Current pin, image rebuild, endpoint boundary, #791 status. |
+| `docs` source files | Current pin, image rebuild, endpoint boundary, #791 validation, and the reopened #850 blocker. |
 | README and wiki outputs | Generated only with `scripts/build_docs.py`. |
 
 ### Task 1: Verify the worktree and pin the reviewed Atlas commit
@@ -646,7 +649,7 @@ Expected: PASS.
 
 **Interfaces:**
 - `docs/` is the source of truth.
-- #791 is resolved at target pin pending Task 7 proof; #792 remains documented unless live evidence shows otherwise.
+- #791 is validated at the target pin; #850 is reopened because its attempted `AIRFLOW__API__JWT_SECRET` wiring misses Airflow 3.3's `[api_auth] jwt_secret`; #792 remains documented unless live evidence shows otherwise.
 
 - [ ] **Step 1: Add failing docs assertions to `tests/test_atlas_usage_contract.py`**
 

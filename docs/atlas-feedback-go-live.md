@@ -7,9 +7,13 @@ Post-go-live observations from running the full `data-eng-lab` platform in a pro
 As of the original go-live run (2026-07-04, atlas `85ff46b`): all A1–A9 capabilities verified during go-live. The platform is fully operational. 19 scenarios executed with parity between Scala and PySpark notebooks where applicable.
 
 Status update (2026-07-28, atlas `af7713ee`): the reviewed pin includes the
-upstream #791 in-network Execution API URL repair and Atlas #850's shared API
-JWT-secret repair. The focused Airflow/DAG retest is still pending; do not
-interpret this upstream pin as completed lab-side live proof. #792 remains open.
+upstream #791 in-network Execution API URL repair and the attempted Atlas #850
+JWT patch. The focused retest validates #791's DNS resolution but proves the
+#850 environment key is ineffective: Atlas wires `AIRFLOW__API__JWT_SECRET`,
+while Airflow 3.3 resolves `[api_auth] jwt_secret`. [#850](https://github.com/thekaveh/atlas/issues/850)
+is reopened pending `AIRFLOW__API_AUTH__JWT_SECRET`; no Airflow DAG success or
+promotion is claimed. Non-Airflow focused checks, including Zeppelin, Trino,
+and streaming, passed. #792 remains open.
 
 ## Key Observations
 
@@ -107,13 +111,29 @@ and Jupyter batch-ingest notebooks now read each declared object in deterministi
 order, cast that column to `double` at the read boundary, and union by name.
 Their Bronze filtering and Iceberg output contract remain unchanged.
 
-## Reviewed #850 repair (2026-07-28, atlas `af7713ee`)
+## Focused #850 retest (2026-07-28, atlas `af7713ee`)
 
-Atlas #850 is closed and its repair is included in the current reviewed pin.
-Atlas now generates one durable `AIRFLOW_JWT_SECRET` and supplies it as
-`AIRFLOW__API__JWT_SECRET` to the webserver, scheduler, and DAG processor, with
-upstream regression coverage for the shared value. This supersedes the
-`881df596` live-gate blocker above, but it is not itself a successful
-data-eng-lab run: rerun the focused `nyc_taxi_etl` proof before promotion and
-record the result here. [atlas#792](https://github.com/thekaveh/atlas/issues/792)
-remains a separate SparkSubmitHook status-poll caveat.
+The current reviewed pin includes #850's attempted repair: Atlas generates one
+durable `AIRFLOW_JWT_SECRET` and supplies `AIRFLOW__API__JWT_SECRET` with the
+same value to the webserver, scheduler, and DAG processor. That container
+environment value is shared, but the Airflow 3.3 effective configuration is
+`[api_auth] jwt_secret`, not `[api] jwt_secret`. `airflow config get-value api
+jwt_secret` therefore resolves a different shared runtime value, and the
+representative `nyc_taxi_etl` task again fails at Pre-Execute with `Invalid auth
+token` before Spark starts.
+
+The scheduler and DAG processor correctly resolve
+`AIRFLOW__CORE__EXECUTION_API_SERVER_URL=http://airflow-webserver:8080/execution/`,
+so #791's in-network DNS repair is validated. The rest of the focused gate also
+passed: consumer launch/doctor/endpoint assertion, Layer 1 (13/13), Layer 2
+(6/6), datasets, Jenkins JAR build, repaired default-small Zeppelin notebook,
+Trino, and streaming producer/consumer. The paired Jupyter process completed
+cleanly but did not retain a pytest terminal summary and is not claimed as a
+pass.
+
+[atlas#850](https://github.com/thekaveh/atlas/issues/850) is reopened pending
+`AIRFLOW__API_AUTH__JWT_SECRET` plus an effective-configuration regression test
+across the webserver, scheduler, and DAG processor. No Airflow DAG live success
+or Gitflow promotion is permitted until a corrected reviewed pin is retested.
+[atlas#792](https://github.com/thekaveh/atlas/issues/792) remains a separate
+SparkSubmitHook status-poll caveat.

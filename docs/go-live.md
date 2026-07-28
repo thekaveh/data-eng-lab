@@ -327,14 +327,18 @@ Run the end-to-end lakehouse pipeline via Airflow.
    ```
    Expected output: Row count > 0.
 
-**Reviewed-pin verification (atlas `af7713ee`):** #791 configures the scheduler
-and DAG processor with the in-network execution API URL, while #850 supplies a
-durable shared API JWT secret to all Airflow services. Rerun `nyc_taxi_etl` and
-record the Task 7 result here before declaring that proof complete. The distinct
-SparkSubmitHook driver-status poll caveat in [atlas#792](https://github.com/thekaveh/atlas/issues/792) remains:
+**Current blocker (atlas `af7713ee`):** the focused retest validates #791: the
+scheduler and DAG processor use the in-network Execution API URL. It also proves
+that #850's attempted `AIRFLOW__API__JWT_SECRET` wiring does not configure
+Airflow 3.3's `[api_auth] jwt_secret`; the DAG fails with `Invalid auth token`
+before Spark starts. [Atlas #850](https://github.com/thekaveh/atlas/issues/850)
+is reopened pending `AIRFLOW__API_AUTH__JWT_SECRET`. Do not claim this DAG
+success or promote the branch until a corrected reviewed pin passes this step.
+The distinct SparkSubmitHook driver-status poll caveat in
+[atlas#792](https://github.com/thekaveh/atlas/issues/792) remains:
 `spark.standalone.submit.waitAppCompletion=true` is the completion signal. See
-[Atlas Go-Live Feedback](atlas-feedback-go-live.md) for the dated finding and
-reviewed-pin update.
+[Atlas Go-Live Feedback](atlas-feedback-go-live.md) for the complete dated
+retest evidence, including the successful non-Airflow checks.
 
 ### 3.7 Trino + streaming validation (A7/A9)
 
@@ -529,7 +533,8 @@ If all above pass, the Atlas enablement is **validated for production use** and 
   processor: `AIRFLOW__CORE__EXECUTION_API_SERVER_URL=http://airflow-webserver:8080/execution/`.
   If it is absent, confirm the checked-out submodule pin and rerun `make up` so
   Atlas rebuilds changed images automatically. See [Atlas Go-Live Feedback](atlas-feedback-go-live.md)
-  for #791's resolved configuration and #792's separate status-poll caveat.
+  for #791's validated DNS configuration, #850's reopened effective-secret
+  blocker, and #792's separate status-poll caveat.
 
 ---
 

@@ -1,6 +1,6 @@
 # Atlas Consumer Modernization Design
 
-**Status:** approved design; implementation planning pending review
+**Status:** implemented through focused live retest; Airflow acceptance blocked upstream
 **Date:** 2026-07-25
 **Owner:** data-eng-lab
 **Target Atlas pin:** `af7713ee43f71e140e57735488001bc1cfb09245` (`origin/main` reviewed 2026-07-28; supersedes the prior `881df596` live-gate baseline)
@@ -24,7 +24,7 @@ It does not add Atlas services, edit `infra/`, alter scenario semantics, replace
 
 | Decision | Chosen design |
 | --- | --- |
-| Atlas version | Refresh, verify ancestry, then pin the exact target SHA. Never track the branch. |
+| Atlas version | Refresh, verify ancestry, then pin the exact target SHA. Never track the branch. `af7713ee` includes an attempted #850 repair that must be superseded after its reopened effective-config fix. |
 | Configuration ownership | `atlas.consumer.yml` owns portable identity, `BASE_PORT: auto`, sources, branding, storage, and overlays. Machine-local scalars and secrets remain untracked. |
 | Ollama | Retain the profile-specific `dev` override selecting `ollama-localhost`; no flat per-launch source flag. |
 | Endpoint model | Generate and assert the supported endpoint export for MinIO. Use a tested parent resolver (explicit override, then `infra/.env`) for data-eng host ports that Atlas does not yet export: Iceberg REST, Trino, Redpanda, Zeppelin, and Airflow. In-container code keeps DNS names such as `iceberg-rest`, `spark-master`, `trino`, and `redpanda`. |
@@ -63,8 +63,8 @@ The endpoint file is a generated, ignored runtime artifact. The target Atlas con
 ### 4.2 Airflow, Spark apps, and scenario DAGs
 
 - Validate every DAG module against the upgraded Airflow/Spark contract, retaining in-network Iceberg REST and Spark catalog configuration.
-- The target routes scheduler and DAG-processor execution API traffic to `airflow-webserver` and shares a durable API JWT secret across Airflow services (#791/#850).
-- Prove those repairs with one representative Spark-submit DAG run; retain unit coverage for catalog values, task shape, and importability.
+- The target routes scheduler and DAG-processor execution API traffic to `airflow-webserver` (#791), which the retest validated. Its attempted #850 repair wires `AIRFLOW__API__JWT_SECRET`, but Airflow 3.3 resolves `[api_auth] jwt_secret`; #850 is reopened pending `AIRFLOW__API_AUTH__JWT_SECRET`.
+- Keep the representative Spark-submit DAG acceptance blocked until a corrected reviewed pin proves the effective secret and task success; retain unit coverage for catalog values, task shape, and importability.
 - Verify the overlay mounts DAGs into both scheduler and DAG processor. Do not duplicate Atlas-owned Airflow environment overrides.
 
 ### 4.3 Notebooks, scenarios, and datasets
@@ -97,7 +97,7 @@ The endpoint file is a generated, ignored runtime artifact. The target Atlas con
 | --- | --- |
 | Consumer startup | Controlled upgrade start, generated endpoint export, `ATLAS_MINIO_HOST_ENDPOINT` assertion, and healthy service summary. |
 | Infrastructure wiring | Existing Layer 1/2 preflight passes for Spark/MinIO/Iceberg, Airflow/Spark, Zeppelin/Spark, Trino/Iceberg, and Spark/Redpanda. |
-| Airflow repair | One representative Spark-submit DAG succeeds without task-side `localhost:8080/execution/` failure. |
+| Airflow repair | Blocked upstream: #791 DNS is validated, but #850 must wire `AIRFLOW__API_AUTH__JWT_SECRET` before one representative Spark-submit DAG can succeed. |
 | Notebooks | One Zeppelin `%spark` path and one Jupyter/PyIceberg path run against target Atlas. |
 | SQL and streaming | One Trino query and one Redpanda producer/consumer path succeed. |
 | Isolation | Resolved port block and `${PROJECT_NAME}` containers are correct; no duplicate Ollama container under the localhost profile. |

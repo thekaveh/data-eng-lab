@@ -27,7 +27,15 @@ Atlas's consumer-doc clarifications from **#281**
 | **A8** | `data-eng` track membership | ✅ delivered (#250) | — |
 | **A9** | **Redpanda (Kafka API) + Spark Kafka connector** | ✅ **delivered** | — |
 
-**Key takeaway:** A1–A9 are now live. **The full scenario catalog can execute** (Spark + Iceberg + Trino + Kafka streaming). See [Delivered deviations](#2-delivered-deviations-from-our-a7a9-asks) for the `%trino` interpreter name and topic-seeding notes.
+**Key takeaway:** A1–A9 are available, and the focused non-Airflow paths are
+validated (including Zeppelin, Trino, and Kafka streaming). The current pin's
+attempted #850 repair wires `AIRFLOW__API__JWT_SECRET`, but Airflow 3.3 resolves
+`[api_auth] jwt_secret`; [#850](https://github.com/thekaveh/atlas/issues/850) is
+reopened pending `AIRFLOW__API_AUTH__JWT_SECRET`. Therefore a successful
+Airflow Spark-submit DAG and Gitflow promotion are not yet claimed. #791's
+in-network Execution API DNS configuration is nevertheless validated. See
+[Delivered deviations](#2-delivered-deviations-from-our-a7a9-asks) for the
+`%trino` interpreter name and topic-seeding notes.
 
 ---
 
