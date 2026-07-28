@@ -26,9 +26,12 @@ def test_events_topic_reachable():
     from kafka import KafkaAdminClient  # gated import
     bootstrap = os.environ.get("REDPANDA_BOOTSTRAP")
     if not bootstrap:
-        endpoint = _live_exec()._http_endpoint(
-            "REDPANDA_HOST_ENDPOINT", "REDPANDA_KAFKA_PORT"
-        )
+        try:
+            endpoint = _live_exec()._http_endpoint(
+                "REDPANDA_HOST_ENDPOINT", "REDPANDA_KAFKA_PORT"
+            )
+        except RuntimeError as exc:
+            pytest.skip(str(exc))
         bootstrap = endpoint.removeprefix("http://").removeprefix("https://")
     admin = KafkaAdminClient(bootstrap_servers=bootstrap)
     topics = admin.list_topics()

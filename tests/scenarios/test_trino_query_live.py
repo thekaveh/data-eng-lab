@@ -22,7 +22,10 @@ def _live_exec():
                     reason="needs live Atlas Trino (issue #268)")
 def test_trino_counts_bronze():
     from trino.dbapi import connect  # gated import
-    endpoint = _live_exec()._http_endpoint("TRINO_HOST_ENDPOINT", "TRINO_PORT")
+    try:
+        endpoint = _live_exec()._http_endpoint("TRINO_HOST_ENDPOINT", "TRINO_PORT")
+    except RuntimeError as exc:
+        pytest.skip(str(exc))
     parsed = urlparse(endpoint)
     if not parsed.hostname or not parsed.port:
         pytest.skip("TRINO_HOST_ENDPOINT unresolved — is the stack up?")
