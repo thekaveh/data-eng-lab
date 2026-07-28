@@ -11,8 +11,12 @@ All notable changes to this project are documented here (Keep a Changelog format
 - Atlas consumer operations now pin `881df596`; changed committed Atlas source
   automatically rebuilds local images using ignored `.atlas-build-state`, and
   the launcher exports/asserts only `ATLAS_MINIO_HOST_ENDPOINT`. Atlas #791's
-  in-network Airflow Execution API configuration is ready for focused DAG proof;
-  the separate #792 SparkSubmitHook status-poll caveat remains documented.
+  in-network Airflow Execution API configuration is present, but Atlas #850
+  remains an open shared-JWT blocker to focused DAG proof; the separate #792
+  SparkSubmitHook status-poll caveat remains documented.
+- Batch NYC Taxi notebook ingestion now normalizes `passenger_count` to `double`
+  per declared Parquet object before unioning, so the January–June 2023 input
+  set retains Scala/PySpark parity despite March's `INT64` schema.
 - Atlas consumption modernized: pin bumped `85ff46b2` → `2d006cae` (v0.1.0-587);
   adopted the `atlas.consumer.yml` consumer manifest (replaces the `_user/`
   symlink, `.env` injection, wrapper source flags, and `create_buckets.sh`);

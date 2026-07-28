@@ -38,7 +38,7 @@
     },
     {
       "title": "3. Read (code)",
-      "text": "%spark\nval raw = spark.read.parquet(\"s3a://landing/nyc_taxi/\")\nraw.printSchema()",
+      "text": "%spark\nval taxiPaths = Seq(\n  \"s3a://landing/nyc_taxi/yellow_tripdata_2023-01.parquet\",\n  \"s3a://landing/nyc_taxi/yellow_tripdata_2023-02.parquet\",\n  \"s3a://landing/nyc_taxi/yellow_tripdata_2023-03.parquet\",\n  \"s3a://landing/nyc_taxi/yellow_tripdata_2023-04.parquet\",\n  \"s3a://landing/nyc_taxi/yellow_tripdata_2023-05.parquet\",\n  \"s3a://landing/nyc_taxi/yellow_tripdata_2023-06.parquet\"\n)\nval raw = taxiPaths\n  .map(path => spark.read.parquet(path).withColumn(\"passenger_count\", col(\"passenger_count\").cast(\"double\")))\n  .reduce(_.unionByName(_))\nraw.printSchema()",
       "config": {},
       "settings": {
         "params": {},

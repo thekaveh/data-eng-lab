@@ -6,11 +6,11 @@ Post-go-live observations from running the full `data-eng-lab` platform in a pro
 
 As of the original go-live run (2026-07-04, atlas `85ff46b`): all A1–A9 capabilities verified during go-live. The platform is fully operational. 19 scenarios executed with parity between Scala and PySpark notebooks where applicable.
 
-Status update (2026-07-21, atlas `2d006cae`): the dated findings below recorded
-the original Airflow execution-API failure and the separate #792 Spark-submit
-status-poll caveat. The reviewed `881df596` pin includes the upstream #791
-configuration repair; Task 7 supplies this consumer's live DAG evidence. #792
-remains open.
+Status update (2026-07-28, atlas `881df596`): the reviewed pin includes the
+upstream #791 in-network Execution API URL repair, and Task 7 confirmed the
+scheduler and DAG processor use it. DAG tasks still fail before Spark because
+the Airflow services do not share an API JWT secret; Atlas #850 tracks that
+separate blocker. #792 remains open.
 
 ## Key Observations
 
@@ -84,3 +84,26 @@ former Pre-Execute connection failure. The distinct SparkSubmitHook driver-statu
 poll behavior in [atlas#792](https://github.com/thekaveh/atlas/issues/792) remains
 an open caveat; `spark.standalone.submit.waitAppCompletion=true` remains the
 authoritative completion signal.
+
+## Task 7 live-gate update (2026-07-28, atlas `881df596`)
+
+The Execution API URL repair is active: the scheduler and DAG processor both
+resolve `http://airflow-webserver:8080/execution/`. The representative
+`nyc_taxi_etl` run nevertheless stopped during Pre-Execute because the
+webserver, scheduler, and DAG processor resolved different `api jwt_secret`
+values. The webserver returned 403 with `InvalidSignatureError`, and the
+scheduler recorded `Invalid auth token`; Spark was never reached.
+
+This is an Atlas-internal shared-secret defect, not a consumer endpoint
+override problem. [atlas#850](https://github.com/thekaveh/atlas/issues/850)
+tracks the required durable shared `AIRFLOW__API__JWT_SECRET`, cross-service
+configuration, regression coverage, and successful representative DAG proof.
+The issue remains open, so the consumer must repin to the reviewed upstream
+fix and rerun the focused live suite before promotion.
+
+The same live run exposed a separate consumer-owned notebook/data compatibility
+problem: the declared January–June 2023 NYC Taxi Parquet files disagree on
+`passenger_count` (`INT64` in March, `double` elsewhere). The paired Zeppelin
+and Jupyter batch-ingest notebooks now read each declared object in deterministic
+order, cast that column to `double` at the read boundary, and union by name.
+Their Bronze filtering and Iceberg output contract remain unchanged.
