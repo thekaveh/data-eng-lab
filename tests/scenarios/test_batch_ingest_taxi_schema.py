@@ -12,15 +12,11 @@ ROOT = Path(__file__).resolve().parents[2]
 SCENARIO = ROOT / "scenarios" / "batch_ingest-nyc_taxi-spark-iceberg"
 
 
-def _declared_taxi_paths() -> list[str]:
+def _taxi_paths_for_scale(scale_name: str) -> list[str]:
     registry = yaml.safe_load((ROOT / "datasets" / "registry.yaml").read_text())
-    urls = {
-        url
-        for scale in registry["datasets"]["nyc_taxi"]["scales"].values()
-        for url in scale["urls"]
-    }
-    return sorted(url.replace("https://d37ci6vzurychx.cloudfront.net/trip-data/", "s3a://landing/nyc_taxi/")
-                  for url in urls)
+    urls = registry["datasets"]["nyc_taxi"]["scales"][scale_name]["urls"]
+    return [url.replace("https://d37ci6vzurychx.cloudfront.net/trip-data/", "s3a://landing/nyc_taxi/")
+            for url in urls]
 
 
 def _zeppelin_read_code() -> str:
@@ -35,15 +31,22 @@ def _jupyter_read_code() -> str:
                 if cell.cell_type == "code" and "taxi_paths" in cell.source)
 
 
-def test_batch_ingest_notebooks_normalize_all_declared_taxi_files():
-    """Both engines explicitly normalize every registry file before their union."""
-    declared = _declared_taxi_paths()
-    for code in (_zeppelin_read_code(), _jupyter_read_code()):
+def test_batch_ingest_notebooks_use_default_scale_paths_and_normalize_before_union():
+    """Default notebooks match ``make datasets`` and normalize each selected object."""
+    declared = _taxi_paths_for_scale("small")
+    zeppelin, jupyter = _zeppelin_read_code(), _jupyter_read_code()
+    for code in (zeppelin, jupyter):
         assert 'spark.read.parquet("s3a://landing/nyc_taxi/")' not in code
         assert "passenger_count" in code
         assert "cast(\"double\")" in code or "cast('double')" in code
         assert "unionByName" in code
         assert all(path in code for path in declared)
+    assert 'val taxiDatasetScale = "small"' in zeppelin
+    assert "taxi_dataset_scale = 'small'" in jupyter
+    assert "taxiPathsByScale" in zeppelin
+    assert "taxi_paths_by_scale" in jupyter
+    assert "val taxiPaths = taxiPathsByScale.getOrElse(" in zeppelin
+    assert "taxi_paths = taxi_paths_by_scale[taxi_dataset_scale]" in jupyter
 
 
 def test_batch_ingest_notebooks_preserve_bronze_output_contract():

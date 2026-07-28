@@ -46,7 +46,7 @@ Namespaces are **not pre-seeded** by Atlas. They are created at bootstrap by `sc
 
 ### 3.3.1 Bronze
 
-The bronze layer is the raw ingestion layer. Data is loaded as-is from the landing bucket with minimal cleaning — only field-level validation (e.g. dropping rows with null fare amounts) and column addition (e.g. `trip_date`, `ingested_at`). Bronze tables preserve the full historical record and form the foundation for all downstream processing.
+The bronze layer is the raw ingestion layer. Data is loaded from the landing bucket with minimal cleaning — only field-level validation (e.g. dropping rows with null fare amounts), compatibility normalization required for a stable table schema (the NYC Taxi `passenger_count` field is canonicalized to `double` before files are unioned), and column addition (e.g. `trip_date`, `ingested_at`). Bronze tables preserve the full historical record and form the foundation for all downstream processing.
 
 **Examples:** `nyc_taxi_trips` (raw taxi trips), `events` (real-time Kafka stream), `gh_events` (file-source streaming), `gh_events_flattened` (flattened JSON from GH Archive).
 
