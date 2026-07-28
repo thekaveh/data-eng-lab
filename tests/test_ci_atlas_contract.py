@@ -80,7 +80,23 @@ def _is_endpoint_assert(command: tuple[str, ...]) -> bool:
     return False
 
 
+def _assert_no_indirect_shell_execution(job: dict) -> None:
+    """Reject constructs that can conceal a live command from fragment parsing."""
+    shell_names = {"bash", "dash", "fish", "ksh", "powershell", "pwsh", "sh", "zsh"}
+    for run_block in _run_commands(job).splitlines():
+        assert "$(" not in run_block
+        assert "`" not in run_block
+
+        command = tuple(token for token in shlex.split(run_block, comments=True) if token)
+        for index, token in enumerate(command):
+            is_shell_command_flag = token.startswith("-") and not token.startswith("--") and "c" in token[1:]
+            if not is_shell_command_flag:
+                continue
+            assert not any(Path(candidate).name in shell_names for candidate in command[:index])
+
+
 def _assert_non_live_contract(job: dict) -> None:
+    _assert_no_indirect_shell_execution(job)
     for command in _executable_commands(job):
         assert not _is_endpoint_assert(command)
         assert not _is_live_operation(command)
@@ -150,6 +166,27 @@ def test_non_live_ci_guard_rejects_wrapped_endpoint_assertions():
             pass
         else:
             raise AssertionError("wrapped endpoint assertion unexpectedly passed the CI contract")
+
+
+def test_non_live_ci_guard_rejects_indirect_shell_execution():
+    with_bash_compose = {"steps": [{"run": 'bash -c "docker compose up -d"'}]}
+    with_bash_start = {"steps": [{"run": 'bash -c "./start.sh up -d"'}]}
+    with_bash_endpoint_assert = {"steps": [{"run": 'bash -c "./start.sh endpoints assert"'}]}
+    with_command_substitution = {"steps": [{"run": "$(./start.sh endpoints assert)"}]}
+    with_backtick_substitution = {"steps": [{"run": "`./start.sh endpoints assert`"}]}
+    for job in (
+        with_bash_compose,
+        with_bash_start,
+        with_bash_endpoint_assert,
+        with_command_substitution,
+        with_backtick_substitution,
+    ):
+        try:
+            _assert_non_live_contract(job)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("indirect shell execution unexpectedly passed the CI contract")
 
 
 def test_required_ci_command_guard_rejects_comments_and_echoes():
