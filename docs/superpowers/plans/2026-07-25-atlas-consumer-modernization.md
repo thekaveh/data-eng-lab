@@ -73,22 +73,22 @@ ATLAS_PIN = "881df596907dce15daaed92e405f92b2830fd7d1"
 
 def test_infra_gitlink_is_the_reviewed_atlas_commit():
     out = subprocess.run(
-        ["git", "ls-tree", "HEAD", "infra"],
+        ["git", "ls-files", "-s", "--", "infra"],
         cwd=ROOT,
         capture_output=True,
         check=True,
         text=True,
     ).stdout.strip()
-    mode, kind, sha, path = out.split()
-    assert (mode, kind, path) == ("160000", "commit", "infra")
+    mode, sha, stage, path = out.split()
+    assert (mode, stage, path) == ("160000", "0", "infra")
     assert sha == ATLAS_PIN
 ```
 
-- [ ] **Step 3: Run it to prove the current pin fails**
+- [ ] **Step 3: Run it to prove the current staged pin fails**
 
 Run: `uv run pytest tests/test_submodule.py::test_infra_gitlink_is_the_reviewed_atlas_commit -q`
 
-Expected: FAIL because `HEAD:infra` is still `2d006cae`.
+Expected: FAIL because the staged `infra` gitlink is still `2d006cae`.
 
 - [ ] **Step 4: Fetch, verify ancestry, and checkout the immutable SHA**
 
@@ -101,11 +101,11 @@ git submodule status infra
 
 Expected: ancestry exits 0, and status starts with `881df596` without `+` or `-`.
 
-- [ ] **Step 5: Verify and commit**
+- [ ] **Step 5: Stage the updated gitlink, verify, and commit**
 
 ```bash
-uv run pytest tests/test_submodule.py -q
 git add infra tests/test_submodule.py
+uv run pytest tests/test_submodule.py -q
 git commit -m "chore: bump Atlas pin to 881df596"
 ```
 
