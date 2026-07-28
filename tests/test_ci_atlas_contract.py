@@ -57,14 +57,19 @@ def _assert_required_commands(job: dict) -> None:
 
 
 def _is_live_operation(command: tuple[str, ...]) -> bool:
-    command_name = _command_name(command)
     live_actions = {"up", "start", "run"}
-    if command_name == "docker" and "compose" in command:
-        return bool(live_actions.intersection(command[command.index("compose") + 1 :]))
-    if command_name in {"compose", "docker-compose"}:
-        return bool(live_actions.intersection(command[1:]))
-    if Path(command_name).name == "start.sh":
-        return bool(live_actions.intersection(command[1:]))
+
+    def has_live_action_after(index: int) -> bool:
+        return bool(live_actions.intersection(command[index + 1 :]))
+
+    # Shell wrappers (for example ``env``, ``command``, ``if``, and ``(``)
+    # change the first token without making the nested command any less live.
+    # Scan the whole executable fragment instead of relying on command_name.
+    for index, token in enumerate(command):
+        if Path(token).name == "start.sh" and has_live_action_after(index):
+            return True
+        if token in {"compose", "docker-compose"} and has_live_action_after(index):
+            return True
     return False
 
 
@@ -93,6 +98,10 @@ def test_non_live_ci_guard_rejects_live_operations():
     with_compose_start = {"steps": [{"run": "compose start"}]}
     with_start_script_start = {"steps": [{"run": "./start.sh --consumer ../atlas.consumer.yml start"}]}
     with_start_script_run = {"steps": [{"run": "./start.sh run consumer"}]}
+    with_env_wrapped_compose = {"steps": [{"run": "env COMPOSE_PROJECT_NAME=x docker compose up -d"}]}
+    with_command_wrapped_compose = {"steps": [{"run": "command docker compose start"}]}
+    with_conditional_compose = {"steps": [{"run": "if docker compose run worker; then :; fi"}]}
+    with_subshell_compose = {"steps": [{"run": "( docker compose up -d )"}]}
     for job in (
         with_live_endpoint_assert,
         with_live_start,
@@ -102,6 +111,10 @@ def test_non_live_ci_guard_rejects_live_operations():
         with_compose_start,
         with_start_script_start,
         with_start_script_run,
+        with_env_wrapped_compose,
+        with_command_wrapped_compose,
+        with_conditional_compose,
+        with_subshell_compose,
     ):
         try:
             _assert_non_live_contract(job)
