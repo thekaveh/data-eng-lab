@@ -6,11 +6,10 @@ Post-go-live observations from running the full `data-eng-lab` platform in a pro
 
 As of the original go-live run (2026-07-04, atlas `85ff46b`): all A1–A9 capabilities verified during go-live. The platform is fully operational. 19 scenarios executed with parity between Scala and PySpark notebooks where applicable.
 
-Status update (2026-07-28, atlas `881df596`): the reviewed pin includes the
-upstream #791 in-network Execution API URL repair, and Task 7 confirmed the
-scheduler and DAG processor use it. DAG tasks still fail before Spark because
-the Airflow services do not share an API JWT secret; Atlas #850 tracks that
-separate blocker. #792 remains open.
+Status update (2026-07-28, atlas `af7713ee`): the reviewed pin includes the
+upstream #791 in-network Execution API URL repair and Atlas #850's shared API
+JWT-secret repair. The focused Airflow/DAG retest is still pending; do not
+interpret this upstream pin as completed lab-side live proof. #792 remains open.
 
 ## Key Observations
 
@@ -107,3 +106,14 @@ problem: the declared January–June 2023 NYC Taxi Parquet files disagree on
 and Jupyter batch-ingest notebooks now read each declared object in deterministic
 order, cast that column to `double` at the read boundary, and union by name.
 Their Bronze filtering and Iceberg output contract remain unchanged.
+
+## Reviewed #850 repair (2026-07-28, atlas `af7713ee`)
+
+Atlas #850 is closed and its repair is included in the current reviewed pin.
+Atlas now generates one durable `AIRFLOW_JWT_SECRET` and supplies it as
+`AIRFLOW__API__JWT_SECRET` to the webserver, scheduler, and DAG processor, with
+upstream regression coverage for the shared value. This supersedes the
+`881df596` live-gate blocker above, but it is not itself a successful
+data-eng-lab run: rerun the focused `nyc_taxi_etl` proof before promotion and
+record the result here. [atlas#792](https://github.com/thekaveh/atlas/issues/792)
+remains a separate SparkSubmitHook status-poll caveat.

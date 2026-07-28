@@ -5,9 +5,10 @@
 **Purpose:** a single, authoritative statement of everything `data-eng-lab` expects from Atlas — what is already **delivered** (so you don't undo it), and the **Iceberg/Spark capabilities** the scenario catalog relies on. This supersedes the ad-hoc `atlas-enablement.md` ledger as the hand-off reference; that file remains the terse A1–A9 origin status table.
 
 `data-eng-lab` consumes Atlas as a **pinned submodule** at `infra/` (currently
-atlas `881df596907dce15daaed92e405f92b2830fd7d1`) and **never edits it** —
+atlas `af7713ee43f71e140e57735488001bc1cfb09245`) and **never edits it** —
 enhancements come to you as issues/PRs. Historic verification references below
-retain their original SHAs; Atlas's consumer-doc clarifications from **#281**
+retain their original SHAs, including the prior `881df596` live-gate baseline;
+Atlas's consumer-doc clarifications from **#281**
 (`85ff46b`) resolved our A7/A9 feedback (see `atlas-feedback-a7a9.md` section F).
 
 ---

@@ -11,7 +11,7 @@
 > an upstream feature request (and, where practical, a PR made through the submodule),
 > so the capability lands where it belongs: in Atlas, reusable by any project.
 >
-> The current consumer pin is `881df596907dce15daaed92e405f92b2830fd7d1` from
+> The current consumer pin is `af7713ee43f71e140e57735488001bc1cfb09245` from
 > Atlas `main`. This document retains historical request context; current consumer
 > configuration lives in the parent-owned `atlas.consumer.yml`, not in Atlas source.
 

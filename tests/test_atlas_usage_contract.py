@@ -117,6 +117,13 @@ def test_current_docs_do_not_describe_atlas_791_as_pending():
     assert not stale
 
 
+def test_current_docs_record_atlas_850_as_fixed_with_live_retest_pending():
+    text = (ROOT / "docs" / "atlas-feedback-go-live.md").read_text(encoding="utf-8")
+    assert "Atlas #850 is closed" in text
+    assert "focused `nyc_taxi_etl` proof before promotion" in text
+    assert "#850 tracks" not in text
+
+
 def test_pin_bump_runbook_describes_automatic_target_rebuild():
     text = (ROOT / "docs" / "atlas-pin-bump-runbook.md").read_text(encoding="utf-8")
     assert ".atlas-build-state" in text

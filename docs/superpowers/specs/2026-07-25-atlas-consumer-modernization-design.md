@@ -3,11 +3,13 @@
 **Status:** approved design; implementation planning pending review
 **Date:** 2026-07-25
 **Owner:** data-eng-lab
-**Target Atlas pin:** `881df596907dce15daaed92e405f92b2830fd7d1` (`origin/main` observed 2026-07-25)
+**Target Atlas pin:** `af7713ee43f71e140e57735488001bc1cfb09245` (`origin/main` reviewed 2026-07-28; supersedes the prior `881df596` live-gate baseline)
 
 ## 1. Purpose and scope
 
-Modernize `data-eng-lab`'s vendored Atlas infrastructure from `2d006cae` to the immutable target above. The consumer will follow Atlas's current submodule adoption runbook:
+Modernize `data-eng-lab`'s vendored Atlas infrastructure from the prior reviewed
+`881df596` live-gate baseline to the immutable target above. The consumer will
+follow Atlas's current submodule adoption runbook:
 
 1. Keep Atlas as a pinned, never locally edited `infra/` submodule.
 2. Keep committed consumer intent in parent-owned `atlas.consumer.yml` and the parent-owned Compose overlay.
@@ -61,8 +63,8 @@ The endpoint file is a generated, ignored runtime artifact. The target Atlas con
 ### 4.2 Airflow, Spark apps, and scenario DAGs
 
 - Validate every DAG module against the upgraded Airflow/Spark contract, retaining in-network Iceberg REST and Spark catalog configuration.
-- Replace documentation and expectations that call DAG execution blocked by Atlas #791. The target routes scheduler and DAG-processor execution API traffic to `airflow-webserver`.
-- Prove that repair with one representative Spark-submit DAG run; retain unit coverage for catalog values, task shape, and importability.
+- The target routes scheduler and DAG-processor execution API traffic to `airflow-webserver` and shares a durable API JWT secret across Airflow services (#791/#850).
+- Prove those repairs with one representative Spark-submit DAG run; retain unit coverage for catalog values, task shape, and importability.
 - Verify the overlay mounts DAGs into both scheduler and DAG processor. Do not duplicate Atlas-owned Airflow environment overrides.
 
 ### 4.3 Notebooks, scenarios, and datasets
@@ -127,4 +129,4 @@ The final handoff reports the exact Atlas SHA, parent commit, validations, inten
 
 ## 8. Supersession
 
-The untracked 2026-07-21 modernization draft documents the already-completed `85ff46b` → `2d006cae` migration. It is preserved as history, not edited. This design supersedes its version-specific assumptions for the next `2d006cae` → `881df596` upgrade.
+The untracked 2026-07-21 modernization draft documents the already-completed `85ff46b` → `2d006cae` migration. It is preserved as history, not edited. This design supersedes its version-specific assumptions for the completed `2d006cae` → `881df596` upgrade and its follow-up `881df596` → `af7713ee` pin.

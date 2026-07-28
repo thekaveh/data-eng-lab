@@ -327,11 +327,11 @@ Run the end-to-end lakehouse pipeline via Airflow.
    ```
    Expected output: Row count > 0.
 
-**Reviewed-pin verification (atlas `881df596`):** #791 configures the scheduler
-and DAG processor with the in-network execution API URL, so `nyc_taxi_etl`
-should complete instead of failing at Pre-Execute. Record the Task 7 run here
-before declaring that proof complete. The distinct SparkSubmitHook driver-status
-poll caveat in [atlas#792](https://github.com/thekaveh/atlas/issues/792) remains:
+**Reviewed-pin verification (atlas `af7713ee`):** #791 configures the scheduler
+and DAG processor with the in-network execution API URL, while #850 supplies a
+durable shared API JWT secret to all Airflow services. Rerun `nyc_taxi_etl` and
+record the Task 7 result here before declaring that proof complete. The distinct
+SparkSubmitHook driver-status poll caveat in [atlas#792](https://github.com/thekaveh/atlas/issues/792) remains:
 `spark.standalone.submit.waitAppCompletion=true` is the completion signal. See
 [Atlas Go-Live Feedback](atlas-feedback-go-live.md) for the dated finding and
 reviewed-pin update.
