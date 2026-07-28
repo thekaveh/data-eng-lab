@@ -684,7 +684,7 @@ Expected: FAIL on pending #791 and manual #506 wording.
 - [ ] **Step 3: Update canonical docs**
 
 - `docs/atlas-pin-bump-runbook.md`: replace manual “#506, open” cold-build step with automatic `--build` after a changed source commit, tracked in ignored `.atlas-build-state`; retain cold reset only for destructive volume reset or uncommitted Atlas Dockerfile edits. Add consumer Compose validation and post-start `endpoints assert --require ATLAS_MINIO_HOST_ENDPOINT`.
-- `docs/atlas-feedback-go-live.md`: retain the dated `881df596` live-gate finding, then add an `af7713ee` update that #850 shares a durable API JWT secret across the Airflow services. Require Task 7 DAG evidence before claiming success. Keep #792 open.
+- `docs/atlas-feedback-go-live.md`: retain the dated `881df596` live-gate finding as the original attempted `AIRFLOW__API__JWT_SECRET` hypothesis, then add an `af7713ee` update that proves that patch ineffective because Airflow 3.3 reads `[api_auth] jwt_secret`. State that #850 remains pending the corrected shared `AIRFLOW__API_AUTH__JWT_SECRET`; live promotion remains blocked until a corrected reviewed pin passes Task 7 DAG evidence. Keep #792 open.
 - `docs/go-live.md`: replace “pending #791” with `nyc_taxi_etl` success verification; retain the distinct SparkSubmitHook/#792 caveat. Update Pre-Execute troubleshooting to verify target config and link feedback.
 - `docs/atlas-expectations.md`: set current pin to `af7713ee`, preserving historic SHAs including the `881df596` live-gate baseline.
 - `docs/getting-started.md` and `docs/atlas-enablement.md`: document eight launcher phases, ignored `atlas-consumer.env`, MinIO export, and explicit-override plus `infra/.env` fallback for unexported data-eng ports.

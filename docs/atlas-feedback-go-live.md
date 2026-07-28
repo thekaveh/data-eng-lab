@@ -99,10 +99,14 @@ scheduler recorded `Invalid auth token`; Spark was never reached.
 
 This is an Atlas-internal shared-secret defect, not a consumer endpoint
 override problem. [atlas#850](https://github.com/thekaveh/atlas/issues/850)
-tracks the required durable shared `AIRFLOW__API__JWT_SECRET`, cross-service
-configuration, regression coverage, and successful representative DAG proof.
-The issue remains open, so the consumer must repin to the reviewed upstream
-fix and rerun the focused live suite before promotion.
+originally tracked the attempted hypothesis that a durable shared
+`AIRFLOW__API__JWT_SECRET` plus cross-service configuration would repair the
+failure. The later retest below proves that hypothesis ineffective: Airflow
+3.3 reads `[api_auth] jwt_secret`. The required pending correction is a shared
+`AIRFLOW__API_AUTH__JWT_SECRET`, effective-configuration regression coverage,
+and successful representative DAG proof. The issue remains open, so the
+consumer must repin to the corrected reviewed upstream fix and rerun the
+focused live suite before promotion.
 
 The same live run exposed a separate consumer-owned notebook/data compatibility
 problem: the declared January–June 2023 NYC Taxi Parquet files disagree on
