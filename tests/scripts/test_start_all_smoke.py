@@ -11,9 +11,27 @@ def test_start_all_dry_run_lists_plan():
                          capture_output=True, text=True)
     assert out.returncode == 0, out.stderr
     text = out.stdout + out.stderr
-    for token in ["_user/data-eng-lab", "env backfill", "doctor", "--consumer",
-                  "--track data-eng", "--detach", "register_iceberg", "preflight", "layer2"]:
+    required = [
+        "_user/data-eng-lab", "env backfill", "compose validate", "doctor",
+        "--consumer", "--track data-eng", "--detach", "endpoints export",
+        "atlas-consumer.env", "ATLAS_MINIO_HOST_ENDPOINT",
+        "register_iceberg", "preflight", "layer2",
+    ]
+    for token in required:
         assert token in text, f"dry-run plan missing '{token}':\n{text}"
+
+
+def test_start_all_asserts_only_supported_endpoint_contract():
+    text = START.read_text(encoding="utf-8")
+    assert "ATLAS_MINIO_HOST_ENDPOINT" in text
+    for unsupported in (
+        "ATLAS_ICEBERG_REST_HOST_ENDPOINT",
+        "ATLAS_TRINO_HOST_ENDPOINT",
+        "ATLAS_REDPANDA_HOST_ENDPOINT",
+        "ATLAS_ZEPPELIN_HOST_ENDPOINT",
+        "ATLAS_AIRFLOW_HOST_ENDPOINT",
+    ):
+        assert unsupported not in text
 
 
 def test_infra_cd_steps_are_subshelled():
