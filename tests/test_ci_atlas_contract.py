@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import re
 import shlex
 from pathlib import Path
 
@@ -38,13 +37,6 @@ def _executable_commands(job: dict) -> list[tuple[str, ...]]:
     return commands
 
 
-def _command_name(command: tuple[str, ...]) -> str:
-    index = 0
-    while index < len(command) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", command[index]):
-        index += 1
-    return command[index] if index < len(command) else ""
-
-
 def _assert_required_commands(job: dict) -> None:
     commands = _executable_commands(job)
     for required in (
@@ -73,9 +65,24 @@ def _is_live_operation(command: tuple[str, ...]) -> bool:
     return False
 
 
+def _is_endpoint_assert(command: tuple[str, ...]) -> bool:
+    """Return whether a ``start.sh ... endpoints assert`` invocation appears."""
+    for index, token in enumerate(command):
+        if Path(token).name != "start.sh":
+            continue
+        trailing_tokens = command[index + 1 :]
+        try:
+            endpoints_index = trailing_tokens.index("endpoints")
+        except ValueError:
+            continue
+        if "assert" in trailing_tokens[endpoints_index + 1 :]:
+            return True
+    return False
+
+
 def _assert_non_live_contract(job: dict) -> None:
     for command in _executable_commands(job):
-        assert not (Path(_command_name(command)).name == "start.sh" and "endpoints" in command and "assert" in command)
+        assert not _is_endpoint_assert(command)
         assert not _is_live_operation(command)
 
 
@@ -122,6 +129,27 @@ def test_non_live_ci_guard_rejects_live_operations():
             pass
         else:
             raise AssertionError("live operation unexpectedly passed the CI contract")
+
+
+def test_non_live_ci_guard_rejects_wrapped_endpoint_assertions():
+    with_env_wrapped_endpoint_assert = {"steps": [{"run": "env X=1 ./start.sh endpoints assert"}]}
+    with_conditional_endpoint_assert = {
+        "steps": [
+            {
+                "run": (
+                    "if command ./start.sh --consumer ../atlas.consumer.yml "
+                    "endpoints assert; then :; fi"
+                )
+            }
+        ]
+    }
+    for job in (with_env_wrapped_endpoint_assert, with_conditional_endpoint_assert):
+        try:
+            _assert_non_live_contract(job)
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("wrapped endpoint assertion unexpectedly passed the CI contract")
 
 
 def test_required_ci_command_guard_rejects_comments_and_echoes():
