@@ -15,12 +15,13 @@ make up
 ```
 
 `make up` runs `./scripts/start-all.sh`, a thin wrapper over Atlas's own headless
-commands: stale-symlink cleanup → `env backfill` → consumer `doctor` (manifest +
-compose + env lints against `atlas.consumer.yml`) → `start.sh --consumer … --track
-data-eng --no-tui --detach` (health-gates the whole track before returning) →
-Iceberg namespace registration → preflight (Layer 1 + Layer 2). All nine `data-eng`
-services are containerized by default via the manifest's `env.values` — no
-`--<svc>-source` CLI flags needed.
+commands in eight phases: stale-symlink cleanup → `env backfill` → consumer
+`compose validate` → consumer `doctor` (manifest + compose + env lints against
+`atlas.consumer.yml`) → `start.sh --consumer … --track data-eng --no-tui --detach`
+(health-gates the whole track before returning) → generated `atlas-consumer.env`
+plus `ATLAS_MINIO_HOST_ENDPOINT` assertion → Iceberg namespace registration →
+preflight (Layer 1 + Layer 2). All nine `data-eng` services are containerized by
+default via the manifest's `env.values` — no `--<svc>-source` CLI flags needed.
 
 This launches ~20+ containers including:
 - Spark (standalone master + worker)
@@ -38,7 +39,9 @@ This launches ~20+ containers including:
 **Expected outcome:**
 - `docker ps` shows ~20+ running containers (exact count depends on resource provisioning).
 - All containers reach "healthy" status within 2–3 minutes.
-- `curl http://localhost:63020/v1/config` returns a valid Iceberg REST catalog config (substitute `63020` with the actual `ICEBERG_REST_PORT` from `.env`).
+- The launcher writes the ignored `atlas-consumer.env` and asserts its supported
+  `ATLAS_MINIO_HOST_ENDPOINT` export. For unexported host services, use an
+  explicit override or the corresponding port in `infra/.env`.
 
 ---
 
@@ -324,7 +327,14 @@ Run the end-to-end lakehouse pipeline via Airflow.
    ```
    Expected output: Row count > 0.
 
-**Caveat (atlas pin `2d006cae`, 2026-07-21):** live verification found two issues that currently prevent the clean Success path: every DAG task dies at Pre-Execute pending an upstream fix (atlas#791), and even once that is fixed, the driver-status poll can mark the task failed despite a successful job — atlas#792; `spark.standalone.submit.waitAppCompletion` is the real completion signal. See `docs/atlas-feedback-go-live.md` ("2026-07-21 live verification findings").
+**Reviewed-pin verification (atlas `881df596`):** #791 configures the scheduler
+and DAG processor with the in-network execution API URL, so `nyc_taxi_etl`
+should complete instead of failing at Pre-Execute. Record the Task 7 run here
+before declaring that proof complete. The distinct SparkSubmitHook driver-status
+poll caveat in [atlas#792](https://github.com/thekaveh/atlas/issues/792) remains:
+`spark.standalone.submit.waitAppCompletion=true` is the completion signal. See
+[Atlas Go-Live Feedback](atlas-feedback-go-live.md) for the dated finding and
+reviewed-pin update.
 
 ### 3.7 Trino + streaming validation (A7/A9)
 
@@ -515,7 +525,11 @@ If all above pass, the Atlas enablement is **validated for production use** and 
 
 ### DAG task dies at Pre-Execute (supervisor ConnectionError → SIGKILL)
 
-- The Airflow 3.3.0 Execution API resolves to `localhost:8080` inside the scheduler container, which is unreachable across Atlas's scheduler/webserver split — atlas#791. No lab-side fix; awaiting the upstream compose change (`AIRFLOW__CORE__EXECUTION_API_SERVER_URL`).
+- Confirm the target Atlas configuration is active on both the scheduler and DAG
+  processor: `AIRFLOW__CORE__EXECUTION_API_SERVER_URL=http://airflow-webserver:8080/execution/`.
+  If it is absent, confirm the checked-out submodule pin and rerun `make up` so
+  Atlas rebuilds changed images automatically. See [Atlas Go-Live Feedback](atlas-feedback-go-live.md)
+  for #791's resolved configuration and #792's separate status-poll caveat.
 
 ---
 

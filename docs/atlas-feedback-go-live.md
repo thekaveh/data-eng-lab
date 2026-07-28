@@ -6,7 +6,11 @@ Post-go-live observations from running the full `data-eng-lab` platform in a pro
 
 As of the original go-live run (2026-07-04, atlas `85ff46b`): all A1–A9 capabilities verified during go-live. The platform is fully operational. 19 scenarios executed with parity between Scala and PySpark notebooks where applicable.
 
-Status update (2026-07-21, atlas `2d006cae`): see the live-verification findings below — DAG execution is currently blocked upstream (atlas#791) and the #308 fix is partial (atlas#792).
+Status update (2026-07-21, atlas `2d006cae`): the dated findings below recorded
+the original Airflow execution-API failure and the separate #792 Spark-submit
+status-poll caveat. The reviewed `881df596` pin includes the upstream #791
+configuration repair; Task 7 supplies this consumer's live DAG evidence. #792
+remains open.
 
 ## Key Observations
 
@@ -68,3 +72,15 @@ Cold-start verification of the consumer-manifest migration surfaced two Atlas-si
    status URL, a documented `deploy_mode=client` recommendation, an Atlas-seeded second
    connection scheme, or tolerating the post-submit poll exception lab-side given
    `waitAppCompletion` already signals completion. Filed as [thekaveh/atlas#792](https://github.com/thekaveh/atlas/issues/792).
+
+## Reviewed-pin update (atlas `881df596`)
+
+Atlas #791 is resolved in the reviewed pin: the scheduler and DAG processor set
+`AIRFLOW__CORE__EXECUTION_API_SERVER_URL=http://airflow-webserver:8080/execution/`.
+That gives Airflow's executor the in-network webserver address instead of a
+container-local `localhost` address. This record does not overclaim a fresh
+lab run: Task 7 must demonstrate a successful `nyc_taxi_etl` DAG without the
+former Pre-Execute connection failure. The distinct SparkSubmitHook driver-status
+poll behavior in [atlas#792](https://github.com/thekaveh/atlas/issues/792) remains
+an open caveat; `spark.standalone.submit.waitAppCompletion=true` remains the
+authoritative completion signal.

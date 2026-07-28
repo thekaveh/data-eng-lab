@@ -100,3 +100,25 @@ def test_atlas_export_guard_rejects_unsupported_exports(tmp_path: Path):
     assert _unsupported_atlas_export_offenders([sample], root=tmp_path) == [
         "launcher.sh: ATLAS_TRINO_HOST_ENDPOINT"
     ]
+
+
+def test_current_docs_do_not_describe_atlas_791_as_pending():
+    docs = [
+        ROOT / "docs" / "atlas-feedback-go-live.md",
+        ROOT / "docs" / "go-live.md",
+    ]
+    stale = [
+        path.relative_to(ROOT).as_posix()
+        for path in docs
+        if "awaiting the upstream compose change" in path.read_text(encoding="utf-8")
+        or "DAG execution is currently blocked upstream (atlas#791)"
+        in path.read_text(encoding="utf-8")
+    ]
+    assert not stale
+
+
+def test_pin_bump_runbook_describes_automatic_target_rebuild():
+    text = (ROOT / "docs" / "atlas-pin-bump-runbook.md").read_text(encoding="utf-8")
+    assert ".atlas-build-state" in text
+    assert "automatically" in text
+    assert "atlas#506, open" not in text

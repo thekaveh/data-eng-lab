@@ -8,6 +8,11 @@ All notable changes to this project are documented here (Keep a Changelog format
   verifier skeleton, and infra-preflight Layer 1.
 
 ### Changed
+- Atlas consumer operations now pin `881df596`; changed committed Atlas source
+  automatically rebuilds local images using ignored `.atlas-build-state`, and
+  the launcher exports/asserts only `ATLAS_MINIO_HOST_ENDPOINT`. Atlas #791's
+  in-network Airflow Execution API configuration is ready for focused DAG proof;
+  the separate #792 SparkSubmitHook status-poll caveat remains documented.
 - Atlas consumption modernized: pin bumped `85ff46b2` → `2d006cae` (v0.1.0-587);
   adopted the `atlas.consumer.yml` consumer manifest (replaces the `_user/`
   symlink, `.env` injection, wrapper source flags, and `create_buckets.sh`);
