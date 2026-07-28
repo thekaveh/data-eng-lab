@@ -11,11 +11,17 @@ from __future__ import annotations
 import hashlib
 import os
 import subprocess
+import sys
 import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 INFRA_ENV = ROOT / "infra" / ".env"
+
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from lakehouse.atlas_endpoints import resolve_http_endpoint  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -42,18 +48,27 @@ def _resolve_project() -> str:
     return _env_val("PROJECT_NAME", "data-eng-lab")
 
 
+def _http_endpoint(override_key: str, port_key: str) -> str:
+    """Resolve a host endpoint from explicit consumer configuration."""
+    return resolve_http_endpoint(override_key, port_key, env_file=INFRA_ENV)
+
+
 def _rest_catalog_kwargs() -> dict:
     """Build pyiceberg RestCatalog kwargs from infra/.env / env vars."""
-    port = _env_val("ICEBERG_REST_PORT")
-    minio_port = _env_val("MINIO_PORT")
+    iceberg_endpoint = _http_endpoint("ICEBERG_REST_HOST_ENDPOINT", "ICEBERG_REST_PORT")
+    minio_endpoint = resolve_http_endpoint(
+        "MINIO_HOST_ENDPOINT",
+        "MINIO_PORT",
+        env_file=INFRA_ENV,
+        export_key="ATLAS_MINIO_HOST_ENDPOINT",
+        export_file=ROOT / "atlas-consumer.env",
+    )
     user = _env_val("MINIO_ROOT_USER")
     password = _env_val("MINIO_ROOT_PASSWORD")
-    if not port:
-        raise RuntimeError("ICEBERG_REST_PORT not set — is the live Iceberg stack up?")
     return {
-        "uri": f"http://localhost:{port}",
+        "uri": iceberg_endpoint,
         "warehouse": "s3a://lakehouse/",
-        "s3.endpoint": f"http://localhost:{minio_port}",
+        "s3.endpoint": minio_endpoint,
         "s3.access-key-id": user,
         "s3.secret-access-key": password,
         "s3.path-style-access": "true",
@@ -163,11 +178,7 @@ def run_zeppelin_note(zpln_path: str, port_env: str = "ZEPPELIN_PORT") -> None:
     """
     import requests  # noqa: PLC0415
 
-    port = _env_val(port_env)
-    if not port:
-        raise RuntimeError(f"{port_env} not set — is the live Zeppelin stack up?")
-
-    base = f"http://localhost:{port}/api"
+    base = f"{_http_endpoint('ZEPPELIN_HOST_ENDPOINT', port_env)}/api"
     note_content = Path(zpln_path).read_text(encoding="utf-8")
 
     # Import note

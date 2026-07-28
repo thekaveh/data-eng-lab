@@ -12,7 +12,10 @@ import sys
 from collections import namedtuple
 from pathlib import Path
 
+ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.path.insert(0, str(ROOT))
+from lakehouse.atlas_endpoints import resolve_http_endpoint  # noqa: E402
 from preflight import Result  # noqa: E402
 from preflight import render_matrix as _render
 from probes.probe_kafka import probe as _probe_kafka  # noqa: E402
@@ -68,20 +71,15 @@ def _run_in(container: str, script_path: str):
 
 def _zeppelin_probe(exec_fn):
     """Zeppelin is probed from the host via its REST API (published port)."""
-    import os
-
     import requests
 
-    infra_env = Path(__file__).resolve().parents[2] / "infra" / ".env"
-    port = ""
-    if infra_env.exists():
-        for line in infra_env.read_text(encoding="utf-8").splitlines():
-            if line.startswith("ZEPPELIN_PORT="):
-                port = line.split("=", 1)[1].strip()
-    port = os.environ.get("ZEPPELIN_PORT", port)
-    if not port:
-        return False, "ZEPPELIN_PORT not found"
-    r = requests.get(f"http://localhost:{port}/api/interpreter/setting", timeout=30)
+    try:
+        endpoint = resolve_http_endpoint(
+            "ZEPPELIN_HOST_ENDPOINT", "ZEPPELIN_PORT", env_file=ROOT / "infra" / ".env"
+        )
+    except RuntimeError as exc:
+        return False, str(exc)
+    r = requests.get(f"{endpoint}/api/interpreter/setting", timeout=30)
     ok = r.status_code == 200 and "spark" in r.text
     return ok, f"interpreter API status={r.status_code}, spark-present={'spark' in r.text}"
 
