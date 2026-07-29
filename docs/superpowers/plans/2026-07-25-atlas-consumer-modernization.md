@@ -3,14 +3,14 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 > **Supersession (2026-07-28):** The original `881df596` reviewed pin was the
-> focused live-gate baseline. Atlas #850's attempted patch is included in this
-> plan's current immutable target, `af7713ee43f71e140e57735488001bc1cfb09245`,
-> but the focused retest proved it wires `AIRFLOW__API__JWT_SECRET` instead of
-> Airflow 3.3's effective `AIRFLOW__API_AUTH__JWT_SECRET`. #850 is reopened;
-> Airflow acceptance and promotion remain blocked pending a corrected reviewed
-> pin. The earlier SHA remains historical evidence, not the current pin.
+> focused live-gate baseline. Its follow-up `af7713ee` included Atlas #850's
+> attempted `AIRFLOW__API__JWT_SECRET` patch, which failed because Airflow 3.3
+> reads `[api_auth] jwt_secret`. This plan's current immutable target,
+> `882877a4a168e5c611bfd3cff8704eeefcf97c9d`, closes #850 with the corrected
+> `AIRFLOW__API_AUTH__JWT_SECRET` mapping. The earlier SHAs remain historical
+> evidence; Airflow acceptance and promotion await the corrected pin's rerun.
 
-**Goal:** Pin Atlas at `af7713ee43f71e140e57735488001bc1cfb09245`, align this repository with the current consumer runbook, and prove the full data-eng catalog remains compatible through static checks and focused live smoke.
+**Goal:** Pin Atlas at `882877a4a168e5c611bfd3cff8704eeefcf97c9d`, align this repository with the current consumer runbook, and prove the full data-eng catalog remains compatible through static checks and focused live smoke.
 
 **Architecture:** Atlas stays a read-only submodule. The parent `atlas.consumer.yml` and Compose overlay remain the only committed integration configuration. New parent endpoint helpers consume Atlas's exported MinIO host endpoint and resolve unexported data-eng host ports through explicit overrides or `infra/.env`, with no port arithmetic.
 
@@ -20,7 +20,7 @@
 
 - Use `codex/atlas-consumer-modernization`, based on `develop`.
 - Preserve and never stage `docs/superpowers/plans/2026-07-21-atlas-submodule-modernization.md`.
-- Pin the exact SHA `af7713ee43f71e140e57735488001bc1cfb09245`; do not chase `origin/main`.
+- Pin the exact SHA `882877a4a168e5c611bfd3cff8704eeefcf97c9d`; do not chase `origin/main`.
 - Never edit a file inside `infra/`.
 - Keep identity, `BASE_PORT: auto`, sources, storage, profile overrides, and overlay selection in `atlas.consumer.yml`.
 - Keep in-network DNS inside DAGs/notebooks. Host code uses explicit override or resolved config, never a fixed port or a base-port offset.
@@ -42,7 +42,7 @@
 | `scripts/start-all.sh` | Canonical consumer lifecycle and endpoint export/assertion. |
 | `tests/test_atlas_usage_contract.py` | Full catalog no-host-port guard. |
 | `.github/workflows/ci.yml` | Pinned, non-live consumer validation job. |
-| `docs` source files | Current pin, image rebuild, endpoint boundary, #791 validation, and the reopened #850 blocker. |
+| `docs` source files | Current pin, image rebuild, endpoint boundary, #791 validation, and #850's corrected mapping awaiting live proof. |
 | README and wiki outputs | Generated only with `scripts/build_docs.py`. |
 
 ### Task 1: Verify the worktree and pin the reviewed Atlas commit
@@ -53,7 +53,7 @@
 - Test: `tests/test_submodule.py`
 
 **Interfaces:**
-- Consumes the Atlas object `af7713ee43f71e140e57735488001bc1cfb09245`.
+- Consumes the Atlas object `882877a4a168e5c611bfd3cff8704eeefcf97c9d`.
 - Produces a parent-tree pin test that works even when CI does not initialize the submodule.
 
 - [ ] **Step 1: Verify branch and preserve user work**
@@ -76,7 +76,7 @@ Append to `tests/test_submodule.py`:
 ```python
 import subprocess
 
-ATLAS_PIN = "af7713ee43f71e140e57735488001bc1cfb09245"
+ATLAS_PIN = "882877a4a168e5c611bfd3cff8704eeefcf97c9d"
 
 
 def test_infra_gitlink_is_the_reviewed_atlas_commit():
@@ -102,19 +102,19 @@ Expected: FAIL because the staged `infra` gitlink is still `2d006cae`.
 
 ```bash
 git -C infra fetch --prune origin
-git -C infra merge-base --is-ancestor af7713ee43f71e140e57735488001bc1cfb09245 origin/main
-git -C infra checkout --detach af7713ee43f71e140e57735488001bc1cfb09245
+git -C infra merge-base --is-ancestor 882877a4a168e5c611bfd3cff8704eeefcf97c9d origin/main
+git -C infra checkout --detach 882877a4a168e5c611bfd3cff8704eeefcf97c9d
 git submodule status infra
 ```
 
-Expected: ancestry exits 0, and status starts with `af7713ee` without `+` or `-`.
+Expected: ancestry exits 0, and status starts with `882877a4` without `+` or `-`.
 
 - [ ] **Step 5: Stage the updated gitlink, verify, and commit**
 
 ```bash
 git add infra tests/test_submodule.py
 uv run pytest tests/test_submodule.py -q
-git commit -m "chore: bump Atlas pin to af7713ee"
+git commit -m "chore: bump Atlas pin to 882877a4"
 ```
 
 Expected: test PASS; commit contains only gitlink and test.
@@ -649,7 +649,7 @@ Expected: PASS.
 
 **Interfaces:**
 - `docs/` is the source of truth.
-- #791 is validated at the target pin; #850 is reopened because its attempted `AIRFLOW__API__JWT_SECRET` wiring misses Airflow 3.3's `[api_auth] jwt_secret`; #792 remains documented unless live evidence shows otherwise.
+- #791 is validated at the target pin; #850 is closed with `AIRFLOW__API_AUTH__JWT_SECRET`, but the corrected pin still needs live DAG evidence; #792 remains documented unless live evidence shows otherwise.
 
 - [ ] **Step 1: Add failing docs assertions to `tests/test_atlas_usage_contract.py`**
 
@@ -684,9 +684,9 @@ Expected: FAIL on pending #791 and manual #506 wording.
 - [ ] **Step 3: Update canonical docs**
 
 - `docs/atlas-pin-bump-runbook.md`: replace manual “#506, open” cold-build step with automatic `--build` after a changed source commit, tracked in ignored `.atlas-build-state`; retain cold reset only for destructive volume reset or uncommitted Atlas Dockerfile edits. Add consumer Compose validation and post-start `endpoints assert --require ATLAS_MINIO_HOST_ENDPOINT`.
-- `docs/atlas-feedback-go-live.md`: retain the dated `881df596` live-gate finding as the original attempted `AIRFLOW__API__JWT_SECRET` hypothesis, then add an `af7713ee` update that proves that patch ineffective because Airflow 3.3 reads `[api_auth] jwt_secret`. State that #850 remains pending the corrected shared `AIRFLOW__API_AUTH__JWT_SECRET`; live promotion remains blocked until a corrected reviewed pin passes Task 7 DAG evidence. Keep #792 open.
+- `docs/atlas-feedback-go-live.md`: retain the dated `881df596` live-gate finding as the original attempted `AIRFLOW__API__JWT_SECRET` hypothesis and the `af7713ee` evidence proving it ineffective because Airflow 3.3 reads `[api_auth] jwt_secret`. Add the `882877a4` correction that closes #850 with shared `AIRFLOW__API_AUTH__JWT_SECRET`; live promotion remains pending Task 7 DAG evidence. Keep #792 open.
 - `docs/go-live.md`: replace “pending #791” with `nyc_taxi_etl` success verification; retain the distinct SparkSubmitHook/#792 caveat. Update Pre-Execute troubleshooting to verify target config and link feedback.
-- `docs/atlas-expectations.md`: set current pin to `af7713ee`, preserving historic SHAs including the `881df596` live-gate baseline.
+- `docs/atlas-expectations.md`: set current pin to `882877a4`, preserving historic SHAs including the `881df596` live-gate baseline and the failed-gate `af7713ee` pin.
 - `docs/getting-started.md` and `docs/atlas-enablement.md`: document eight launcher phases, ignored `atlas-consumer.env`, MinIO export, and explicit-override plus `infra/.env` fallback for unexported data-eng ports.
 - `docs/CHANGELOG.md`: add Unreleased entry for the new pin, automatic rebuild, MinIO export, and #791 verification.
 - Search diagrams for `atlas#791`, `localhost:8080/execution`, or “pending”; change only exact stale claims.
@@ -807,7 +807,7 @@ Expected: every command exits 0; no runtime artifacts or historic plan staged.
 git push -u origin codex/atlas-consumer-modernization
 gh pr create --base develop --head codex/atlas-consumer-modernization \
   --title "feat: modernize Atlas consumer integration" \
-  --body "Pins Atlas to af7713ee, aligns consumer validation and endpoint resolution, adds contract guards, and records focused live evidence."
+  --body "Pins Atlas to 882877a4, aligns consumer validation and endpoint resolution, adds contract guards, and records focused live evidence."
 ```
 
 Wait for required checks and review, then:
@@ -827,7 +827,7 @@ Expected: merged feature is absent locally and remotely, while `develop` contain
 ```bash
 gh pr create --base main --head develop \
   --title "release: promote Atlas consumer modernization" \
-  --body "Promotes validated Atlas pin af7713ee and the parent consumer integration."
+  --body "Promotes validated Atlas pin 882877a4 and the parent consumer integration."
 ```
 
 After required checks pass:

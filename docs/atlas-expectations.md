@@ -5,7 +5,7 @@
 **Purpose:** a single, authoritative statement of everything `data-eng-lab` expects from Atlas — what is already **delivered** (so you don't undo it), and the **Iceberg/Spark capabilities** the scenario catalog relies on. This supersedes the ad-hoc `atlas-enablement.md` ledger as the hand-off reference; that file remains the terse A1–A9 origin status table.
 
 `data-eng-lab` consumes Atlas as a **pinned submodule** at `infra/` (currently
-atlas `af7713ee43f71e140e57735488001bc1cfb09245`) and **never edits it** —
+atlas `882877a4a168e5c611bfd3cff8704eeefcf97c9d`) and **never edits it** —
 enhancements come to you as issues/PRs. Historic verification references below
 retain their original SHAs, including the prior `881df596` live-gate baseline;
 Atlas's consumer-doc clarifications from **#281**
@@ -28,12 +28,13 @@ Atlas's consumer-doc clarifications from **#281**
 | **A9** | **Redpanda (Kafka API) + Spark Kafka connector** | ✅ **delivered** | — |
 
 **Key takeaway:** A1–A9 are available, and the focused non-Airflow paths are
-validated (including Zeppelin, Trino, and Kafka streaming). The current pin's
-attempted #850 repair wires `AIRFLOW__API__JWT_SECRET`, but Airflow 3.3 resolves
-`[api_auth] jwt_secret`; [#850](https://github.com/thekaveh/atlas/issues/850) is
-reopened pending `AIRFLOW__API_AUTH__JWT_SECRET`. Therefore a successful
-Airflow Spark-submit DAG and Gitflow promotion are not yet claimed. #791's
-in-network Execution API DNS configuration is nevertheless validated. See
+validated (including Zeppelin, Trino, and Kafka streaming). The current pin
+includes [#850](https://github.com/thekaveh/atlas/issues/850)'s corrected shared
+`AIRFLOW__API_AUTH__JWT_SECRET` mapping for Airflow 3.3's `[api_auth] jwt_secret`.
+The earlier `af7713ee` failed-gate evidence is retained below; a successful
+Airflow Spark-submit DAG and Gitflow promotion are not yet claimed until this
+new pin is live-retested. #791's in-network Execution API DNS configuration is
+nevertheless validated. See
 [Delivered deviations](#2-delivered-deviations-from-our-a7a9-asks) for the
 `%trino` interpreter name and topic-seeding notes.
 

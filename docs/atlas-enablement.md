@@ -11,14 +11,14 @@
 > an upstream feature request (and, where practical, a PR made through the submodule),
 > so the capability lands where it belongs: in Atlas, reusable by any project.
 >
-> The current consumer pin is `af7713ee43f71e140e57735488001bc1cfb09245` from
+> The current consumer pin is `882877a4a168e5c611bfd3cff8704eeefcf97c9d` from
 > Atlas `main`. This document retains historical request context; current consumer
 > configuration lives in the parent-owned `atlas.consumer.yml`, not in Atlas source.
-> This pin includes the attempted Atlas #850 JWT repair, but the focused live
-> retest found its `AIRFLOW__API__JWT_SECRET` wiring does not configure Airflow
-> 3.3's `[api_auth] jwt_secret`; [#850](https://github.com/thekaveh/atlas/issues/850)
-> is reopened pending `AIRFLOW__API_AUTH__JWT_SECRET`. Airflow DAG acceptance and
-> promotion remain blocked, while the non-Airflow live checks remain valid.
+> This pin includes Atlas #850's corrected `AIRFLOW__API_AUTH__JWT_SECRET` mapping
+> for Airflow 3.3's `[api_auth] jwt_secret`; [#850](https://github.com/thekaveh/atlas/issues/850)
+> is closed. The prior `af7713ee` retest remains failure evidence, while this
+> corrected pin awaits a fresh representative DAG run before Airflow acceptance
+> and promotion are claimed. The non-Airflow live checks remain valid.
 
 ---
 

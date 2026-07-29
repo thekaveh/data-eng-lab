@@ -6,14 +6,14 @@ Post-go-live observations from running the full `data-eng-lab` platform in a pro
 
 As of the original go-live run (2026-07-04, atlas `85ff46b`): all A1–A9 capabilities verified during go-live. The platform is fully operational. 19 scenarios executed with parity between Scala and PySpark notebooks where applicable.
 
-Status update (2026-07-28, atlas `af7713ee`): the reviewed pin includes the
-upstream #791 in-network Execution API URL repair and the attempted Atlas #850
-JWT patch. The focused retest validates #791's DNS resolution but proves the
-#850 environment key is ineffective: Atlas wires `AIRFLOW__API__JWT_SECRET`,
-while Airflow 3.3 resolves `[api_auth] jwt_secret`. [#850](https://github.com/thekaveh/atlas/issues/850)
-is reopened pending `AIRFLOW__API_AUTH__JWT_SECRET`; no Airflow DAG success or
-promotion is claimed. Non-Airflow focused checks, including Zeppelin, Trino,
-and streaming, passed. #792 remains open.
+Status update (2026-07-28, atlas `882877a4`): the current reviewed pin includes
+the upstream #791 in-network Execution API URL repair and [Atlas #850](https://github.com/thekaveh/atlas/issues/850)'s
+corrected `AIRFLOW__API_AUTH__JWT_SECRET` mapping for Airflow 3.3's `[api_auth]`
+section. The earlier `af7713ee` focused retest remains recorded below as failed
+evidence for the ineffective `AIRFLOW__API__JWT_SECRET` mapping. Airflow DAG
+live acceptance and promotion are not yet claimed until this corrected pin is
+retested. Non-Airflow focused checks, including Zeppelin, Trino, and streaming,
+remain valid. #792 remains open.
 
 ## Key Observations
 
@@ -141,3 +141,20 @@ across the webserver, scheduler, and DAG processor. No Airflow DAG live success
 or Gitflow promotion is permitted until a corrected reviewed pin is retested.
 [atlas#792](https://github.com/thekaveh/atlas/issues/792) remains a separate
 SparkSubmitHook status-poll caveat.
+
+## Corrected #850 pin staged for retest (2026-07-28, atlas `882877a4`)
+
+Atlas [#850](https://github.com/thekaveh/atlas/issues/850) is closed by the
+reviewed correction merged through Atlas PRs #860 and #861. It keeps the durable
+shared `AIRFLOW_JWT_SECRET` but maps it as
+`AIRFLOW__API_AUTH__JWT_SECRET` on the Airflow services, which configures
+Airflow 3.3's effective `[api_auth] jwt_secret` setting. Atlas also updates its
+manifest, Compose, environment reference, baseline, and regression test to lock
+that section mapping.
+
+The parent now pins that immutable merged commit. This records the upstream
+fix's availability, not a successful rerun: `nyc_taxi_etl` must still complete
+on this pin and verify effective secret parity before Airflow live acceptance or
+Gitflow promotion is claimed. The `af7713ee` section above remains the historic
+failed-gate evidence; [atlas#792](https://github.com/thekaveh/atlas/issues/792)
+remains a separate SparkSubmitHook status-poll caveat.
