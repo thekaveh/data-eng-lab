@@ -11,14 +11,15 @@
 > an upstream feature request (and, where practical, a PR made through the submodule),
 > so the capability lands where it belongs: in Atlas, reusable by any project.
 >
-> The current consumer pin is `01f448a69d8a1fe895868ceca0aaa2d8561adc6d` from
+> The current consumer pin is `0644a8f3865f9c42dfbe0a279e44a69fdc633c8a` from
 > Atlas `main`. This document retains historical request context; current consumer
 > configuration lives in the parent-owned `atlas.consumer.yml`, not in Atlas source.
 > This pin includes Atlas #850's corrected `AIRFLOW__API_AUTH__JWT_SECRET` mapping
 > for Airflow 3.3's `[api_auth] jwt_secret`; [#850](https://github.com/thekaveh/atlas/issues/850)
 > is closed. The prior `af7713ee` retest remains failure evidence, while this
-> corrected pin awaits a fresh representative DAG run before Airflow acceptance
-> and promotion are claimed. The non-Airflow live checks remain valid.
+> corrected pin includes the #876 provider-compatible Spark wrapper and awaits a
+> fresh representative DAG run before Airflow acceptance and promotion are
+> claimed. The non-Airflow live checks remain valid.
 
 ---
 

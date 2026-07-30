@@ -1,9 +1,9 @@
 """Guards for production JAR DAG Spark submission and Atlas #792 status confirmation.
 
 Standalone cluster-mode drivers do NOT inherit spark-connect's catalog defaults, so every JAR
-submission must carry its own lakehouse configuration. Atlas #792 requires the DAG to bypass the
-provider operator's incompatible :7077 status poll: submit through ``SparkSubmitHook`` and confirm
-the resulting driver through the master's :6066 REST API instead.
+submission must carry its own lakehouse configuration. Atlas #876 provides the provider-compatible
+#792 path: construct ``SparkSubmitHook`` without an application, then submit and confirm through
+the master's :6066 REST API with Atlas's canonical helper.
 """
 import ast
 from pathlib import Path
@@ -190,6 +190,9 @@ def test_cluster_jar_dags_use_atlas_792_hook_and_rest_confirmation():
         assert isinstance(hook_call, ast.Call)
         assert _string_literal(_keyword(hook_call, "conn_id")) == "spark_default"
         assert _string_literal(_keyword(hook_call, "deploy_mode")) == "cluster"
+        assert _keyword(hook_call, "application") is None, (
+            f"{path} must pass the application to Atlas's helper, not SparkSubmitHook"
+        )
         conf = _keyword(hook_call, "conf")
         assert isinstance(conf, ast.Name) and conf.id == "spark_conf", (
             f"{path} must pass its spark_conf to SparkSubmitHook"
@@ -215,40 +218,30 @@ def test_cluster_jar_dags_use_atlas_792_hook_and_rest_confirmation():
         assert _string_literal(spark_conf_values["spark.eventLog.enabled"]) == "true"
         assert _string_literal(spark_conf_values["spark.eventLog.dir"]) == "s3a://spark-history/"
 
-        driver_assignments = [
-            (index, assignment)
-            for index, statement in enumerate(task_body[hook_index + 1:], start=hook_index + 1)
-            if (assignment := _assignment_to(statement, "driver_id")) is not None
-            and isinstance(assignment.value, ast.Call)
-            and isinstance(assignment.value.func, ast.Attribute)
-            and isinstance(assignment.value.func.value, ast.Name)
-            and assignment.value.func.value.id == "hook"
-            and assignment.value.func.attr == "submit"
-        ]
-        assert len(driver_assignments) == 1, (
-            f"{path} must assign the SparkSubmitHook result to driver_id"
+        assert _imports_name(module, "atlas_spark_utils", "submit_and_confirm_via_rest"), (
+            f"{path} must import Atlas's provider-compatible submission helper"
         )
-        driver_index, _ = driver_assignments[0]
-        confirmations = [
+        submissions = [
             statement.value
-            for statement in task_body[driver_index + 1:]
+            for statement in task_body[hook_index + 1:]
             if isinstance(statement, ast.Expr)
             and isinstance(statement.value, ast.Call)
-            and _called_name(statement.value) == "confirm_driver_status_via_rest"
+            and _called_name(statement.value) == "submit_and_confirm_via_rest"
             and statement.value.args
             and isinstance(statement.value.args[0], ast.Name)
-            and statement.value.args[0].id == "driver_id"
+            and statement.value.args[0].id == "hook"
+            and _string_literal(_keyword(statement.value, "application")) is not None
             and _string_literal(_keyword(statement.value, "rest_host")) == "spark-master"
         ]
-        assert confirmations, (
-            f"{path} must confirm the returned driver_id on Atlas's Spark REST endpoint"
+        assert len(submissions) == 1, (
+            f"{path} must use Atlas's canonical Spark submit-and-confirm helper"
         )
 
 
 def test_parent_dags_can_import_atlas_792_helper_from_the_shared_dags_root():
     """The consumer overlay nests parent DAGs below Atlas's `/opt/airflow/dags` mount.
 
-    Atlas #875 supplies ``atlas_spark_utils.py`` at that mount root. Keeping the
+    Atlas #878 supplies ``atlas_spark_utils.py`` at that mount root. Keeping the
     consumer DAGs in a child directory therefore preserves the canonical direct
     import documented by Atlas, without copying an upstream helper into the parent.
     """
@@ -256,4 +249,4 @@ def test_parent_dags_can_import_atlas_792_helper_from_the_shared_dags_root():
     assert "/opt/airflow/dags/data_eng_lab_spark_apps:ro" in overlay
     for path in sorted((ROOT / "spark-apps").rglob("dag.py")):
         module = ast.parse(path.read_text(), filename=str(path))
-        assert _imports_name(module, "atlas_spark_utils", "confirm_driver_status_via_rest")
+        assert _imports_name(module, "atlas_spark_utils", "submit_and_confirm_via_rest")

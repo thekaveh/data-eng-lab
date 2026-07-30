@@ -102,7 +102,7 @@ The DAG (`nyc_taxi_medallion`) uses `SparkSubmitHook` configured with:
 - **application:** `s3a://jars/nyc-taxi-medallion/0.1.0/nyc-taxi-medallion.jar`
 - **deploy-mode:** `cluster` (Spark runs on cluster YARN/K8s, not driver)
 - **conf:** Iceberg SPARK config (`spark.sql.extensions=org.apache.iceberg.spark.IcebergSparkSessionExtensions`, catalog config with `warehouse=...`, `io-impl=...`)
-- **completion:** `hook.submit()` blocks with `spark.standalone.submit.waitAppCompletion=true`, then `confirm_driver_status_via_rest()` requires a `FINISHED` successful driver at `spark-master:6066`.
+- **completion:** Atlas #876's `submit_and_confirm_via_rest()` passes the application to `hook.submit()` while disabling the incompatible provider poll, then requires a `FINISHED` successful driver at `spark-master:6066`.
 - **jars:** the MinIO-published JAR
 - **dependencies:** no external PyPI packages; the JAR ships its shaded dependencies (Spark 4 as `provided`, Iceberg runtime bundled)
 - **depends_on:** upstream `nyc_taxi_etl` DAG (Airflow task group dependency)

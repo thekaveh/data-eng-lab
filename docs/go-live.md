@@ -328,14 +328,14 @@ Run the end-to-end lakehouse pipeline via Airflow.
    ```
    Expected output: Row count > 0.
 
-**Current live gate (atlas `01f448a6`):** the reviewed pin includes Atlas
+**Current live gate (atlas `0644a8f3`):** the reviewed pin includes Atlas
 [#850](https://github.com/thekaveh/atlas/issues/850)'s corrected shared
-`AIRFLOW__API_AUTH__JWT_SECRET` mapping and [Atlas #792](https://github.com/thekaveh/atlas/issues/792)'s
-REST-confirmation helper. The DAG uses that helper after `SparkSubmitHook.submit()`,
-so it does not run the provider operator's incompatible post-submit `:7077` status
-poll. The hook still blocks on `spark.standalone.submit.waitAppCompletion=true`, and
-the REST confirmation raises for a failed or non-terminal driver. Do not claim this
-DAG success or promote the branch until this reviewed pin passes this step.
+`AIRFLOW__API_AUTH__JWT_SECRET` mapping and [Atlas #876](https://github.com/thekaveh/atlas/issues/876)'s
+provider-compatible REST-confirmation helper. The DAG constructs the hook without an
+application and calls `submit_and_confirm_via_rest()` so it does not run the provider's
+incompatible post-submit `:7077` status poll. The helper still allows genuine submission failures
+to raise and rejects a failed or non-terminal driver through `:6066`. Do not claim this DAG
+success or promote the branch until this reviewed pin passes this step.
 
 ### 3.7 Trino + streaming validation (A7/A9)
 

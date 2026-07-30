@@ -8,7 +8,7 @@ import pendulum
 from airflow import DAG
 from airflow.decorators import task
 from airflow.providers.apache.spark.hooks.spark_submit import SparkSubmitHook
-from atlas_spark_utils import confirm_driver_status_via_rest
+from atlas_spark_utils import submit_and_confirm_via_rest
 
 REGION = os.environ.get("MINIO_REGION", "us-east-1")
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
@@ -81,7 +81,6 @@ with DAG(
         """Submit over Spark RPC, then verify the completed driver over REST."""
         hook = SparkSubmitHook(
             conn_id="spark_default",
-            application="s3a://jars/nyc-taxi-medallion/0.1.0/app.jar",
             java_class="com.thekaveh.dataeng.medallion.NycTaxiMedallion",
             deploy_mode="cluster",
             conf=spark_conf,
@@ -90,7 +89,10 @@ with DAG(
             ],
             verbose=True,
         )
-        driver_id = hook.submit()
-        confirm_driver_status_via_rest(driver_id, rest_host="spark-master")
+        submit_and_confirm_via_rest(
+            hook,
+            application="s3a://jars/nyc-taxi-medallion/0.1.0/app.jar",
+            rest_host="spark-master",
+        )
 
     submit_nyc_taxi_medallion()
