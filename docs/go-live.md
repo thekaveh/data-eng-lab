@@ -307,9 +307,10 @@ Run the end-to-end lakehouse pipeline via Airflow.
 1. Navigate to Airflow UI: `http://localhost:${AIRFLOW_PORT}` (the host port from `infra/.env`, slot-allocated — not 8080).
 2. Find the `nyc_taxi_etl` DAG (dag_id `nyc_taxi_etl`, auto-discovered from the `spark-apps/` DAG mount).
 3. Manually trigger the DAG (click **Trigger DAG**) or wait for the `@daily` schedule.
-4. The DAG has a **single task**: `submit_nyc_taxi_etl` — a `SparkSubmitOperator` that:
-    - Submits `s3a://jars/nyc-taxi-etl/0.1.0/app.jar` to the Spark standalone cluster in cluster deploy-mode.
+4. The DAG has a **single task**: `submit_nyc_taxi_etl` — a `SparkSubmitHook` task that:
+    - Submits `s3a://jars/nyc-taxi-etl/0.1.0/app.jar` to the Spark standalone cluster in cluster deploy-mode through `spark_default` (`spark://spark-master:7077`).
     - Passes the full `spark.sql.catalog.lakehouse.*` configuration so the driver finds the Iceberg REST catalog.
+    - Confirms the returned driver ID through Atlas's in-network Spark REST endpoint (`spark-master:6066`), requiring `FINISHED` and `success: true`.
     - Reads Parquet from `s3a://landing/nyc_taxi/`.
     - Writes to `lakehouse.bronze.nyc_taxi_trips`.
 
@@ -327,18 +328,14 @@ Run the end-to-end lakehouse pipeline via Airflow.
    ```
    Expected output: Row count > 0.
 
-**Current live gate (atlas `882877a4`):** the focused `af7713ee` retest validated
-#791's in-network Execution API URL but proved its attempted
-`AIRFLOW__API__JWT_SECRET` wiring ineffective. [Atlas #850](https://github.com/thekaveh/atlas/issues/850)
-is now closed in this pin with the corrected shared
-`AIRFLOW__API_AUTH__JWT_SECRET` mapping for Airflow 3.3's `[api_auth] jwt_secret`.
-Do not claim this DAG success or promote the branch until this corrected reviewed
-pin passes this step.
-The distinct SparkSubmitHook driver-status poll caveat in
-[atlas#792](https://github.com/thekaveh/atlas/issues/792) remains:
-`spark.standalone.submit.waitAppCompletion=true` is the completion signal. See
-[Atlas Go-Live Feedback](atlas-feedback-go-live.md) for the complete dated
-retest evidence, including the successful non-Airflow checks.
+**Current live gate (atlas `01f448a6`):** the reviewed pin includes Atlas
+[#850](https://github.com/thekaveh/atlas/issues/850)'s corrected shared
+`AIRFLOW__API_AUTH__JWT_SECRET` mapping and [Atlas #792](https://github.com/thekaveh/atlas/issues/792)'s
+REST-confirmation helper. The DAG uses that helper after `SparkSubmitHook.submit()`,
+so it does not run the provider operator's incompatible post-submit `:7077` status
+poll. The hook still blocks on `spark.standalone.submit.waitAppCompletion=true`, and
+the REST confirmation raises for a failed or non-terminal driver. Do not claim this
+DAG success or promote the branch until this reviewed pin passes this step.
 
 ### 3.7 Trino + streaming validation (A7/A9)
 

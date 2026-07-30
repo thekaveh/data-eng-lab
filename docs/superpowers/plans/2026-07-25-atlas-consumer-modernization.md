@@ -6,11 +6,14 @@
 > focused live-gate baseline. Its follow-up `af7713ee` included Atlas #850's
 > attempted `AIRFLOW__API__JWT_SECRET` patch, which failed because Airflow 3.3
 > reads `[api_auth] jwt_secret`. This plan's current immutable target,
-> `882877a4a168e5c611bfd3cff8704eeefcf97c9d`, closes #850 with the corrected
+> `882877a4a168e5c611bfd3cff8704eeefcf97c9d`, closed #850 with the corrected
 > `AIRFLOW__API_AUTH__JWT_SECRET` mapping. The earlier SHAs remain historical
-> evidence; Airflow acceptance and promotion await the corrected pin's rerun.
+> evidence. **2026-07-30 update:** the current immutable target is
+> `01f448a69d8a1fe895868ceca0aaa2d8561adc6d` (Atlas PR #875), which supplies
+> the #792 `SparkSubmitHook.submit()` plus REST driver-confirmation pattern.
+> Airflow acceptance and promotion await its live rerun.
 
-**Goal:** Pin Atlas at `882877a4a168e5c611bfd3cff8704eeefcf97c9d`, align this repository with the current consumer runbook, and prove the full data-eng catalog remains compatible through static checks and focused live smoke.
+**Goal:** Pin Atlas at `01f448a69d8a1fe895868ceca0aaa2d8561adc6d`, align this repository with the current consumer runbook, and prove the full data-eng catalog remains compatible through static checks and focused live smoke.
 
 **Architecture:** Atlas stays a read-only submodule. The parent `atlas.consumer.yml` and Compose overlay remain the only committed integration configuration. New parent endpoint helpers consume Atlas's exported MinIO host endpoint and resolve unexported data-eng host ports through explicit overrides or `infra/.env`, with no port arithmetic.
 
@@ -20,7 +23,7 @@
 
 - Use `codex/atlas-consumer-modernization`, based on `develop`.
 - Preserve and never stage `docs/superpowers/plans/2026-07-21-atlas-submodule-modernization.md`.
-- Pin the exact SHA `882877a4a168e5c611bfd3cff8704eeefcf97c9d`; do not chase `origin/main`.
+- Pin the exact SHA `01f448a69d8a1fe895868ceca0aaa2d8561adc6d`; do not chase `origin/main`.
 - Never edit a file inside `infra/`.
 - Keep identity, `BASE_PORT: auto`, sources, storage, profile overrides, and overlay selection in `atlas.consumer.yml`.
 - Keep in-network DNS inside DAGs/notebooks. Host code uses explicit override or resolved config, never a fixed port or a base-port offset.

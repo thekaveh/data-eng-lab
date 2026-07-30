@@ -69,7 +69,7 @@ The gold layer contains business-level marts and pre-aggregated metrics. These t
 | Spark Connect (JupyterHub) | PySpark, PyIceberg, streaming | `s3a://lakehouse/` + Iceberg catalog |
 | Zeppelin (Scala) | Spark Scala, `%trino` interpreter for Trino queries | `s3a://lakehouse/` + Iceberg catalog |
 | Trino | SQL queries, CTAS, federated reads over Iceberg REST | Reads `lakehouse.*` tables (bronze/silver/gold) |
-| Airflow | SparkSubmitOperator (cluster mode), DAG orchestration | `s3a://jars/` for JARs, `s3a://lakehouse/` for Iceberg |
+| Airflow | SparkSubmitHook (cluster mode) + REST driver confirmation, DAG orchestration | `s3a://jars/` for JARs, `s3a://lakehouse/` for Iceberg |
 | Jenkins CI | Maven build, JAR publishing to MinIO | Publishes to `s3a://jars/` |
 | Spark → Redpanda | Structured Streaming writeStream to Kafka API topics | `redpanda:9092` topics |
 

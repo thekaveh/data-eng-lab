@@ -6,7 +6,9 @@ from datetime import timedelta
 
 import pendulum
 from airflow import DAG
-from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
+from airflow.decorators import task
+from airflow.providers.apache.spark.hooks.spark_submit import SparkSubmitHook
+from atlas_spark_utils import confirm_driver_status_via_rest
 
 REGION = os.environ.get("MINIO_REGION", "us-east-1")
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
@@ -74,19 +76,21 @@ with DAG(
     catchup=False,
     tags=["data-eng-lab", "scenario"],
 ) as dag:
-    # Same cluster-mode driver-status caveat as nyc-taxi-etl (atlas#308/#792): the
-    # poll can mark this task failed even when the job succeeded; waitAppCompletion
-    # is the real completion signal. See spark-apps/nyc-taxi-etl/dag.py and
-    # docs/atlas-feedback-go-live.md ("2026-07-21 live verification findings").
-    SparkSubmitOperator(
-        task_id="submit_nyc_taxi_medallion",
-        conn_id="spark_default",
-        application="s3a://jars/nyc-taxi-medallion/0.1.0/app.jar",
-        java_class="com.thekaveh.dataeng.medallion.NycTaxiMedallion",
-        deploy_mode="cluster",
-        conf=spark_conf,
-        application_args=[
-            "lakehouse.bronze.nyc_taxi_trips",
-        ],
-        verbose=True,
-    )
+    @task(task_id="submit_nyc_taxi_medallion")
+    def submit_nyc_taxi_medallion() -> None:
+        """Submit over Spark RPC, then verify the completed driver over REST."""
+        hook = SparkSubmitHook(
+            conn_id="spark_default",
+            application="s3a://jars/nyc-taxi-medallion/0.1.0/app.jar",
+            java_class="com.thekaveh.dataeng.medallion.NycTaxiMedallion",
+            deploy_mode="cluster",
+            conf=spark_conf,
+            application_args=[
+                "lakehouse.bronze.nyc_taxi_trips",
+            ],
+            verbose=True,
+        )
+        driver_id = hook.submit()
+        confirm_driver_status_via_rest(driver_id, rest_host="spark-master")
+
+    submit_nyc_taxi_medallion()

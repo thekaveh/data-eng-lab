@@ -24,7 +24,7 @@ lakehouse.bronze.nyc_taxi_trips
            ▼                   ▼
     ┌─────────────────────────────┐
     │        Airflow DAG           │
-    │   SparkSubmitOperator        │
+    │ Hook + REST confirmation     │
     └──────────────┬──────────────┘
                    │
                    ▼
@@ -50,7 +50,7 @@ lakehouse.bronze.nyc_taxi_trips
 - **Iceberg bronze → Jenkins:** SCM poll triggers the pipeline; Spark reads from the bronze layer.
 - **Jenkins CI:** runs `mvn test` (ScalaTest) then `mvn package`, producing a shaded JAR.
 - **MinIO:** JAR is published to `s3a://jars/nyc-taxi-medallion/0.1.0/nyc-taxi-medallion.jar`.
-- **Airflow:** `SparkSubmitOperator` submits the JAR to the Spark cluster in cluster mode.
+- **Airflow:** `SparkSubmitHook` submits the JAR to the Spark cluster in cluster mode, then confirms the completed driver through Atlas's Spark REST endpoint.
 - **Spark Cluster:** reads from `lakehouse.bronze.nyc_taxi_trips`, applies `MedallionTransforms.silver()` for deduplication and `MedallionTransforms.gold()` for daily aggregation, writes both tables.
 
 ## 2. Project Structure
@@ -97,11 +97,12 @@ mvn -q -B -f spark-apps/nyc-taxi-medallion/pom.xml package
 
 ## 5. Run with Airflow
 
-The DAG (`nyc_taxi_medallion`) uses `SparkSubmitOperator` configured with:
+The DAG (`nyc_taxi_medallion`) uses `SparkSubmitHook` configured with:
 
 - **application:** `s3a://jars/nyc-taxi-medallion/0.1.0/nyc-taxi-medallion.jar`
 - **deploy-mode:** `cluster` (Spark runs on cluster YARN/K8s, not driver)
 - **conf:** Iceberg SPARK config (`spark.sql.extensions=org.apache.iceberg.spark.IcebergSparkSessionExtensions`, catalog config with `warehouse=...`, `io-impl=...`)
+- **completion:** `hook.submit()` blocks with `spark.standalone.submit.waitAppCompletion=true`, then `confirm_driver_status_via_rest()` requires a `FINISHED` successful driver at `spark-master:6066`.
 - **jars:** the MinIO-published JAR
 - **dependencies:** no external PyPI packages; the JAR ships its shaded dependencies (Spark 4 as `provided`, Iceberg runtime bundled)
 - **depends_on:** upstream `nyc_taxi_etl` DAG (Airflow task group dependency)
@@ -113,7 +114,7 @@ Spark reads `lakehouse.bronze.nyc_taxi_trips` and writes to:
 ## 6. Prerequisites
 
 - Atlas A5 (Jenkins CI pipeline)
-- Atlas A6 (Airflow SparkSubmitOperator)
+- Atlas A6 (Airflow SparkSubmitHook + Spark REST confirmation)
 - JAR published to `s3a://jars/nyc-taxi-medallion/0.1.0/nyc-taxi-medallion.jar`
 - Preconfigured `minio` `mc` alias and `jars` bucket (A5)
 - S3A credentials available on the Spark cluster (A6)

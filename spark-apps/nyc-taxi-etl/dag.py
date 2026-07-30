@@ -6,7 +6,9 @@ from datetime import timedelta
 
 import pendulum
 from airflow import DAG
-from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
+from airflow.decorators import task
+from airflow.providers.apache.spark.hooks.spark_submit import SparkSubmitHook
+from atlas_spark_utils import confirm_driver_status_via_rest
 
 REGION = os.environ.get("MINIO_REGION", "us-east-1")
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
@@ -74,22 +76,29 @@ with DAG(
     catchup=False,
     tags=["data-eng-lab", "scenario"],
 ) as dag:
-    # Cluster-mode caveat (atlas#308, partially addressed): the master's REST API
-    # (:6066) is enabled upstream, but SparkSubmitHook polls driver status via the
-    # spark_default connection (port 7077, required for submission), so the poll
-    # fails after submit and can mark this task failed even when the job succeeded.
-    # spark.standalone.submit.waitAppCompletion above is the real completion signal;
-    # see docs/atlas-feedback-go-live.md ("2026-07-21 live verification").
-    SparkSubmitOperator(
-        task_id="submit_nyc_taxi_etl",
-        conn_id="spark_default",
-        application="s3a://jars/nyc-taxi-etl/0.1.0/app.jar",
-        java_class="com.thekaveh.dataeng.nyctaxi.NycTaxiEtl",
-        deploy_mode="cluster",
-        conf=spark_conf,
-        application_args=[
-            "s3a://landing/nyc_taxi/",
-            "lakehouse.bronze.nyc_taxi_trips",
-        ],
-        verbose=True,
-    )
+    @task(task_id="submit_nyc_taxi_etl")
+    def submit_nyc_taxi_etl() -> None:
+        """Submit over Spark RPC, then verify the completed driver over REST.
+
+        Atlas #792 keeps the seeded ``spark_default`` connection on :7077 for
+        cluster-mode submission.  The provider operator's subsequent status poll
+        also uses that RPC port, although the standalone master's status API is
+        on :6066.  Calling the hook directly avoids that redundant false-negative
+        and the Atlas helper still raises for a genuinely failed driver.
+        """
+        hook = SparkSubmitHook(
+            conn_id="spark_default",
+            application="s3a://jars/nyc-taxi-etl/0.1.0/app.jar",
+            java_class="com.thekaveh.dataeng.nyctaxi.NycTaxiEtl",
+            deploy_mode="cluster",
+            conf=spark_conf,
+            application_args=[
+                "s3a://landing/nyc_taxi/",
+                "lakehouse.bronze.nyc_taxi_trips",
+            ],
+            verbose=True,
+        )
+        driver_id = hook.submit()
+        confirm_driver_status_via_rest(driver_id, rest_host="spark-master")
+
+    submit_nyc_taxi_etl()

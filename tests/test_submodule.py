@@ -4,7 +4,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
-ATLAS_PIN = "882877a4a168e5c611bfd3cff8704eeefcf97c9d"
+ATLAS_PIN = "01f448a69d8a1fe895868ceca0aaa2d8561adc6d"
 
 
 def test_gitmodules_points_at_atlas():

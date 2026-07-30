@@ -6,14 +6,22 @@ Post-go-live observations from running the full `data-eng-lab` platform in a pro
 
 As of the original go-live run (2026-07-04, atlas `85ff46b`): all A1–A9 capabilities verified during go-live. The platform is fully operational. 19 scenarios executed with parity between Scala and PySpark notebooks where applicable.
 
-Status update (2026-07-28, atlas `882877a4`): the current reviewed pin includes
+Status update (2026-07-28, atlas `882877a4`): the then-current reviewed pin included
 the upstream #791 in-network Execution API URL repair and [Atlas #850](https://github.com/thekaveh/atlas/issues/850)'s
 corrected `AIRFLOW__API_AUTH__JWT_SECRET` mapping for Airflow 3.3's `[api_auth]`
 section. The earlier `af7713ee` focused retest remains recorded below as failed
 evidence for the ineffective `AIRFLOW__API__JWT_SECRET` mapping. Airflow DAG
 live acceptance and promotion are not yet claimed until this corrected pin is
 retested. Non-Airflow focused checks, including Zeppelin, Trino, and streaming,
-remain valid. #792 remains open.
+remain valid. #792 remained open at that point.
+
+Status update (2026-07-30, atlas `01f448a6`): Atlas [PR #875](https://github.com/thekaveh/atlas/pull/875)
+merged the #792 follow-up. The current pin supplies `atlas_spark_utils.confirm_driver_status_via_rest()`:
+the parent DAGs submit through `SparkSubmitHook` on the required `spark_default` RPC endpoint
+(`spark://spark-master:7077`), then confirm the returned driver ID through the master's REST
+endpoint (`spark-master:6066`). This bypasses the provider operator's incompatible post-submit
+`:7077` poll without treating a failed Spark driver as success. The integration is staged for the
+representative live rerun; no Airflow success or promotion is claimed here until that run passes.
 
 ## Key Observations
 
@@ -22,7 +30,7 @@ remain valid. #792 remains open.
 3. **Spark Connect** — The shared PySpark session in JupyterHub is stable across notebook executions. Each notebook manages its own session lifecycle.
 4. **Trino performance** — Trino performed well on the dataset sizes used. TPC-H at larger scales may need tuning.
 5. **Streaming reliability** — Redpanda handled streaming workloads without issues. The `foreachBatch` CDC pattern produced correct results.
-6. **Airflow orchestration** — Airflow successfully scheduled Spark jobs via `SparkSubmitOperator`. DAG execution was reliable.
+6. **Airflow orchestration** — Airflow schedules Spark jobs through the Atlas #792 `SparkSubmitHook` + REST-confirmation pattern. Its new live acceptance remains pending.
 7. **Jenkins CI** — The JAR build and publish pipeline works end-to-end.
 
 ## Recommendations
@@ -157,4 +165,5 @@ fix's availability, not a successful rerun: `nyc_taxi_etl` must still complete
 on this pin and verify effective secret parity before Airflow live acceptance or
 Gitflow promotion is claimed. The `af7713ee` section above remains the historic
 failed-gate evidence; [atlas#792](https://github.com/thekaveh/atlas/issues/792)
-remains a separate SparkSubmitHook status-poll caveat.
+remained a separate SparkSubmitHook status-poll caveat at this historical pin; the later
+`01f448a6` update above supplies the REST-confirmation pattern for the pending rerun.
