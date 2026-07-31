@@ -6,7 +6,7 @@ The lakehouse follows the medallion pattern: bronze (raw landing) → silver (cl
 
 The platform is orchestrated by Airflow, orchestrated from notebooks (Jupyter/PySpark and Zeppelin/Scala Spark), queried via Trino BI, and extended with streaming through Redpanda (Kafka API).
 
-![Lakehouse Architecture](architectures/lakehouse.svg)
+![Lakehouse Architecture](diagrams/img/lakehouse.png)
 
 ## 3.1 Storage Layer
 

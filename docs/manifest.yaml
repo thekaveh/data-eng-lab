@@ -73,4 +73,27 @@ sections:
       - {id: atlas-enablement, number: '8.6', title: Atlas Enablement, source: docs/atlas-enablement.md}
       - {id: atlas-pin-bump-runbook, number: '8.7', title: Atlas Pin-Bump Runbook, source: docs/atlas-pin-bump-runbook.md}
   - {id: changelog, number: '9', title: Changelog, source: docs/CHANGELOG.md}
-diagrams: []
+diagrams:
+  - {id: overview, master: docs/diagrams/overview.html}
+  - {id: lakehouse, master: docs/diagrams/lakehouse.html}
+  - {id: batch_ingest-nyc_taxi-spark-iceberg, master: docs/diagrams/batch_ingest-nyc_taxi-spark-iceberg.html}
+  - {id: bi_query-tpch-trino-iceberg, master: docs/diagrams/bi_query-tpch-trino-iceberg.html}
+  - {id: cdc_streaming-online_retail-spark-iceberg, master: docs/diagrams/cdc_streaming-online_retail-spark-iceberg.html}
+  - {id: data_quality-nyc_taxi-spark-iceberg, master: docs/diagrams/data_quality-nyc_taxi-spark-iceberg.html}
+  - {id: feature_engineering-movielens-spark-iceberg, master: docs/diagrams/feature_engineering-movielens-spark-iceberg.html}
+  - {id: federated_query-nyc_taxi-trino-iceberg, master: docs/diagrams/federated_query-nyc_taxi-trino-iceberg.html}
+  - {id: incremental_upsert-online_retail-spark-iceberg, master: docs/diagrams/incremental_upsert-online_retail-spark-iceberg.html}
+  - {id: join_optimization-tpch-spark-iceberg, master: docs/diagrams/join_optimization-tpch-spark-iceberg.html}
+  - {id: json_flatten-gh_archive-spark-iceberg, master: docs/diagrams/json_flatten-gh_archive-spark-iceberg.html}
+  - {id: medallion-nyc_taxi-spark-iceberg, master: docs/diagrams/medallion-nyc_taxi-spark-iceberg.html}
+  - {id: nyc-taxi-etl, master: docs/diagrams/nyc-taxi-etl.html}
+  - {id: nyc-taxi-medallion, master: docs/diagrams/nyc-taxi-medallion.html}
+  - {id: scd2-online_retail-spark-iceberg, master: docs/diagrams/scd2-online_retail-spark-iceberg.html}
+  - {id: schema_evolution-gh_archive-spark-iceberg, master: docs/diagrams/schema_evolution-gh_archive-spark-iceberg.html}
+  - {id: sessionization-gh_archive-spark-iceberg, master: docs/diagrams/sessionization-gh_archive-spark-iceberg.html}
+  - {id: star_schema-tpch-spark-iceberg, master: docs/diagrams/star_schema-tpch-spark-iceberg.html}
+  - {id: streaming_ingest-events-spark-iceberg, master: docs/diagrams/streaming_ingest-events-spark-iceberg.html}
+  - {id: streaming_ingest-gh_archive-spark-iceberg, master: docs/diagrams/streaming_ingest-gh_archive-spark-iceberg.html}
+  - {id: streaming_windows-events-spark-iceberg, master: docs/diagrams/streaming_windows-events-spark-iceberg.html}
+  - {id: table_maintenance-nyc_taxi-spark-iceberg, master: docs/diagrams/table_maintenance-nyc_taxi-spark-iceberg.html}
+  - {id: time_travel-nyc_taxi-spark-iceberg, master: docs/diagrams/time_travel-nyc_taxi-spark-iceberg.html}

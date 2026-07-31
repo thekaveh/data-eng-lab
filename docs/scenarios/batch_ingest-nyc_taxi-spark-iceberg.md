@@ -41,7 +41,7 @@ Source: `s3a://landing/nyc_taxi/*.parquet` (downloaded via `make datasets`).
 
 ## 3. Architecture
 
-![Architecture](../architectures/batch_ingest-nyc_taxi-spark-iceberg.svg)
+![Architecture](../diagrams/img/batch_ingest-nyc_taxi-spark-iceberg.png)
 
 Raw Parquet trip data flows from the S3 landing zone through Spark batch processing into an Iceberg bronze table in the `lakehouse.bronze` namespace. The notebooks select the declared `tiny`, `small`, or `medium` file list deterministically (default `small`, matching `make datasets`), normalize `passenger_count` to `double` per file, and then union by name. This preserves source records while avoiding the known March `INT64` / double incompatibility.
 

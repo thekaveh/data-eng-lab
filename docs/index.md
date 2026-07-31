@@ -8,7 +8,7 @@ Curated Spark scenarios in Scala (Zeppelin) and PySpark (Jupyter), orchestrated 
 
 ## 1.1 Architecture
 
-![Full-stack Lakehouse Architecture](architectures/overview.svg)
+![Full-stack Lakehouse Architecture](diagrams/img/overview.png)
 
 The lab implements a **medallion lakehouse** with four layers:
 
