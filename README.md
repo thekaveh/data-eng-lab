@@ -151,27 +151,29 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
 ## Scenario catalog
 
-| # | Scenario | Notebook doc |
-|---|---|---|
-| 1 | [batch_ingest-nyc_taxi-spark-iceberg](scenarios/batch_ingest-nyc_taxi-spark-iceberg/README.md) | [notebooks](scenarios/batch_ingest-nyc_taxi-spark-iceberg/notebooks.md) |
-| 2 | [bi_query-tpch-trino-iceberg](scenarios/bi_query-tpch-trino-iceberg/README.md) | [notebooks](scenarios/bi_query-tpch-trino-iceberg/notebooks.md) |
-| 3 | [cdc_streaming-online_retail-spark-iceberg](scenarios/cdc_streaming-online_retail-spark-iceberg/README.md) | [notebooks](scenarios/cdc_streaming-online_retail-spark-iceberg/notebooks.md) |
-| 4 | [data_quality-nyc_taxi-spark-iceberg](scenarios/data_quality-nyc_taxi-spark-iceberg/README.md) | [notebooks](scenarios/data_quality-nyc_taxi-spark-iceberg/notebooks.md) |
-| 5 | [feature_engineering-movielens-spark-iceberg](scenarios/feature_engineering-movielens-spark-iceberg/README.md) | [notebooks](scenarios/feature_engineering-movielens-spark-iceberg/notebooks.md) |
-| 6 | [federated_query-nyc_taxi-trino-iceberg](scenarios/federated_query-nyc_taxi-trino-iceberg/README.md) | [notebooks](scenarios/federated_query-nyc_taxi-trino-iceberg/notebooks.md) |
-| 7 | [incremental_upsert-online_retail-spark-iceberg](scenarios/incremental_upsert-online_retail-spark-iceberg/README.md) | [notebooks](scenarios/incremental_upsert-online_retail-spark-iceberg/notebooks.md) |
-| 8 | [join_optimization-tpch-spark-iceberg](scenarios/join_optimization-tpch-spark-iceberg/README.md) | [notebooks](scenarios/join_optimization-tpch-spark-iceberg/notebooks.md) |
-| 9 | [json_flatten-gh_archive-spark-iceberg](scenarios/json_flatten-gh_archive-spark-iceberg/README.md) | [notebooks](scenarios/json_flatten-gh_archive-spark-iceberg/notebooks.md) |
-| 10 | [medallion-nyc_taxi-spark-iceberg](scenarios/medallion-nyc_taxi-spark-iceberg/README.md) | [notebooks](scenarios/medallion-nyc_taxi-spark-iceberg/notebooks.md) |
-| 11 | [scd2-online_retail-spark-iceberg](scenarios/scd2-online_retail-spark-iceberg/README.md) | [notebooks](scenarios/scd2-online_retail-spark-iceberg/notebooks.md) |
-| 12 | [schema_evolution-gh_archive-spark-iceberg](scenarios/schema_evolution-gh_archive-spark-iceberg/README.md) | [notebooks](scenarios/schema_evolution-gh_archive-spark-iceberg/notebooks.md) |
-| 13 | [sessionization-gh_archive-spark-iceberg](scenarios/sessionization-gh_archive-spark-iceberg/README.md) | [notebooks](scenarios/sessionization-gh_archive-spark-iceberg/notebooks.md) |
-| 14 | [star_schema-tpch-spark-iceberg](scenarios/star_schema-tpch-spark-iceberg/README.md) | [notebooks](scenarios/star_schema-tpch-spark-iceberg/notebooks.md) |
-| 15 | [streaming_ingest-events-spark-iceberg](scenarios/streaming_ingest-events-spark-iceberg/README.md) | [notebooks](scenarios/streaming_ingest-events-spark-iceberg/notebooks.md) |
-| 16 | [streaming_ingest-gh_archive-spark-iceberg](scenarios/streaming_ingest-gh_archive-spark-iceberg/README.md) | [notebooks](scenarios/streaming_ingest-gh_archive-spark-iceberg/notebooks.md) |
-| 17 | [streaming_windows-events-spark-iceberg](scenarios/streaming_windows-events-spark-iceberg/README.md) | [notebooks](scenarios/streaming_windows-events-spark-iceberg/notebooks.md) |
-| 18 | [table_maintenance-nyc_taxi-spark-iceberg](scenarios/table_maintenance-nyc_taxi-spark-iceberg/README.md) | [notebooks](scenarios/table_maintenance-nyc_taxi-spark-iceberg/notebooks.md) |
-| 19 | [time_travel-nyc_taxi-spark-iceberg](scenarios/time_travel-nyc_taxi-spark-iceberg/README.md) | [notebooks](scenarios/time_travel-nyc_taxi-spark-iceberg/notebooks.md) |
+Canonical notebook walkthroughs are maintained once under `docs/notebooks/`; each one compares the paired Scala and PySpark implementations.
+
+| # | Scenario |
+|---|---|
+| 1 | [batch_ingest-nyc_taxi-spark-iceberg](scenarios/batch_ingest-nyc_taxi-spark-iceberg/README.md) |
+| 2 | [bi_query-tpch-trino-iceberg](scenarios/bi_query-tpch-trino-iceberg/README.md) |
+| 3 | [cdc_streaming-online_retail-spark-iceberg](scenarios/cdc_streaming-online_retail-spark-iceberg/README.md) |
+| 4 | [data_quality-nyc_taxi-spark-iceberg](scenarios/data_quality-nyc_taxi-spark-iceberg/README.md) |
+| 5 | [feature_engineering-movielens-spark-iceberg](scenarios/feature_engineering-movielens-spark-iceberg/README.md) |
+| 6 | [federated_query-nyc_taxi-trino-iceberg](scenarios/federated_query-nyc_taxi-trino-iceberg/README.md) |
+| 7 | [incremental_upsert-online_retail-spark-iceberg](scenarios/incremental_upsert-online_retail-spark-iceberg/README.md) |
+| 8 | [join_optimization-tpch-spark-iceberg](scenarios/join_optimization-tpch-spark-iceberg/README.md) |
+| 9 | [json_flatten-gh_archive-spark-iceberg](scenarios/json_flatten-gh_archive-spark-iceberg/README.md) |
+| 10 | [medallion-nyc_taxi-spark-iceberg](scenarios/medallion-nyc_taxi-spark-iceberg/README.md) |
+| 11 | [scd2-online_retail-spark-iceberg](scenarios/scd2-online_retail-spark-iceberg/README.md) |
+| 12 | [schema_evolution-gh_archive-spark-iceberg](scenarios/schema_evolution-gh_archive-spark-iceberg/README.md) |
+| 13 | [sessionization-gh_archive-spark-iceberg](scenarios/sessionization-gh_archive-spark-iceberg/README.md) |
+| 14 | [star_schema-tpch-spark-iceberg](scenarios/star_schema-tpch-spark-iceberg/README.md) |
+| 15 | [streaming_ingest-events-spark-iceberg](scenarios/streaming_ingest-events-spark-iceberg/README.md) |
+| 16 | [streaming_ingest-gh_archive-spark-iceberg](scenarios/streaming_ingest-gh_archive-spark-iceberg/README.md) |
+| 17 | [streaming_windows-events-spark-iceberg](scenarios/streaming_windows-events-spark-iceberg/README.md) |
+| 18 | [table_maintenance-nyc_taxi-spark-iceberg](scenarios/table_maintenance-nyc_taxi-spark-iceberg/README.md) |
+| 19 | [time_travel-nyc_taxi-spark-iceberg](scenarios/time_travel-nyc_taxi-spark-iceberg/README.md) |
 
 ## Spark Apps
 

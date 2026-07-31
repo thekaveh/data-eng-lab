@@ -58,5 +58,6 @@ docs-serve: ## Generate site input and serve it locally
 	uv run --group dev mkdocs serve
 
 docs-wiki: ## Generate and validate the wiki projection without pushing
-	uv run --group dev python -m scripts.docs.build_docs --wiki --root .
+	uv run --group dev python -m scripts.docs.render_diagrams --root .
+	uv run --group dev python -m scripts.docs.check_docs --root .
 	uv run --group dev python -m scripts.docs.push_wiki --check --root .

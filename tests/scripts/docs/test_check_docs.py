@@ -13,6 +13,7 @@ from scripts.docs.check_docs import (
     check_placeholders,
     check_self_containment,
 )
+from scripts.docs.manifest import iter_leaf_sections, load_manifest
 from scripts.docs.render_diagrams import extract_svg, svg_to_png
 
 
@@ -129,6 +130,52 @@ def test_completeness_ignores_only_explicit_internal_root(repo_fixture: Path):
     assert messages(check_completeness(repo_fixture)) == [
         "public Markdown is absent from manifest: docs/unmanifested.md"
     ]
+
+
+def test_completeness_rejects_legacy_scenario_notebook_mirror(repo_fixture: Path):
+    legacy = repo_fixture / "scenarios/example/notebooks.md"
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("# Duplicate notebook docs\n", encoding="utf-8")
+
+    assert messages(check_completeness(repo_fixture)) == [
+        "legacy scenario notebook documentation is not manifest-owned: "
+        "scenarios/example/notebooks.md"
+    ]
+
+
+def test_repository_notebook_docs_are_manifest_owned_without_legacy_mirrors(repo_root):
+    manifest = load_manifest(repo_root / "docs/manifest.yaml", repo_root)
+    declared = {
+        section.source
+        for section in iter_leaf_sections(manifest.sections)
+        if section.source is not None
+    }
+    scenario_ids = {
+        path.name
+        for path in (repo_root / "scenarios").iterdir()
+        if (path / "jupyter/notebook.ipynb").is_file()
+        and (path / "zeppelin/notebook.zpln").is_file()
+    }
+    notebook_sources = {
+        path
+        for path in declared
+        if path.parent == Path("docs/notebooks") and path.name != "index.md"
+    }
+
+    assert scenario_ids == {path.stem for path in notebook_sources}
+    assert len(scenario_ids) == 19
+    assert not tuple((repo_root / "scenarios").glob("*/notebooks.md"))
+    for source in notebook_sources:
+        assert "Auto-extracted" not in (repo_root / source).read_text(encoding="utf-8")
+
+    readme = (repo_root / "README.md").read_text(encoding="utf-8")
+    index = (repo_root / "docs/notebooks/index.md").read_text(encoding="utf-8")
+    assert "scenarios/" not in "\n".join(
+        line for line in readme.splitlines() if "[notebooks]" in line
+    )
+    assert "scripts/docslib/notebooks.py" not in index
+    assert "scripts/build_docs.py" not in index
+    assert "make docs-check" in index
 
 
 def test_all_canonical_scans_follow_manifest_internal_roots(repo_fixture: Path):

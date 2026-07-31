@@ -55,6 +55,46 @@ def check_completeness(repo_root: Path) -> tuple[Finding, ...]:
             continue
         if relative not in declared:
             findings += (_error(f"public Markdown is absent from manifest: {relative.as_posix()}"),)
+    for path in sorted((root / "scenarios").glob("*/notebooks.md")):
+        findings += (
+            _error(
+                "legacy scenario notebook documentation is not manifest-owned: "
+                f"{path.relative_to(root).as_posix()}"
+            ),
+        )
+
+    scenarios_root = root / "scenarios"
+    scenario_ids = (
+        {
+            path.name
+            for path in scenarios_root.iterdir()
+            if path.is_dir()
+            and (path / "jupyter/notebook.ipynb").is_file()
+            and (path / "zeppelin/notebook.zpln").is_file()
+        }
+        if scenarios_root.is_dir()
+        else set()
+    )
+    notebook_sources = {
+        path
+        for path in declared
+        if path.parent == Path("docs/notebooks") and path.name != "index.md"
+    }
+    documented_ids = {path.stem for path in notebook_sources}
+    for identifier in sorted(scenario_ids - documented_ids):
+        findings += (
+            _error(
+                "scenario notebook documentation absent from manifest: "
+                f"docs/notebooks/{identifier}.md"
+            ),
+        )
+    for identifier in sorted(documented_ids - scenario_ids):
+        findings += (
+            _error(
+                "manifest notebook documentation has no paired scenario notebooks: "
+                f"docs/notebooks/{identifier}.md"
+            ),
+        )
     return _sorted(findings)
 
 

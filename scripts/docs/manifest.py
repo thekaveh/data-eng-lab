@@ -11,6 +11,11 @@ from typing import Any
 import yaml
 
 _PATH_SAFE_SLUG = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]*$")
+_AUXILIARY_PUBLIC_INPUTS = (
+    Path("docs/stylesheets/extra.css"),
+    Path("docs/overrides/main.html"),
+    Path("docs/diagrams/img"),
+)
 
 
 class ManifestError(ValueError):
@@ -97,6 +102,12 @@ def load_manifest(path: Path, repo_root: Path) -> Manifest:
         resolved = (root / internal_root).resolve()
         if not resolved.is_relative_to(root):
             raise ManifestError(f"manifest path outside repository: {internal_root}")
+        canonical = resolved.relative_to(root)
+        if internal_root != canonical:
+            raise ManifestError(
+                f"internal root must be canonical repo-relative path: "
+                f"{internal_root} (use {canonical})"
+            )
         if resolved == docs_root or not resolved.is_relative_to(docs_root):
             raise ManifestError(
                 f"internal root must be a proper docs subtree: {internal_root}"
@@ -121,6 +132,18 @@ def load_manifest(path: Path, repo_root: Path) -> Manifest:
             if resolved == internal_resolved or resolved.is_relative_to(internal_resolved):
                 raise ManifestError(
                     f"diagram master is inside internal root: {master} ({internal_root})"
+                )
+    for internal_root, internal_resolved in resolved_internal_roots:
+        for auxiliary in _AUXILIARY_PUBLIC_INPUTS:
+            auxiliary_resolved = (root / auxiliary).resolve()
+            if (
+                auxiliary_resolved == internal_resolved
+                or auxiliary_resolved.is_relative_to(internal_resolved)
+                or internal_resolved.is_relative_to(auxiliary_resolved)
+            ):
+                raise ManifestError(
+                    "internal root overlaps published auxiliary input: "
+                    f"{internal_root} ({auxiliary})"
                 )
     return manifest
 

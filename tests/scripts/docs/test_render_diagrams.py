@@ -32,6 +32,36 @@ def test_extract_svg_rejects_missing_or_multiple_roots():
         extract_svg("<html><svg></svg><svg></svg></html>")
 
 
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "<script>alert(1)</script>",
+        '<rect onload="alert(1)"/>',
+        '<a href="javascript:alert(1)"><text>open</text></a>',
+        '<image xmlns:xlink="http://www.w3.org/1999/xlink" '
+        'xlink:href="data:image/svg+xml,&lt;svg onload=alert(1)&gt;"/>',
+        '<rect style="fill:url(javascript:alert(1))"/>',
+        '<foreignObject><div xmlns="http://www.w3.org/1999/xhtml">unsafe</div></foreignObject>',
+    ],
+)
+def test_extract_svg_rejects_executable_content(payload):
+    master = f'<html><svg xmlns="http://www.w3.org/2000/svg">{payload}</svg></html>'
+
+    with pytest.raises(DiagramError, match="unsafe SVG"):
+        extract_svg(master)
+
+
+def test_extract_svg_rejects_obfuscated_executable_uri():
+    master = (
+        '<html><svg xmlns="http://www.w3.org/2000/svg">'
+        '<a href="java&#x73;cript:alert(1)"><text>open</text></a>'
+        "</svg></html>"
+    )
+
+    with pytest.raises(DiagramError, match="unsafe SVG"):
+        extract_svg(master)
+
+
 def test_import_svg_master_preserves_the_complete_svg():
     svg = '<svg xmlns="http://www.w3.org/2000/svg"><path d="M0 0h10v10z"/></svg>'
 

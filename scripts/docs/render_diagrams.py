@@ -6,6 +6,7 @@ import argparse
 import html
 import re
 import shutil
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 from scripts.docs.manifest import Manifest, load_manifest
@@ -18,6 +19,37 @@ class DiagramError(ValueError):
 _SVG_ROOT = re.compile(r"<svg\b[^>]*>.*?</svg>", re.DOTALL)
 _HTML_NAMED_ENTITY = re.compile(r"&([A-Za-z][A-Za-z0-9]+);")
 _XML_NAMED_ENTITIES = {"amp", "apos", "gt", "lt", "quot"}
+_FORBIDDEN_ELEMENTS = {
+    "animate",
+    "animatemotion",
+    "animatetransform",
+    "embed",
+    "foreignobject",
+    "iframe",
+    "object",
+    "script",
+    "set",
+    "style",
+}
+_FORBIDDEN_VALUE_FRAGMENTS = (
+    "javascript:",
+    "vbscript:",
+    "data:",
+    "@import",
+    "expression(",
+    "-moz-binding",
+)
+_URI_OR_STYLE_ATTRIBUTES = {
+    "clip-path",
+    "cursor",
+    "fill",
+    "filter",
+    "href",
+    "mask",
+    "src",
+    "stroke",
+    "style",
+}
 
 
 def import_svg_master(svg_text: str, *, title: str, evidence: str) -> str:
@@ -56,7 +88,44 @@ def extract_svg(html_text: str) -> str:
         name = match.group(1)
         return match.group(0) if name in _XML_NAMED_ENTITIES else html.unescape(match.group(0))
 
-    return _HTML_NAMED_ENTITY.sub(sanitize, roots[0])
+    svg = _HTML_NAMED_ENTITY.sub(sanitize, roots[0])
+    _validate_safe_svg(svg)
+    return svg
+
+
+def _validate_safe_svg(svg: str) -> None:
+    if "<!doctype" in svg.lower() or "<!entity" in svg.lower():
+        raise DiagramError("unsafe SVG declaration")
+    try:
+        root = ET.fromstring(svg)
+    except ET.ParseError as error:
+        raise DiagramError(f"invalid SVG XML: {error}") from error
+
+    for element in root.iter():
+        tag = _local_name(element.tag).lower()
+        if tag in _FORBIDDEN_ELEMENTS:
+            raise DiagramError(f"unsafe SVG element: {tag}")
+        for raw_name, value in element.attrib.items():
+            name = _local_name(raw_name).lower()
+            if name.startswith("on"):
+                raise DiagramError(f"unsafe SVG event attribute: {name}")
+            if name == "style":
+                raise DiagramError("unsafe SVG style attribute")
+            if name in _URI_OR_STYLE_ATTRIBUTES and _contains_executable_value(value):
+                raise DiagramError(f"unsafe SVG attribute value: {name}")
+
+
+def _local_name(name: str) -> str:
+    return name.rsplit("}", 1)[-1]
+
+
+def _contains_executable_value(value: str) -> bool:
+    normalized = "".join(
+        character
+        for character in html.unescape(value).lower()
+        if not character.isspace() and ord(character) >= 0x20
+    )
+    return any(fragment in normalized for fragment in _FORBIDDEN_VALUE_FRAGMENTS)
 
 
 def svg_to_png(svg: str, destination: Path, *, width: int = 1600) -> None:

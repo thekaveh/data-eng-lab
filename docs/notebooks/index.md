@@ -1,9 +1,9 @@
 # 6.1. Index
 
 Each scenario ships paired Zeppelin (Scala) and Jupyter (PySpark) notebooks with identical logic.
-A comprehensive, auto-extracted notebook doc per scenario lives below — also reachable from each scenario's §4.
+The manifest-owned walkthroughs below are the canonical notebook documentation; each shows the section map, the side-by-side Scala/PySpark walkthrough for every numbered section, and the parity statement.
 
-The docs below are generated from `scenarios/<name>/jupyter/notebook.ipynb` and `scenarios/<name>/zeppelin/notebook.zpln` by `scripts/docslib/notebooks.py`. Each doc shows the section map, the side-by-side Scala/PySpark walkthrough for every numbered section, and the Scala/PySpark parity statement.
+Update a walkthrough alongside its source notebooks, then run `make docs-check`. The aggregate gate verifies that every paired scenario has exactly one manifest-owned walkthrough and projects it to the site and wiki.
 
 ## Batch
 

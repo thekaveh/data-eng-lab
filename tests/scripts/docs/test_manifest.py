@@ -114,16 +114,24 @@ def test_load_manifest_requires_internal_roots_to_be_directories(tmp_path):
         load_manifest(path, tmp_path)
 
 
-@pytest.mark.parametrize("internal_root", [".", "docs", "scenarios", "docs/private/.."])
+@pytest.mark.parametrize(
+    ("internal_root", "message"),
+    [
+        (".", "internal root must be a proper docs subtree"),
+        ("docs", "internal root must be a proper docs subtree"),
+        ("scenarios", "internal root must be a proper docs subtree"),
+        ("docs/private/..", "internal root must be canonical"),
+    ],
+)
 def test_load_manifest_requires_internal_roots_to_be_proper_docs_subtrees(
-    tmp_path, internal_root
+    tmp_path, internal_root, message
 ):
     _write_valid_manifest_tree(tmp_path)
     (tmp_path / "docs/private").mkdir()
     path = tmp_path / "docs/manifest.yaml"
     path.write_text(VALID.replace("docs/superpowers", internal_root), encoding="utf-8")
 
-    with pytest.raises(ManifestError, match="internal root must be a proper docs subtree"):
+    with pytest.raises(ManifestError, match=message):
         load_manifest(path, tmp_path)
 
 
@@ -145,6 +153,34 @@ def test_load_manifest_rejects_internal_roots_that_overlap_public_inputs(
         load_manifest(path, tmp_path)
 
 
+def test_load_manifest_rejects_noncanonical_internal_root_alias(tmp_path):
+    _write_valid_manifest_tree(tmp_path)
+    (tmp_path / "docs/private").mkdir()
+    path = tmp_path / "docs/manifest.yaml"
+    path.write_text(
+        VALID.replace("docs/superpowers", "docs/private/../superpowers"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ManifestError, match="internal root must be canonical"):
+        load_manifest(path, tmp_path)
+
+
+@pytest.mark.parametrize(
+    "internal_root",
+    ["docs/stylesheets", "docs/overrides", "docs/diagrams/img"],
+)
+def test_load_manifest_rejects_internal_roots_that_overlap_auxiliary_public_inputs(
+    tmp_path, internal_root
+):
+    _write_valid_manifest_tree(tmp_path)
+    path = tmp_path / "docs/manifest.yaml"
+    path.write_text(VALID.replace("docs/superpowers", internal_root), encoding="utf-8")
+
+    with pytest.raises(ManifestError, match="internal root overlaps published auxiliary input"):
+        load_manifest(path, tmp_path)
+
+
 def test_load_manifest_rejects_explicit_public_source_inside_internal_root(tmp_path):
     _write_valid_manifest_tree(tmp_path)
     internal_source = tmp_path / "docs/superpowers/private.md"
@@ -160,9 +196,14 @@ def test_load_manifest_rejects_explicit_public_source_inside_internal_root(tmp_p
 
 
 def _write_valid_manifest_tree(root: Path) -> None:
-    (root / "docs/diagrams").mkdir(parents=True)
+    (root / "docs/diagrams/img").mkdir(parents=True)
     (root / "docs/superpowers").mkdir()
+    (root / "docs/stylesheets").mkdir()
+    (root / "docs/overrides").mkdir()
     (root / "docs/index.md").write_text("# 1. Overview\n", encoding="utf-8")
     (root / "docs/scenarios").mkdir()
     (root / "docs/scenarios/index.md").write_text("# 5.1. Catalog\n", encoding="utf-8")
     (root / "docs/diagrams/overview.html").write_text("<svg/>\n", encoding="utf-8")
+    (root / "docs/diagrams/img/overview.png").write_bytes(b"png")
+    (root / "docs/stylesheets/extra.css").write_text("body {}\n", encoding="utf-8")
+    (root / "docs/overrides/main.html").write_text("{% extends 'base.html' %}\n", encoding="utf-8")
