@@ -5,6 +5,7 @@ from pathlib import Path
 
 import boto3
 from botocore.client import Config
+
 from lakehouse.atlas_endpoints import resolve_http_endpoint
 
 

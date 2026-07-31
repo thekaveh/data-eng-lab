@@ -15,11 +15,12 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.path.insert(0, str(ROOT))
-from lakehouse.atlas_endpoints import resolve_http_endpoint  # noqa: E402
 from preflight import Result  # noqa: E402
-from preflight import render_matrix as _render
+from preflight import render_matrix as _render  # noqa: E402
 from probes.probe_kafka import probe as _probe_kafka  # noqa: E402
 from probes.probe_trino import probe as _probe_trino  # noqa: E402
+
+from lakehouse.atlas_endpoints import resolve_http_endpoint  # noqa: E402
 
 Edge = namedtuple("Edge", "name enabled probe")
 

@@ -7,7 +7,6 @@ from pathlib import Path
 import nbformat
 import yaml
 
-
 ROOT = Path(__file__).resolve().parents[2]
 SCENARIO = ROOT / "scenarios" / "batch_ingest-nyc_taxi-spark-iceberg"
 

@@ -23,7 +23,6 @@ if str(ROOT) not in sys.path:
 
 from lakehouse.atlas_endpoints import resolve_http_endpoint  # noqa: E402
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
