@@ -15,6 +15,21 @@ ROOT = Path(__file__).resolve().parents[1]
 POM_NAMESPACE = {"m": "http://maven.apache.org/POM/4.0.0"}
 
 
+@pytest.mark.parametrize("relative", ["README.md", "docs/index.md"])
+def test_overviews_distinguish_kafka_and_file_source_streaming(relative: str):
+    text = (ROOT / relative).read_text(encoding="utf-8")
+
+    assert "drives all streaming scenarios" not in text
+    assert (
+        "Redpanda (Kafka-compatible) backs the event-ingest, windowing, and CDC "
+        "streaming scenarios."
+    ) in text
+    assert (
+        "`streaming_ingest-gh_archive-spark-iceberg` uses an incremental file "
+        "source and requires no Kafka broker."
+    ) in text
+
+
 def _pom_contract(app: str) -> dict[str, str]:
     root = ET.parse(ROOT / "spark-apps" / app / "pom.xml").getroot()
     properties = root.find("m:properties", POM_NAMESPACE)
