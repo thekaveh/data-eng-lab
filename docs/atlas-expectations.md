@@ -5,7 +5,7 @@
 **Purpose:** a single, authoritative statement of everything `data-eng-lab` expects from Atlas — what is already **delivered** (so you don't undo it), and the **Iceberg/Spark capabilities** the scenario catalog relies on. This supersedes the ad-hoc `atlas-enablement.md` ledger as the hand-off reference; that file remains the terse A1–A9 origin status table.
 
 `data-eng-lab` consumes Atlas as a **pinned submodule** at `infra/` (currently
-atlas `0644a8f3865f9c42dfbe0a279e44a69fdc633c8a`) and **never edits it** —
+atlas `985918ce8c805081947d53b1c48bb80610237a5b`) and **never edits it** —
 enhancements come to you as issues/PRs. Historic verification references below
 retain their original SHAs, including the prior `881df596` live-gate baseline;
 Atlas's consumer-doc clarifications from **#281**
@@ -173,11 +173,11 @@ When all A1–A9 are delivered, we flip `--trino-source`/`--redpanda-source` on 
 
 Of the four Atlas-side issues surfaced during go-live (atlas#308–#311): #309, #310, and #311
 are fixed upstream and the corresponding lab workarounds were removed. The remaining standalone
-Spark status-poll limitation is resolved in the current pin by the #876 correction to the #792
+Spark status-poll limitation is resolved in the current pin by Atlas #880's correction to the #792
 consumer pattern: construct `SparkSubmitHook` without an application, then use
 `submit_and_confirm_via_rest()` to submit through `spark_default` on `:7077` and confirm the
-hook's driver ID through `spark-master:6066`. The helper raises unless the driver is `FINISHED`
-with `success: true`; it is not a false-success workaround.
+driver ID extracted from the spark-submit log through `spark-master:6066`. The helper raises
+unless the driver is `FINISHED` with `success: true`; it is not a false-success workaround.
 
 ---
 

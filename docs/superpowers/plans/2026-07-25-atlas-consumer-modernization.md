@@ -9,11 +9,11 @@
 > `882877a4a168e5c611bfd3cff8704eeefcf97c9d`, closed #850 with the corrected
 > `AIRFLOW__API_AUTH__JWT_SECRET` mapping. The earlier SHAs remain historical
 > evidence. **2026-07-30 update:** the current immutable target is
-> `0644a8f3865f9c42dfbe0a279e44a69fdc633c8a` (Atlas PR #878), which corrects
-> Atlas #876's provider-compatible #792 submit-and-confirm wrapper.
+> `985918ce8c805081947d53b1c48bb80610237a5b` (Atlas PR #883), which corrects
+> Atlas #880's remaining driver-ID extraction defect in the #792 submit-and-confirm wrapper.
 > Airflow acceptance and promotion await its live rerun.
 
-**Goal:** Pin Atlas at `0644a8f3865f9c42dfbe0a279e44a69fdc633c8a`, align this repository with the current consumer runbook, and prove the full data-eng catalog remains compatible through static checks and focused live smoke.
+**Goal:** Pin Atlas at `985918ce8c805081947d53b1c48bb80610237a5b`, align this repository with the current consumer runbook, and prove the full data-eng catalog remains compatible through static checks and focused live smoke.
 
 **Architecture:** Atlas stays a read-only submodule. The parent `atlas.consumer.yml` and Compose overlay remain the only committed integration configuration. New parent endpoint helpers consume Atlas's exported MinIO host endpoint and resolve unexported data-eng host ports through explicit overrides or `infra/.env`, with no port arithmetic.
 
@@ -23,7 +23,7 @@
 
 - Use `codex/atlas-consumer-modernization`, based on `develop`.
 - Preserve and never stage `docs/superpowers/plans/2026-07-21-atlas-submodule-modernization.md`.
-- Pin the exact SHA `0644a8f3865f9c42dfbe0a279e44a69fdc633c8a`; do not chase `origin/main`.
+- Pin the exact SHA `985918ce8c805081947d53b1c48bb80610237a5b`; do not chase `origin/main`.
 - Never edit a file inside `infra/`.
 - Keep identity, `BASE_PORT: auto`, sources, storage, profile overrides, and overlay selection in `atlas.consumer.yml`.
 - Keep in-network DNS inside DAGs/notebooks. Host code uses explicit override or resolved config, never a fixed port or a base-port offset.

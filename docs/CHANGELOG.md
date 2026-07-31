@@ -8,7 +8,8 @@ All notable changes to this project are documented here (Keep a Changelog format
   verifier skeleton, and infra-preflight Layer 1.
 
 ### Changed
-- Atlas consumer operations now pin `0644a8f3` (superseding the #850-corrected
+- Atlas consumer operations now pin `985918ce` (superseding the #880-predecessor
+  `0644a8f3`, the #850-corrected
   `882877a4` pin and the failed-gate
   `af7713ee` pin and retaining the prior `881df596` reviewed/live-gate baseline);
   changed committed Atlas source
@@ -19,11 +20,13 @@ All notable changes to this project are documented here (Keep a Changelog format
   `AIRFLOW__API__JWT_SECRET` while Airflow 3.3 reads `[api_auth] jwt_secret`.
   The corrected reviewed pin closes #850 with
   `AIRFLOW__API_AUTH__JWT_SECRET`; no Airflow DAG success or promotion is
-  claimed until its live retest. Atlas #876 corrects the #792 wrapper for the
+  claimed until its live retest. Atlas #880 corrects the remaining #792 wrapper
+  defect for the
   shipped provider: both production cluster-mode DAGs construct
   `SparkSubmitHook` without an application and call
-  `submit_and_confirm_via_rest()` to submit on `:7077` and verify the hook's
-  driver ID on `spark-master:6066` without masking real driver failures.
+  `submit_and_confirm_via_rest()` to submit on `:7077`, extract the driver ID
+  from the spark-submit log, and verify it on `spark-master:6066` without
+  masking real driver failures.
 - Batch NYC Taxi notebook ingestion now normalizes `passenger_count` to `double`
   per declared Parquet object before unioning, so the January–June 2023 input
   set retains Scala/PySpark parity despite March's `INT64` schema.

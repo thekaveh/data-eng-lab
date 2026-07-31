@@ -1,9 +1,9 @@
-"""Guards for production JAR DAG Spark submission and Atlas #792 status confirmation.
+"""Guards for production JAR DAG Spark submission and Atlas #792/#880 confirmation.
 
 Standalone cluster-mode drivers do NOT inherit spark-connect's catalog defaults, so every JAR
-submission must carry its own lakehouse configuration. Atlas #876 provides the provider-compatible
-#792 path: construct ``SparkSubmitHook`` without an application, then submit and confirm through
-the master's :6066 REST API with Atlas's canonical helper.
+submission must carry its own lakehouse configuration. Atlas #880 provides the provider-compatible
+#792 path: construct ``SparkSubmitHook`` without an application, then submit, extract the driver
+ID from the submission log, and confirm through the master's :6066 REST API with Atlas's helper.
 """
 import ast
 from pathlib import Path
@@ -238,10 +238,10 @@ def test_cluster_jar_dags_use_atlas_792_hook_and_rest_confirmation():
         )
 
 
-def test_parent_dags_can_import_atlas_792_helper_from_the_shared_dags_root():
+def test_parent_dags_can_import_atlas_880_helper_from_the_shared_dags_root():
     """The consumer overlay nests parent DAGs below Atlas's `/opt/airflow/dags` mount.
 
-    Atlas #878 supplies ``atlas_spark_utils.py`` at that mount root. Keeping the
+    Atlas #883 supplies ``atlas_spark_utils.py`` at that mount root. Keeping the
     consumer DAGs in a child directory therefore preserves the canonical direct
     import documented by Atlas, without copying an upstream helper into the parent.
     """

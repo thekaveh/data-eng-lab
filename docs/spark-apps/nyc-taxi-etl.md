@@ -87,7 +87,7 @@ The DAG (`nyc_taxi_etl`) uses `SparkSubmitHook` configured with:
 - **application:** `s3a://jars/nyc-taxi-etl/0.1.0/nyc-taxi-etl.jar`
 - **deploy-mode:** `cluster` (Spark runs on cluster YARN/K8s, not driver)
 - **conf:** Iceberg SPARK config (`spark.sql.extensions=org.apache.iceberg.spark.IcebergSparkSessionExtensions`, catalog config)
-- **completion:** Atlas #876's `submit_and_confirm_via_rest()` passes the application to `hook.submit()` while disabling the incompatible provider poll, then requires a `FINISHED` successful driver at `spark-master:6066`.
+- **completion:** Atlas #880's `submit_and_confirm_via_rest()` disables the incompatible provider poll, captures the standalone driver ID from the `spark-submit` log, then requires a `FINISHED` successful driver at `spark-master:6066`.
 - **jars:** the MinIO-published JAR
 - **dependencies:** no external PyPI packages; the JAR ships its shaded dependencies
 

@@ -78,7 +78,7 @@ with DAG(
 ) as dag:
     @task(task_id="submit_nyc_taxi_medallion")
     def submit_nyc_taxi_medallion() -> None:
-        """Submit over Spark RPC, then verify the completed driver over REST."""
+        """Submit over Spark RPC, then extract and verify the driver ID over REST."""
         hook = SparkSubmitHook(
             conn_id="spark_default",
             java_class="com.thekaveh.dataeng.medallion.NycTaxiMedallion",

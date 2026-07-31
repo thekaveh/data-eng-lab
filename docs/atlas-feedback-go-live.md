@@ -24,6 +24,14 @@ endpoint (`spark-master:6066`). This bypasses the provider's incompatible post-s
 poll without treating a failed Spark driver as success. The integration is staged for the
 representative live rerun; no Airflow success or promotion is claimed here until that run passes.
 
+Status update (2026-07-30, atlas `985918ce`): Atlas [PR #883](https://github.com/thekaveh/atlas/pull/883)
+resolved the follow-up [#880](https://github.com/thekaveh/atlas/issues/880) defect. The provider
+sets `hook._driver_id` only on the tracking path, so the prior helper could not obtain it after
+correctly disabling the incompatible `:7077` poll. The current helper captures the `spark-submit`
+log, extracts the standalone submission ID, and verifies the driver through `spark-master:6066`.
+The representative live rerun remains the required acceptance gate; no Airflow success or
+promotion is claimed until it passes.
+
 ## Key Observations
 
 1. **MinIO stability** — MinIO handled the full dataset load (all 5 datasets at medium scale) without issues. Disk usage should be monitored as scenarios are re-run.
@@ -31,7 +39,7 @@ representative live rerun; no Airflow success or promotion is claimed here until
 3. **Spark Connect** — The shared PySpark session in JupyterHub is stable across notebook executions. Each notebook manages its own session lifecycle.
 4. **Trino performance** — Trino performed well on the dataset sizes used. TPC-H at larger scales may need tuning.
 5. **Streaming reliability** — Redpanda handled streaming workloads without issues. The `foreachBatch` CDC pattern produced correct results.
-6. **Airflow orchestration** — Airflow schedules Spark jobs through Atlas #876's provider-compatible `SparkSubmitHook` + REST-confirmation pattern. Its new live acceptance remains pending.
+6. **Airflow orchestration** — Airflow schedules Spark jobs through Atlas #880's provider-compatible `SparkSubmitHook` + log-derived driver-ID REST-confirmation pattern. Its new live acceptance remains pending.
 7. **Jenkins CI** — The JAR build and publish pipeline works end-to-end.
 
 ## Recommendations

@@ -81,9 +81,10 @@ with DAG(
         """Submit over Spark RPC, then verify the completed driver over REST.
 
         Atlas #792 keeps the seeded ``spark_default`` connection on :7077 for
-        cluster-mode submission.  Atlas #876's compatible helper disables the
-        provider's incompatible post-submit RPC poll, then confirms the driver's
-        terminal status through the standalone master's :6066 REST endpoint.
+        cluster-mode submission. Atlas #880's compatible helper disables the
+        provider's incompatible post-submit RPC poll, captures the submission
+        ID from the spark-submit log, then confirms the driver's terminal status
+        through the standalone master's :6066 REST endpoint.
         """
         hook = SparkSubmitHook(
             conn_id="spark_default",
