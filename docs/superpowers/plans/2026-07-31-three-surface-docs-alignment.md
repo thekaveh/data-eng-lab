@@ -169,11 +169,11 @@ class Manifest:
 
 Implement `parse_manifest` so YAML/parser/key/type errors are wrapped as `ManifestError`, every node is exactly a source leaf or children group, and IDs/numbers/diagram IDs are unique. Implement `load_manifest` so every source/master resolves inside `repo_root` and exists.
 
-- [ ] **Step 4: Add the complete manifest**
+- [ ] **Step 4: Add the complete public-page manifest**
 
 Encode the current `mkdocs.yml` navigation exactly as public leaves: overview `1`; getting-started `2`; lakehouse `3`; datasets `4`; scenario catalog `5.1` plus the 19 scenario pages `5.2`–`5.20`; notebook index `6.1` plus the 19 notebook pages `6.2`–`6.20`; Spark app index `7.1` plus two app pages `7.2`–`7.3`; Atlas operation pages `8.1`–`8.7`; changelog `9`.
 
-Declare exactly these 23 diagram IDs and future master paths:
+Set `diagrams: []` in this first valid manifest. Task 3 creates and fact-checks the HTML masters, then atomically replaces that empty list with these exact 23 entries so `load_manifest` never observes missing paths:
 
 ```yaml
 diagrams:
@@ -320,6 +320,7 @@ git commit -m "docs: add self-contained surface transforms"
 ### Task 3: Replace copied SVGs with fact-checked HTML masters and derived assets
 
 **Files:**
+- Modify: `docs/manifest.yaml` (replace `diagrams: []` with the 23 entries enumerated in Task 1)
 - Create: `scripts/docs/render_diagrams.py`
 - Create: `tests/scripts/docs/test_render_diagrams.py`
 - Create: `docs/diagrams/*.html` (23 manifest masters)
@@ -527,7 +528,7 @@ git commit -m "docs: generate site and wiki from one source"
 - Delete after parity: `scripts/check_surfaces.py`, `scripts/check_diagrams.py`, `scripts/diagrams_manifest.yaml`, `tests/scripts/test_check_surfaces.py`, `tests/scripts/test_check_diagrams.py`
 
 **Interfaces:**
-- Produces: `Finding(severity: str, message: str)`, `check_completeness(...)`, `check_numbering(...)`, `check_self_containment(...)`, `check_placeholders(...)`, `check_empty_artifacts(...)`, `check(repo_root: Path) -> tuple[Finding, ...]`, `sync_wiki(source: Path, clone: Path) -> None`, `push_wiki(source: Path, remote: str, key_path: Path, *, push: bool) -> None`.
+- Produces: `Finding(severity: str, message: str)`, `check_completeness(...)`, `check_numbering(...)`, `check_self_containment(...)`, `check_placeholders(...)`, `check_empty_artifacts(...)`, `check(repo_root: Path) -> tuple[Finding, ...]`, `sync_wiki(source: Path, clone: Path) -> None`, `push_wiki(source: Path, remote: str, key_path: Path | None, *, push: bool) -> None`.
 
 - [ ] **Step 1: Write failing aggregate-gate tests**
 
@@ -573,6 +574,17 @@ def test_push_command_targets_master_and_supplies_default_identity(fake_git, tmp
     assert fake_git.last_push_ref == "master"
     assert fake_git.env["GIT_AUTHOR_NAME"] == "data-eng-lab docs bot"
     assert fake_git.env["GIT_AUTHOR_EMAIL"] == "docs-bot@users.noreply.github.com"
+
+
+def test_https_remote_does_not_require_an_ssh_key(fake_git, tmp_path):
+    push_wiki(
+        tmp_path / "source",
+        "https://x-access-token:token@github.com/thekaveh/data-eng-lab.wiki.git",
+        None,
+        push=True,
+    )
+    assert "GIT_SSH_COMMAND" not in fake_git.env
+    assert fake_git.last_push_ref == "master"
 ```
 
 - [ ] **Step 3: Implement all gate probes**
@@ -581,7 +593,7 @@ def test_push_command_targets_master_and_supplies_default_identity(fake_git, tmp
 
 - [ ] **Step 4: Implement safe wiki synchronization**
 
-Clone to a temporary directory for `--push`, preserve `.git`, remove stale working-tree files, copy `generated/wiki`, stage within the clone, skip commit/push when the index is unchanged, default author/committer identity, set `GIT_SSH_COMMAND` with the provided key path, and push `HEAD:master`.
+Clone to a temporary directory for `--push`, preserve `.git`, remove stale working-tree files, copy `generated/wiki`, stage within the clone, skip commit/push when the index is unchanged, default author/committer identity, and push `HEAD:master`. Set `GIT_SSH_COMMAND` only for an SSH remote with a non-null key path; accept an authenticated HTTPS remote with `key_path=None` so the current `GITHUB_TOKEN` publisher remains supported.
 
 - [ ] **Step 5: Add the supported Make interface**
 
