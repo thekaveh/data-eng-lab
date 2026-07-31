@@ -10,15 +10,46 @@ from pathlib import Path
 SITE = "thekaveh.github.io"
 BANNER = "Full docs site"
 MARKDOWN_LINK = re.compile(r"(!?)\[[^\]]*\]\(([^)]+)\)")
-DOCS_TARGET = re.compile(r"^(?:\.\./)*docs/")
+URI_SCHEME = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
 
 
-def _allowed_docs_image(root: Path, source: Path, bang: str, target: str) -> bool:
-    """Return whether a docs/-relative target is the committed PNG exception."""
-    if bang != "!" or not target.endswith(".png"):
+def _resolve_local_target(source: Path, target: str) -> tuple[str, Path] | None:
+    """Strip URL decorations and resolve a local target without requiring it to exist."""
+    clean = re.split(r"[?#]", target, maxsplit=1)[0]
+    if not clean or clean.startswith("//") or URI_SCHEME.match(clean):
+        return None
+    return clean, (source.parent / clean).resolve()
+
+
+def _escapes_root(root: Path, source: Path, target: str) -> bool:
+    """Return whether lexical traversal leaves root before reaching its final target."""
+    path = Path(target)
+    if path.is_absolute():
+        return True
+    depth = len(source.parent.resolve().relative_to(root).parts)
+    for part in path.parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if depth == 0:
+                return True
+            depth -= 1
+        else:
+            depth += 1
+    return False
+
+
+def _allowed_docs_image(
+    root: Path,
+    source: Path,
+    bang: str,
+    target: str,
+    resolved: Path,
+) -> bool:
+    """Return whether a resolved docs target is the committed PNG exception."""
+    if bang != "!" or Path(target).suffix != ".png" or _escapes_root(root, source, target):
         return False
     canonical = (root / "docs" / "diagrams" / "img").resolve()
-    resolved = (source.parent / target).resolve()
     return resolved.parent == canonical and resolved.is_file()
 
 
@@ -36,9 +67,16 @@ def _scan(root: Path) -> list[str]:
             findings.append(f"{f.relative_to(root)}: links to .io site")
         for match in MARKDOWN_LINK.finditer(text):
             bang, target = match.groups()
-            if DOCS_TARGET.match(target) and not _allowed_docs_image(root, f, bang, target):
+            local = _resolve_local_target(f, target)
+            if local is None:
+                continue
+            clean, resolved = local
+            docs = (root / "docs").resolve()
+            if resolved.is_relative_to(docs) and not _allowed_docs_image(
+                root, f, bang, clean, resolved
+            ):
                 findings.append(f"{f.relative_to(root)}: forbidden docs/-relative target {target}")
-            if bang == "!" and target.endswith((".png", ".svg")) and not (f.parent / target).is_file():
+            if bang == "!" and Path(clean).suffix in (".png", ".svg") and not resolved.is_file():
                 findings.append(f"{f.relative_to(root)}: missing local image {target}")
     # wiki surface
     wdir = root / "wiki"
@@ -51,7 +89,11 @@ def _scan(root: Path) -> list[str]:
                 findings.append(f"wiki/{f.name}: contains mirror banner")
             for match in MARKDOWN_LINK.finditer(text):
                 bang, target = match.groups()
-                if bang == "!" and target.endswith((".png", ".svg")) and not (f.parent / target).is_file():
+                local = _resolve_local_target(f, target)
+                if local is None:
+                    continue
+                clean, resolved = local
+                if bang == "!" and Path(clean).suffix in (".png", ".svg") and not resolved.is_file():
                     findings.append(f"wiki/{f.name}: missing local image {target}")
     return findings
 
