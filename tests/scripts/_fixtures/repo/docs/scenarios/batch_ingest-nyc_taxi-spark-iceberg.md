@@ -4,7 +4,7 @@ Lede.
 p
 ## 3. Architecture
 
-![Architecture](../architectures/batch_ingest-nyc_taxi-spark-iceberg.svg)
+![Architecture](../diagrams/img/batch_ingest-nyc_taxi-spark-iceberg.png)
 ## 8. Known Issues & Caveats
 p
 ## See Also

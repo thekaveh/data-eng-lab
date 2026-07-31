@@ -16,7 +16,7 @@ def test_wiki_has_home_sidebar_scenarios_no_banner():
     assert "Full docs site" not in scen            # no banner
     assert "thekaveh.github.io" not in scen
     assert "[[Datasets]]" in scen                  # concept → wiki link
-    assert "batch_ingest-nyc_taxi-spark-iceberg.svg" in scen  # diagram localized
+    assert "batch_ingest-nyc_taxi-spark-iceberg.png" in scen  # diagram localized
 
 
 def test_sidebar_lists_sections():

@@ -20,6 +20,7 @@ def _map():
     ("https://github.com/thekaveh/atlas", LinkKind.EXTERNAL_OTHER),
     ("architectures/foo.svg", LinkKind.DIAGRAM),
     ("architectures/foo.html", LinkKind.DIAGRAM),
+    ("../diagrams/img/foo.png", LinkKind.DIAGRAM),
     ("../bar.md", LinkKind.DOC_RELATIVE),
     ("datasets.md", LinkKind.DOC_RELATIVE),
     ("#anchor", LinkKind.ANCHOR),
@@ -37,29 +38,25 @@ def test_readme_rewrites_internal_and_localizes_diagram():
         "../medallion-nyc_taxi-spark-iceberg/README.md"
     # concept → root README anchor
     assert rewrite_for_readme("datasets.md", cur, m) == "../../README.md#datasets"
-    # diagram → local svg (relative to the scenario README's dir)
-    assert rewrite_for_readme("architectures/batch_ingest-nyc_taxi-spark-iceberg.svg", cur, m) == \
-        "architectures/batch_ingest-nyc_taxi-spark-iceberg.svg"
+    # diagram → committed PNG (relative to the scenario README's dir)
+    assert rewrite_for_readme("../diagrams/img/batch_ingest-nyc_taxi-spark-iceberg.png", cur, m) == \
+        "../../docs/diagrams/img/batch_ingest-nyc_taxi-spark-iceberg.png"
     # site URL must NOT appear
     assert "thekaveh.github.io" not in \
         rewrite_for_readme("https://thekaveh.github.io/data-eng-lab/", cur, m)
 
 
-def test_readme_normalizes_dotdot_prefixed_diagram_to_local_architectures():
-    # Regression: a source doc at docs/scenarios/foo.md references its diagram via
-    # ../architectures/foo.svg (resolves inside docs/). The README surface must NORMALIZE
-    # that to architectures/foo.svg so it resolves against the scenario README's own dir
-    # (scenarios/foo/architectures/foo.svg). Returning the verbatim ../-prefixed target
-    # made the in-repo README point at scenarios/architectures/... (wrong).
+def test_readme_normalizes_diagrams_to_committed_pngs():
+    # Source docs and legacy inputs both normalize to the one committed PNG projection.
     m = _map()
     assert rewrite_for_readme("../architectures/foo.svg",
-                              "scenarios/foo-bar-baz-qux.md", m) == "architectures/foo.svg"
-    # .html diagram refs are also normalized to .svg basename
+                              "scenarios/foo-bar-baz-qux.md", m) == "../../docs/diagrams/img/foo.png"
     assert rewrite_for_readme("../architectures/foo.html",
-                              "scenarios/foo-bar-baz-qux.md", m) == "architectures/foo.svg"
-    # Root README's own diagram ref (bare, no ../) is likewise normalized.
+                              "scenarios/foo-bar-baz-qux.md", m) == "../../docs/diagrams/img/foo.png"
+    assert rewrite_for_readme("../diagrams/img/foo.png",
+                              "scenarios/foo-bar-baz-qux.md", m) == "../../docs/diagrams/img/foo.png"
     assert rewrite_for_readme("architectures/overview.svg", "index.md", m) == \
-        "architectures/overview.svg"
+        "docs/diagrams/img/overview.png"
 
 
 def test_readme_rejects_site_url():
@@ -83,5 +80,5 @@ def test_wiki_uses_wiki_links():
     assert rewrite_for_wiki("medallion-nyc_taxi-spark-iceberg.md", cur, m) == \
         "[[Scenario-medallion-nyc_taxi-spark-iceberg]]"
     assert rewrite_for_wiki("datasets.md", cur, m) == "[[Datasets]]"
-    assert rewrite_for_wiki("architectures/batch_ingest-nyc_taxi-spark-iceberg.svg", cur, m) == \
-        "batch_ingest-nyc_taxi-spark-iceberg.svg"
+    assert rewrite_for_wiki("../diagrams/img/batch_ingest-nyc_taxi-spark-iceberg.png", cur, m) == \
+        "batch_ingest-nyc_taxi-spark-iceberg.png"

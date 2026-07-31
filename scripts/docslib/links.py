@@ -47,7 +47,13 @@ def classify(target: str) -> LinkKind:
         return LinkKind.MAILTO
     if t.startswith(("http://", "https://")):
         return LinkKind.EXTERNAL_SITE if t.startswith(SITE_URL_PREFIX) else LinkKind.EXTERNAL_OTHER
-    if "/architectures/" in t or t.startswith("architectures/") or "architecture.html" in t:
+    if (
+        "/architectures/" in t
+        or t.startswith("architectures/")
+        or "architecture.html" in t
+        or "/diagrams/img/" in t
+        or t.startswith("diagrams/img/")
+    ):
         return LinkKind.DIAGRAM
     if t.endswith(".md") or "/" in t:
         return LinkKind.DOC_RELATIVE
@@ -56,7 +62,7 @@ def classify(target: str) -> LinkKind:
 
 def _diagram_basename(target: str) -> str:
     base = target.split("/")[-1]
-    return re.sub(r"\.(html|svg)$", ".svg", base)
+    return re.sub(r"\.(html|png|svg)$", ".png", base)
 
 
 def _resolve_doc_relative(target: str, current_doc_posix: str) -> str:
@@ -117,13 +123,8 @@ def rewrite_for_readme(target: str, current_doc_posix: str, doc_map: DocMap) -> 
     if kind == LinkKind.EXTERNAL_OTHER:
         return target
     if kind == LinkKind.DIAGRAM:
-        # Normalize to the local-relative form used inside every in-repo README dir:
-        #   scenario README (scenarios/foo/) → scenarios/foo/architectures/foo.svg
-        #   app README (spark-apps/bar/)      → spark-apps/bar/architectures/bar.svg
-        #   root README (<repo>/)             → <repo>/architectures/overview.svg
-        # The source may carry a ``../`` prefix (docs/scenarios/foo.md → docs/architectures/foo.svg);
-        # we strip it so the path resolves to the surface-local copy made by assets.copy_assets.
-        return f"architectures/{_diagram_basename(target)}"
+        destination = f"docs/diagrams/img/{_diagram_basename(target)}"
+        return _relpath(_readme_dir_for(current_doc_posix), destination)
     # DOC_RELATIVE
     doc_posix = _resolve_doc_relative(target, current_doc_posix)
     if doc_posix in doc_map.readme:
@@ -146,7 +147,7 @@ def rewrite_for_wiki(target: str, current_doc_posix: str, doc_map: DocMap) -> st
     if kind == LinkKind.EXTERNAL_OTHER:
         return target
     if kind == LinkKind.DIAGRAM:
-        return _diagram_basename(target)  # svg copied into wiki repo root
+        return _diagram_basename(target)  # PNG copied into wiki repo root
     doc_posix = _resolve_doc_relative(target, current_doc_posix)
     if doc_posix in doc_map.wiki:
         return f"[[{doc_map.wiki[doc_posix]}]]"

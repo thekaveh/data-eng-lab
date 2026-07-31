@@ -45,7 +45,7 @@ lakehouse.bronze.nyc_taxi_trips
     └──────────────────┘          └──────────────────────┘
 ```
 
-![Architecture](architectures/nyc-taxi-medallion.svg)
+![Architecture](../../docs/diagrams/img/nyc-taxi-medallion.png)
 
 - **Iceberg bronze → Jenkins:** SCM poll triggers the pipeline; Spark reads from the bronze layer.
 - **Jenkins CI:** runs `mvn test` (ScalaTest) then `mvn package`, producing a shaded JAR.

@@ -70,7 +70,7 @@ def _check(repo_root: Path, wiki_dir: Path) -> int:
         wtmp = tmp / "wiki"
         wtmp.mkdir()
         _write_surface(render_wiki_surface(model, doc_map, repo_root), wtmp)
-        copy_assets(model, tmp, wtmp)
+        copy_assets(model, repo_root, wtmp)
         for rel in _expected_outputs(model):
             committed = repo_root / rel
             fresh = tmp / rel

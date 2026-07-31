@@ -13,10 +13,16 @@ from scripts.docs.render_diagrams import (
 )
 
 
-def test_extract_svg_sanitizes_html_named_entities():
-    master = '<html><svg xmlns="http://www.w3.org/2000/svg"><text>&Sigma; &middot; &amp;</text></svg></html>'
+def test_extract_svg_sanitizes_html_named_entities_and_preserves_numeric_entities():
+    master = (
+        '<html><svg xmlns="http://www.w3.org/2000/svg">'
+        "<text>&Sigma; &middot; &amp; &#931; &#x3A3;</text>"
+        "</svg></html>"
+    )
 
-    assert extract_svg(master) == '<svg xmlns="http://www.w3.org/2000/svg"><text>Σ · &amp;</text></svg>'
+    assert extract_svg(master) == (
+        '<svg xmlns="http://www.w3.org/2000/svg"><text>Σ · &amp; &#931; &#x3A3;</text></svg>'
+    )
 
 
 def test_extract_svg_rejects_missing_or_multiple_roots():
@@ -79,8 +85,22 @@ def test_render_all_writes_site_svg_and_committed_png(tmp_path):
         tmp_path / "docs/diagrams/img",
     )
 
-    assert (tmp_path / "generated/site/assets/img/overview.svg").read_text(encoding="utf-8").endswith("\n")
-    assert (tmp_path / "docs/diagrams/img/overview.png").read_bytes().startswith(b"\x89PNG")
+    svg_path = tmp_path / "generated/site/assets/img/overview.svg"
+    png_path = tmp_path / "docs/diagrams/img/overview.png"
+    first_svg = svg_path.read_bytes()
+    first_png = png_path.read_bytes()
+    assert first_svg.endswith(b"\n")
+    assert first_png.startswith(b"\x89PNG")
+
+    render_all(
+        manifest,
+        tmp_path,
+        tmp_path / "generated/site/assets/img",
+        tmp_path / "docs/diagrams/img",
+    )
+
+    assert svg_path.read_bytes() == first_svg
+    assert png_path.read_bytes() == first_png
 
 
 def test_copy_assets_copies_only_png_files(tmp_path):

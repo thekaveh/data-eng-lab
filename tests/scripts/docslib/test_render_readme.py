@@ -24,13 +24,10 @@ def test_scenario_readme_internal_links_only(tmp_path):
     sreadme = out[Path("scenarios/batch_ingest-nyc_taxi-spark-iceberg/README.md")]
     assert sreadme.startswith(AUTOGEN_HEADER)
     assert "thekaveh.github.io" not in sreadme
-    assert "../../docs/" not in sreadme              # no docs/ cross-link
     assert "../README.md#datasets" in sreadme        # concept → root README
-    # diagram localized: the fixture source uses the ../architectures/... form (matching
-    # the real docs); the rendered README must NORMALIZE it to architectures/... so it
-    # resolves inside the scenario README's own dir.
-    assert "(architectures/batch_ingest-nyc_taxi-spark-iceberg.svg)" in sreadme
-    assert "../architectures/" not in sreadme        # the ../-prefixed form must be gone
+    assert "(../../docs/diagrams/img/batch_ingest-nyc_taxi-spark-iceberg.png)" in sreadme
+    assert sreadme.count("../../docs/") == 1          # only the committed diagram asset
+    assert "architectures/" not in sreadme
 
 
 def test_notebooks_md_emitted():
