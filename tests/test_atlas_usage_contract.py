@@ -117,11 +117,12 @@ def test_current_docs_do_not_describe_atlas_791_as_pending():
     assert not stale
 
 
-def test_current_docs_record_the_closed_atlas_850_fix_pending_live_retest():
+def test_current_docs_record_the_closed_atlas_850_fix_and_live_acceptance():
     text = (ROOT / "docs" / "atlas-feedback-go-live.md").read_text(encoding="utf-8")
     assert "#850](https://github.com/thekaveh/atlas/issues/850) is closed" in text
     assert "AIRFLOW__API_AUTH__JWT_SECRET" in text
-    assert "live acceptance and promotion are not yet claimed" in text
+    assert "acceptance gate for this pin" in text
+    assert "`FINISHED` with `success=true`" in text
     assert "#791's in-network DNS repair is validated" in text
 
 

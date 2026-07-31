@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # batch_ingest-nyc_taxi-spark-iceberg
 
 Batch ingestion: read raw NYC taxi Trips Parquet from `s3a://landing/nyc_taxi/*` and write to an Iceberg bronze table. Scala (Zeppelin) and PySpark (Jupyter) notebooks implement the same logic.
@@ -42,7 +41,7 @@ Source: `s3a://landing/nyc_taxi/*.parquet` (downloaded via `make datasets`).
 
 ## 3. Architecture
 
-![Architecture](architectures/batch_ingest-nyc_taxi-spark-iceberg.svg)
+![Architecture](../../docs/diagrams/img/batch_ingest-nyc_taxi-spark-iceberg.png)
 
 Raw Parquet trip data flows from the S3 landing zone through Spark batch processing into an Iceberg bronze table in the `lakehouse.bronze` namespace. The notebooks select the declared `tiny`, `small`, or `medium` file list deterministically (default `small`, matching `make datasets`), normalize `passenger_count` to `double` per file, and then union by name. This preserves source records while avoiding the known March `INT64` / double incompatibility.
 
@@ -87,5 +86,5 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `
 - [Related: medallion-nyc_taxi-spark-iceberg](../medallion-nyc_taxi-spark-iceberg/README.md) — Medallion transforms downstream
 - [Related: time_travel-nyc_taxi-spark-iceberg](../time_travel-nyc_taxi-spark-iceberg/README.md) — Iceberg time travel on ingested tables
 - [Production Spark app: nyc-taxi-etl](../../spark-apps/nyc-taxi-etl/README.md) — Phase-3a JAR productionizes this scenario for Airflow
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

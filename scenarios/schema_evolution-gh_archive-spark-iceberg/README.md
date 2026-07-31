@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # schema_evolution-gh_archive-spark-iceberg
 
 Handles schema evolution in GitHub Archive events using Iceberg's schema evolution to accommodate evolving JSON schema with new fields over time.
@@ -26,7 +25,7 @@ Source: Compressed JSON files from GitHub Archive landing zone (`s3a://landing/g
 
 ## 3. Architecture
 
-![Architecture](architectures/schema_evolution-gh_archive-spark-iceberg.svg)
+![Architecture](../../docs/diagrams/img/schema_evolution-gh_archive-spark-iceberg.png)
 
 GitHub Archive JSON events flow from the landing zone through Spark batch processing with Iceberg's schema evolution enabled. As new fields appear in the JSON data, Iceberg automatically extends the table schema to include them, preserving historical records that were written with the original schema. No manual ALTER TABLE is required.
 
@@ -70,5 +69,5 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `
 - [Related: json_flatten-gh_archive-spark-iceberg](../json_flatten-gh_archive-spark-iceberg/README.md) — JSON field extraction (upstream)
 - [Related: sessionization-gh_archive-spark-iceberg](../sessionization-gh_archive-spark-iceberg/README.md) — Consumes flattened events
 - [Related: streaming_ingest-gh_archive-spark-iceberg](../streaming_ingest-gh_archive-spark-iceberg/README.md) — Streaming version of JSON ingest
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

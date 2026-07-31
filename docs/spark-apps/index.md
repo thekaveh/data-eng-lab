@@ -1,8 +1,8 @@
-# Spark Applications
+# 7.1. Overview
 
-This directory documents the production Spark applications in the `data-eng-lab` lakehouse. Each application is a Maven-built Scala Spark project with a Jenkinsfile for CI (build, test, package shaded JAR) and an Airflow DAG for CD (SparkSubmitHook cluster-mode deployment plus REST driver confirmation). Together, these apps productionize the notebook prototypes originally authored as Spark-Iceberg scenarios.
+This directory documents the production Spark applications in the `data-eng-lab` lakehouse. Each application is a Maven-built Scala Spark project with a Jenkins pipeline for build, test, package, and publication, plus an Airflow TaskFlow DAG that uses `SparkSubmitHook` and Atlas's REST-confirmation helper.
 
-The applications form a sequential pipeline: raw Parquet data is first ingested and quality-filtered into the bronze layer (`nyc-taxi-etl`), then deduplicated and aggregated across silver and gold layers (`nyc-taxi-medallion`). The shaded JARs produced by Jenkins include all runtime dependencies (Iceberg bindings bundled, Spark marked `provided`) and are published to MinIO for Airflow's `SparkSubmitHook` to submit and verify through Atlas's Spark REST helper.
+The data products form a sequence: `nyc-taxi-etl` creates the Bronze table, and `nyc-taxi-medallion` reads that table to create Silver and Gold tables. The DAGs remain independently scheduled, so operators must ensure the Bronze prerequisite exists before running the medallion DAG.
 
 ## Overview
 
@@ -15,9 +15,11 @@ The applications form a sequential pipeline: raw Parquet data is first ingested 
 
 Both apps follow the same CI/CD pattern:
 
-1. **CI:** Jenkins clones the repo → `mvn test` (ScalaTest) → `mvn package` (Maven Shade plugin) → produces a shaded JAR → publishes to `s3a://jars/<app>/0.1.0/<app>.jar` in MinIO.
-2. **CD:** Airflow's `SparkSubmitHook` (cluster deploy mode) submits the JAR from MinIO with Iceberg catalog configuration, then confirms the completed driver through Atlas's Spark REST endpoint.
+1. **CI:** Jenkins runs `mvn test`, then `mvn package`, and publishes the local Maven artifact to the stable MinIO object `s3a://jars/<app>/0.1.0/app.jar`.
+2. **CD:** Airflow's `SparkSubmitHook` submits the object in Spark standalone cluster mode with the Iceberg catalog configuration, then confirms the completed driver through Atlas's Spark REST helper.
 3. The JAR output is consumed by downstream scenarios or serves as the final medallion-layer output.
+
+The POMs mark Spark as `provided`. The Atlas Spark image supplies the Spark, S3A, and Iceberg runtime used by the cluster driver.
 
 ```
 GitHub SCM
@@ -27,7 +29,7 @@ Jenkins CI
   mvn test → mvn package → shaded JAR
     │
     ▼
-MinIO (/jars/<app>/0.1.0/<app>.jar)
+MinIO (/jars/<app>/0.1.0/app.jar)
     │
     ▼
 Airflow (SparkSubmitHook + REST confirmation, cluster mode)
@@ -41,5 +43,5 @@ Spark Cluster (reads from/sinks to Iceberg tables in S3)
 - Atlas A5 (Jenkins CI) + A6 (Airflow spark-submit CD)
 - `mvn` installed locally for testing
 - S3A credentials configured on the Spark cluster (for Iceberg catalog access)
-- MinIO `mc` alias and `jars` bucket (A5)
+- Jenkins MinIO endpoint and Iceberg credentials; each Jenkinsfile creates its `atlas` alias
 - Iceberg catalog configuration on the Spark cluster (`spark.sql extensions`, warehouse path, catalog type)

@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # table_maintenance-nyc_taxi-spark-iceberg
 
 Demonstrates Iceberg table maintenance operations: overwrite, VACUUM, and time travel on NYC taxi trip data.
@@ -33,7 +32,7 @@ Source: `lakehouse.bronze.nyc_taxi_trips` (populated by `batch_ingest-nyc_taxi-s
 
 ## 3. Architecture
 
-![Architecture](architectures/table_maintenance-nyc_taxi-spark-iceberg.svg)
+![Architecture](../../docs/diagrams/img/table_maintenance-nyc_taxi-spark-iceberg.png)
 
 NYC taxi trip data from the bronze table flows through Spark batch processing demonstrating three Iceberg maintenance operations: (1) partition overwrite — replacing a specific date partition with new data, (2) VACUUM — cleaning up orphan metadata and data files, and (3) time travel — querying historical versions of the table using version or timestamp.
 
@@ -75,5 +74,5 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. Both 
 - [Related: batch_ingest-nyc_taxi-spark-iceberg](../batch_ingest-nyc_taxi-spark-iceberg/README.md) — Produces the bronze source data
 - [Related: medallion-nyc_taxi-spark-iceberg](../medallion-nyc_taxi-spark-iceberg/README.md) — Full medallion pipeline
 - [Production Spark app: nyc-taxi-medallion](../../spark-apps/nyc-taxi-medallion/README.md) — Phase-3a JAR productionizes this scenario for Airflow
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

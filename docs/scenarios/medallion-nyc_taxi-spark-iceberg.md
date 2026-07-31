@@ -1,4 +1,4 @@
-# medallion-nyc_taxi-spark-iceberg
+# 5.3. medallion-nyc_taxi-spark-iceberg
 
 Transforms raw NYC taxi trip data from the bronze layer through silver (cleaned) to gold (aggregated), implementing the medallion architecture pattern.
 
@@ -33,7 +33,7 @@ Source: `lakehouse.bronze.nyc_taxi_trips` (populated by `batch_ingest-nyc_taxi-s
 
 ## 3. Architecture
 
-![Architecture](../architectures/medallion-nyc_taxi-spark-iceberg.svg)
+![Architecture](../diagrams/img/medallion-nyc_taxi-spark-iceberg.png)
 
 NYC taxi trip data flows from the bronze table (raw) through Spark batch processing into the silver layer where trips are cleaned and enriched with computed columns (`trip_duration`, `start_hour`, `trip_direction`). From silver, data is aggregated into gold with daily per-location statistics including average duration, average fare, trip counts, and total revenue.
 

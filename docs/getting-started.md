@@ -1,4 +1,4 @@
-# Getting Started
+# 2. Getting Started
 
 Get the full `data-eng-lab` stack running in five steps.
 
@@ -29,7 +29,7 @@ The `data-eng-lab` platform runs on the Atlas Docker Compose cluster, consisting
 
 The medallion data flow runs at the bottom: bronze (raw) → silver (clean) → gold (aggregated).
 
-![Architecture](architectures/overview.svg)
+![Architecture](diagrams/img/overview.png)
 
 ---
 

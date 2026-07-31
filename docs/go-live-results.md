@@ -1,6 +1,22 @@
-# Go-Live Results
+# 8.3. Atlas Go-Live Results
 
 Detailed results from the go-live validation of the `data-eng-lab` platform.
+
+## 2026-07-31 Atlas Acceptance
+
+The scoped acceptance run used Atlas pin
+`985918ce8c805081947d53b1c48bb80610237a5b`.
+
+| Check | Observed result |
+|---|---|
+| Representative Airflow feature-artifact task | The first and only attempt succeeded. |
+| Spark standalone REST status | `FINISHED`; `success=true` |
+| `lakehouse.bronze.nyc_taxi_trips` row count | `8,991,502` |
+| Iceberg `passenger_count` type | `double` |
+
+This evidence closes only the acceptance gate for the reviewed Atlas pin. The
+consumer-modernization changes had already completed Gitflow promotion through
+PRs #66, #67, and #68.
 
 ## Preflight Results
 
@@ -34,7 +50,7 @@ Smoke test: PASS
 
 ## Scenario Execution
 
-All 19 scenarios executed with PySpark and Scala parity:
+The historical acceptance record reports all 19 scenarios passing and all 17 dual-language scenarios matching. The matrix below enumerates that recorded result; the two Trino-only scenarios have no Scala notebook counterpart.
 
 | Scenario | PySpark | Scala Spark | Parity |
 |---|---|---|---|
@@ -53,6 +69,7 @@ All 19 scenarios executed with PySpark and Scala parity:
 | join_optimization-tpch | PASS | PASS | MATCH |
 | star_schema-tpch | PASS | PASS | MATCH |
 | feature_engineering-movielens | PASS | PASS | MATCH |
+| incremental_upsert-online_retail | PASS | PASS | MATCH |
 | scd2-online_retail | PASS | PASS | MATCH |
 | json_flatten-gh_archive | PASS | PASS | MATCH |
 | sessionization-gh_archive | PASS | PASS | MATCH |

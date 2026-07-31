@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # federated_query-nyc_taxi-trino-iceberg
 
 Query the NYC-taxi Iceberg lakehouse via Trino SQL — `lakehouse.bronze.nyc_taxi_trips` → `lakehouse.gold.nyc_taxi_daily_trino` — from both a Zeppelin `%trino` notebook and a Jupyter notebook using the `trino` Python client. Both surfaces run identical SQL.
@@ -21,7 +20,7 @@ Source: `lakehouse.bronze.nyc_taxi_trips` (populated by `batch_ingest-nyc_taxi-s
 
 ## 3. Architecture
 
-![Architecture](architectures/federated_query-nyc_taxi-trino-iceberg.svg)
+![Architecture](../../docs/diagrams/img/federated_query-nyc_taxi-trino-iceberg.png)
 
 Data flows from the bronze Iceberg table through Trino SQL aggregation into the gold layer. Trino reads directly from the Iceberg REST catalog (same catalog as Spark), executes ANSI SQL queries for daily aggregation, and writes results back — no Spark cluster involved.
 
@@ -54,5 +53,5 @@ Live execution is gated on Atlas #268 (Trino coordinator integration). The `%tri
 ## See Also
 
 - [Upstream: batch_ingest-nyc_taxi-spark-iceberg](../batch_ingest-nyc_taxi-spark-iceberg/README.md) — Populates the bronze table
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

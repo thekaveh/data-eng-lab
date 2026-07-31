@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # medallion-nyc_taxi-spark-iceberg
 
 Transforms raw NYC taxi trip data from the bronze layer through silver (cleaned) to gold (aggregated), implementing the medallion architecture pattern.
@@ -34,7 +33,7 @@ Source: `lakehouse.bronze.nyc_taxi_trips` (populated by `batch_ingest-nyc_taxi-s
 
 ## 3. Architecture
 
-![Architecture](architectures/medallion-nyc_taxi-spark-iceberg.svg)
+![Architecture](../../docs/diagrams/img/medallion-nyc_taxi-spark-iceberg.png)
 
 NYC taxi trip data flows from the bronze table (raw) through Spark batch processing into the silver layer where trips are cleaned and enriched with computed columns (`trip_duration`, `start_hour`, `trip_direction`). From silver, data is aggregated into gold with daily per-location statistics including average duration, average fare, trip counts, and total revenue.
 
@@ -78,5 +77,5 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. All t
 - [Related: batch_ingest-nyc_taxi-spark-iceberg](../batch_ingest-nyc_taxi-spark-iceberg/README.md) — Produces the bronze source table
 - [Related: data_quality-nyc_taxi-spark-iceberg](../data_quality-nyc_taxi-spark-iceberg/README.md) — Quality checks on ingested data
 - [Production Spark app: nyc-taxi-medallion](../../spark-apps/nyc-taxi-medallion/README.md) — Phase-3a JAR productionizes this scenario for Airflow
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

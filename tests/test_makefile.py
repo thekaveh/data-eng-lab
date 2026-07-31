@@ -5,6 +5,7 @@ ROOT = Path(__file__).resolve().parents[1]
 TARGETS = [
     "setup", "up", "down", "datasets", "verify", "test",
     "preflight", "lint", "fmt", "new-scenario", "build-apps",
+    "docs-build", "docs-check", "docs-serve", "docs-wiki",
 ]
 
 
@@ -28,3 +29,11 @@ def test_new_scenario_target_runs_scaffolder():
 def test_build_apps_target_runs_maven():
     text = subprocess.run(["make", "-npq"], cwd=ROOT, capture_output=True, text=True).stdout
     assert "mvn" in text and "spark-apps" in text
+
+
+def test_docs_targets_use_supported_module_entrypoints():
+    text = subprocess.run(["make", "-npq"], cwd=ROOT, capture_output=True, text=True).stdout
+    assert "python -m scripts.docs.render_diagrams --root ." in text
+    assert "python -m scripts.docs.build_docs --site --root ." in text
+    assert "python -m scripts.docs.check_docs --root ." in text
+    assert "python -m scripts.docs.push_wiki --check --root ." in text

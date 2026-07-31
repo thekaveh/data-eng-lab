@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # feature_engineering-movielens-spark-iceberg
 
 Processes MovieLens dataset to create a feature store for machine learning, aggregating user and item features from rating history into Iceberg.
@@ -32,7 +31,7 @@ Source: `s3a://landing/movielens/ratings.csv` and `s3a://landing/movielens/movie
 
 ## 3. Architecture
 
-![Architecture](architectures/feature_engineering-movielens-spark-iceberg.svg)
+![Architecture](../../docs/diagrams/img/feature_engineering-movielens-spark-iceberg.png)
 
 MovieLens ratings and movies data flows from S3 landing zone into Spark for feature engineering. User-level features (aggregated ratings, deviation from mean) and item-level features (average ratings, genre distributions) are computed and stored in separate Iceberg silver tables, along with raw user-item interactions for feature serving.
 
@@ -73,5 +72,5 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. Both 
 
 ## See Also
 
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

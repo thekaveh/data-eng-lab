@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # incremental_upsert-online_retail-spark-iceberg
 
 Implements CDC-style incremental upserts using Iceberg's `MERGE INTO` to apply change sets idempotently without rewriting entire tables.
@@ -32,7 +31,7 @@ Source: Online retail batch deltas (inline seed data + change-set batches in the
 
 ## 3. Architecture
 
-![Architecture](architectures/incremental_upsert-online_retail-spark-iceberg.svg)
+![Architecture](../../docs/diagrams/img/incremental_upsert-online_retail-spark-iceberg.png)
 
 Data flows from inline seed data through Spark batch processing with `MERGE INTO`. The notebook seeds initial data, applies two change-set batches (one with an update, one with an insert). The same batch can be merged multiple times without duplication, demonstrating idempotent change-set application.
 
@@ -73,5 +72,5 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `
 
 - [Related: scd2-online_retail-spark-iceberg](../scd2-online_retail-spark-iceberg/README.md) — Another online_retail dimension scenario
 - [Related: cdc_streaming-online_retail-spark-iceberg](../cdc_streaming-online_retail-spark-iceberg/README.md) — Streaming form of CDC upserts
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

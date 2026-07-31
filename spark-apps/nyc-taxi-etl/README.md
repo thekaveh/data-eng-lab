@@ -1,127 +1,81 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # NYC Taxi ETL — Raw to Bronze
 
-Pure Spark application that reads raw Parquet files from the landing zone, applies quality filtering, and writes a cleaned Iceberg table at the bronze layer. This app is the first step in the lakehouse ingestion pipeline and is built by Jenkins, tested via ScalaTest, and orchestrated by Airflow.
+This Spark application reads the configured NYC Taxi Parquet landing set, normalizes the monthly schemas, filters invalid trips, and replaces the Bronze Iceberg table. Jenkins builds and publishes the application artifact; Airflow submits it to the Atlas Spark standalone cluster and confirms the terminal driver status.
 
 ## 1. Architecture
 
-```
-s3a://landing/nyc_taxi/*.parquet
-           │
-           ▼
-    ┌─────────────┐
-    │   GitHub     │  (Git SCM trigger)
-    └──────┬──────┘
-           │
-           ▼
-    ┌─────────────┐      ┌──────────┐
-    │  Jenkins CI  │─────▶│  MinIO   │
-    │ mvn test     │      │  jars/   │
-    │ mvn package  │      │ app.jar  │
-    └──────┬──────┘      └────┬─────┘
-           │                   │
-           ▼                   ▼
-    ┌─────────────────────────────┐
-    │        Airflow DAG           │
-    │ Hook + REST confirmation     │
-    └──────────────┬──────────────┘
-                   │
-                   ▼
-    ┌─────────────────────────────┐
-    │     Spark Cluster            │
-    │                              │
-    │  read Parquet → filter      │
-    │    → write Iceberg          │
-    └──────────────┬──────────────┘
-                   │
-                   ▼
-    ┌─────────────────────────────┐
-    │  lakehouse.bronze           │
-    │  .nyc_taxi_trips            │
-    └─────────────────────────────┘
-```
+![Architecture](../../docs/diagrams/img/nyc-taxi-etl.png)
 
-![Architecture](architectures/nyc-taxi-etl.svg)
-
-- **GitHub → Jenkins:** SCM poll or webhook triggers the pipeline.
-- **Jenkins CI:** runs `mvn test` then `mvn package`, producing a shaded JAR.
-- **MinIO:** JAR is published to `s3a://jars/nyc-taxi-etl/0.1.0/nyc-taxi-etl.jar`.
-- **Airflow:** `SparkSubmitHook` submits the JAR to the Spark cluster in cluster mode, then confirms the completed driver through Atlas's `spark-master:6066` REST endpoint.
-- **Spark Cluster:** reads Parquet from `s3a://landing/nyc_taxi/`, applies `TaxiTransforms` quality filters, writes Iceberg.
+Jenkins publishes the Maven output as `s3a://jars/nyc-taxi-etl/0.1.0/app.jar`. The published object name is deliberately stable even though the local Maven artifact is `target/nyc-taxi-etl-0.1.0.jar`.
 
 ## 2. Project Structure
 
-- **Language:** Scala (2.12)
-- **Build tool:** Maven (3.8+)
-- **Testing:** ScalaTest 3.2.19
-- **Transform source:** `src/main/scala/transforms/TaxiTransforms.scala`
-- **Entrypoint:** `src/main/scala/NycTaxiEtl.scala` (argument-driven: accepts `--source` / `--sink`)
-- **CI/CD:** `Jenkinsfile`, `src/main/scala/dag.py`
+- **Language:** Scala (2.13.14)
+- **Runtime target:** Spark 4.1.2 on Java 17
+- **Build and tests:** Maven with ScalaTest 3.2.19 and the Maven Shade plugin
+- **Landing reader:** `src/main/scala/com/thekaveh/dataeng/nyctaxi/TaxiLanding.scala`
+- **Transform source:** `src/main/scala/com/thekaveh/dataeng/nyctaxi/transforms/TaxiTransforms.scala`
+- **Entrypoint source:** `src/main/scala/com/thekaveh/dataeng/nyctaxi/NycTaxiEtl.scala`
+- **Entrypoint class:** `com.thekaveh.dataeng.nyctaxi.NycTaxiEtl`
+- **Automation:** `Jenkinsfile` and `dag.py` at the application root
+
+The entrypoint accepts two positional arguments: the landing prefix followed by the target table. Their defaults are `s3a://landing/nyc_taxi/` and `lakehouse.bronze.nyc_taxi_trips`.
 
 ## 3. Transform Logic
 
-The `TaxiTransforms` object defines a single public method `sanitize`:
+`TaxiLanding.read` selects the configured monthly objects, reads each Parquet file separately, casts `passenger_count` to `double`, and then unions the normalized DataFrames. Its default `small` scale selects the January through March 2023 files.
 
-1. **Input schema** — the raw Parquet schema: `id`, `type`, `actor_login` (repo), `created_at`, etc. from the `nyc_taxi` bucket.
-2. **Operations:**
-   - `drop null pickups` — filters out rows where the pickup datetime / primary key is null.
-   - `non-positive passengers` — filters out rows with passengers <= 0.
-   - `add trip_date` — derives a `trip_date` column as `to_date(created_at)`.
-3. **Output schema** — same columns as input plus `trip_date`, all non-null, ready for the bronze layer.
+`TaxiTransforms.clean` then:
 
-Spark concepts used: DataFrame `filter`, `withColumn`, `drop`, typed columns via `col()`, and I/O via `spark.read.parquet` / `df.writeTo("lakehouse.bronze.nyc_taxi_trips").append()`.
+1. keeps rows whose `tpep_pickup_datetime` is not null;
+2. keeps rows whose `passenger_count` is greater than zero; and
+3. derives `trip_date` from `tpep_pickup_datetime`.
 
-## 4. Build & Test
+The entrypoint creates the target namespace if necessary and writes the cleaned DataFrame with `createOrReplace()`. It does not declare an Iceberg partition specification.
+
+## 4. Build and Test
 
 ```bash
-# Run unit tests
 mvn -q -B -f spark-apps/nyc-taxi-etl/pom.xml test
-
-# Build the shaded JAR
 mvn -q -B -f spark-apps/nyc-taxi-etl/pom.xml package
 ```
 
+The package step produces `spark-apps/nyc-taxi-etl/target/nyc-taxi-etl-0.1.0.jar`. The Jenkins publish stage creates an `atlas` MinIO alias from its injected endpoint and credentials, then copies that file to `s3a://jars/nyc-taxi-etl/0.1.0/app.jar`.
+
 ## 5. Run with Airflow
 
-The DAG (`nyc_taxi_etl`) uses `SparkSubmitHook` configured with:
+The `nyc_taxi_etl` DAG contains one TaskFlow task. It constructs `SparkSubmitHook` with these source-backed settings:
 
-- **application:** `s3a://jars/nyc-taxi-etl/0.1.0/nyc-taxi-etl.jar`
-- **deploy-mode:** `cluster` (Spark runs on cluster YARN/K8s, not driver)
-- **conf:** Iceberg SPARK config (`spark.sql.extensions=org.apache.iceberg.spark.IcebergSparkSessionExtensions`, catalog config)
-- **completion:** Atlas #880's `submit_and_confirm_via_rest()` disables the incompatible provider poll, captures the standalone driver ID from the `spark-submit` log, then requires a `FINISHED` successful driver at `spark-master:6066`.
-- **jars:** the MinIO-published JAR
-- **dependencies:** no external PyPI packages; the JAR ships its shaded dependencies
+- **application:** `s3a://jars/nyc-taxi-etl/0.1.0/app.jar`
+- **class:** `com.thekaveh.dataeng.nyctaxi.NycTaxiEtl`
+- **arguments:** `s3a://landing/nyc_taxi/`, then `lakehouse.bronze.nyc_taxi_trips`
+- **submission:** Spark standalone cluster mode through `spark://spark-master:7077`
+- **Iceberg extension:** `org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions`
+- **completion:** `submit_and_confirm_via_rest()` captures the standalone driver ID from the submission log and requires a successful terminal result from `spark-master:6066`
 
-Spark reads `s3a://landing/nyc_taxi/` and writes to `lakehouse.bronze.nyc_taxi_trips`.
+Spark is a `provided` Maven dependency. The Atlas Spark image supplies the Spark, S3A, and Iceberg runtime; the application does not download runtime packages during submission.
 
 ## 6. Prerequisites
 
-- Atlas A5 (Jenkins CI pipeline)
-- Atlas A6 (Airflow SparkSubmitHook + Spark REST confirmation)
-- JAR published to `s3a://jars/nyc-taxi-etl/0.1.0/nyc-taxi-etl.jar`
-- Preconfigured `minio` `mc` alias and `jars` bucket (A5)
-- S3A credentials available on the Spark cluster (A6)
-- `s3a://landing/nyc_taxi/` populated with Parquet files
+- The Atlas Spark, Airflow, MinIO, and Iceberg REST services are running.
+- Jenkins has the MinIO endpoint and Iceberg access credentials used by the publish stage.
+- `s3a://landing/nyc_taxi/` contains the monthly Parquet files for the selected scale.
+- `s3a://jars/nyc-taxi-etl/0.1.0/app.jar` has been published.
+- The consumer overlay mounts `spark-apps/` below `/opt/airflow/dags`, where the DAG can import Atlas's shared `atlas_spark_utils` helper from the DAG root.
 
 ## 7. Data Flow
 
-```
-s3a://landing/nyc_taxi/*.parquet
-       │
-       │  read (Spark DataFrame)
-       ▼
-  TaxiTransforms.sanitize()
-       │  drop null pickups
-       │  drop non-positive passengers
-       │  add trip_date
-       ▼
-  lakehouse.bronze.nyc_taxi_trips  (Iceberg, partitioned by trip_date)
+```text
+selected landing Parquet files
+  -> per-file passenger_count normalization
+  -> TaxiTransforms.clean
+  -> lakehouse.bronze.nyc_taxi_trips (create or replace)
 ```
 
 ## 8. See Also
 
-- [Spark apps overview](../index/README.md)
-- [Related scenario: batch_ingest-nyc_taxi-spark-iceberg](../../scenarios/batch_ingest-nyc_taxi-spark-iceberg/README.md) — Produces the bronze table this app consumes
-- [Related scenario: medallion-nyc_taxi-spark-iceberg](../../scenarios/medallion-nyc_taxi-spark-iceberg/README.md) — Also consumes the bronze table
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
-- [Datasets](../../README.md#datasets)
+- [Spark apps overview](../../docs/spark-apps/index.md)
+- [Batch-ingest scenario](../../scenarios/batch_ingest-nyc_taxi-spark-iceberg/README.md)
+- [Medallion scenario](../../scenarios/medallion-nyc_taxi-spark-iceberg/README.md)
+- [Lakehouse architecture](../../docs/lakehouse.md)
+- [Datasets](../../docs/datasets.md)

@@ -1,4 +1,4 @@
-# Changelog
+# 9. Changelog
 
 All notable changes to this project are documented here (Keep a Changelog format).
 
@@ -8,19 +8,27 @@ All notable changes to this project are documented here (Keep a Changelog format
   verifier skeleton, and infra-preflight Layer 1.
 
 ### Changed
-- Atlas consumer operations now pin `985918ce` (superseding the #880-predecessor
-  `0644a8f3`, the #850-corrected
-  `882877a4` pin and the failed-gate
-  `af7713ee` pin and retaining the prior `881df596` reviewed/live-gate baseline);
-  changed committed Atlas source
-  automatically rebuilds local images using ignored `.atlas-build-state`, and
+- Documentation publication now validates every repository-local file and
+  Markdown fragment, rejects manifest path aliases and projection collisions,
+  and tracks each committed diagram PNG with a source/render-contract
+  fingerprint. Publication jobs force fresh PNG renders without requiring
+  Cairo output bytes to match across operating systems.
+- On 2026-07-31, Atlas consumer operations accepted pin
+  `985918ce8c805081947d53b1c48bb80610237a5b` after the representative Airflow
+  feature-artifact task succeeded on its first and only attempt. Spark standalone
+  REST reported `FINISHED` with `success=true`; the Bronze table contained
+  `8,991,502` rows and its Iceberg `passenger_count` type was `double`. The Atlas
+  consumer modernization had already completed Gitflow promotion through PRs
+  #66, #67, and #68. This pin supersedes the #880 predecessor `0644a8f3`, the
+  #850-corrected `882877a4` pin, and the failed-gate `af7713ee` pin while
+  retaining the prior `881df596` reviewed/live-gate baseline. Committed Atlas
+  source changes automatically rebuild local images using ignored `.atlas-build-state`, and
   the launcher exports/asserts only `ATLAS_MINIO_HOST_ENDPOINT`. Atlas #791's
   in-network Airflow Execution API configuration is live and validated. The
   prior `af7713ee` focused retest proved its attempted #850 patch set
   `AIRFLOW__API__JWT_SECRET` while Airflow 3.3 reads `[api_auth] jwt_secret`.
   The corrected reviewed pin closes #850 with
-  `AIRFLOW__API_AUTH__JWT_SECRET`; no Airflow DAG success or promotion is
-  claimed until its live retest. Atlas #880 corrects the remaining #792 wrapper
+  `AIRFLOW__API_AUTH__JWT_SECRET`. Atlas #880 corrects the remaining #792 wrapper
   defect for the
   shipped provider: both production cluster-mode DAGs construct
   `SparkSubmitHook` without an application and call
@@ -33,5 +41,5 @@ All notable changes to this project are documented here (Keep a Changelog format
 - Atlas consumption modernized: pin bumped `85ff46b2` → `2d006cae` (v0.1.0-587);
   adopted the `atlas.consumer.yml` consumer manifest (replaces the `_user/`
   symlink, `.env` injection, wrapper source flags, and `create_buckets.sh`);
-  unwound the #309–#311 go-live workarounds fixed upstream (#308 remains caveated —
-  see docs/atlas-feedback-go-live.md).
+  unwound the #309–#311 go-live workarounds fixed upstream. #308 remained
+  caveated at that historical pin and was resolved by the later #880 wrapper.
