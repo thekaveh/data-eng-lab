@@ -72,5 +72,5 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `
 
 - [Related: scd2-online_retail-spark-iceberg](../scd2-online_retail-spark-iceberg/README.md) — Another online_retail dimension scenario
 - [Related: cdc_streaming-online_retail-spark-iceberg](../cdc_streaming-online_retail-spark-iceberg/README.md) — Streaming form of CDC upserts
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

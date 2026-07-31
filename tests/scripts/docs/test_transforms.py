@@ -187,3 +187,23 @@ diagrams: []
 
     with pytest.raises(ManifestError, match="site destination escapes its surface root"):
         build_source_map(manifest, "site")
+
+
+def test_site_source_map_independently_rejects_destination_collisions():
+    manifest = parse_manifest(
+        """\
+surfaces: [repo, site, wiki]
+numbering: baked
+internal_roots: [docs/superpowers]
+sections:
+  - {id: overview, number: '1', title: Overview, source: docs/index.md}
+  - {id: duplicate, number: '2', title: Duplicate, source: index.md}
+diagrams: []
+"""
+    )
+
+    with pytest.raises(ManifestError, match="site destination collision at index.md") as error:
+        build_source_map(manifest, "site")
+
+    assert "overview (docs/index.md)" in str(error.value)
+    assert "duplicate (index.md)" in str(error.value)

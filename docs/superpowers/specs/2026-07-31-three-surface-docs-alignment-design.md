@@ -39,7 +39,7 @@ The 2026-07-31 audit found the following material defects:
 | Generated outputs | `generated/site/`, `generated/wiki/`, root `mkdocs.yml`, and `site/` are generated and gitignored. The tracked root `mkdocs.yml` is removed from the index. |
 | Site configuration | A deterministic template in the documentation builder generates `mkdocs.yml` with `docs_dir: generated/site` and no `repo_url`, `repo_name`, or `edit_uri`. |
 | Navigation and numbering | `docs/manifest.yaml` is the only declaration of public page membership and nav/sidebar hierarchy. Page numbers remain baked into portable Markdown headings and are cross-checked against the manifest. |
-| Diagrams | Each public diagram has one committed HTML master. The renderer extracts a sanitized SVG for the site and emits a committed PNG for repository/wiki use. Assets are physically copied to every generated surface. |
+| Diagrams | Each public diagram has one committed HTML master, PNG, and source/render-contract SHA-256 sidecar. The renderer extracts a sanitized SVG for the site and emits a PNG for repository/wiki use. Assets are physically copied to every generated surface. |
 | Runtime content | Atlas status pages are updated to state the completed 2026-07-31 acceptance and promotion, with exact evidence grounded in the repository and captured run results. |
 | Atlas ownership | No file inside `infra/` is modified. The existing reviewed submodule pin remains unchanged. |
 | Gitflow | Feature branch → `develop` PR → `main` PR. Publishing runs from `main`; merge gates cover both protected branches. |
@@ -52,7 +52,7 @@ README.md                       ─┐
 docs/public Markdown             ├─ build/check ─ generated/site ─ MkDocs Pages
 docs/manifest.yaml               │               generated/wiki ─ GitHub Wiki
 docs/diagrams/*.html             │               mkdocs.yml
-docs/diagrams/img/*.png         ─┘               site/
+docs/diagrams/img/*.{png,sha256} ─┘               site/
 
 docs/superpowers/  ─ internal engineering archive; not published
 infra/             ─ immutable Atlas submodule; not modified
@@ -70,7 +70,7 @@ The in-repository surface needs no generated mirror: GitHub renders the canonica
 - notebook documentation and its source specifications where applicable;
 - diagram IDs and HTML master paths.
 
-Validation fails for malformed YAML, duplicate IDs or numbers, missing referenced files, a section that mixes `source` and `children`, unmanifested public Markdown, or disagreement between a manifest number and the page's baked heading.
+Validation fails for malformed YAML, duplicate IDs or numbers, missing referenced files, non-canonical source/master aliases, destination collisions, a section that mixes `source` and `children`, unmanifested public Markdown, or disagreement between a manifest number and the page's baked heading.
 
 `docs/superpowers/**` is the single explicit internal-tree exception. It is not silently treated as public content and is never copied into generated outputs.
 
@@ -99,6 +99,7 @@ The checker enforces the full matrix:
 - wiki Markdown has no repository source or site links;
 - relative Markdown links are rewritten only to manifest-known targets;
 - links to notebooks or non-public internal Markdown become unlinked text on generated surfaces;
+- every repository-local file target exists outside the internal archive and every local Markdown fragment resolves using GitHub-compatible heading slugs;
 - every referenced diagram exists locally on the surface that embeds it.
 
 The site configuration deliberately omits repository navigation and edit controls. User-facing README prose describes the project and its operation, not the documentation build system.
@@ -107,7 +108,7 @@ The site configuration deliberately omits repository navigation and edit control
 
 Each existing architecture diagram is reviewed against current DAGs, notebooks, Compose overlays, Spark applications, and Atlas consumer configuration. The migration then creates or consolidates one HTML master per diagram under `docs/diagrams/`, derives site SVG and committed repository/wiki PNG assets, and removes obsolete copied SVG trees only after all references have been migrated.
 
-Diagram rendering tests cover SVG extraction, HTML-entity sanitization, PNG validity, deterministic filenames, subdirectory-relative paths, and physical copying into both generated surfaces. Cairo is installed explicitly in CI.
+Diagram rendering tests cover SVG extraction, HTML-entity sanitization, PNG validity, deterministic filenames, subdirectory-relative paths, and physical copying into both generated surfaces. Each PNG's sidecar fingerprints the canonical extracted SVG together with the versioned renderer configuration. The merge gate compares that fingerprint to detect master-only drift; it deliberately does not compare Cairo-generated PNG bytes across hosts because installed fonts and native Cairo libraries can vary. Main-branch Pages/wiki publication forces a fresh render in its own job before copying assets. Cairo is installed explicitly in CI.
 
 ## 9. Content reconciliation
 
@@ -144,7 +145,7 @@ The work is complete only when all of the following are true:
 - Every public Markdown page is represented in the manifest; only `docs/superpowers/**` is excluded by policy.
 - No generated or repository surface contains a forbidden cross-surface link.
 - Root `mkdocs.yml`, `generated/`, and `site/` are ignored and reproducible.
-- Every diagram has an HTML master, generated site SVG, committed PNG, and surface-local references.
+- Every diagram has an HTML master, generated site SVG, committed PNG, matching source/render-contract fingerprint, and surface-local references.
 - `find docs -type f -empty -o -type d -empty` reports no empty public artifact or directory.
 - Atlas acceptance and promotion claims agree across all relevant canonical pages.
 - `infra/` remains at the reviewed pin with no submodule worktree modifications.
@@ -158,6 +159,7 @@ The work is complete only when all of the following are true:
 | Public/internal boundary accidentally publishes engineering plans | Manifest allow-list plus an explicit `docs/superpowers/**` exclusion test. |
 | Migration silently drops a current page | Inventory current nav, wiki map, README projections, and all public Markdown before finalizing the manifest. |
 | Generated trees appear clean while content differs | Compare SHA-256 hashes, not filenames alone. |
+| Native Cairo output differs across macOS and Ubuntu | Gate master/config freshness with committed source fingerprints; force fresh renders in publication jobs without requiring cross-host PNG byte equality. |
 | Diagram conversion changes semantics | Fact-check every master against current code/config and review generated SVG/PNG output. |
 | Wiki publication breaks | Preserve `master`, CI git identity, no-op behavior, and the already functional repository authentication path. |
 | Atlas submodule is modified accidentally | Check `git submodule status` and `git -C infra status` before each commit and stage explicit parent-repository paths only. |

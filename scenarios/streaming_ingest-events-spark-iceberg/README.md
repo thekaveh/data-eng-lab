@@ -68,5 +68,5 @@ Atlas seeds only the `atlas_stream_events` demo topic; this scenario uses its ow
 - Upstream: None — streaming source from Redpanda (no prior scenario)
 - [Downstream: streaming_windows-events-spark-iceberg](../streaming_windows-events-spark-iceberg/README.md) — Consumes events for windowed aggregation
 - [Downstream: cdc_streaming-online_retail-spark-iceberg](../cdc_streaming-online_retail-spark-iceberg/README.md) — Related streaming scenario using CDC topic
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

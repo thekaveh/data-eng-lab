@@ -53,5 +53,5 @@ Live execution is gated on Atlas #268 (Trino coordinator integration). The `%tri
 ## See Also
 
 - [Upstream: batch_ingest-nyc_taxi-spark-iceberg](../batch_ingest-nyc_taxi-spark-iceberg/README.md) — Populates the bronze table
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

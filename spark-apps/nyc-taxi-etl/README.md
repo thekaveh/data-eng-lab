@@ -119,8 +119,8 @@ s3a://landing/nyc_taxi/*.parquet
 
 ## 8. See Also
 
-- [Spark apps overview](../index/README.md)
+- [Spark apps overview](../../docs/spark-apps/index.md)
 - [Related scenario: batch_ingest-nyc_taxi-spark-iceberg](../../scenarios/batch_ingest-nyc_taxi-spark-iceberg/README.md) — Produces the bronze table this app consumes
 - [Related scenario: medallion-nyc_taxi-spark-iceberg](../../scenarios/medallion-nyc_taxi-spark-iceberg/README.md) — Also consumes the bronze table
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
-- [Datasets](../../README.md#datasets)
+- [Lakehouse Architecture](../../docs/lakehouse.md)
+- [Datasets](../../docs/datasets.md)

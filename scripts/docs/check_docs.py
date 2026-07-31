@@ -5,11 +5,11 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-import tempfile
+import unicodedata
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from scripts.docs.build_docs import DocumentationDrift, build
 from scripts.docs.links import (
@@ -21,7 +21,12 @@ from scripts.docs.links import (
     is_forbidden,
 )
 from scripts.docs.manifest import Manifest, ManifestError, iter_leaf_sections, load_manifest
-from scripts.docs.render_diagrams import DiagramError, extract_svg, svg_to_png
+from scripts.docs.render_diagrams import (
+    DiagramError,
+    diagram_fingerprint,
+    extract_svg,
+    projection_fingerprint_path,
+)
 
 _UNFINISHED_MARKERS = ("TO" + "DO", "TB" + "D", "FIX" + "ME", "X" + "XX")
 _H1 = re.compile(r"^ {0,3}(# [^\r\n]+)$", re.MULTILINE)
@@ -160,12 +165,12 @@ def check_empty_artifacts(repo_root: Path) -> tuple[Finding, ...]:
 
 
 def check_self_containment(repo_root: Path) -> tuple[Finding, ...]:
-    """Reject cross-surface links and missing surface-local image targets."""
+    """Reject cross-surface links and invalid surface-local targets/fragments."""
     root = repo_root.resolve()
     manifest, findings = _load(root)
     if manifest is None:
         return findings
-    for surface, path, restrict_docs in _surface_files(root, manifest.internal_roots):
+    for surface, path in _surface_files(root, manifest.internal_roots):
         text = path.read_text(encoding="utf-8")
         relative = path.relative_to(root).as_posix()
         findings += _origin_findings(relative, text, surface)
@@ -173,7 +178,7 @@ def check_self_containment(repo_root: Path) -> tuple[Finding, ...]:
             findings += (_error(f"{relative}: contains mirror banner"),)
         if path.suffix != ".md":
             continue
-        for match in MARKDOWN_LINK_RE.finditer(text):
+        for match in MARKDOWN_LINK_RE.finditer(_without_fenced_code(text)):
             target = match.group("target")
             # Exercise the shared classifier as the authoritative origin matrix.
             if is_forbidden(target, surface):
@@ -181,29 +186,43 @@ def check_self_containment(repo_root: Path) -> tuple[Finding, ...]:
             local = _resolve_local_target(path, target)
             if local is None:
                 continue
-            clean, resolved = local
-            if restrict_docs and resolved.is_relative_to((root / "docs").resolve()):
-                if not _allowed_docs_image(root, path, match.group(0), clean, resolved):
-                    findings += (
-                        _error(f"{relative}: forbidden docs/-relative target {target}"),
-                    )
+            clean, fragment, resolved = local
             is_image = match.group(0).startswith("!")
-            if surface in {"site", "wiki"} or (is_image and Path(clean).suffix in {".png", ".svg"}):
-                surface_root = {
-                    "repo": root,
-                    "site": root / "generated/site",
-                    "wiki": root / "generated/wiki",
-                }[surface].resolve()
-                if not resolved.is_relative_to(surface_root):
-                    label = "repository" if surface == "repo" else surface
-                    kind = "image" if is_image else "target"
+            surface_root = {
+                "repo": root,
+                "site": root / "generated/site",
+                "wiki": root / "generated/wiki",
+            }[surface].resolve()
+            if _escapes_root(surface_root, path, clean) or not resolved.is_relative_to(surface_root):
+                label = "repository" if surface == "repo" else surface
+                kind = "image" if is_image else "target"
+                findings += (
+                    _error(f"{relative}: local {kind} escapes {label} surface: {target}"),
+                )
+                continue
+            if surface == "repo":
+                target_relative = resolved.relative_to(root)
+                if _is_internal(target_relative, manifest.internal_roots):
                     findings += (
-                        _error(f"{relative}: local {kind} escapes {label} surface: {target}"),
+                        _error(
+                            f"{relative}: local target enters internal documentation: "
+                            f"{target_relative.as_posix()}"
+                        ),
                     )
                     continue
-                if not resolved.is_file():
-                    kind = "image" if is_image else "target"
-                    findings += (_error(f"{relative}: missing local {kind} {target}"),)
+            if not resolved.is_file():
+                kind = "image" if is_image else "target"
+                findings += (_error(f"{relative}: missing local {kind} {target}"),)
+                continue
+            if fragment and not is_image and resolved.suffix.casefold() in {".md", ".markdown"}:
+                anchors = _markdown_anchors(resolved.read_text(encoding="utf-8"))
+                if fragment not in anchors and fragment.removeprefix("user-content-") not in anchors:
+                    target_name = resolved.relative_to(surface_root).as_posix()
+                    findings += (
+                        _error(
+                            f"{relative}: missing local fragment #{fragment} in {target_name}"
+                        ),
+                    )
     return _sorted(findings)
 
 
@@ -223,58 +242,56 @@ def check_diagrams(repo_root: Path) -> tuple[Finding, ...]:
     svg_dir = root / "generated/site/assets/img"
     master_ids = {path.stem for path in masters_dir.glob("*.html")}
     png_ids = {path.stem for path in png_dir.glob("*.png")}
+    fingerprint_ids = {path.stem for path in png_dir.glob("*.sha256")}
     svg_ids = {path.stem for path in svg_dir.glob("*.svg")}
     findings += _set_findings("HTML masters", expected, master_ids)
     findings += _set_findings("PNG projections", expected, png_ids)
+    findings += _set_findings("PNG source fingerprints", expected, fingerprint_ids)
     findings += _set_findings("site SVG projections", expected, svg_ids)
 
-    with tempfile.TemporaryDirectory() as directory:
-        fresh_png_dir = Path(directory)
-        for identifier, entry in entries.items():
-            expected_master = Path(f"docs/diagrams/{identifier}.html")
-            png_findings: tuple[Finding, ...] = ()
-            if identifier in png_ids:
-                png_findings = _check_png(png_dir / f"{identifier}.png", identifier)
-                findings += png_findings
-            if entry.master != expected_master:
-                findings += (
-                    _error(
-                        f"{identifier}: manifest master must be {expected_master}, got {entry.master}"
-                    ),
+    for identifier, entry in entries.items():
+        expected_master = Path(f"docs/diagrams/{identifier}.html")
+        if identifier in png_ids:
+            findings += _check_png(png_dir / f"{identifier}.png", identifier)
+        if entry.master != expected_master:
+            findings += (
+                _error(
+                    f"{identifier}: manifest master must be {expected_master}, got {entry.master}"
+                ),
+            )
+        if identifier in master_ids:
+            master_path = root / expected_master
+            master_findings = _check_master(master_path, identifier)
+            findings += master_findings
+            if not master_findings and identifier in fingerprint_ids:
+                svg = extract_svg(master_path.read_text(encoding="utf-8"))
+                expected_fingerprint = f"sha256:{diagram_fingerprint(svg)}\n"
+                fingerprint_path = projection_fingerprint_path(
+                    png_dir / f"{identifier}.png"
                 )
-            if identifier in master_ids:
-                master_path = root / expected_master
-                master_findings = _check_master(master_path, identifier)
-                findings += master_findings
-                if not master_findings and not png_findings:
-                    try:
-                        svg = extract_svg(master_path.read_text(encoding="utf-8"))
-                        fresh_png = fresh_png_dir / f"{identifier}.png"
-                        svg_to_png(svg, fresh_png)
-                    except (DiagramError, OSError, ValueError) as error:
-                        findings += (
-                            _error(f"{identifier}: fresh PNG render failed: {error}"),
-                        )
-                    else:
-                        committed_png = png_dir / f"{identifier}.png"
-                        if (
-                            committed_png.is_file()
-                            and committed_png.read_bytes() != fresh_png.read_bytes()
-                        ):
-                            findings += (
-                                _error(
-                                    f"{identifier}: committed PNG differs from fresh master render"
-                                ),
-                            )
-            if identifier in svg_ids:
-                svg_path = svg_dir / f"{identifier}.svg"
                 try:
-                    svg = svg_path.read_text(encoding="utf-8")
-                except OSError:
-                    findings += (_error(f"{identifier}: missing site SVG {svg_path}"),)
+                    actual_fingerprint = fingerprint_path.read_text(encoding="utf-8")
+                except OSError as error:
+                    findings += (
+                        _error(f"{identifier}: unable to read PNG source fingerprint: {error}"),
+                    )
                 else:
-                    if not _SVG_OPEN.search(svg):
-                        findings += (_error(f"{identifier}: invalid site SVG projection"),)
+                    if actual_fingerprint != expected_fingerprint:
+                        findings += (
+                            _error(
+                                f"{identifier}: PNG source fingerprint differs from "
+                                "master/render contract"
+                            ),
+                        )
+        if identifier in svg_ids:
+            svg_path = svg_dir / f"{identifier}.svg"
+            try:
+                svg = svg_path.read_text(encoding="utf-8")
+            except OSError:
+                findings += (_error(f"{identifier}: missing site SVG {svg_path}"),)
+            else:
+                if not _SVG_OPEN.search(svg):
+                    findings += (_error(f"{identifier}: invalid site SVG projection"),)
     return _sorted(findings)
 
 
@@ -340,22 +357,19 @@ def _placeholder_files(root: Path, internal_roots: tuple[Path, ...]) -> tuple[Pa
 
 def _surface_files(
     root: Path, internal_roots: tuple[Path, ...]
-) -> tuple[tuple[str, Path, bool], ...]:
-    values: list[tuple[str, Path, bool]] = []
+) -> tuple[tuple[str, Path], ...]:
+    values: list[tuple[str, Path]] = []
     for path in _canonical_markdown(root, internal_roots):
-        restrict_docs = path == root / "README.md" or path.is_relative_to(root / "scenarios") or path.is_relative_to(
-            root / "spark-apps"
-        )
-        values.append(("repo", path, restrict_docs))
+        values.append(("repo", path))
     site = root / "generated/site"
     if site.exists():
-        values.extend(("site", path, False) for path in sorted(site.rglob("*.md")))
+        values.extend(("site", path) for path in sorted(site.rglob("*.md")))
     config = root / "mkdocs.yml"
     if config.is_file():
-        values.append(("site", config, False))
+        values.append(("site", config))
     wiki = root / "generated/wiki"
     if wiki.exists():
-        values.extend(("wiki", path, False) for path in sorted(wiki.rglob("*.md")))
+        values.extend(("wiki", path) for path in sorted(wiki.rglob("*.md")))
     return tuple(values)
 
 
@@ -425,14 +439,16 @@ def _fence_marker(line: str) -> tuple[str, int, str] | None:
     return character, length, content[length:]
 
 
-def _resolve_local_target(source: Path, target: str) -> tuple[str, Path] | None:
+def _resolve_local_target(source: Path, target: str) -> tuple[str, str, Path] | None:
     parsed = urlsplit(target)
     if parsed.scheme or parsed.netloc or target.startswith("//"):
         return None
-    clean = parsed.path
-    if not clean:
+    clean = unquote(parsed.path)
+    fragment = unquote(parsed.fragment)
+    if not clean and not fragment:
         return None
-    return clean, (source.parent / clean).resolve()
+    resolved = (source.parent / clean).resolve() if clean else source.resolve()
+    return clean, fragment, resolved
 
 
 def _escapes_root(root: Path, source: Path, target: str) -> bool:
@@ -452,19 +468,44 @@ def _escapes_root(root: Path, source: Path, target: str) -> bool:
     return False
 
 
-def _allowed_docs_image(
-    root: Path,
-    source: Path,
-    markdown: str,
-    target: str,
-    resolved: Path,
-) -> bool:
-    if not markdown.startswith("!") or Path(target).suffix != ".png":
-        return False
-    if _escapes_root(root, source, target):
-        return False
-    canonical = (root / "docs/diagrams/img").resolve()
-    return resolved.parent == canonical and resolved.is_file()
+def _markdown_anchors(markdown: str) -> set[str]:
+    """Return GitHub-compatible automatic and explicit anchors for Markdown."""
+    visible = _without_fenced_code(markdown)
+    anchors = {
+        unquote(value)
+        for value in re.findall(
+            r"<(?:a|h[1-6])\b[^>]*(?:id|name)=[\"']([^\"']+)[\"']",
+            visible,
+            flags=re.IGNORECASE,
+        )
+    }
+    generated: set[str] = set()
+    for match in re.finditer(r"^ {0,3}#{1,6}[ \t]+(.+?)[ \t]*#*[ \t]*$", visible, re.MULTILINE):
+        base = _github_slug(match.group(1))
+        if not base:
+            continue
+        candidate = base
+        suffix = 1
+        while candidate in generated:
+            candidate = f"{base}-{suffix}"
+            suffix += 1
+        generated.add(candidate)
+        anchors.add(candidate)
+    return anchors
+
+
+def _github_slug(heading: str) -> str:
+    """Approximate GitHub's heading slugger for repository documentation."""
+    value = re.sub(r"<[^>]+>", "", heading)
+    value = re.sub(r"!?\[([^\]]+)\]\([^)]*\)", r"\1", value)
+    value = value.replace("`", "").strip().casefold()
+    value = "".join(
+        character
+        for character in value
+        if character in {"-", "_", " "}
+        or not unicodedata.category(character).startswith(("P", "S"))
+    )
+    return re.sub(r"\s", "-", value)
 
 
 def _set_findings(label: str, expected: set[str], actual: set[str]) -> tuple[Finding, ...]:

@@ -89,13 +89,29 @@ def load_manifest(path: Path, repo_root: Path) -> Manifest:
     root = repo_root.resolve()
     sources = [leaf.source for leaf in iter_leaf_sections(manifest.sections)]
     masters = [entry.master for entry in manifest.diagrams]
-    for manifest_path in (*sources, *masters):
-        assert manifest_path is not None
-        resolved = (root / manifest_path).resolve()
-        if not resolved.is_relative_to(root):
-            raise ManifestError(f"manifest path outside repository: {manifest_path}")
-        if not resolved.exists():
-            raise ManifestError(f"missing manifest path: {manifest_path}")
+    seen_sources: set[Path] = set()
+    seen_masters: set[Path] = set()
+    for label, manifest_paths, seen in (
+        ("section source", sources, seen_sources),
+        ("diagram master", masters, seen_masters),
+    ):
+        for manifest_path in manifest_paths:
+            assert manifest_path is not None
+            resolved = (root / manifest_path).resolve()
+            if not resolved.is_relative_to(root):
+                raise ManifestError(f"manifest path outside repository: {manifest_path}")
+            canonical = resolved.relative_to(root)
+            if manifest_path != canonical:
+                raise ManifestError(
+                    f"{label} must be canonical repo-relative path: "
+                    f"{manifest_path} (use {canonical})"
+                )
+            if manifest_path in seen:
+                duplicate = "published source" if label == "section source" else label
+                raise ManifestError(f"duplicate {duplicate}: {manifest_path}")
+            seen.add(manifest_path)
+            if not resolved.exists():
+                raise ManifestError(f"missing manifest path: {manifest_path}")
     docs_root = (root / "docs").resolve()
     resolved_internal_roots: list[tuple[Path, Path]] = []
     for internal_root in manifest.internal_roots:

@@ -27,14 +27,19 @@ _WIKI_STRUCTURAL_DESTINATIONS = {
 def build_source_map(manifest: Manifest, surface: str) -> dict[Path, Path]:
     """Map each manifest source page to its destination on *surface*."""
     mapping: dict[Path, Path] = {}
-    wiki_owners: dict[Path, Section] = {}
+    destination_owners: dict[str, str] = {}
     for section in iter_leaf_sections(manifest.sections):
         assert section.source is not None
         destination = _destination(section.source, section.id, surface)
         _validate_surface_destination(destination, surface)
         if surface == "wiki":
-            _validate_wiki_destination(section, destination, wiki_owners)
-            wiki_owners[destination] = section
+            _validate_wiki_destination(section, destination)
+        _register_destination(
+            surface,
+            destination,
+            f"{section.id} ({section.source})",
+            destination_owners,
+        )
         mapping[section.source] = destination
     if surface == "site":
         asset_dir = Path("assets/img")
@@ -47,6 +52,12 @@ def build_source_map(manifest: Manifest, surface: str) -> dict[Path, Path]:
     for diagram in manifest.diagrams:
         destination = asset_dir / f"{diagram.id}{extension}"
         _validate_surface_destination(destination, surface)
+        _register_destination(
+            surface,
+            destination,
+            f"diagram {diagram.id} ({diagram.master})",
+            destination_owners,
+        )
         mapping[Path("docs/architectures") / f"{diagram.id}.svg"] = destination
         mapping[Path("docs/diagrams/img") / f"{diagram.id}.png"] = destination
     return mapping
@@ -61,12 +72,31 @@ def _validate_surface_destination(destination: Path, surface: str) -> None:
         raise ManifestError(
             f"{surface} destination escapes its surface root: {destination}"
         )
+    canonical = resolved.relative_to(surface_root)
+    if destination != canonical:
+        raise ManifestError(
+            f"{surface} destination must be canonical: {destination} (use {canonical})"
+        )
+
+
+def _register_destination(
+    surface: str,
+    destination: Path,
+    owner: str,
+    owners: dict[str, str],
+) -> None:
+    key = destination.as_posix().casefold()
+    existing = owners.get(key)
+    if existing is not None and existing != owner:
+        raise ManifestError(
+            f"{surface} destination collision at {destination}: {existing} and {owner}"
+        )
+    owners[key] = owner
 
 
 def _validate_wiki_destination(
     section: Section,
     destination: Path,
-    owners: Mapping[Path, Section],
 ) -> None:
     assert section.source is not None
     structural_destination = _WIKI_STRUCTURAL_DESTINATIONS.get(section.id.casefold())
@@ -85,13 +115,6 @@ def _validate_wiki_destination(
         raise ManifestError(
             f"wiki destination {_WIKI_HOME} is reserved for {owner_id} ({owner_source}); "
             f"{section.id} ({section.source}) cannot use it"
-        )
-    owner = owners.get(destination)
-    if owner is not None:
-        assert owner.source is not None
-        raise ManifestError(
-            f"wiki destination collision at {destination}: "
-            f"{owner.id} ({owner.source}) and {section.id} ({section.source})"
         )
 
 

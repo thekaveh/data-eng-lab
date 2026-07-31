@@ -68,5 +68,5 @@ The `online_retail_cdc` topic is auto-created on first produce. Notebook executi
 
 - [Related: incremental_upsert-online_retail-spark-iceberg](../incremental_upsert-online_retail-spark-iceberg/README.md) — Batch form of the same CDC upsert pattern
 - [Related: scd2-online_retail-spark-iceberg](../scd2-online_retail-spark-iceberg/README.md) — Another online_retail dimension scenario
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

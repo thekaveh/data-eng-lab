@@ -72,5 +72,5 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. Both 
 
 ## See Also
 
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

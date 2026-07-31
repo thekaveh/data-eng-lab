@@ -145,9 +145,9 @@ lakehouse.bronze.nyc_taxi_trips
 
 ## 8. See Also
 
-- [Spark apps overview](../index/README.md)
+- [Spark apps overview](../../docs/spark-apps/index.md)
 - [nyc-taxi-etl](../nyc-taxi-etl/README.md)
 - [Related scenario: medallion-nyc_taxi-spark-iceberg](../../scenarios/medallion-nyc_taxi-spark-iceberg/README.md) — Notebook prototype of this app
 - [Related scenario: batch_ingest-nyc_taxi-spark-iceberg](../../scenarios/batch_ingest-nyc_taxi-spark-iceberg/README.md) — Populates the bronze table this app reads from
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
-- [Datasets](../../README.md#datasets)
+- [Lakehouse Architecture](../../docs/lakehouse.md)
+- [Datasets](../../docs/datasets.md)

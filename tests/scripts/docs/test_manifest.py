@@ -167,6 +167,48 @@ def test_load_manifest_rejects_noncanonical_internal_root_alias(tmp_path):
 
 
 @pytest.mark.parametrize(
+    ("old", "new", "message"),
+    [
+        (
+            "source: docs/index.md",
+            "source: docs/scenarios/../index.md",
+            "section source must be canonical repo-relative path",
+        ),
+        (
+            "master: docs/diagrams/overview.html",
+            "master: docs/diagrams/nested/../overview.html",
+            "diagram master must be canonical repo-relative path",
+        ),
+    ],
+)
+def test_load_manifest_rejects_source_and_master_path_aliases(tmp_path, old, new, message):
+    _write_valid_manifest_tree(tmp_path)
+    (tmp_path / "docs/diagrams/nested").mkdir()
+    path = tmp_path / "docs/manifest.yaml"
+    path.write_text(VALID.replace(old, new), encoding="utf-8")
+
+    with pytest.raises(ManifestError, match=message):
+        load_manifest(path, tmp_path)
+
+
+def test_load_manifest_rejects_duplicate_published_sources(tmp_path):
+    _write_valid_manifest_tree(tmp_path)
+    path = tmp_path / "docs/manifest.yaml"
+    path.write_text(
+        VALID.replace(
+            "diagrams:",
+            "  - {id: duplicate, number: '5.2', title: Duplicate, "
+            "source: docs/index.md}\n"
+            "diagrams:",
+        ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ManifestError, match="duplicate published source: docs/index.md"):
+        load_manifest(path, tmp_path)
+
+
+@pytest.mark.parametrize(
     "internal_root",
     ["docs/stylesheets", "docs/overrides", "docs/diagrams/img"],
 )

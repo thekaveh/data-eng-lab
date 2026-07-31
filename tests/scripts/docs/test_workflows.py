@@ -108,7 +108,7 @@ def test_make_docs_wiki_regenerates_and_validates_before_staging():
             recipe.append(line.strip())
 
     assert recipe == [
-        "uv run --group dev python -m scripts.docs.render_diagrams --root .",
+        "uv run --group dev python -m scripts.docs.render_diagrams --force-png --root .",
         "uv run --group dev python -m scripts.docs.check_docs --root .",
         "uv run --group dev python -m scripts.docs.push_wiki --check --root .",
     ]
@@ -149,7 +149,7 @@ def test_publish_workflow_generates_site_before_pages_deploy():
     )
     required = [
         "sudo apt-get install -y libcairo2",
-        "uv run --group dev python -m scripts.docs.render_diagrams --root .",
+        "uv run --group dev python -m scripts.docs.render_diagrams --force-png --root .",
         "uv run --group dev python -m scripts.docs.build_docs --site --root .",
         "uv run --group dev mkdocs build --strict",
     ]
@@ -171,7 +171,7 @@ def test_publish_workflow_pushes_generated_wiki_after_pages_deploy():
     commands = _executable_lines(wiki)
     required = [
         "sudo apt-get install -y libcairo2",
-        "uv run --group dev python -m scripts.docs.render_diagrams --root .",
+        "uv run --group dev python -m scripts.docs.render_diagrams --force-png --root .",
         "uv run --group dev python -m scripts.docs.build_docs --wiki --root .",
         "uv run --group dev python -m scripts.docs.push_wiki --push --root .",
     ]

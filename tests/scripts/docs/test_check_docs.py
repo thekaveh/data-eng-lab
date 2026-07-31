@@ -14,7 +14,12 @@ from scripts.docs.check_docs import (
     check_self_containment,
 )
 from scripts.docs.manifest import iter_leaf_sections, load_manifest
-from scripts.docs.render_diagrams import extract_svg, svg_to_png
+from scripts.docs.render_diagrams import (
+    diagram_fingerprint,
+    extract_svg,
+    projection_fingerprint_path,
+    svg_to_png,
+)
 
 
 def _master(
@@ -52,9 +57,11 @@ def repo_fixture(tmp_path: Path) -> Path:
     (repo / "docs/overrides").mkdir(parents=True)
     (repo / "docs/index.md").write_text("# 1. Overview\n", encoding="utf-8")
     (repo / "docs/diagrams/overview.html").write_text(_master(), encoding="utf-8")
-    svg_to_png(
-        extract_svg((repo / "docs/diagrams/overview.html").read_text(encoding="utf-8")),
-        repo / "docs/diagrams/img/overview.png",
+    svg = extract_svg((repo / "docs/diagrams/overview.html").read_text(encoding="utf-8"))
+    png = repo / "docs/diagrams/img/overview.png"
+    svg_to_png(svg, png)
+    projection_fingerprint_path(png).write_text(
+        f"sha256:{diagram_fingerprint(svg)}\n", encoding="utf-8"
     )
     (repo / "docs/stylesheets/extra.css").write_text("body { color: cyan; }\n", encoding="utf-8")
     (repo / "docs/overrides/main.html").write_text('{% extends "base.html" %}\n', encoding="utf-8")
@@ -315,16 +322,14 @@ def test_bare_generated_url_fails_but_fenced_clone_command_is_ignored(repo_fixtu
 
 
 @pytest.mark.parametrize("target", ["./docs/index.md", "x/../docs/index.md"])
-def test_repository_docs_page_link_fails_after_normalization(repo_fixture: Path, target: str):
+def test_repository_docs_page_link_passes_after_normalization(repo_fixture: Path, target: str):
     (repo_fixture / "x").mkdir()
     (repo_fixture / "README.md").write_text(f"[docs]({target})\n", encoding="utf-8")
 
-    assert messages(check_self_containment(repo_fixture)) == [
-        f"README.md: forbidden docs/-relative target {target}"
-    ]
+    assert check_self_containment(repo_fixture) == ()
 
 
-def test_committed_diagram_png_is_the_only_docs_exception(repo_fixture: Path):
+def test_repository_diagram_links_are_validated_like_other_local_assets(repo_fixture: Path):
     (repo_fixture / "README.md").write_text(
         "![diagram](docs/diagrams/img/overview.png?raw=1#overview)\n", encoding="utf-8"
     )
@@ -334,9 +339,7 @@ def test_committed_diagram_png_is_the_only_docs_exception(repo_fixture: Path):
     (repo_fixture / "README.md").write_text(
         "![diagram](docs/diagrams/img/overview.svg?raw=1)\n", encoding="utf-8"
     )
-    assert messages(check_self_containment(repo_fixture)) == [
-        "README.md: forbidden docs/-relative target docs/diagrams/img/overview.svg?raw=1"
-    ]
+    assert check_self_containment(repo_fixture) == ()
 
 
 def test_nested_committed_diagram_png_passes(repo_fixture: Path):
@@ -356,7 +359,7 @@ def test_docs_exception_cannot_escape_root_then_reenter(repo_fixture: Path):
     (repo_fixture / "README.md").write_text(f"![diagram]({target})\n", encoding="utf-8")
 
     assert messages(check_self_containment(repo_fixture)) == [
-        f"README.md: forbidden docs/-relative target {target}"
+        f"README.md: local image escapes repository surface: {target}"
     ]
 
 
@@ -386,7 +389,6 @@ def test_missing_committed_diagram_png_fails(repo_fixture: Path):
     )
 
     assert messages(check_self_containment(repo_fixture)) == [
-        "README.md: forbidden docs/-relative target docs/diagrams/img/missing.png",
         "README.md: missing local image docs/diagrams/img/missing.png",
     ]
 
@@ -436,6 +438,71 @@ def test_generated_existing_local_link_passes(repo_fixture: Path):
     assert check_self_containment(repo_fixture) == ()
 
 
+def test_repository_missing_local_link_fails(repo_fixture: Path):
+    (repo_fixture / "README.md").write_text(
+        "[Missing](docs/missing.md)\n", encoding="utf-8"
+    )
+
+    assert messages(check_self_containment(repo_fixture)) == [
+        "README.md: missing local target docs/missing.md"
+    ]
+
+
+def test_repository_missing_markdown_fragment_fails(repo_fixture: Path):
+    (repo_fixture / "README.md").write_text(
+        "[Setup](docs/index.md#missing-setup)\n", encoding="utf-8"
+    )
+
+    assert messages(check_self_containment(repo_fixture)) == [
+        "README.md: missing local fragment #missing-setup in docs/index.md"
+    ]
+
+
+def test_repository_github_heading_fragments_and_external_protocols_pass(
+    repo_fixture: Path,
+):
+    (repo_fixture / "docs/index.md").write_text(
+        "# 1. Overview\n\n## Setup & Run\n\n## Setup & Run\n", encoding="utf-8"
+    )
+    (repo_fixture / "README.md").write_text(
+        "[First](docs/index.md#setup--run) "
+        "[Second](docs/index.md#setup--run-1) "
+        "[Mail](mailto:docs@example.com) "
+        "[External](https://example.com/docs#missing)\n",
+        encoding="utf-8",
+    )
+
+    assert check_self_containment(repo_fixture) == ()
+
+
+def test_repository_github_heading_suffixes_avoid_existing_slug_collisions(
+    repo_fixture: Path,
+):
+    (repo_fixture / "docs/index.md").write_text(
+        "# 1. Overview\n\n## Foo\n\n## Foo-1\n\n## Foo\n", encoding="utf-8"
+    )
+    (repo_fixture / "README.md").write_text(
+        "[First](docs/index.md#foo) [Named](docs/index.md#foo-1) "
+        "[Duplicate](docs/index.md#foo-2)\n",
+        encoding="utf-8",
+    )
+
+    assert check_self_containment(repo_fixture) == ()
+
+
+def test_public_repository_page_cannot_link_into_internal_archive(repo_fixture: Path):
+    internal = repo_fixture / "docs/superpowers/internal.md"
+    internal.write_text("# Internal\n", encoding="utf-8")
+    (repo_fixture / "README.md").write_text(
+        "[Internal](docs/superpowers/internal.md)\n", encoding="utf-8"
+    )
+
+    assert messages(check_self_containment(repo_fixture)) == [
+        "README.md: local target enters internal documentation: "
+        "docs/superpowers/internal.md"
+    ]
+
+
 def test_diagram_inventory_and_file_validation(repo_fixture: Path):
     site_images = repo_fixture / "generated/site/assets/img"
     site_images.mkdir(parents=True)
@@ -453,45 +520,43 @@ def test_diagram_inventory_and_file_validation(repo_fixture: Path):
     ]
 
 
-def test_diagram_gate_rejects_png_that_is_not_a_fresh_master_render(repo_fixture: Path):
-    pytest.importorskip("cairosvg")
+def test_diagram_gate_rejects_stale_master_fingerprint(repo_fixture: Path):
     site_images = repo_fixture / "generated/site/assets/img"
     site_images.mkdir(parents=True)
     (site_images / "overview.svg").write_text(
         "<svg xmlns=\"http://www.w3.org/2000/svg\"/>", encoding="utf-8"
     )
-    stale = repo_fixture / "docs/diagrams/img/overview.png"
-    stale.write_bytes(_png())
+    (repo_fixture / "docs/diagrams/overview.html").write_text(
+        _master(width=900), encoding="utf-8"
+    )
 
-    assert "overview: committed PNG differs from fresh master render" in messages(
+    assert "overview: PNG source fingerprint differs from master/render contract" in messages(
         check_diagrams(repo_fixture)
     )
 
 
-def test_aggregate_gate_reports_stale_committed_png_without_rewriting_it(repo_fixture: Path):
-    stale = repo_fixture / "docs/diagrams/img/overview.png"
-    stale.write_bytes(_png())
-    before = stale.read_bytes()
+def test_aggregate_gate_reports_stale_fingerprint_without_rewriting_png(repo_fixture: Path):
+    png = repo_fixture / "docs/diagrams/img/overview.png"
+    before = png.read_bytes()
+    projection_fingerprint_path(png).write_text("sha256:" + "0" * 64 + "\n", encoding="utf-8")
 
-    assert "overview: committed PNG differs from fresh master render" in messages(
+    assert "overview: PNG source fingerprint differs from master/render contract" in messages(
         check(repo_fixture)
     )
-    assert stale.read_bytes() == before
+    assert png.read_bytes() == before
 
 
-def test_diagram_gate_reports_fresh_render_failure(repo_fixture: Path, monkeypatch):
+def test_diagram_gate_accepts_host_specific_png_bytes_when_source_fingerprint_matches(
+    repo_fixture: Path,
+):
     site_images = repo_fixture / "generated/site/assets/img"
     site_images.mkdir(parents=True)
     (site_images / "overview.svg").write_text("<svg/>", encoding="utf-8")
 
-    def fail_render(*_args, **_kwargs):
-        raise ValueError("renderer unavailable")
+    png = repo_fixture / "docs/diagrams/img/overview.png"
+    png.write_bytes(_png(width=111, height=77))
 
-    monkeypatch.setattr("scripts.docs.check_docs.svg_to_png", fail_render)
-
-    assert "overview: fresh PNG render failed: renderer unavailable" in messages(
-        check_diagrams(repo_fixture)
-    )
+    assert check_diagrams(repo_fixture) == ()
 
 
 def test_diagram_gate_requires_accessible_svg_metadata(repo_fixture: Path):

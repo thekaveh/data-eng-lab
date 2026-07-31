@@ -75,5 +75,5 @@ Live execution is gated on Atlas #268 (Trino coordinator integration). The `%tri
 
 - [Upstream: star_schema-tpch-spark-iceberg](../star_schema-tpch-spark-iceberg/README.md) — Populates the gold tables this scenario queries
 - [Related: join_optimization-tpch-spark-iceberg](../join_optimization-tpch-spark-iceberg/README.md) — Another TPC-H query optimization scenario
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

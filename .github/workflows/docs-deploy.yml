@@ -43,7 +43,7 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv run --group dev python -m scripts.docs.render_diagrams --root .
+      - run: uv run --group dev python -m scripts.docs.render_diagrams --force-png --root .
 
       - run: uv run --group dev python -m scripts.docs.build_docs --site --root .
 
@@ -87,7 +87,7 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv run --group dev python -m scripts.docs.render_diagrams --root .
+      - run: uv run --group dev python -m scripts.docs.render_diagrams --force-png --root .
 
       - run: uv run --group dev python -m scripts.docs.build_docs --wiki --root .
 

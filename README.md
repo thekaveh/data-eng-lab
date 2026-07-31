@@ -31,7 +31,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
     19 end-to-end Spark and Trino scenarios across bronze, silver, and gold layers.
 
-     [:octicons-arrow-right-24: Browse scenarios](scenarios/index/README.md)
+     [:octicons-arrow-right-24: Browse scenarios](docs/scenarios/index.md)
 
 -   :material-rocket-launch:{ .lg .middle } **Spark apps**
 
@@ -39,7 +39,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
     2 CI-verified Maven Scala Spark apps built by Jenkins and run by Airflow.
 
-     [:octicons-arrow-right-24: Browse apps](spark-apps/index/README.md)
+     [:octicons-arrow-right-24: Browse apps](docs/spark-apps/index.md)
 
 -   :material-table-large:{ .lg .middle } **Datasets**
 
@@ -47,7 +47,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
     5 curated datasets (NYC Taxi, TPC-H, Online Retail, GH Archive, Events) with `make datasets`.
 
-    [:octicons-arrow-right-24: Dataset guide](README.md#datasets)
+    [:octicons-arrow-right-24: Dataset guide](docs/datasets.md)
 
 -   :material-layers-triple:{ .lg .middle } **Lakehouse design**
 
@@ -55,7 +55,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
     Medallion layout, Iceberg namespaces, MinIO buckets, and the bronze smoke test.
 
-    [:octicons-arrow-right-24: Lakehouse guide](README.md#lakehouse-architecture)
+    [:octicons-arrow-right-24: Lakehouse guide](docs/lakehouse.md)
 
 -   :material-check-decagram:{ .lg .middle } **Atlas platform**
 
@@ -63,7 +63,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
     A1–A9 Atlas enablement checklist, expectations, and go-live runbook.
 
-    :octicons-arrow-right-24: Atlas enablement
+    [:octicons-arrow-right-24: Atlas enablement](docs/atlas-enablement.md)
 
 -   :material-play-box-multiple:{ .lg .middle } **Getting started**
 
@@ -71,7 +71,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
     Prerequisites, `make datasets`, starting the stack, and running notebooks.
 
-    [:octicons-arrow-right-24: Quick start](README.md#getting-started)
+    [:octicons-arrow-right-24: Quick start](docs/getting-started.md)
 
 </div>
 
@@ -144,10 +144,10 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 ---
 
 !!! tip "New here?"
-    Start with [Getting started](README.md#getting-started) to get the stack running, then pick a scenario from the [catalog](scenarios/index/README.md) or dive into the [lakehouse design](README.md#lakehouse-architecture).
+    Start with [Getting started](docs/getting-started.md) to get the stack running, then pick a scenario from the [catalog](docs/scenarios/index.md) or dive into the [lakehouse design](docs/lakehouse.md).
 
 !!! info "Atlas platform"
-    The Atlas platform underpins this lab. See Atlas enablement for the full A1–A9 checklist and Go-live runbook for production readiness steps.
+    The Atlas platform underpins this lab. See [Atlas enablement](docs/atlas-enablement.md) for the full A1–A9 checklist and the [go-live runbook](docs/go-live.md) for production readiness steps.
 
 ## Scenario catalog
 

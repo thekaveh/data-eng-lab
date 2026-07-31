@@ -6,8 +6,10 @@ from scripts.docs.manifest import DiagramEntry, Manifest
 from scripts.docs.render_diagrams import (
     DiagramError,
     copy_assets,
+    diagram_fingerprint,
     extract_svg,
     import_svg_master,
+    projection_fingerprint_path,
     render_all,
     svg_to_png,
 )
@@ -128,6 +130,10 @@ def test_render_all_writes_site_svg_and_committed_png(tmp_path):
     first_png = png_path.read_bytes()
     assert first_svg.endswith(b"\n")
     assert first_png.startswith(b"\x89PNG")
+    fingerprint_path = projection_fingerprint_path(png_path)
+    assert fingerprint_path.read_text(encoding="utf-8") == (
+        f"sha256:{diagram_fingerprint(extract_svg(master))}\n"
+    )
 
     render_all(
         manifest,
@@ -138,6 +144,43 @@ def test_render_all_writes_site_svg_and_committed_png(tmp_path):
 
     assert svg_path.read_bytes() == first_svg
     assert png_path.read_bytes() == first_png
+
+
+def test_matching_fingerprint_avoids_host_specific_png_rerender(tmp_path, monkeypatch):
+    master_path = Path("docs/diagrams/overview.html")
+    master = import_svg_master(
+        '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="9"></svg>',
+        title="Overview",
+        evidence="Verified against fixture.",
+    )
+    (tmp_path / master_path).parent.mkdir(parents=True)
+    (tmp_path / master_path).write_text(master, encoding="utf-8")
+    manifest = Manifest(
+        surfaces=("repo", "site", "wiki"),
+        numbering="baked",
+        internal_roots=(),
+        sections=(),
+        diagrams=(DiagramEntry("overview", master_path),),
+    )
+    png = tmp_path / "docs/diagrams/img/overview.png"
+    png.parent.mkdir(parents=True)
+    png.write_bytes(b"host-specific png bytes")
+    projection_fingerprint_path(png).write_text(
+        f"sha256:{diagram_fingerprint(extract_svg(master))}\n", encoding="utf-8"
+    )
+
+    def unexpected_render(*_args, **_kwargs):
+        raise AssertionError("matching source fingerprint must not rerender")
+
+    monkeypatch.setattr("scripts.docs.render_diagrams.svg_to_png", unexpected_render)
+    render_all(
+        manifest,
+        tmp_path,
+        tmp_path / "generated/site/assets/img",
+        tmp_path / "docs/diagrams/img",
+    )
+
+    assert png.read_bytes() == b"host-specific png bytes"
 
 
 def test_copy_assets_copies_only_png_files(tmp_path):

@@ -8,6 +8,11 @@ All notable changes to this project are documented here (Keep a Changelog format
   verifier skeleton, and infra-preflight Layer 1.
 
 ### Changed
+- Documentation publication now validates every repository-local file and
+  Markdown fragment, rejects manifest path aliases and projection collisions,
+  and tracks each committed diagram PNG with a source/render-contract
+  fingerprint. Publication jobs force fresh PNG renders without requiring
+  Cairo output bytes to match across operating systems.
 - On 2026-07-31, Atlas consumer operations accepted pin
   `985918ce8c805081947d53b1c48bb80610237a5b` after the representative Airflow
   feature-artifact task succeeded on its first and only attempt. Spark standalone

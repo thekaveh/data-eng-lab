@@ -68,5 +68,5 @@ Atlas seeds only the `atlas_stream_events` demo topic; this scenario's topic (`e
 
 - [Upstream: streaming_ingest-events-spark-iceberg](../streaming_ingest-events-spark-iceberg/README.md) — Produces the events topic this scenario consumes
 - [Related: cdc_streaming-online_retail-spark-iceberg](../cdc_streaming-online_retail-spark-iceberg/README.md) — Another CDC/streaming scenario
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)
