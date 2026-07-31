@@ -13,7 +13,7 @@ from scripts.docs.build_docs import (
     render_site,
     render_wiki,
 )
-from scripts.docs.manifest import iter_leaf_sections, load_manifest, parse_manifest
+from scripts.docs.manifest import ManifestError, iter_leaf_sections, load_manifest, parse_manifest
 
 
 @pytest.fixture
@@ -92,6 +92,20 @@ def test_render_site_and_wiki_are_complete(tmp_repo, manifest):
     assert "assets/img/overview.svg" in (tmp_repo / "generated/site/index.md").read_text(encoding="utf-8")
     assert "img/overview.png" in (tmp_repo / "generated/wiki/Home.md").read_text(encoding="utf-8")
     assert "http" not in (tmp_repo / "generated/wiki/_Footer.md").read_text(encoding="utf-8")
+
+
+def test_renderer_independently_rejects_destination_outside_surface_root(
+    tmp_repo, manifest, monkeypatch
+):
+    monkeypatch.setattr(
+        "scripts.docs.build_docs.build_source_map",
+        lambda _manifest, _surface: {Path("docs/index.md"): Path("../escaped.md")},
+    )
+
+    with pytest.raises(ManifestError, match="site destination escapes its surface root"):
+        render_site(manifest, tmp_repo, tmp_repo / "generated/site")
+
+    assert not (tmp_repo / "generated/escaped.md").exists()
 
 
 def test_repository_manifest_projects_all_public_pages_and_assets(tmp_path):

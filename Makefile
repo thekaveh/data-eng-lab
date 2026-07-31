@@ -49,7 +49,6 @@ docs-build: ## Generate diagrams, site input, and build the strict site
 	uv run --group dev mkdocs build --strict
 
 docs-check: ## Verify all documentation surfaces and build the strict site
-	uv run --group dev python -m scripts.docs.render_diagrams --root .
 	uv run --group dev python -m scripts.docs.check_docs --root .
 	uv run --group dev mkdocs build --strict
 

@@ -80,6 +80,23 @@ def test_ci_docs_job_uses_canonical_gate():
             _command_index(commands, legacy, prefix=True)
 
 
+def test_make_docs_check_is_non_mutating_and_checks_before_strict_build():
+    lines = (ROOT / "Makefile").read_text(encoding="utf-8").splitlines()
+    start = lines.index("docs-check: ## Verify all documentation surfaces and build the strict site")
+    recipe: list[str] = []
+    for line in lines[start + 1 :]:
+        if line and not line.startswith("\t"):
+            break
+        if line.startswith("\t"):
+            recipe.append(line.strip())
+
+    check = "uv run --group dev python -m scripts.docs.check_docs --root ."
+    strict_build = "uv run --group dev mkdocs build --strict"
+    renderer = "uv run --group dev python -m scripts.docs.render_diagrams --root ."
+    assert recipe == [check, strict_build]
+    assert renderer not in recipe
+
+
 def test_all_publication_jobs_are_main_ref_gated():
     workflow = _load_workflow("docs-deploy.yml")
 

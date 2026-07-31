@@ -9,7 +9,13 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from scripts.docs.manifest import Manifest, Section, iter_leaf_sections, load_manifest
+from scripts.docs.manifest import (
+    Manifest,
+    ManifestError,
+    Section,
+    iter_leaf_sections,
+    load_manifest,
+)
 from scripts.docs.render_diagrams import copy_assets, extract_svg
 from scripts.docs.transforms import build_source_map, rewrite_for_surface
 
@@ -110,10 +116,19 @@ def render_site(manifest: Manifest, repo_root: Path, output: Path) -> None:
     image_dir.mkdir(parents=True, exist_ok=True)
     for diagram in manifest.diagrams:
         master = (repo_root / diagram.master).read_text(encoding="utf-8")
-        (image_dir / f"{diagram.id}.svg").write_text(f"{extract_svg(master)}\n", encoding="utf-8")
+        destination = _surface_destination(
+            output, Path("assets/img") / f"{diagram.id}.svg", "site"
+        )
+        destination.write_text(f"{extract_svg(master)}\n", encoding="utf-8")
 
-    _copy_file(repo_root / "docs/stylesheets/extra.css", output / "stylesheets/extra.css")
-    _copy_file(repo_root / "docs/overrides/main.html", output / "overrides/main.html")
+    _copy_file(
+        repo_root / "docs/stylesheets/extra.css",
+        _surface_destination(output, Path("stylesheets/extra.css"), "site"),
+    )
+    _copy_file(
+        repo_root / "docs/overrides/main.html",
+        _surface_destination(output, Path("overrides/main.html"), "site"),
+    )
 
 
 def render_wiki(manifest: Manifest, repo_root: Path, output: Path) -> None:
@@ -121,12 +136,17 @@ def render_wiki(manifest: Manifest, repo_root: Path, output: Path) -> None:
     _reset(output)
     source_map = build_source_map(manifest, "wiki")
     _render_pages(manifest, repo_root, output, "wiki", source_map)
-    (output / "_Sidebar.md").write_text(_render_sidebar(manifest), encoding="utf-8")
-    (output / "_Footer.md").write_text(
+    _surface_destination(output, Path("_Sidebar.md"), "wiki").write_text(
+        _render_sidebar(manifest), encoding="utf-8"
+    )
+    _surface_destination(output, Path("_Footer.md"), "wiki").write_text(
         "data-eng-lab documentation · Generated from the canonical documentation manifest.\n",
         encoding="utf-8",
     )
-    copy_assets(repo_root / "docs/diagrams/img", output / "img")
+    copy_assets(
+        repo_root / "docs/diagrams/img",
+        _surface_destination(output, Path("img"), "wiki"),
+    )
 
 
 def hash_tree(root: Path) -> dict[Path, str]:
@@ -215,12 +235,24 @@ def _render_pages(
     for section in iter_leaf_sections(manifest.sections):
         assert section.source is not None
         source = repo_root / section.source
-        destination = output / source_map[section.source]
+        destination = _surface_destination(
+            output, source_map[section.source], surface
+        )
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(
             rewrite_for_surface(source.read_text(encoding="utf-8"), surface, section.source, source_map),
             encoding="utf-8",
         )
+
+
+def _surface_destination(output: Path, relative: Path, surface: str) -> Path:
+    output_root = output.resolve()
+    destination = (output_root / relative).resolve()
+    if relative.is_absolute() or not destination.is_relative_to(output_root):
+        raise ManifestError(
+            f"{surface} destination escapes its surface root: {relative}"
+        )
+    return destination
 
 
 def _render_sidebar(manifest: Manifest) -> str:

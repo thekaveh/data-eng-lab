@@ -31,6 +31,7 @@ def build_source_map(manifest: Manifest, surface: str) -> dict[Path, Path]:
     for section in iter_leaf_sections(manifest.sections):
         assert section.source is not None
         destination = _destination(section.source, section.id, surface)
+        _validate_surface_destination(destination, surface)
         if surface == "wiki":
             _validate_wiki_destination(section, destination, wiki_owners)
             wiki_owners[destination] = section
@@ -45,9 +46,21 @@ def build_source_map(manifest: Manifest, surface: str) -> dict[Path, Path]:
         return mapping
     for diagram in manifest.diagrams:
         destination = asset_dir / f"{diagram.id}{extension}"
+        _validate_surface_destination(destination, surface)
         mapping[Path("docs/architectures") / f"{diagram.id}.svg"] = destination
         mapping[Path("docs/diagrams/img") / f"{diagram.id}.png"] = destination
     return mapping
+
+
+def _validate_surface_destination(destination: Path, surface: str) -> None:
+    if surface not in {"site", "wiki"}:
+        return
+    surface_root = Path("/__docs_surface__")
+    resolved = (surface_root / destination).resolve()
+    if destination.is_absolute() or not resolved.is_relative_to(surface_root):
+        raise ManifestError(
+            f"{surface} destination escapes its surface root: {destination}"
+        )
 
 
 def _validate_wiki_destination(

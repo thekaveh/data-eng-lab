@@ -421,6 +421,32 @@ def test_diagram_gate_rejects_png_that_is_not_a_fresh_master_render(repo_fixture
     )
 
 
+def test_aggregate_gate_reports_stale_committed_png_without_rewriting_it(repo_fixture: Path):
+    stale = repo_fixture / "docs/diagrams/img/overview.png"
+    stale.write_bytes(_png())
+    before = stale.read_bytes()
+
+    assert "overview: committed PNG differs from fresh master render" in messages(
+        check(repo_fixture)
+    )
+    assert stale.read_bytes() == before
+
+
+def test_diagram_gate_reports_fresh_render_failure(repo_fixture: Path, monkeypatch):
+    site_images = repo_fixture / "generated/site/assets/img"
+    site_images.mkdir(parents=True)
+    (site_images / "overview.svg").write_text("<svg/>", encoding="utf-8")
+
+    def fail_render(*_args, **_kwargs):
+        raise ValueError("renderer unavailable")
+
+    monkeypatch.setattr("scripts.docs.check_docs.svg_to_png", fail_render)
+
+    assert "overview: fresh PNG render failed: renderer unavailable" in messages(
+        check_diagrams(repo_fixture)
+    )
+
+
 def test_diagram_gate_requires_accessible_svg_metadata(repo_fixture: Path):
     site_images = repo_fixture / "generated/site/assets/img"
     site_images.mkdir(parents=True)

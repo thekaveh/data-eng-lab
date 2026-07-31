@@ -171,3 +171,19 @@ diagrams: []
         build_source_map(manifest, "wiki")
 
     assert f"{identifier} ({source})" in str(error.value)
+
+
+def test_site_source_map_rejects_destination_that_escapes_surface_root():
+    manifest = parse_manifest(
+        """\
+surfaces: [repo, site, wiki]
+numbering: baked
+internal_roots: [docs/superpowers]
+sections:
+  - {id: overview, number: '1', title: Overview, source: docs/../README.md}
+diagrams: []
+"""
+    )
+
+    with pytest.raises(ManifestError, match="site destination escapes its surface root"):
+        build_source_map(manifest, "site")

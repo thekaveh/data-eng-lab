@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+_PATH_SAFE_SLUG = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_-]*$")
 
 
 class ManifestError(ValueError):
@@ -79,23 +82,46 @@ def load_manifest(path: Path, repo_root: Path) -> Manifest:
 
     manifest = parse_manifest(text)
     root = repo_root.resolve()
-    paths = [leaf.source for leaf in iter_leaf_sections(manifest.sections)]
-    paths.extend(entry.master for entry in manifest.diagrams)
-    for manifest_path in paths:
+    sources = [leaf.source for leaf in iter_leaf_sections(manifest.sections)]
+    masters = [entry.master for entry in manifest.diagrams]
+    for manifest_path in (*sources, *masters):
         assert manifest_path is not None
         resolved = (root / manifest_path).resolve()
         if not resolved.is_relative_to(root):
             raise ManifestError(f"manifest path outside repository: {manifest_path}")
         if not resolved.exists():
             raise ManifestError(f"missing manifest path: {manifest_path}")
+    docs_root = (root / "docs").resolve()
+    resolved_internal_roots: list[tuple[Path, Path]] = []
     for internal_root in manifest.internal_roots:
         resolved = (root / internal_root).resolve()
         if not resolved.is_relative_to(root):
             raise ManifestError(f"manifest path outside repository: {internal_root}")
+        if resolved == docs_root or not resolved.is_relative_to(docs_root):
+            raise ManifestError(
+                f"internal root must be a proper docs subtree: {internal_root}"
+            )
         if not resolved.exists():
             raise ManifestError(f"missing manifest path: {internal_root}")
         if not resolved.is_dir():
             raise ManifestError(f"internal root must be a directory: {internal_root}")
+        resolved_internal_roots.append((internal_root, resolved))
+
+    for source in sources:
+        assert source is not None
+        resolved = (root / source).resolve()
+        for internal_root, internal_resolved in resolved_internal_roots:
+            if resolved == internal_resolved or resolved.is_relative_to(internal_resolved):
+                raise ManifestError(
+                    f"published source is inside internal root: {source} ({internal_root})"
+                )
+    for master in masters:
+        resolved = (root / master).resolve()
+        for internal_root, internal_resolved in resolved_internal_roots:
+            if resolved == internal_resolved or resolved.is_relative_to(internal_resolved):
+                raise ManifestError(
+                    f"diagram master is inside internal root: {master} ({internal_root})"
+                )
     return manifest
 
 
@@ -112,6 +138,7 @@ def _parse_section(value: Any, ids: set[str], numbers: set[str]) -> Section:
     section = _mapping(value, "section")
     _keys(section, {"id", "number", "title"}, {"source", "children", "diagrams"}, "section")
     identifier = _string(section["id"], "section id")
+    _path_safe_slug(identifier, "section id")
     number = _string(section["number"], "section number")
     title = _string(section["title"], "section title")
     if identifier in ids:
@@ -147,6 +174,7 @@ def _parse_diagram(value: Any, ids: set[str]) -> DiagramEntry:
     diagram = _mapping(value, "diagram")
     _keys(diagram, {"id", "master"}, set(), "diagram")
     identifier = _string(diagram["id"], "diagram id")
+    _path_safe_slug(identifier, "diagram id")
     if identifier in ids:
         raise ManifestError(f"duplicate diagram id: {identifier}")
     ids.add(identifier)
@@ -184,3 +212,8 @@ def _string(value: Any, name: str) -> str:
     if not isinstance(value, str) or not value:
         raise ManifestError(f"{name} must be a non-empty string")
     return value
+
+
+def _path_safe_slug(value: str, name: str) -> None:
+    if not _PATH_SAFE_SLUG.fullmatch(value):
+        raise ManifestError(f"{name} must be a path-safe slug: {value}")

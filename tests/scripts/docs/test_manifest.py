@@ -56,6 +56,22 @@ def test_parse_manifest_rejects_invalid_contract(text, message):
         parse_manifest(text)
 
 
+@pytest.mark.parametrize(
+    ("old", "new", "message"),
+    [
+        ("id: overview", "id: ../overview", "section id must be a path-safe slug"),
+        (
+            "id: overview, master: docs/diagrams/overview.html",
+            "id: diagrams/overview, master: docs/diagrams/overview.html",
+            "diagram id must be a path-safe slug",
+        ),
+    ],
+)
+def test_parse_manifest_requires_path_safe_slug_ids(old, new, message):
+    with pytest.raises(ManifestError, match=message):
+        parse_manifest(VALID.replace(old, new))
+
+
 def test_load_manifest_rejects_missing_source_and_master(tmp_path):
     path = tmp_path / "docs" / "manifest.yaml"
     path.parent.mkdir()
@@ -96,3 +112,57 @@ def test_load_manifest_requires_internal_roots_to_be_directories(tmp_path):
 
     with pytest.raises(ManifestError, match="internal root must be a directory: docs/internal.md"):
         load_manifest(path, tmp_path)
+
+
+@pytest.mark.parametrize("internal_root", [".", "docs", "scenarios", "docs/private/.."])
+def test_load_manifest_requires_internal_roots_to_be_proper_docs_subtrees(
+    tmp_path, internal_root
+):
+    _write_valid_manifest_tree(tmp_path)
+    (tmp_path / "docs/private").mkdir()
+    path = tmp_path / "docs/manifest.yaml"
+    path.write_text(VALID.replace("docs/superpowers", internal_root), encoding="utf-8")
+
+    with pytest.raises(ManifestError, match="internal root must be a proper docs subtree"):
+        load_manifest(path, tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("internal_root", "message"),
+    [
+        ("docs/scenarios", "published source is inside internal root"),
+        ("docs/diagrams", "diagram master is inside internal root"),
+    ],
+)
+def test_load_manifest_rejects_internal_roots_that_overlap_public_inputs(
+    tmp_path, internal_root, message
+):
+    _write_valid_manifest_tree(tmp_path)
+    path = tmp_path / "docs/manifest.yaml"
+    path.write_text(VALID.replace("docs/superpowers", internal_root), encoding="utf-8")
+
+    with pytest.raises(ManifestError, match=message):
+        load_manifest(path, tmp_path)
+
+
+def test_load_manifest_rejects_explicit_public_source_inside_internal_root(tmp_path):
+    _write_valid_manifest_tree(tmp_path)
+    internal_source = tmp_path / "docs/superpowers/private.md"
+    internal_source.write_text("# Private\n", encoding="utf-8")
+    path = tmp_path / "docs/manifest.yaml"
+    path.write_text(
+        VALID.replace("source: docs/index.md", "source: docs/superpowers/private.md"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ManifestError, match="published source is inside internal root"):
+        load_manifest(path, tmp_path)
+
+
+def _write_valid_manifest_tree(root: Path) -> None:
+    (root / "docs/diagrams").mkdir(parents=True)
+    (root / "docs/superpowers").mkdir()
+    (root / "docs/index.md").write_text("# 1. Overview\n", encoding="utf-8")
+    (root / "docs/scenarios").mkdir()
+    (root / "docs/scenarios/index.md").write_text("# 5.1. Catalog\n", encoding="utf-8")
+    (root / "docs/diagrams/overview.html").write_text("<svg/>\n", encoding="utf-8")

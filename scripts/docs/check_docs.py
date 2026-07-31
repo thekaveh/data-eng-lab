@@ -211,8 +211,10 @@ def check_diagrams(repo_root: Path) -> tuple[Finding, ...]:
                         svg = extract_svg(master_path.read_text(encoding="utf-8"))
                         fresh_png = fresh_png_dir / f"{identifier}.png"
                         svg_to_png(svg, fresh_png)
-                    except (DiagramError, OSError, ValueError):
-                        pass
+                    except (DiagramError, OSError, ValueError) as error:
+                        findings += (
+                            _error(f"{identifier}: fresh PNG render failed: {error}"),
+                        )
                     else:
                         committed_png = png_dir / f"{identifier}.png"
                         if (
