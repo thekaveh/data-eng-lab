@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.docs.manifest import parse_manifest
+from scripts.docs.manifest import ManifestError, parse_manifest
 from scripts.docs.transforms import build_source_map, rewrite_for_surface
 
 
@@ -87,3 +87,68 @@ def test_rewrite_changes_only_the_target_when_it_matches_the_label(manifest):
         mapping,
     )
     assert result == "[../scenarios/index.md](Scenarios.md)"
+
+
+def test_wiki_source_map_rejects_normalized_destination_collisions():
+    manifest = parse_manifest(
+        """\
+surfaces: [repo, site, wiki]
+numbering: baked
+internal_roots: [docs/superpowers]
+sections:
+  - {id: foo_bar, number: '1', title: Foo Bar, source: docs/foo.md}
+  - {id: foo-bar, number: '2', title: Foo-Bar, source: docs/bar.md}
+diagrams: []
+"""
+    )
+
+    with pytest.raises(ManifestError, match="wiki destination collision at Foo-Bar.md") as error:
+        build_source_map(manifest, "wiki")
+
+    assert "foo_bar (docs/foo.md)" in str(error.value)
+    assert "foo-bar (docs/bar.md)" in str(error.value)
+
+
+def test_wiki_source_map_reserves_home_for_the_overview_leaf():
+    manifest = parse_manifest(
+        """\
+surfaces: [repo, site, wiki]
+numbering: baked
+internal_roots: [docs/superpowers]
+sections:
+  - {id: overview, number: '1', title: Overview, source: docs/index.md}
+  - {id: home, number: '2', title: Home, source: docs/home.md}
+diagrams: []
+"""
+    )
+
+    with pytest.raises(ManifestError, match="wiki destination Home.md is reserved") as error:
+        build_source_map(manifest, "wiki")
+
+    assert "overview (docs/index.md)" in str(error.value)
+    assert "home (docs/home.md)" in str(error.value)
+
+
+@pytest.mark.parametrize(
+    ("identifier", "source", "destination"),
+    [
+        ("_Sidebar", "docs/sidebar.md", "_Sidebar.md"),
+        ("_Footer", "docs/footer.md", "_Footer.md"),
+    ],
+)
+def test_wiki_source_map_reserves_structural_page_identifiers(identifier, source, destination):
+    manifest = parse_manifest(
+        f"""\
+surfaces: [repo, site, wiki]
+numbering: baked
+internal_roots: [docs/superpowers]
+sections:
+  - {{id: {identifier}, number: '1', title: Reserved, source: {source}}}
+diagrams: []
+"""
+    )
+
+    with pytest.raises(ManifestError, match=rf"wiki destination {destination} is reserved") as error:
+        build_source_map(manifest, "wiki")
+
+    assert f"{identifier} ({source})" in str(error.value)
