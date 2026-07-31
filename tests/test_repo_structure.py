@@ -12,6 +12,14 @@ REQUIRED_FILES = [
     "CHANGELOG.md",
     "docs/atlas-enablement.md",
     "docs/superpowers/specs/2026-07-02-data-eng-lab-design.md",
+    "scripts/docs/check_docs.py",
+    "scripts/docs/push_wiki.py",
+]
+
+RETIRED_DOC_CHECKERS = [
+    "scripts/check_surfaces.py",
+    "scripts/check_diagrams.py",
+    "scripts/diagrams_manifest.yaml",
 ]
 
 
@@ -22,3 +30,8 @@ def test_required_top_level_files_exist():
 
 def test_python_version_is_311():
     assert (ROOT / ".python-version").read_text().strip() == "3.11"
+
+
+def test_interim_documentation_checkers_are_retired():
+    remaining = [path for path in RETIRED_DOC_CHECKERS if (ROOT / path).exists()]
+    assert not remaining, f"interim documentation checkers still present: {remaining}"
