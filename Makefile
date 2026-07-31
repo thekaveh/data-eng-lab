@@ -1,6 +1,6 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
-.PHONY: help setup up down datasets verify test preflight lint fmt new-scenario build-apps
+.PHONY: help setup up down datasets verify test preflight lint fmt new-scenario build-apps docs-build docs-check docs-serve docs-wiki
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-12s %s\n",$$1,$$2}'
@@ -42,3 +42,22 @@ build-apps: ## Build (test + shade) the Maven Spark apps
 	for pom in spark-apps/*/pom.xml; do \
 		echo "$$pom"; mvn -q -B -f "$$pom" package; \
 	done
+
+docs-build: ## Generate diagrams, site input, and build the strict site
+	uv run --group dev python -m scripts.docs.render_diagrams --root .
+	uv run --group dev python -m scripts.docs.build_docs --site --root .
+	uv run --group dev mkdocs build --strict
+
+docs-check: ## Verify all documentation surfaces and build the strict site
+	uv run --group dev python -m scripts.docs.check_docs --root .
+	uv run --group dev mkdocs build --strict
+
+docs-serve: ## Generate site input and serve it locally
+	uv run --group dev python -m scripts.docs.render_diagrams --root .
+	uv run --group dev python -m scripts.docs.build_docs --site --root .
+	uv run --group dev mkdocs serve
+
+docs-wiki: ## Generate and validate the wiki projection without pushing
+	uv run --group dev python -m scripts.docs.render_diagrams --force-png --root .
+	uv run --group dev python -m scripts.docs.check_docs --root .
+	uv run --group dev python -m scripts.docs.push_wiki --check --root .

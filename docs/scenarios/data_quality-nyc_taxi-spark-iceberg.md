@@ -1,4 +1,4 @@
-# data_quality-nyc_taxi-spark-iceberg
+# 5.8. data_quality-nyc_taxi-spark-iceberg
 
 Applies data quality checks to NYC taxi trip data using custom Spark SQL functions, counting and flagging records that fail validation rules.
 
@@ -32,7 +32,7 @@ Source: `lakehouse.bronze.nyc_taxi_trips` (the bronze table populated by `batch_
 
 ## 3. Architecture
 
-![Architecture](../architectures/data_quality-nyc_taxi-spark-iceberg.svg)
+![Architecture](../diagrams/img/data_quality-nyc_taxi-spark-iceberg.png)
 
 NYC taxi trip data (from local CSV seed or the bronze table) flows through Spark batch processing where custom Spark SQL quality-check functions are defined and applied. The output is a quality summary showing counts of records failing various checks (null fields, negative distances, negative fares), with no downstream sink table written.
 

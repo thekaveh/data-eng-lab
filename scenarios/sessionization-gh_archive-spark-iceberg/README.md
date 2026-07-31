@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # sessionization-gh_archive-spark-iceberg
 
 Detects user sessions from GitHub Archive events using window functions and gap-based sessionization with a 30-minute inactivity threshold.
@@ -28,7 +27,7 @@ Source: `lakehouse.silver.gh_events` (populated by the upstream `json_flatten-gh
 
 ## 3. Architecture
 
-![Architecture](architectures/sessionization-gh_archive-spark-iceberg.svg)
+![Architecture](../../docs/diagrams/img/sessionization-gh_archive-spark-iceberg.png)
 
 Data flows from the GitHub Events silver table through Spark batch processing. Events are partitioned by `actor_login`, ordered by timestamp, and the `LAG` window function detects gaps > 30 minutes between consecutive events. Sessions are assigned IDs via cumulative sum over gap indicators, and each output row includes the actor login and its session ID.
 
@@ -70,5 +69,5 @@ The 30-minute gap threshold is hardcoded as 1800 seconds and not externally conf
 
 - [Upstream: json_flatten-gh_archive-spark-iceberg](../json_flatten-gh_archive-spark-iceberg/README.md) — Produces the events table this scenario consumes
 - [Related: schema_evolution-gh_archive-spark-iceberg](../schema_evolution-gh_archive-spark-iceberg/README.md) — Another GitHub Archive processing scenario
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

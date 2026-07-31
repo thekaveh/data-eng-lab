@@ -1,8 +1,8 @@
-# Atlas Enablement Requests — for the `data-eng-lab` project
+# 8.6. Atlas Enablement
 
-**Status:** draft contract `v0.2` · **Consumer repo:** `data-eng-lab` (private) · **Target:** [`thekaveh/atlas`](https://github.com/thekaveh/atlas)
+**Status:** accepted `v0.2` on 2026-07-31 · **Consumer repo:** `data-eng-lab` (private) · **Target:** [`thekaveh/atlas`](https://github.com/thekaveh/atlas)
 
-> **➡️ The authoritative hand-off is now [`atlas-expectations.md`](atlas-expectations.md)** — it reflects the delivered reality (A1–A9, all delivered). This file remains the terse A1–A9 origin ledger.
+> The authoritative hand-off is [`atlas-expectations.md`](atlas-expectations.md). It records the delivered A1–A9 capabilities; this page retains the original request ledger.
 
 > This document is a hand-off for the Atlas maintainer/worker. It enumerates the
 > infrastructure enhancements that `data-eng-lab` needs from Atlas. `data-eng-lab`
@@ -18,9 +18,13 @@
 > for Airflow 3.3's `[api_auth] jwt_secret`; [#850](https://github.com/thekaveh/atlas/issues/850)
 > is closed. The prior `af7713ee` retest remains failure evidence, while this
 > corrected pin includes the #880 provider-compatible Spark wrapper, which extracts the driver
-> ID from the spark-submit log before REST confirmation, and awaits a
-> fresh representative DAG run before Airflow acceptance and promotion are
-> claimed. The non-Airflow live checks remain valid.
+> ID from the spark-submit log before REST confirmation. The original
+> `SparkSubmitOperator` requirement is now implemented by a TaskFlow task that
+> invokes `SparkSubmitHook`. On 2026-07-31, that representative Airflow
+> feature-artifact task succeeded on its first and only attempt; the standalone
+> Spark REST record was `FINISHED` with `success=true`. This result closes the
+> Airflow acceptance gate for the reviewed pin. The prior failed retest remains
+> historical evidence.
 
 ---
 
@@ -168,7 +172,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 - Python client: reaches `localhost:$TRINO_PORT` from host.
 - Member of `data-eng` track; `--trino-source` flag (default `disabled`).
 - Consumers: `scenarios/federated_query-nyc_taxi-trino-iceberg/`, `bi_query-tpch-trino-iceberg` (roadmap), live tests `tests/scenarios/test_trino_query_live.py`.
-- **Deviation:** Interpreter is `%trino`, not `%jdbc(trino)` (Zeppelin 0.12.1 semantics; also no auth, user convention `atlas`). See [`atlas-feedback-a7a9.md`] for the full delivery feedback.
+- **Deviation:** Interpreter is `%trino`, not `%jdbc(trino)` (Zeppelin 0.12.1 semantics; also no auth, user convention `atlas`). See [Atlas feedback for A7/A9](atlas-feedback-a7a9.md) for the full delivery feedback.
 
 ---
 
@@ -183,7 +187,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 - Checkpoints: use existing `s3a://checkpoints/` bucket (MinIO).
 - Member of `data-eng` track; `--redpanda-source` flag (default `disabled`).
 - Consumers: `scenarios/streaming_ingest-events-spark-iceberg/`, `producer.py` (auto-creates topics), live tests `tests/scenarios/test_streaming_live.py`.
-- **Note:** Demo-topic default is only `atlas_stream_events`; projects override `REDPANDA_DEMO_TOPICS` or rely on `auto_create_topics_enabled`. See [`atlas-feedback-a7a9.md`] for the full delivery feedback.
+- **Note:** Demo-topic default is only `atlas_stream_events`; projects override `REDPANDA_DEMO_TOPICS` or rely on `auto_create_topics_enabled`. See [Atlas feedback for A7/A9](atlas-feedback-a7a9.md) for the full delivery feedback.
 
 ---
 

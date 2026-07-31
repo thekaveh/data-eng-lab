@@ -65,14 +65,16 @@ jobs:
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
         with:
           enable-cache: true
-      - name: Build docs (strict)
-        run: uv run --group dev mkdocs build --strict
-      - name: Docs build --check (idempotent)
-        run: uv run --group dev python scripts/build_docs.py --root . --check
-      - name: Docs surface check
-        run: uv run --group dev python scripts/check_surfaces.py --root .
-      - name: Docs diagram check
-        run: uv run --group dev python scripts/check_diagrams.py --root .
+      - name: Install Cairo runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2
+      - name: Run canonical docs gate
+        run: make docs-check
+      - name: Lint docs tooling
+        run: uv run --group dev ruff check scripts/docs/
+      - name: Test docs tooling
+        run: uv run --group dev pytest tests/scripts/docs/ -q
 
   maven-spark-apps:
     runs-on: ubuntu-24.04

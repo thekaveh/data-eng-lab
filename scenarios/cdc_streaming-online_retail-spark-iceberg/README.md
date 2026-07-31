@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # cdc_streaming-online_retail-spark-iceberg
 
 Streaming CDC (Change Data Capture) upserts from the Redpanda `online_retail_cdc` topic, applied to an Iceberg table via `foreachBatch` + `MERGE INTO` for idempotent real-time updates.
@@ -32,7 +31,7 @@ Checkpoint: `s3a://checkpoints/online_retail_cdc`
 
 ## 3. Architecture
 
-![Architecture](architectures/cdc_streaming-online_retail-spark-iceberg.svg)
+![Architecture](../../docs/diagrams/img/cdc_streaming-online_retail-spark-iceberg.png)
 
 CDC events flow from the Redpanda `online_retail_cdc` topic through Spark Structured Streaming (`readStream` + `from_json`) into an Iceberg table. Each micro-batch triggers a `foreachBatch` callback that executes `MERGE INTO` — the same MERGE SQL as the batch `incremental_upsert-online_retail` scenario. The upsert key is the composite `(invoice, stock_code)`.
 
@@ -69,5 +68,5 @@ The `online_retail_cdc` topic is auto-created on first produce. Notebook executi
 
 - [Related: incremental_upsert-online_retail-spark-iceberg](../incremental_upsert-online_retail-spark-iceberg/README.md) — Batch form of the same CDC upsert pattern
 - [Related: scd2-online_retail-spark-iceberg](../scd2-online_retail-spark-iceberg/README.md) — Another online_retail dimension scenario
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

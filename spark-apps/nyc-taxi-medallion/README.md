@@ -1,154 +1,81 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # NYC Taxi Medallion Pipeline
 
-Productionizes the medallion transform pattern for NYC taxi trip data: bronze Iceberg → silver (deduplicated) → gold (daily aggregation on trip counts and average fares). Built by Jenkins CI, orchestrated by Airflow CD.
+This Spark application replaces the Silver and Gold NYC Taxi Iceberg tables from an existing Bronze table. Jenkins builds and publishes the application artifact; Airflow submits it to the Atlas Spark standalone cluster and confirms the terminal driver status.
 
 ## 1. Architecture
 
-```
-lakehouse.bronze.nyc_taxi_trips
-           │
-           │  (Iceberg table, Spark reads)
-           ▼
-    ┌─────────────┐
-    │   GitHub     │  (Git SCM trigger)
-    └──────┬──────┘
-           │
-           ▼
-    ┌─────────────┐      ┌──────────┐
-    │  Jenkins CI  │─────▶│  MinIO   │
-    │ mvn test     │      │  jars/   │
-    │ mvn package  │      │ app.jar  │
-    └──────┬──────┘      └────┬─────┘
-           │                   │
-           ▼                   ▼
-    ┌─────────────────────────────┐
-    │        Airflow DAG           │
-    │ Hook + REST confirmation     │
-    └──────────────┬──────────────┘
-                   │
-                   ▼
-    ┌──────────────────────────────────────────┐
-    │           Spark Cluster                   │
-    │                                           │
-    │   read bronze → MedallionTransforms       │
-    │     silver: dedup on (pickup, dropoff)    │
-    │     gold:   aggregate by trip_date        │
-    │           → write silver + gold           │
-    └────────────────────────┬─────────────────┘
-             ┌────────────────┴────────────────┐
-             ▼                                  ▼
-    ┌──────────────────┐          ┌──────────────────────┐
-    │ lakehouse.silver  │          │ lakehouse.gold        │
-    │ .nyc_taxi_trips   │          │ .nyc_taxi_daily        │
-    │ (deduplicated)    │          │ (trip counts, avg fare)│
-    └──────────────────┘          └──────────────────────┘
-```
+![Architecture](../../docs/diagrams/img/nyc-taxi-medallion.png)
 
-![Architecture](architectures/nyc-taxi-medallion.svg)
-
-- **Iceberg bronze → Jenkins:** SCM poll triggers the pipeline; Spark reads from the bronze layer.
-- **Jenkins CI:** runs `mvn test` (ScalaTest) then `mvn package`, producing a shaded JAR.
-- **MinIO:** JAR is published to `s3a://jars/nyc-taxi-medallion/0.1.0/nyc-taxi-medallion.jar`.
-- **Airflow:** `SparkSubmitHook` submits the JAR to the Spark cluster in cluster mode, then confirms the completed driver through Atlas's Spark REST endpoint.
-- **Spark Cluster:** reads from `lakehouse.bronze.nyc_taxi_trips`, applies `MedallionTransforms.silver()` for deduplication and `MedallionTransforms.gold()` for daily aggregation, writes both tables.
+Jenkins publishes the Maven output as `s3a://jars/nyc-taxi-medallion/0.1.0/app.jar`. The published object name is deliberately stable even though the local Maven artifact is `target/nyc-taxi-medallion-0.1.0.jar`.
 
 ## 2. Project Structure
 
-- **Language:** Scala (2.12)
-- **Build tool:** Maven (3.8+)
-- **Testing:** ScalaTest 3.2.19 — `MedallionTransformsSpec` with parameterised property tests
-- **Transform source:** `src/main/scala/transforms/MedallionTransforms.scala`
-- **Entrypoint:** `src/main/scala/MedallionMedallion.scala` (argument-driven: accepts `--bronze` / `--silver` / `--gold`)
-- **CI/CD:** `Jenkinsfile`, `src/main/scala/dag.py`
+- **Language:** Scala (2.13.14)
+- **Runtime target:** Spark 4.1.2 on Java 17
+- **Build and tests:** Maven with ScalaTest 3.2.19 and the Maven Shade plugin
+- **Transform source:** `src/main/scala/com/thekaveh/dataeng/medallion/transforms/MedallionTransforms.scala`
+- **Entrypoint source:** `src/main/scala/com/thekaveh/dataeng/medallion/NycTaxiMedallion.scala`
+- **Entrypoint class:** `com.thekaveh.dataeng.medallion.NycTaxiMedallion`
+- **Automation:** `Jenkinsfile` and `dag.py` at the application root
+
+The entrypoint accepts one optional positional bronze-table argument, defaulting to `lakehouse.bronze.nyc_taxi_trips`. The Silver and Gold destinations are fixed in the application.
 
 ## 3. Transform Logic
 
-The `MedallionTransforms` object defines two public methods:
+`MedallionTransforms.silver` removes duplicates on the natural trip-key pair `tpep_pickup_datetime` and `tpep_dropoff_datetime`.
 
-### `silver(df): DataFrame` — Bronze → Silver (deduplication)
+`MedallionTransforms.gold` groups the Silver DataFrame by its existing `trip_date` column and emits:
 
-1. **Input:** `lakehouse.bronze.nyc_taxi_trips` with columns: `id`, `type`, `actor_login`, `repo_name`, `created_at`, `trip_date`, etc.
-2. **Operation:** `df.dropDuplicates("tpep_pickup_datetime", "tpep_dropoff_datetime")` — removes rows sharing the same pickup and dropoff datetime pair, keeping the first occurrence.
-3. **Output:** Deduplicated DataFrame with the same schema, ready for the silver layer.
+- `trips` from `count(*)`; and
+- `avg_fare` from the average of `fare_amount`.
 
-### `gold(silverDf): DataFrame` — Silver → Gold (daily aggregation)
+The entrypoint creates `lakehouse.silver` and `lakehouse.gold` when necessary. It writes `lakehouse.silver.nyc_taxi_trips` and `lakehouse.gold.nyc_taxi_daily` with `createOrReplace()`.
 
-1. **Input:** Deduplicated silver DataFrame.
-2. **Operations:**
-   - Derive `trip_date = to_date(tpep_pickup_datetime)` if not already present.
-   - `groupBy("trip_date").agg(
-       count("id").alias("trip_count"),
-       avg("fare_amount").alias("avg_fare")
-     )`
-3. **Output:** Daily summary table with columns: `trip_date`, `trip_count`, `avg_fare`.
-
-Spark concepts used: `dropDuplicates`, `groupBy().agg()`, `avg`, `count`, `to_date`, `writeTo(...).overwrite()` for idempotent gold writes.
-
-## 4. Build & Test
+## 4. Build and Test
 
 ```bash
-# Run unit tests
 mvn -q -B -f spark-apps/nyc-taxi-medallion/pom.xml test
-
-# Build the shaded JAR
 mvn -q -B -f spark-apps/nyc-taxi-medallion/pom.xml package
 ```
 
+The package step produces `spark-apps/nyc-taxi-medallion/target/nyc-taxi-medallion-0.1.0.jar`. The Jenkins publish stage creates an `atlas` MinIO alias from its injected endpoint and credentials, then copies that file to `s3a://jars/nyc-taxi-medallion/0.1.0/app.jar`.
+
 ## 5. Run with Airflow
 
-The DAG (`nyc_taxi_medallion`) uses `SparkSubmitHook` configured with:
+The `nyc_taxi_medallion` DAG contains one TaskFlow task. It constructs `SparkSubmitHook` with these source-backed settings:
 
-- **application:** `s3a://jars/nyc-taxi-medallion/0.1.0/nyc-taxi-medallion.jar`
-- **deploy-mode:** `cluster` (Spark runs on cluster YARN/K8s, not driver)
-- **conf:** Iceberg SPARK config (`spark.sql.extensions=org.apache.iceberg.spark.IcebergSparkSessionExtensions`, catalog config with `warehouse=...`, `io-impl=...`)
-- **completion:** Atlas #880's `submit_and_confirm_via_rest()` disables the incompatible provider poll, captures the standalone driver ID from the `spark-submit` log, then requires a `FINISHED` successful driver at `spark-master:6066`.
-- **jars:** the MinIO-published JAR
-- **dependencies:** no external PyPI packages; the JAR ships its shaded dependencies (Spark 4 as `provided`, Iceberg runtime bundled)
-- **depends_on:** upstream `nyc_taxi_etl` DAG (Airflow task group dependency)
+- **application:** `s3a://jars/nyc-taxi-medallion/0.1.0/app.jar`
+- **class:** `com.thekaveh.dataeng.medallion.NycTaxiMedallion`
+- **argument:** `lakehouse.bronze.nyc_taxi_trips`
+- **submission:** Spark standalone cluster mode through `spark://spark-master:7077`
+- **Iceberg extension:** `org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions`
+- **completion:** `submit_and_confirm_via_rest()` captures the standalone driver ID from the submission log and requires a successful terminal result from `spark-master:6066`
 
-Spark reads `lakehouse.bronze.nyc_taxi_trips` and writes to:
-- `lakehouse.silver.nyc_taxi_trips` (deduplicated)
-- `lakehouse.gold.nyc_taxi_daily` (daily aggregation, `overwrite` mode for idempotency)
+The DAG does not declare cross-DAG orchestration; the Bronze table must exist before it runs. Spark is a `provided` Maven dependency. The Atlas Spark image supplies the Spark, S3A, and Iceberg runtime; the application does not download runtime packages during submission.
 
 ## 6. Prerequisites
 
-- Atlas A5 (Jenkins CI pipeline)
-- Atlas A6 (Airflow SparkSubmitHook + Spark REST confirmation)
-- JAR published to `s3a://jars/nyc-taxi-medallion/0.1.0/nyc-taxi-medallion.jar`
-- Preconfigured `minio` `mc` alias and `jars` bucket (A5)
-- S3A credentials available on the Spark cluster (A6)
-- `lakehouse.bronze.nyc_taxi_trips` populated by upstream `nyc-taxi-etl` DAG
-- Iceberg catalog configured on the Spark cluster
+- The Atlas Spark, Airflow, MinIO, and Iceberg REST services are running.
+- Jenkins has the MinIO endpoint and Iceberg access credentials used by the publish stage.
+- `lakehouse.bronze.nyc_taxi_trips` exists and includes `trip_date`.
+- `s3a://jars/nyc-taxi-medallion/0.1.0/app.jar` has been published.
+- The consumer overlay mounts `spark-apps/` below `/opt/airflow/dags`, where the DAG can import Atlas's shared `atlas_spark_utils` helper from the DAG root.
 
 ## 7. Data Flow
 
-```
+```text
 lakehouse.bronze.nyc_taxi_trips
-       │
-       │  read (Iceberg table, Spark DataFrame)
-       ▼
-  MedallionTransforms.silver()
-       │  dropDuplicates(pickup_datetime, dropoff_datetime)
-       ▼
-  lakehouse.silver.nyc_taxi_trips  (deduplicated Bronze data)
-       │
-       │  read (silver layer)
-       ▼
-  MedallionTransforms.gold()
-       │  groupBy(trip_date)
-       │  → trip_count = count(*)
-       │  → avg_fare = avg(fare_amount)
-       ▼
-  lakehouse.gold.nyc_taxi_daily  (daily aggregation, overwrite)
-  [trip_date | trip_count | avg_fare]
+  -> deduplicate pickup/dropoff pairs
+  -> lakehouse.silver.nyc_taxi_trips (create or replace)
+  -> group by trip_date
+  -> lakehouse.gold.nyc_taxi_daily [trip_date, trips, avg_fare] (create or replace)
 ```
 
 ## 8. See Also
 
-- [Spark apps overview](../index/README.md)
+- [Spark apps overview](../../docs/spark-apps/index.md)
 - [nyc-taxi-etl](../nyc-taxi-etl/README.md)
-- [Related scenario: medallion-nyc_taxi-spark-iceberg](../../scenarios/medallion-nyc_taxi-spark-iceberg/README.md) — Notebook prototype of this app
-- [Related scenario: batch_ingest-nyc_taxi-spark-iceberg](../../scenarios/batch_ingest-nyc_taxi-spark-iceberg/README.md) — Populates the bronze table this app reads from
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
-- [Datasets](../../README.md#datasets)
+- [Medallion scenario](../../scenarios/medallion-nyc_taxi-spark-iceberg/README.md)
+- [Batch-ingest scenario](../../scenarios/batch_ingest-nyc_taxi-spark-iceberg/README.md)
+- [Lakehouse architecture](../../docs/lakehouse.md)
+- [Datasets](../../docs/datasets.md)

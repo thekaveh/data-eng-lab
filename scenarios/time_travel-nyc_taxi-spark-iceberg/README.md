@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # time_travel-nyc_taxi-spark-iceberg
 
 Demonstrates Iceberg time travel capabilities — querying historical table versions using `VERSION AS OF` and `TIMESTAMP AS OF` syntax — on NYC taxi trip data.
@@ -33,7 +32,7 @@ Source: `s3a://landing/nyc_taxi/taxi_data.csv` (local CSV seed) plus NYC Taxi Tr
 
 ## 3. Architecture
 
-![Architecture](architectures/time_travel-nyc_taxi-spark-iceberg.svg)
+![Architecture](../../docs/diagrams/img/time_travel-nyc_taxi-spark-iceberg.png)
 
 NYC taxi trip data flows through Spark batch processing where the table undergoes multiple write operations (inserts and overwrites). After each operation, the table acquires a new snapshot. Time travel queries then read specific historical snapshots using either `VERSION AS OF <version>` or `TIMESTAMP AS OF <timestamp>`, demonstrating point-in-time accuracy. The scenario also explores Write-Audit-Publish (WAP) branching: create a WAP branch for safe mutation, validate reads against it, then fast-forward the branch to publish — all without affecting the main branch until the changes are ready.
 
@@ -76,5 +75,5 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `
 - [Related: table_maintenance-nyc_taxi-spark-iceberg](../table_maintenance-nyc_taxi-spark-iceberg/README.md) — Also demonstrates time travel
 - [Related: medallion-nyc_taxi-spark-iceberg](../medallion-nyc_taxi-spark-iceberg/README.md) — Full medallion pipeline
 - [Production Spark app: nyc-taxi-medallion](../../spark-apps/nyc-taxi-medallion/README.md) — Phase-3a JAR productionizes this scenario for Airflow
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

@@ -1,4 +1,4 @@
-# star_schema-tpch-spark-iceberg
+# 5.10. star_schema-tpch-spark-iceberg
 
 Builds fact and dimension tables from the TPC-H dataset using star schema dimensional modeling, creating `dim_customer` and `fct_orders` in the gold layer.
 
@@ -46,7 +46,7 @@ Source: TPC-H Parquet datasets in S3 (`s3a://landing/tpch/`), downloaded via `ma
 
 ## 3. Architecture
 
-![Architecture](../architectures/star_schema-tpch-spark-iceberg.svg)
+![Architecture](../diagrams/img/star_schema-tpch-spark-iceberg.png)
 
 Data flows from three Parquet tables in S3 (`orders`, `customer`, `lineitem`) through Spark batch processing. Orders are joined with lineitems on order key, then joined with customers on customer key. The result produces two gold-layer Iceberg tables: a dimension table (`dim_customer`) and a fact table (`fct_orders`), forming a star schema.
 

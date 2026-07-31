@@ -1,4 +1,4 @@
-# streaming_windows-events-spark-iceberg
+# 5.6. streaming_windows-events-spark-iceberg
 
 Windowed aggregation with watermark on the Redpanda `events` Kafka topic, writing closed window counts to `lakehouse.gold.event_windows` (Iceberg).
 
@@ -28,7 +28,7 @@ Checkpoint: `s3a://checkpoints/event_windows`
 
 ## 3. Architecture
 
-![Architecture](../architectures/streaming_windows-events-spark-iceberg.svg)
+![Architecture](../diagrams/img/streaming_windows-events-spark-iceberg.png)
 
 Data flows from the Redpanda `events` topic through Spark Structured Streaming with `withWatermark` and `groupBy` over tumbling windows (5-minute windows, 10-minute watermark). Aggregation: counts events per event type per window. Results are written to Iceberg in append mode — only closed windows emit.
 

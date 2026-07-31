@@ -1,6 +1,8 @@
-# Atlas Go-Live Runbook — `data-eng-lab`
+# 8.2. Atlas Go-Live Runbook
 
-This document is the playbook for **deferred live validation** of the Atlas enablement items (A1–A9). The Atlas infrastructure is considered stable and pinned; this runbook validates the end-to-end lakehouse scenarios against the delivered contract documented in `atlas-expectations.md`.
+This playbook validates the Atlas enablement items (A1–A9) against the delivered
+contract documented in `atlas-expectations.md`. The 2026-07-31 accepted baseline
+is recorded below; rerun the same gates for every later Atlas pin.
 
 **Scope:** Validates A1–A9 (all delivered). Full run takes ~30–45 minutes (including container startup and test suites).
 
@@ -328,15 +330,16 @@ Run the end-to-end lakehouse pipeline via Airflow.
    ```
    Expected output: Row count > 0.
 
-**Current live gate (atlas `985918ce`):** the reviewed pin includes Atlas
+**Accepted baseline (2026-07-31, atlas `985918ce8c805081947d53b1c48bb80610237a5b`):** the reviewed pin includes Atlas
 [#850](https://github.com/thekaveh/atlas/issues/850)'s corrected shared
 `AIRFLOW__API_AUTH__JWT_SECRET` mapping and [Atlas #880](https://github.com/thekaveh/atlas/issues/880)'s
 provider-compatible REST-confirmation helper. The DAG constructs the hook without an application
 and calls `submit_and_confirm_via_rest()` so it does not run the provider's incompatible post-submit
 `:7077` status poll. The helper captures the standalone driver ID from the spark-submit log before
 checking `:6066`; it still allows genuine submission failures to raise and rejects a failed or
-non-terminal driver. Do not claim this DAG
-success or promote the branch until this reviewed pin passes this step.
+non-terminal driver. The representative feature-artifact task succeeded on its first and only
+attempt, and Spark reported `FINISHED` with `success=true`. For any later Atlas pin, rerun this
+step and require the same terminal REST evidence before promotion.
 
 ### 3.7 Trino + streaming validation (A7/A9)
 
@@ -530,9 +533,9 @@ If all above pass, the Atlas enablement is **validated for production use** and 
 - Confirm the target Atlas configuration is active on both the scheduler and DAG
   processor: `AIRFLOW__CORE__EXECUTION_API_SERVER_URL=http://airflow-webserver:8080/execution/`.
   If it is absent, confirm the checked-out submodule pin and rerun `make up` so
-  Atlas rebuilds changed images automatically. See [Atlas Go-Live Feedback](atlas-feedback-go-live.md)
-  for #791's validated DNS configuration, #850's corrected mapping awaiting
-  live retest, and #792's separate status-poll caveat.
+  Atlas rebuilds changed images automatically. See [Atlas Go-Live Findings](atlas-feedback-go-live.md)
+  for #791's validated DNS configuration, #850's corrected mapping, the resolved
+  #792 status-poll path, and the historical failed-gate evidence.
 
 ---
 
@@ -548,6 +551,6 @@ After a successful go-live run:
 
 *Cross-referenced from:* `atlas-expectations.md` — the A1–A9 enablement contract and delivered shapes.
 
-*See also:* [Go-Live Results](go-live-results.md) — actual results from the 2026-07-04 live validation run (30 containers, 156 GiB Docker; all 6 Layer-2 edges passed; bugs found and fixed).
+*See also:* [Go-Live Results](go-live-results.md) — the 2026-07-04 platform validation and the scoped 2026-07-31 Atlas acceptance result.
 
-*Maintained by `data-eng-lab`.* Latest update: Phase 4 — go-live runbook authoring complete. All 19 scenarios validated against live Atlas stack.
+*Maintained by `data-eng-lab`.* Latest update: 2026-07-31 Atlas acceptance baseline recorded.

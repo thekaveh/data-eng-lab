@@ -9,6 +9,10 @@ ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW = ROOT / ".github/workflows/ci.yml"
 
 
+def _load_workflow() -> dict:
+    return yaml.load(WORKFLOW.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+
+
 def _atlas_contract_job(workflow: dict) -> dict:
     return workflow["jobs"]["atlas-consumer-contract"]
 
@@ -103,13 +107,20 @@ def _assert_non_live_contract(job: dict) -> None:
 
 
 def test_ci_has_a_pinned_non_live_atlas_consumer_contract_job():
-    workflow = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))
+    workflow = _load_workflow()
     job = _atlas_contract_job(workflow)
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"]["submodules"] == "recursive"
 
     _assert_required_commands(job)
     _assert_non_live_contract(job)
+
+
+def test_ci_covers_main_and_develop_pushes_and_pull_requests():
+    workflow = _load_workflow()
+
+    assert workflow["on"]["push"]["branches"] == ["main", "develop"]
+    assert workflow["on"]["pull_request"]["branches"] == ["main", "develop"]
 
 
 def test_non_live_ci_guard_rejects_live_operations():

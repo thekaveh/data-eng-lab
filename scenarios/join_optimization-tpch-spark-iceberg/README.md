@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # join_optimization-tpch-spark-iceberg
 
 Optimizes Spark join strategies for large-scale TPCH data with Iceberg table partitions, exploring broadcast joins, sort-merge joins, and bucket joins for different data sizes.
@@ -25,7 +24,7 @@ Source: `s3a://landing/tpch/*.parquet` (TPCH dataset downloaded via `make datase
 
 ## 3. Architecture
 
-![Architecture](architectures/join_optimization-tpch-spark-iceberg.svg)
+![Architecture](../../docs/diagrams/img/join_optimization-tpch-spark-iceberg.png)
 
 TPCH parquets flow from S3 landing zone into Spark for join optimization demonstration. Multiple join strategies (broadcast, sort-merge, bucket) are applied to TPCH tables, with performance comparison output showing which strategy is optimal for each data size and join key configuration.
 
@@ -67,5 +66,5 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `
 
 - [Related: bi_query-tpch-trino-iceberg](../bi_query-tpch-trino-iceberg/README.md) — BI queries on TPCH
 - [Related: bi_query-tpch-trino-iceberg](../bi_query-tpch-trino-iceberg/README.md) — Trino/SQL queries on TPCH gold marts
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

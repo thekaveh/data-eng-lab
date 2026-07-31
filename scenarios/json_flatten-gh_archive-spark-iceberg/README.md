@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # json_flatten-gh_archive-spark-iceberg
 
 Reads GitHub Archive nested JSON events, extracts and flattens nested fields, casts timestamps, and writes to a flat Iceberg silver table.
@@ -29,7 +28,7 @@ Source: `s3a://landing/gh_archive/*.json.gz` (compressed JSON files from GitHub 
 
 ## 3. Architecture
 
-![Architecture](architectures/json_flatten-gh_archive-spark-iceberg.svg)
+![Architecture](../../docs/diagrams/img/json_flatten-gh_archive-spark-iceberg.png)
 
 Data flows from compressed JSON files in S3 through Spark batch processing. Nested fields are extracted using dot notation (`col("actor.login")`), timestamps are cast to proper types, and the flattened result is written to an Iceberg silver table.
 
@@ -72,5 +71,5 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `
 - [Related: schema_evolution-gh_archive-spark-iceberg](../schema_evolution-gh_archive-spark-iceberg/README.md) — Another GitHub Archive processing scenario
 - [Related: sessionization-gh_archive-spark-iceberg](../sessionization-gh_archive-spark-iceberg/README.md) — Consumes flattened events from this scenario
 - [Related: streaming_ingest-gh_archive-spark-iceberg](../streaming_ingest-gh_archive-spark-iceberg/README.md) — Streaming version of JSON ingest
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

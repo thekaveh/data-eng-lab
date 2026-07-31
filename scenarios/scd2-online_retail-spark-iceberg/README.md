@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # scd2-online_retail-spark-iceberg
 
 Implements Slowly Changing Dimension Type 2 (SCD2) to track historical changes on a customer dimension, preserving full history with effective timestamps and current flags.
@@ -27,7 +26,7 @@ Source: Online retail dimension data (inline seed in notebooks — no external d
 
 ## 3. Architecture
 
-![Architecture](architectures/scd2-online_retail-spark-iceberg.svg)
+![Architecture](../../docs/diagrams/img/scd2-online_retail-spark-iceberg.png)
 
 Data flows from inline seed data through Spark batch processing with SCD2 logic. The notebook seeds initial customer data, then simulates a segment change by closing the old row and opening a new row with the updated segment and effective timestamps. This demonstrates how Iceberg handles row-level updates efficiently.
 
@@ -69,5 +68,5 @@ Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `
 
 - [Related: incremental_upsert-online_retail-spark-iceberg](../incremental_upsert-online_retail-spark-iceberg/README.md) — Batch form of the same CDC upsert pattern
 - [Related: cdc_streaming-online_retail-spark-iceberg](../cdc_streaming-online_retail-spark-iceberg/README.md) — Streaming CDC version of upserts
-- [Datasets](../../README.md#datasets)
-- [Lakehouse Architecture](../../README.md#lakehouse-architecture)
+- [Datasets](../../docs/datasets.md)
+- [Lakehouse Architecture](../../docs/lakehouse.md)

@@ -1,4 +1,4 @@
-# streaming_ingest-events-spark-iceberg
+# 5.4. streaming_ingest-events-spark-iceberg
 
 Ingest synthetic click events from the Redpanda `events` Kafka topic into `lakehouse.bronze.events` (Iceberg) via Spark Structured Streaming. Scala (Zeppelin) and PySpark (Jupyter) notebooks implement the same streaming logic; `producer.py` generates synthetic events for local testing.
 
@@ -28,7 +28,7 @@ Checkpoint: `s3a://checkpoints/events`
 
 ## 3. Architecture
 
-![Architecture](../architectures/streaming_ingest-events-spark-iceberg.svg)
+![Architecture](../diagrams/img/streaming_ingest-events-spark-iceberg.png)
 
 Data flows from the Redpanda `events` topic through Spark Structured Streaming (`readStream` + `from_json` + `writeStream`) into the Iceberg bronze table. Checkpointing ensures exactly-once semantics for streaming offsets.
 

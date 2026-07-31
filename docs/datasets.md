@@ -1,4 +1,4 @@
-# Datasets
+# 4. Datasets
 
 `data-eng-lab` lands a curated set of five standard open datasets into MinIO's `landing` bucket, driven by a declarative registry. Each dataset comes in multiple scale levels (`tiny`, `small`, `medium`) to support CI, local development, and heavier analytical workloads.
 

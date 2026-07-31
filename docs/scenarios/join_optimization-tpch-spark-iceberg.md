@@ -1,4 +1,4 @@
-# join_optimization-tpch-spark-iceberg
+# 5.18. join_optimization-tpch-spark-iceberg
 
 Optimizes Spark join strategies for large-scale TPCH data with Iceberg table partitions, exploring broadcast joins, sort-merge joins, and bucket joins for different data sizes.
 
@@ -24,7 +24,7 @@ Source: `s3a://landing/tpch/*.parquet` (TPCH dataset downloaded via `make datase
 
 ## 3. Architecture
 
-![Architecture](../architectures/join_optimization-tpch-spark-iceberg.svg)
+![Architecture](../diagrams/img/join_optimization-tpch-spark-iceberg.png)
 
 TPCH parquets flow from S3 landing zone into Spark for join optimization demonstration. Multiple join strategies (broadcast, sort-merge, bucket) are applied to TPCH tables, with performance comparison output showing which strategy is optimal for each data size and join key configuration.
 

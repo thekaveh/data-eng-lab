@@ -11,6 +11,10 @@ htmlcov/
 .superpowers/
 # MkDocs built site
 site/
+/site/
+# Generated documentation surfaces and configuration
+/generated/
+/mkdocs.yml
 # wiki staging dir (built by scripts/build_docs.py, never committed)
 wiki/
 # local data (never committed)

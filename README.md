@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # data-eng-lab
 
 **An Iceberg-lakehouse data-engineering lab built on the [Atlas](https://github.com/thekaveh/atlas) platform.**
@@ -9,7 +8,7 @@ Curated Spark scenarios in Scala (Zeppelin) and PySpark (Jupyter), orchestrated 
 
 ## 1.1 Architecture
 
-![Full-stack Lakehouse Architecture](architectures/overview.svg)
+![Full-stack Lakehouse Architecture](docs/diagrams/img/overview.png)
 
 The lab implements a **medallion lakehouse** with four layers:
 
@@ -18,7 +17,7 @@ s3a://landing/   →   bronze   →   silver   →   gold
   (raw Parquet)       (clean)     (enriched)   (aggregated/modelled)
 ```
 
-Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg REST catalog** (`lakehouse`). Compute is provided by a Spark cluster; Trino handles ad-hoc SQL and federated queries. Redpanda (Kafka-compatible) drives all streaming scenarios. Airflow schedules production DAGs; Jenkins builds and publishes Maven Spark apps to MinIO artifacts.
+Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg REST catalog** (`lakehouse`). Compute is provided by a Spark cluster; Trino handles ad-hoc SQL and federated queries. Redpanda (Kafka-compatible) backs the event-ingest, windowing, and CDC streaming scenarios. `streaming_ingest-gh_archive-spark-iceberg` uses an incremental file source and requires no Kafka broker. Airflow schedules production DAGs; Jenkins builds and publishes Maven Spark apps to MinIO artifacts.
 
 ---
 
@@ -32,7 +31,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
     19 end-to-end Spark and Trino scenarios across bronze, silver, and gold layers.
 
-     [:octicons-arrow-right-24: Browse scenarios](scenarios/index/README.md)
+     [:octicons-arrow-right-24: Browse scenarios](docs/scenarios/index.md)
 
 -   :material-rocket-launch:{ .lg .middle } **Spark apps**
 
@@ -40,7 +39,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
     2 CI-verified Maven Scala Spark apps built by Jenkins and run by Airflow.
 
-     [:octicons-arrow-right-24: Browse apps](spark-apps/index/README.md)
+     [:octicons-arrow-right-24: Browse apps](docs/spark-apps/index.md)
 
 -   :material-table-large:{ .lg .middle } **Datasets**
 
@@ -48,7 +47,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
     5 curated datasets (NYC Taxi, TPC-H, Online Retail, GH Archive, Events) with `make datasets`.
 
-    [:octicons-arrow-right-24: Dataset guide](README.md#datasets)
+    [:octicons-arrow-right-24: Dataset guide](docs/datasets.md)
 
 -   :material-layers-triple:{ .lg .middle } **Lakehouse design**
 
@@ -56,7 +55,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
     Medallion layout, Iceberg namespaces, MinIO buckets, and the bronze smoke test.
 
-    [:octicons-arrow-right-24: Lakehouse guide](README.md#lakehouse-architecture)
+    [:octicons-arrow-right-24: Lakehouse guide](docs/lakehouse.md)
 
 -   :material-check-decagram:{ .lg .middle } **Atlas platform**
 
@@ -64,7 +63,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
     A1–A9 Atlas enablement checklist, expectations, and go-live runbook.
 
-    :octicons-arrow-right-24: Atlas enablement
+    [:octicons-arrow-right-24: Atlas enablement](docs/atlas-enablement.md)
 
 -   :material-play-box-multiple:{ .lg .middle } **Getting started**
 
@@ -72,7 +71,7 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 
     Prerequisites, `make datasets`, starting the stack, and running notebooks.
 
-    [:octicons-arrow-right-24: Quick start](README.md#getting-started)
+    [:octicons-arrow-right-24: Quick start](docs/getting-started.md)
 
 </div>
 
@@ -145,34 +144,36 @@ Every table is an **Apache Iceberg** table, accessed through the Atlas **Iceberg
 ---
 
 !!! tip "New here?"
-    Start with [Getting started](README.md#getting-started) to get the stack running, then pick a scenario from the [catalog](scenarios/index/README.md) or dive into the [lakehouse design](README.md#lakehouse-architecture).
+    Start with [Getting started](docs/getting-started.md) to get the stack running, then pick a scenario from the [catalog](docs/scenarios/index.md) or dive into the [lakehouse design](docs/lakehouse.md).
 
 !!! info "Atlas platform"
-    The Atlas platform underpins this lab. See Atlas enablement for the full A1–A9 checklist and Go-live runbook for production readiness steps.
+    The Atlas platform underpins this lab. See [Atlas enablement](docs/atlas-enablement.md) for the full A1–A9 checklist and the [go-live runbook](docs/go-live.md) for production readiness steps.
 
 ## Scenario catalog
 
-| # | Scenario | Notebook doc |
-|---|---|---|
-| 1 | [batch_ingest-nyc_taxi-spark-iceberg](scenarios/batch_ingest-nyc_taxi-spark-iceberg/README.md) | [notebooks](scenarios/batch_ingest-nyc_taxi-spark-iceberg/notebooks.md) |
-| 2 | [bi_query-tpch-trino-iceberg](scenarios/bi_query-tpch-trino-iceberg/README.md) | [notebooks](scenarios/bi_query-tpch-trino-iceberg/notebooks.md) |
-| 3 | [cdc_streaming-online_retail-spark-iceberg](scenarios/cdc_streaming-online_retail-spark-iceberg/README.md) | [notebooks](scenarios/cdc_streaming-online_retail-spark-iceberg/notebooks.md) |
-| 4 | [data_quality-nyc_taxi-spark-iceberg](scenarios/data_quality-nyc_taxi-spark-iceberg/README.md) | [notebooks](scenarios/data_quality-nyc_taxi-spark-iceberg/notebooks.md) |
-| 5 | [feature_engineering-movielens-spark-iceberg](scenarios/feature_engineering-movielens-spark-iceberg/README.md) | [notebooks](scenarios/feature_engineering-movielens-spark-iceberg/notebooks.md) |
-| 6 | [federated_query-nyc_taxi-trino-iceberg](scenarios/federated_query-nyc_taxi-trino-iceberg/README.md) | [notebooks](scenarios/federated_query-nyc_taxi-trino-iceberg/notebooks.md) |
-| 7 | [incremental_upsert-online_retail-spark-iceberg](scenarios/incremental_upsert-online_retail-spark-iceberg/README.md) | [notebooks](scenarios/incremental_upsert-online_retail-spark-iceberg/notebooks.md) |
-| 8 | [join_optimization-tpch-spark-iceberg](scenarios/join_optimization-tpch-spark-iceberg/README.md) | [notebooks](scenarios/join_optimization-tpch-spark-iceberg/notebooks.md) |
-| 9 | [json_flatten-gh_archive-spark-iceberg](scenarios/json_flatten-gh_archive-spark-iceberg/README.md) | [notebooks](scenarios/json_flatten-gh_archive-spark-iceberg/notebooks.md) |
-| 10 | [medallion-nyc_taxi-spark-iceberg](scenarios/medallion-nyc_taxi-spark-iceberg/README.md) | [notebooks](scenarios/medallion-nyc_taxi-spark-iceberg/notebooks.md) |
-| 11 | [scd2-online_retail-spark-iceberg](scenarios/scd2-online_retail-spark-iceberg/README.md) | [notebooks](scenarios/scd2-online_retail-spark-iceberg/notebooks.md) |
-| 12 | [schema_evolution-gh_archive-spark-iceberg](scenarios/schema_evolution-gh_archive-spark-iceberg/README.md) | [notebooks](scenarios/schema_evolution-gh_archive-spark-iceberg/notebooks.md) |
-| 13 | [sessionization-gh_archive-spark-iceberg](scenarios/sessionization-gh_archive-spark-iceberg/README.md) | [notebooks](scenarios/sessionization-gh_archive-spark-iceberg/notebooks.md) |
-| 14 | [star_schema-tpch-spark-iceberg](scenarios/star_schema-tpch-spark-iceberg/README.md) | [notebooks](scenarios/star_schema-tpch-spark-iceberg/notebooks.md) |
-| 15 | [streaming_ingest-events-spark-iceberg](scenarios/streaming_ingest-events-spark-iceberg/README.md) | [notebooks](scenarios/streaming_ingest-events-spark-iceberg/notebooks.md) |
-| 16 | [streaming_ingest-gh_archive-spark-iceberg](scenarios/streaming_ingest-gh_archive-spark-iceberg/README.md) | [notebooks](scenarios/streaming_ingest-gh_archive-spark-iceberg/notebooks.md) |
-| 17 | [streaming_windows-events-spark-iceberg](scenarios/streaming_windows-events-spark-iceberg/README.md) | [notebooks](scenarios/streaming_windows-events-spark-iceberg/notebooks.md) |
-| 18 | [table_maintenance-nyc_taxi-spark-iceberg](scenarios/table_maintenance-nyc_taxi-spark-iceberg/README.md) | [notebooks](scenarios/table_maintenance-nyc_taxi-spark-iceberg/notebooks.md) |
-| 19 | [time_travel-nyc_taxi-spark-iceberg](scenarios/time_travel-nyc_taxi-spark-iceberg/README.md) | [notebooks](scenarios/time_travel-nyc_taxi-spark-iceberg/notebooks.md) |
+Canonical notebook walkthroughs are maintained once under `docs/notebooks/`; each one compares the paired Scala and PySpark implementations.
+
+| # | Scenario |
+|---|---|
+| 1 | [batch_ingest-nyc_taxi-spark-iceberg](scenarios/batch_ingest-nyc_taxi-spark-iceberg/README.md) |
+| 2 | [bi_query-tpch-trino-iceberg](scenarios/bi_query-tpch-trino-iceberg/README.md) |
+| 3 | [cdc_streaming-online_retail-spark-iceberg](scenarios/cdc_streaming-online_retail-spark-iceberg/README.md) |
+| 4 | [data_quality-nyc_taxi-spark-iceberg](scenarios/data_quality-nyc_taxi-spark-iceberg/README.md) |
+| 5 | [feature_engineering-movielens-spark-iceberg](scenarios/feature_engineering-movielens-spark-iceberg/README.md) |
+| 6 | [federated_query-nyc_taxi-trino-iceberg](scenarios/federated_query-nyc_taxi-trino-iceberg/README.md) |
+| 7 | [incremental_upsert-online_retail-spark-iceberg](scenarios/incremental_upsert-online_retail-spark-iceberg/README.md) |
+| 8 | [join_optimization-tpch-spark-iceberg](scenarios/join_optimization-tpch-spark-iceberg/README.md) |
+| 9 | [json_flatten-gh_archive-spark-iceberg](scenarios/json_flatten-gh_archive-spark-iceberg/README.md) |
+| 10 | [medallion-nyc_taxi-spark-iceberg](scenarios/medallion-nyc_taxi-spark-iceberg/README.md) |
+| 11 | [scd2-online_retail-spark-iceberg](scenarios/scd2-online_retail-spark-iceberg/README.md) |
+| 12 | [schema_evolution-gh_archive-spark-iceberg](scenarios/schema_evolution-gh_archive-spark-iceberg/README.md) |
+| 13 | [sessionization-gh_archive-spark-iceberg](scenarios/sessionization-gh_archive-spark-iceberg/README.md) |
+| 14 | [star_schema-tpch-spark-iceberg](scenarios/star_schema-tpch-spark-iceberg/README.md) |
+| 15 | [streaming_ingest-events-spark-iceberg](scenarios/streaming_ingest-events-spark-iceberg/README.md) |
+| 16 | [streaming_ingest-gh_archive-spark-iceberg](scenarios/streaming_ingest-gh_archive-spark-iceberg/README.md) |
+| 17 | [streaming_windows-events-spark-iceberg](scenarios/streaming_windows-events-spark-iceberg/README.md) |
+| 18 | [table_maintenance-nyc_taxi-spark-iceberg](scenarios/table_maintenance-nyc_taxi-spark-iceberg/README.md) |
+| 19 | [time_travel-nyc_taxi-spark-iceberg](scenarios/time_travel-nyc_taxi-spark-iceberg/README.md) |
 
 ## Spark Apps
 

@@ -1,4 +1,4 @@
-# json_flatten-gh_archive-spark-iceberg
+# 5.19. json_flatten-gh_archive-spark-iceberg
 
 Reads GitHub Archive nested JSON events, extracts and flattens nested fields, casts timestamps, and writes to a flat Iceberg silver table.
 
@@ -28,7 +28,7 @@ Source: `s3a://landing/gh_archive/*.json.gz` (compressed JSON files from GitHub 
 
 ## 3. Architecture
 
-![Architecture](../architectures/json_flatten-gh_archive-spark-iceberg.svg)
+![Architecture](../diagrams/img/json_flatten-gh_archive-spark-iceberg.png)
 
 Data flows from compressed JSON files in S3 through Spark batch processing. Nested fields are extracted using dot notation (`col("actor.login")`), timestamps are cast to proper types, and the flattened result is written to an Iceberg silver table.
 

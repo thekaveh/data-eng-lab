@@ -1,4 +1,4 @@
-# data-eng-lab → Atlas: Expectations & Enablement Hand-off
+# 8.1. Atlas Expectations
 
 **Audience:** the engineer(s) working on **Atlas** (`thekaveh/atlas`).
 
@@ -31,10 +31,14 @@ Atlas's consumer-doc clarifications from **#281**
 validated (including Zeppelin, Trino, and Kafka streaming). The current pin
 includes [#850](https://github.com/thekaveh/atlas/issues/850)'s corrected shared
 `AIRFLOW__API_AUTH__JWT_SECRET` mapping for Airflow 3.3's `[api_auth] jwt_secret`.
-The earlier `af7713ee` failed-gate evidence is retained below; a successful
-Airflow Spark-submit DAG and Gitflow promotion are not yet claimed until this
-new pin is live-retested. #791's in-network Execution API DNS configuration is
-nevertheless validated. See
+On 2026-07-31, the representative Airflow feature-artifact TaskFlow task, which
+invokes `SparkSubmitHook`, succeeded on its first and only attempt. Spark
+standalone REST reached `FINISHED` with `success=true`, closing the acceptance
+gate for this pin. Gitflow promotion had already completed through PRs #66,
+#67, and #68. The earlier `af7713ee` failed-gate evidence is retained below, and
+#791's in-network Execution API DNS configuration remains validated. For any
+future pin, rerun the gates in [Atlas Pin-Bump Runbook](atlas-pin-bump-runbook.md)
+before promotion. See
 [Delivered deviations](#2-delivered-deviations-from-our-a7a9-asks) for the
 `%trino` interpreter name and topic-seeding notes.
 
@@ -169,7 +173,7 @@ When all A1–A9 are delivered, we flip `--trino-source`/`--redpanda-source` on 
 
 ---
 
-**A7/A9 delivery feedback:** See [`atlas-feedback-a7a9.md`] for a detailed feedback report on the delivered Trino + Redpanda services (atlas `72e30d1`), including what matched the contract, the intentional deviations we've adapted to, and optional documentation polish suggestions.
+**A7/A9 delivery feedback:** See [Atlas feedback for A7/A9](atlas-feedback-a7a9.md) for a detailed report on the delivered Trino + Redpanda services (atlas `72e30d1`), including what matched the contract, the intentional deviations we've adapted to, and optional documentation polish suggestions.
 
 Of the four Atlas-side issues surfaced during go-live (atlas#308–#311): #309, #310, and #311
 are fixed upstream and the corresponding lab workarounds were removed. The remaining standalone
