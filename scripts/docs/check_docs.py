@@ -122,12 +122,7 @@ def check_self_containment(repo_root: Path) -> tuple[Finding, ...]:
     for surface, path, restrict_docs in _surface_files(root):
         text = path.read_text(encoding="utf-8")
         relative = path.relative_to(root).as_posix()
-        findings += _origin_findings(
-            relative,
-            text,
-            surface,
-            scan_plain_urls=path.suffix != ".md",
-        )
+        findings += _origin_findings(relative, text, surface)
         if surface == "wiki" and _MIRROR_BANNER in text:
             findings += (_error(f"{relative}: contains mirror banner"),)
         if path.suffix != ".md":
@@ -147,6 +142,17 @@ def check_self_containment(repo_root: Path) -> tuple[Finding, ...]:
                         _error(f"{relative}: forbidden docs/-relative target {target}"),
                     )
             if match.group(0).startswith("!") and Path(clean).suffix in {".png", ".svg"}:
+                surface_root = {
+                    "repo": root,
+                    "site": root / "generated/site",
+                    "wiki": root / "generated/wiki",
+                }[surface].resolve()
+                if not resolved.is_relative_to(surface_root):
+                    label = "repository" if surface == "repo" else surface
+                    findings += (
+                        _error(f"{relative}: local image escapes {label} surface: {target}"),
+                    )
+                    continue
                 if not resolved.is_file():
                     findings += (_error(f"{relative}: missing local image {target}"),)
     return _sorted(findings)
@@ -269,15 +275,14 @@ def _origin_findings(
     relative: str,
     text: str,
     surface: str,
-    *,
-    scan_plain_urls: bool,
 ) -> tuple[Finding, ...]:
     findings: tuple[Finding, ...] = ()
     label = "repository" if surface == "repo" else surface
+    visible_text = _without_fenced_code(text)
     # Calling find_links keeps link parsing centralized; plain origins remain checked
     # to preserve the interim gate's protection against bare URLs and config values.
-    targets = tuple(link.target for link in find_links(text))
-    searchable = "\n".join((text if scan_plain_urls else "", *targets))
+    targets = tuple(link.target for link in find_links(visible_text))
+    searchable = "\n".join((visible_text, *targets))
     if surface != "wiki" and WIKI_ORIGIN in searchable:
         findings += (_error(f"{relative}: {label} surface links to the wiki surface"),)
     without_wiki = searchable.replace(WIKI_ORIGIN, "")
@@ -286,10 +291,31 @@ def _origin_findings(
     pages_host = urlsplit(PAGES_ORIGIN).netloc
     # The interim repository gate also rejected a bare Pages URL, not only a
     # Markdown link. Preserve that behavior for canonical repository files.
-    pages_searchable = text if surface != "site" else searchable
-    if surface != "site" and pages_host in pages_searchable:
+    if surface != "site" and pages_host in searchable:
         findings += (_error(f"{relative}: {label} surface links to the site surface"),)
     return findings
+
+
+def _without_fenced_code(markdown: str) -> str:
+    lines: list[str] = []
+    fence_character = ""
+    fence_length = 0
+    for line in markdown.splitlines(keepends=True):
+        stripped = line.lstrip()
+        match = re.match(r"(`{3,}|~{3,})", stripped)
+        if fence_character:
+            if match and match.group(1)[0] == fence_character and len(match.group(1)) >= fence_length:
+                fence_character = ""
+                fence_length = 0
+            lines.append("\n" if line.endswith("\n") else "")
+            continue
+        if match:
+            fence_character = match.group(1)[0]
+            fence_length = len(match.group(1))
+            lines.append("\n" if line.endswith("\n") else "")
+            continue
+        lines.append(line)
+    return "".join(lines)
 
 
 def _resolve_local_target(source: Path, target: str) -> tuple[str, Path] | None:

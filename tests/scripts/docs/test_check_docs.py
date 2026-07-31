@@ -116,6 +116,29 @@ def test_repository_cross_surface_link_fails(repo_fixture: Path):
     ]
 
 
+def test_bare_generated_url_fails_but_fenced_clone_command_is_ignored(repo_fixture: Path):
+    page = repo_fixture / "generated/site/index.md"
+    page.parent.mkdir(parents=True)
+    page.write_text(
+        "Repository: https://github.com/thekaveh/data-eng-lab\n\n"
+        "```bash\n"
+        "git clone https://github.com/thekaveh/data-eng-lab.git\n"
+        "```\n",
+        encoding="utf-8",
+    )
+    assert messages(check_self_containment(repo_fixture)) == [
+        "generated/site/index.md: site surface links to the repository surface"
+    ]
+
+    page.write_text(
+        "```bash\n"
+        "git clone https://github.com/thekaveh/data-eng-lab.git\n"
+        "```\n",
+        encoding="utf-8",
+    )
+    assert check_self_containment(repo_fixture) == ()
+
+
 @pytest.mark.parametrize("target", ["./docs/index.md", "x/../docs/index.md"])
 def test_repository_docs_page_link_fails_after_normalization(repo_fixture: Path, target: str):
     (repo_fixture / "x").mkdir()
@@ -169,6 +192,16 @@ def test_missing_repository_image_fails(repo_fixture: Path):
 
     assert messages(check_self_containment(repo_fixture)) == [
         "scenarios/example/README.md: missing local image architectures/missing.svg"
+    ]
+
+
+def test_existing_image_outside_surface_fails(repo_fixture: Path):
+    outside = repo_fixture.parent / "outside.png"
+    outside.write_bytes(_png())
+    (repo_fixture / "README.md").write_text("![outside](../outside.png)\n", encoding="utf-8")
+
+    assert messages(check_self_containment(repo_fixture)) == [
+        "README.md: local image escapes repository surface: ../outside.png"
     ]
 
 

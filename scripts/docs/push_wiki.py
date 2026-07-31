@@ -49,6 +49,7 @@ def push_wiki(source: Path, remote: str, key_path: Path | None, *, push: bool) -
         raise ValueError("wiki remote is required when pushing")
 
     env = os.environ.copy()
+    env.pop("GIT_SSH_COMMAND", None)
     env.update(
         {
             "GIT_AUTHOR_NAME": _BOT_NAME,
@@ -97,7 +98,10 @@ def _validate_source(source: Path) -> None:
 
 
 def _is_ssh_remote(remote: str) -> bool:
-    return remote.startswith(("ssh://", "git@"))
+    if remote.startswith("ssh://"):
+        return True
+    prefix, separator, _ = remote.partition(":")
+    return bool(separator and "@" in prefix and "/" not in prefix)
 
 
 def main(argv: list[str] | None = None) -> int:

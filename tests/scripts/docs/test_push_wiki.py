@@ -89,6 +89,39 @@ def test_https_remote_does_not_require_an_ssh_key(
     assert "GIT_SSH_COMMAND" not in env
 
 
+def test_https_remote_removes_inherited_ssh_command(
+    monkeypatch: pytest.MonkeyPatch, source: Path
+):
+    fake_git = FakeGit()
+    monkeypatch.setenv("GIT_SSH_COMMAND", "ssh inherited")
+    monkeypatch.setattr(subprocess, "run", fake_git)
+
+    push_wiki(
+        source,
+        "https://x-access-token:token@github.com/thekaveh/data-eng-lab.wiki.git",
+        None,
+        push=True,
+    )
+
+    assert "GIT_SSH_COMMAND" not in fake_git.push_call[2]
+
+
+def test_scp_style_ssh_remote_uses_supplied_key(
+    monkeypatch: pytest.MonkeyPatch, source: Path, tmp_path: Path
+):
+    fake_git = FakeGit()
+    monkeypatch.setattr(subprocess, "run", fake_git)
+
+    push_wiki(
+        source,
+        "deploy@github.com:thekaveh/data-eng-lab.wiki.git",
+        tmp_path / "deploy key",
+        push=True,
+    )
+
+    assert fake_git.push_call[2]["GIT_SSH_COMMAND"].startswith("ssh -i ")
+
+
 def test_noop_index_skips_commit_and_push(monkeypatch: pytest.MonkeyPatch, source: Path):
     fake_git = FakeGit(unchanged=True)
     monkeypatch.setattr(subprocess, "run", fake_git)
