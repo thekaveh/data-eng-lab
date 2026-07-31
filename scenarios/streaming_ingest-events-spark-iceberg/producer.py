@@ -8,8 +8,6 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
-from kafka import KafkaProducer  # kafka-python
-
 ROOT = Path(__file__).resolve().parents[2]
 INFRA_ENV = ROOT / "infra" / ".env"
 
@@ -33,6 +31,8 @@ TOPIC = "events"
 
 
 def main(count: int = 100) -> None:
+    from kafka import KafkaProducer  # kafka-python
+
     producer = KafkaProducer(bootstrap_servers=_resolve_bootstrap(),
                              value_serializer=lambda v: json.dumps(v).encode("utf-8"))
     fmt = "%Y-%m-%dT%H:%M:%S"
