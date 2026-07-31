@@ -1,4 +1,4 @@
-# Notebooks — join_optimization-tpch-spark-iceberg
+# 6.18. join_optimization-tpch-spark-iceberg
 Auto-extracted from `jupyter/notebook.ipynb` and `zeppelin/notebook.zpln`.
 Both notebooks implement identical logic in PySpark and Scala.
 

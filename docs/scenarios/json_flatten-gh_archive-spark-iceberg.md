@@ -1,4 +1,4 @@
-# json_flatten-gh_archive-spark-iceberg
+# 5.19. json_flatten-gh_archive-spark-iceberg
 
 Reads GitHub Archive nested JSON events, extracts and flattens nested fields, casts timestamps, and writes to a flat Iceberg silver table.
 

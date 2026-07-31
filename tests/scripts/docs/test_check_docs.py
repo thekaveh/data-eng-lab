@@ -55,8 +55,26 @@ diagrams:
     return repo
 
 
+@pytest.fixture
+def repo_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
 def messages(findings):
     return [finding.message for finding in findings]
+
+
+def test_atlas_acceptance_record_is_consistent(repo_root):
+    required = {
+        "docs/atlas-enablement.md": ["2026-07-31", "SparkSubmitOperator", "succeeded"],
+        "docs/atlas-feedback-go-live.md": ["2026-07-31", "resolved", "FINISHED"],
+        "docs/go-live-results.md": ["8,991,502", "passenger_count", "double", "success=true"],
+        "docs/CHANGELOG.md": ["985918ce8c805081947d53b1c48bb80610237a5b", "2026-07-31"],
+    }
+    for relative, phrases in required.items():
+        text = (repo_root / relative).read_text(encoding="utf-8")
+        for phrase in phrases:
+            assert phrase in text, f"{relative} is missing {phrase!r}"
 
 
 def test_completeness_ignores_only_explicit_internal_root(repo_fixture: Path):

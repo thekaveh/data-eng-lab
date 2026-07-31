@@ -1,4 +1,4 @@
-# federated_query-nyc_taxi-trino-iceberg
+# 5.17. federated_query-nyc_taxi-trino-iceberg
 
 Query the NYC-taxi Iceberg lakehouse via Trino SQL — `lakehouse.bronze.nyc_taxi_trips` → `lakehouse.gold.nyc_taxi_daily_trino` — from both a Zeppelin `%trino` notebook and a Jupyter notebook using the `trino` Python client. Both surfaces run identical SQL.
 

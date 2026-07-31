@@ -1,4 +1,4 @@
-# 6. Notebooks
+# 6.1. Index
 
 Each scenario ships paired Zeppelin (Scala) and Jupyter (PySpark) notebooks with identical logic.
 A comprehensive, auto-extracted notebook doc per scenario lives below — also reachable from each scenario's §4.

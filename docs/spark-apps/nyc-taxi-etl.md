@@ -1,4 +1,4 @@
-# NYC Taxi ETL — Raw to Bronze
+# 7.2. nyc-taxi-etl
 
 Pure Spark application that reads raw Parquet files from the landing zone, applies quality filtering, and writes a cleaned Iceberg table at the bronze layer. This app is the first step in the lakehouse ingestion pipeline and is built by Jenkins, tested via ScalaTest, and orchestrated by Airflow.
 

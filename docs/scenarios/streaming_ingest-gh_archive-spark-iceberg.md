@@ -1,4 +1,4 @@
-# streaming_ingest-gh_archive-spark-iceberg
+# 5.5. streaming_ingest-gh_archive-spark-iceberg
 
 Demonstrate Iceberg ingestion via Structured Streaming with a file source: read JSON files incrementally from S3 landing, parse with schema, cast the timestamp column, and write to Iceberg with checkpoints for exactly-once semantics. No Kafka or external messaging queue required.
 

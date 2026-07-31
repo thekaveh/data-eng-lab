@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # batch_ingest-nyc_taxi-spark-iceberg
 
 Batch ingestion: read raw NYC taxi Trips Parquet from `s3a://landing/nyc_taxi/*` and write to an Iceberg bronze table. Scala (Zeppelin) and PySpark (Jupyter) notebooks implement the same logic.

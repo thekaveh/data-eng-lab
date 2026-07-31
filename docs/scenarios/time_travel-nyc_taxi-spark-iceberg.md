@@ -1,4 +1,4 @@
-# time_travel-nyc_taxi-spark-iceberg
+# 5.13. time_travel-nyc_taxi-spark-iceberg
 
 Demonstrates Iceberg time travel capabilities — querying historical table versions using `VERSION AS OF` and `TIMESTAMP AS OF` syntax — on NYC taxi trip data.
 

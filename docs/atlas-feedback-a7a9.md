@@ -1,4 +1,4 @@
-# Atlas Feedback — A7/A9
+# 8.4. Atlas Feedback (A7/A9)
 
 This document captures observations and feedback from building and testing A7 (Trino federated queries) and A9 (Redpanda + Structured Streaming).
 

@@ -1,4 +1,4 @@
-# Notebooks — bi_query-tpch-trino-iceberg
+# 6.16. bi_query-tpch-trino-iceberg
 Auto-extracted from `jupyter/notebook.ipynb` and `zeppelin/notebook.zpln`.
 Both notebooks implement identical logic in PySpark and Scala.
 

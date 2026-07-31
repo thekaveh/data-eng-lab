@@ -1,4 +1,4 @@
-# data-eng-lab
+# 1. Overview
 
 **An Iceberg-lakehouse data-engineering lab built on the [Atlas](https://github.com/thekaveh/atlas) platform.**
 

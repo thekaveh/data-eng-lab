@@ -1,4 +1,4 @@
-# Notebooks — feature_engineering-movielens-spark-iceberg
+# 6.11. feature_engineering-movielens-spark-iceberg
 Auto-extracted from `jupyter/notebook.ipynb` and `zeppelin/notebook.zpln`.
 Both notebooks implement identical logic in PySpark and Scala.
 

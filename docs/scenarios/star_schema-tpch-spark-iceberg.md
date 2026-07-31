@@ -1,4 +1,4 @@
-# star_schema-tpch-spark-iceberg
+# 5.10. star_schema-tpch-spark-iceberg
 
 Builds fact and dimension tables from the TPC-H dataset using star schema dimensional modeling, creating `dim_customer` and `fct_orders` in the gold layer.
 

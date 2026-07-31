@@ -1,4 +1,4 @@
-# data-eng-lab → Atlas: Expectations & Enablement Hand-off
+# 8.1. Atlas Expectations
 
 **Audience:** the engineer(s) working on **Atlas** (`thekaveh/atlas`).
 

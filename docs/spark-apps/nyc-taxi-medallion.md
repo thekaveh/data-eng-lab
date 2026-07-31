@@ -1,4 +1,4 @@
-# NYC Taxi Medallion Pipeline
+# 7.3. nyc-taxi-medallion
 
 Productionizes the medallion transform pattern for NYC taxi trip data: bronze Iceberg → silver (deduplicated) → gold (daily aggregation on trip counts and average fares). Built by Jenkins CI, orchestrated by Airflow CD.
 

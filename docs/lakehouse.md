@@ -1,4 +1,4 @@
-# Data Lakehouse Architecture
+# 3. Lakehouse Architecture
 
 `data-eng-lab` runs an Apache Iceberg lakehouse on MinIO, cataloged by an Iceberg REST catalog with a Postgres backend. All data lives in S3-compatible object storage; compute (Spark, Trino) accesses data through the catalog.
 

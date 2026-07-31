@@ -1,8 +1,8 @@
-# Atlas Enablement Requests — for the `data-eng-lab` project
+# 8.6. Atlas Enablement
 
-**Status:** draft contract `v0.2` · **Consumer repo:** `data-eng-lab` (private) · **Target:** [`thekaveh/atlas`](https://github.com/thekaveh/atlas)
+**Status:** accepted `v0.2` on 2026-07-31 · **Consumer repo:** `data-eng-lab` (private) · **Target:** [`thekaveh/atlas`](https://github.com/thekaveh/atlas)
 
-> **➡️ The authoritative hand-off is now [`atlas-expectations.md`](atlas-expectations.md)** — it reflects the delivered reality (A1–A9, all delivered). This file remains the terse A1–A9 origin ledger.
+> The authoritative hand-off is [`atlas-expectations.md`](atlas-expectations.md). It records the delivered A1–A9 capabilities; this page retains the original request ledger.
 
 > This document is a hand-off for the Atlas maintainer/worker. It enumerates the
 > infrastructure enhancements that `data-eng-lab` needs from Atlas. `data-eng-lab`
@@ -18,9 +18,13 @@
 > for Airflow 3.3's `[api_auth] jwt_secret`; [#850](https://github.com/thekaveh/atlas/issues/850)
 > is closed. The prior `af7713ee` retest remains failure evidence, while this
 > corrected pin includes the #880 provider-compatible Spark wrapper, which extracts the driver
-> ID from the spark-submit log before REST confirmation, and awaits a
-> fresh representative DAG run before Airflow acceptance and promotion are
-> claimed. The non-Airflow live checks remain valid.
+> ID from the spark-submit log before REST confirmation. The original
+> `SparkSubmitOperator` requirement is now implemented by a TaskFlow task that
+> invokes `SparkSubmitHook`. On 2026-07-31, that representative Airflow
+> feature-artifact task succeeded on its first and only attempt; the standalone
+> Spark REST record was `FINISHED` with `success=true`. This result closes the
+> Airflow acceptance gate for the reviewed pin. The prior failed retest remains
+> historical evidence.
 
 ---
 

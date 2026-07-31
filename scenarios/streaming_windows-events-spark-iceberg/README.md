@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # streaming_windows-events-spark-iceberg
 
 Windowed aggregation with watermark on the Redpanda `events` Kafka topic, writing closed window counts to `lakehouse.gold.event_windows` (Iceberg).

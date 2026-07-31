@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # feature_engineering-movielens-spark-iceberg
 
 Processes MovieLens dataset to create a feature store for machine learning, aggregating user and item features from rating history into Iceberg.

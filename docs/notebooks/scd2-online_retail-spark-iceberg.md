@@ -1,4 +1,4 @@
-# Notebooks — scd2-online_retail-spark-iceberg
+# 6.12. scd2-online_retail-spark-iceberg
 Auto-extracted from `jupyter/notebook.ipynb` and `zeppelin/notebook.zpln`.
 Both notebooks implement identical logic in PySpark and Scala.
 

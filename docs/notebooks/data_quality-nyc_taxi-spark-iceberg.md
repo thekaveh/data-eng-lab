@@ -1,4 +1,4 @@
-# Notebooks — data_quality-nyc_taxi-spark-iceberg
+# 6.8. data_quality-nyc_taxi-spark-iceberg
 Auto-extracted from `jupyter/notebook.ipynb` and `zeppelin/notebook.zpln`.
 Both notebooks implement identical logic in PySpark and Scala.
 

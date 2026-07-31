@@ -1,4 +1,4 @@
-# incremental_upsert-online_retail-spark-iceberg
+# 5.15. incremental_upsert-online_retail-spark-iceberg
 
 Implements CDC-style incremental upserts using Iceberg's `MERGE INTO` to apply change sets idempotently without rewriting entire tables.
 

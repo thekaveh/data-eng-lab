@@ -1,4 +1,4 @@
-# join_optimization-tpch-spark-iceberg
+# 5.18. join_optimization-tpch-spark-iceberg
 
 Optimizes Spark join strategies for large-scale TPCH data with Iceberg table partitions, exploring broadcast joins, sort-merge joins, and bucket joins for different data sizes.
 

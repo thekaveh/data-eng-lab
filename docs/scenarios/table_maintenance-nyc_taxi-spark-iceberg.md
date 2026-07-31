@@ -1,4 +1,4 @@
-# table_maintenance-nyc_taxi-spark-iceberg
+# 5.14. table_maintenance-nyc_taxi-spark-iceberg
 
 Demonstrates Iceberg table maintenance operations: overwrite, VACUUM, and time travel on NYC taxi trip data.
 

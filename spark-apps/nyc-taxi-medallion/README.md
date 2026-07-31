@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # NYC Taxi Medallion Pipeline
 
 Productionizes the medallion transform pattern for NYC taxi trip data: bronze Iceberg → silver (deduplicated) → gold (daily aggregation on trip counts and average fares). Built by Jenkins CI, orchestrated by Airflow CD.

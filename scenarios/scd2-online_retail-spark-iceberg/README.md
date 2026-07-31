@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # scd2-online_retail-spark-iceberg
 
 Implements Slowly Changing Dimension Type 2 (SCD2) to track historical changes on a customer dimension, preserving full history with effective timestamps and current flags.

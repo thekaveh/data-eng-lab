@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # medallion-nyc_taxi-spark-iceberg
 
 Transforms raw NYC taxi trip data from the bronze layer through silver (cleaned) to gold (aggregated), implementing the medallion architecture pattern.

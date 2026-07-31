@@ -1,4 +1,4 @@
-# Atlas pin-bump runbook
+# 8.7. Atlas Pin-Bump Runbook
 
 How to move the `infra` submodule to a newer Atlas commit using only Atlas's
 official headless commands (adapted from tableau's runbook; validated on the

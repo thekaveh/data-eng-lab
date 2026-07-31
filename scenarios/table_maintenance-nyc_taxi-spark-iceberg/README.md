@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # table_maintenance-nyc_taxi-spark-iceberg
 
 Demonstrates Iceberg table maintenance operations: overwrite, VACUUM, and time travel on NYC taxi trip data.

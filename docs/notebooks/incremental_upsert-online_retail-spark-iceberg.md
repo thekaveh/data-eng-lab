@@ -1,4 +1,4 @@
-# Notebooks — incremental_upsert-online_retail-spark-iceberg
+# 6.15. incremental_upsert-online_retail-spark-iceberg
 Auto-extracted from `jupyter/notebook.ipynb` and `zeppelin/notebook.zpln`.
 Both notebooks implement identical logic in PySpark and Scala.
 

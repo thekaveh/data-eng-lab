@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # schema_evolution-gh_archive-spark-iceberg
 
 Handles schema evolution in GitHub Archive events using Iceberg's schema evolution to accommodate evolving JSON schema with new fields over time.

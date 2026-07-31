@@ -1,4 +1,4 @@
-# Scenario Catalog
+# 5.1. Catalog
 
 This page catalogs all 19 scenarios in the `data-eng-lab` lakehouse, organized by functional category. Each scenario is a self-contained folder with Scala Spark (Zeppelin), PySpark (Jupyter), and optional Airflow DAG implementations. Architecture diagrams are linked from each scenario's README.
 

@@ -1,4 +1,4 @@
-# Notebooks — federated_query-nyc_taxi-trino-iceberg
+# 6.17. federated_query-nyc_taxi-trino-iceberg
 Auto-extracted from `jupyter/notebook.ipynb` and `zeppelin/notebook.zpln`.
 Both notebooks implement identical logic in PySpark and Scala.
 

@@ -1,4 +1,4 @@
-# Notebooks — cdc_streaming-online_retail-spark-iceberg
+# 6.7. cdc_streaming-online_retail-spark-iceberg
 Auto-extracted from `jupyter/notebook.ipynb` and `zeppelin/notebook.zpln`.
 Both notebooks implement identical logic in PySpark and Scala.
 

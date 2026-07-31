@@ -1,4 +1,4 @@
-# Getting Started
+# 2. Getting Started
 
 Get the full `data-eng-lab` stack running in five steps.
 

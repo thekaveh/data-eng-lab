@@ -1,4 +1,4 @@
-# Notebooks — star_schema-tpch-spark-iceberg
+# 6.10. star_schema-tpch-spark-iceberg
 Auto-extracted from `jupyter/notebook.ipynb` and `zeppelin/notebook.zpln`.
 Both notebooks implement identical logic in PySpark and Scala.
 

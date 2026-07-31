@@ -1,4 +1,4 @@
-# Notebooks — table_maintenance-nyc_taxi-spark-iceberg
+# 6.14. table_maintenance-nyc_taxi-spark-iceberg
 Auto-extracted from `jupyter/notebook.ipynb` and `zeppelin/notebook.zpln`.
 Both notebooks implement identical logic in PySpark and Scala.
 

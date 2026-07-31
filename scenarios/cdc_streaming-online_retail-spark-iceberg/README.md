@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # cdc_streaming-online_retail-spark-iceberg
 
 Streaming CDC (Change Data Capture) upserts from the Redpanda `online_retail_cdc` topic, applied to an Iceberg table via `foreachBatch` + `MERGE INTO` for idempotent real-time updates.

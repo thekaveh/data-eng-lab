@@ -1,4 +1,4 @@
-# sessionization-gh_archive-spark-iceberg
+# 5.20. sessionization-gh_archive-spark-iceberg
 
 Detects user sessions from GitHub Archive events using window functions and gap-based sessionization with a 30-minute inactivity threshold.
 

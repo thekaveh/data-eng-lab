@@ -1,4 +1,4 @@
-# Spark Applications
+# 7.1. Overview
 
 This directory documents the production Spark applications in the `data-eng-lab` lakehouse. Each application is a Maven-built Scala Spark project with a Jenkinsfile for CI (build, test, package shaded JAR) and an Airflow DAG for CD (SparkSubmitHook cluster-mode deployment plus REST driver confirmation). Together, these apps productionize the notebook prototypes originally authored as Spark-Iceberg scenarios.
 

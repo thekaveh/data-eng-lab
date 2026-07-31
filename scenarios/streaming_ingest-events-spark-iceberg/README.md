@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # streaming_ingest-events-spark-iceberg
 
 Ingest synthetic click events from the Redpanda `events` Kafka topic into `lakehouse.bronze.events` (Iceberg) via Spark Structured Streaming. Scala (Zeppelin) and PySpark (Jupyter) notebooks implement the same streaming logic; `producer.py` generates synthetic events for local testing.

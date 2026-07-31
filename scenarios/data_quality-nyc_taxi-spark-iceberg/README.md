@@ -1,4 +1,3 @@
-<!-- AUTO-GENERATED — do not edit; run scripts/build_docs.py -->
 # data_quality-nyc_taxi-spark-iceberg
 
 Applies data quality checks to NYC taxi trip data using custom Spark SQL functions, counting and flagging records that fail validation rules.

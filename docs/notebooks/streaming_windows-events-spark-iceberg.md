@@ -1,4 +1,4 @@
-# Notebooks — streaming_windows-events-spark-iceberg
+# 6.6. streaming_windows-events-spark-iceberg
 Auto-extracted from `jupyter/notebook.ipynb` and `zeppelin/notebook.zpln`.
 Both notebooks implement identical logic in PySpark and Scala.
 
