@@ -11,6 +11,7 @@ on:
       - "README.md"
       - "pyproject.toml"
       - "uv.lock"
+      - "scripts/docs/**"
       - ".github/workflows/docs-deploy.yml"
   workflow_dispatch:
 
@@ -32,9 +33,18 @@ jobs:
           submodules: false
           persist-credentials: false
 
+      - name: Install Cairo runtime
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcairo2
+
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
         with:
           enable-cache: true
+
+      - run: uv run --group dev python -m scripts.docs.render_diagrams --root .
+
+      - run: uv run --group dev python -m scripts.docs.build_docs --site --root .
 
       - run: uv run --group dev mkdocs build --strict
 
@@ -53,3 +63,25 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e  # v4
+
+  wiki:
+    needs: deploy
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
+        with:
+          submodules: false
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
+        with:
+          enable-cache: true
+
+      - run: uv run --group dev python -m scripts.docs.build_docs --wiki --root .
+
+      - name: Push generated wiki
+        env:
+          WIKI_REMOTE: https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git
+        run: uv run --group dev python -m scripts.docs.push_wiki --push --root .
