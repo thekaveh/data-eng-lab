@@ -629,7 +629,20 @@ uv run --group dev pytest tests/scripts/docs/test_check_docs.py tests/scripts/do
 make docs-check
 ```
 
-Expected: all tests and the aggregate gate pass.
+Expected: the focused mechanical tests pass. At this sequencing point,
+`make docs-check` must fail only with the Task 6 content inventory that is
+already known and owned below: the 55 manifest-listed pages whose first H1
+does not yet match its manifest number/title, plus these three empty public
+artifacts:
+
+- `docs/architectures/.gitkeep`
+- `docs/overrides/.gitkeep`
+- `docs/css/`
+
+Any completeness, placeholder, self-containment, render-determinism, or
+diagram finding is a Task 5 failure and must be fixed here. Do not weaken the
+checker to make this invocation green. Task 6 Steps 5–6 own removal of this
+explicit content inventory and the first green `make docs-check`.
 
 Commit with message:
 
@@ -649,7 +662,7 @@ git commit -m "docs: enforce three-surface documentation parity"
 - Modify: `docs/go-live-results.md`
 - Modify: `docs/CHANGELOG.md`
 - Modify: other manifest pages only when the self-containment/numbering gate identifies a concrete defect
-- Delete: `docs/architectures/.gitkeep`, `docs/overrides/.gitkeep`
+- Delete: `docs/architectures/.gitkeep`, `docs/overrides/.gitkeep`, and the empty `docs/css/` directory
 - Test: `tests/scripts/docs/test_check_docs.py`
 
 **Interfaces:**
@@ -707,12 +720,20 @@ uv run --group dev python -m scripts.docs.check_docs --root .
 ```
 
 Expected: no numbering, placeholder, completeness, empty-artifact, or cross-surface findings.
+This removes the complete deferred Task 5 content inventory; the supported
+`make docs-check` interface is exercised in Step 6.
 
 - [ ] **Step 6: Run content tests and commit**
 
-Run: `uv run --group dev pytest tests/scripts/docs/test_check_docs.py -q`
+Run:
 
-Expected: all tests pass.
+```bash
+uv run --group dev pytest tests/scripts/docs/test_check_docs.py -q
+make docs-check
+```
+
+Expected: all tests pass and `make docs-check` is green for the first time in
+the ordered migration.
 
 Commit only manifest-listed Markdown, the two explicit empty-file removals, and the regression test with message:
 

@@ -77,6 +77,26 @@ def test_numbering_matches_manifest_heading(repo_fixture: Path):
     ]
 
 
+def test_numbering_ignores_correct_h1_inside_fenced_code(repo_fixture: Path):
+    (repo_fixture / "docs/index.md").write_text(
+        "````markdown\n# 1. Overview\n```\n````\n\n# Wrong real heading\n",
+        encoding="utf-8",
+    )
+
+    assert messages(check_numbering(repo_fixture)) == [
+        "docs/index.md heading must start with '# 1. Overview'"
+    ]
+
+
+def test_numbering_uses_correct_real_h1_after_fenced_example(repo_fixture: Path):
+    (repo_fixture / "docs/index.md").write_text(
+        "~~~markdown\n# Wrong fenced heading\n~~~\n\n# 1. Overview\n",
+        encoding="utf-8",
+    )
+
+    assert check_numbering(repo_fixture) == ()
+
+
 def test_empty_public_artifacts_are_errors_but_generated_dirs_are_not(repo_fixture: Path):
     (repo_fixture / "docs/empty.md").touch()
     (repo_fixture / "generated/empty").mkdir(parents=True)
@@ -103,6 +123,25 @@ def test_placeholders_ignore_only_internal_documentation(repo_fixture: Path):
 
     assert messages(check_placeholders(repo_fixture)) == [
         "unfinished marker TODO in public documentation: docs/index.md"
+    ]
+
+
+def test_placeholders_scan_renderer_only_pages_and_generated_config(repo_fixture: Path):
+    site = repo_fixture / "generated/site/renderer-only.md"
+    sidebar = repo_fixture / "generated/wiki/_Sidebar.md"
+    footer = repo_fixture / "generated/wiki/_Footer.md"
+    site.parent.mkdir(parents=True)
+    sidebar.parent.mkdir(parents=True)
+    site.write_text("TO" + "DO" + ": site projection\n", encoding="utf-8")
+    sidebar.write_text("TB" + "D" + ": sidebar\n", encoding="utf-8")
+    footer.write_text("FIX" + "ME" + ": footer\n", encoding="utf-8")
+    (repo_fixture / "mkdocs.yml").write_text("X" + "XX" + ": config\n", encoding="utf-8")
+
+    assert messages(check_placeholders(repo_fixture)) == [
+        "unfinished marker FIXME in public documentation: generated/wiki/_Footer.md",
+        "unfinished marker TBD in public documentation: generated/wiki/_Sidebar.md",
+        "unfinished marker TODO in public documentation: generated/site/renderer-only.md",
+        "unfinished marker XXX in public documentation: mkdocs.yml",
     ]
 
 

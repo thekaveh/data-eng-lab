@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -98,10 +99,12 @@ def _validate_source(source: Path) -> None:
 
 
 def _is_ssh_remote(remote: str) -> bool:
-    if remote.startswith("ssh://"):
-        return True
-    prefix, separator, _ = remote.partition(":")
-    return bool(separator and "@" in prefix and "/" not in prefix)
+    if re.match(r"^[A-Za-z]:[\\/]", remote):
+        return False
+    uri = re.match(r"^(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*)://", remote)
+    if uri is not None:
+        return uri.group("scheme").lower() in {"ssh", "git+ssh"}
+    return re.match(r"^(?:[^/@:\s]+@)?[^/\\:\s]+:[^\s]+$", remote) is not None
 
 
 def main(argv: list[str] | None = None) -> int:

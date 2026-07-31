@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from scripts.docs.push_wiki import push_wiki, sync_wiki
+from scripts.docs.push_wiki import _is_ssh_remote, push_wiki, sync_wiki
 
 
 def test_sync_wiki_preserves_git_and_removes_stale_files(tmp_path: Path):
@@ -120,6 +120,36 @@ def test_scp_style_ssh_remote_uses_supplied_key(
     )
 
     assert fake_git.push_call[2]["GIT_SSH_COMMAND"].startswith("ssh -i ")
+
+
+def test_scp_style_ssh_remote_without_user_uses_supplied_key(
+    monkeypatch: pytest.MonkeyPatch, source: Path, tmp_path: Path
+):
+    fake_git = FakeGit()
+    monkeypatch.setattr(subprocess, "run", fake_git)
+
+    push_wiki(
+        source,
+        "github.com:thekaveh/data-eng-lab.wiki.git",
+        tmp_path / "deploy-key",
+        push=True,
+    )
+
+    assert fake_git.push_call[2]["GIT_SSH_COMMAND"].startswith("ssh -i ")
+
+
+@pytest.mark.parametrize(
+    "remote",
+    [
+        "https://github.com/thekaveh/data-eng-lab.wiki.git",
+        "file:///tmp/data-eng-lab.wiki.git",
+        "C:/repos/data-eng-lab.wiki.git",
+        r"C:\repos\data-eng-lab.wiki.git",
+        "/tmp/data-eng-lab.wiki.git",
+    ],
+)
+def test_non_scp_remote_forms_are_not_classified_as_ssh(remote: str):
+    assert not _is_ssh_remote(remote)
 
 
 def test_noop_index_skips_commit_and_push(monkeypatch: pytest.MonkeyPatch, source: Path):

@@ -24,7 +24,7 @@ from scripts.docs.render_diagrams import DiagramError, extract_svg
 
 _INTERNAL_ROOT = Path("docs/superpowers")
 _UNFINISHED_MARKERS = ("TO" + "DO", "TB" + "D", "FIX" + "ME", "X" + "XX")
-_H1 = re.compile(r"^# .+$", re.MULTILINE)
+_H1 = re.compile(r"^ {0,3}(# [^\r\n]+)$", re.MULTILINE)
 _SVG_OPEN = re.compile(r"<svg\b")
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _MIRROR_BANNER = "Full docs site"
@@ -66,10 +66,10 @@ def check_numbering(repo_root: Path) -> tuple[Finding, ...]:
         return findings
     for section in iter_leaf_sections(manifest.sections):
         assert section.source is not None
-        text = (root / section.source).read_text(encoding="utf-8")
+        text = _without_fenced_code((root / section.source).read_text(encoding="utf-8"))
         heading = _H1.search(text)
         expected = f"# {section.number}. {section.title}"
-        if heading is None or not heading.group(0).startswith(expected):
+        if heading is None or not heading.group(1).startswith(expected):
             findings += (
                 _error(
                     f"{section.source.as_posix()} heading must start with {expected!r}"
@@ -79,10 +79,10 @@ def check_numbering(repo_root: Path) -> tuple[Finding, ...]:
 
 
 def check_placeholders(repo_root: Path) -> tuple[Finding, ...]:
-    """Reject standard unfinished-work markers in canonical public Markdown."""
+    """Reject unfinished-work markers in canonical and generated public artifacts."""
     root = repo_root.resolve()
     findings: tuple[Finding, ...] = ()
-    for path in _canonical_markdown(root):
+    for path in _placeholder_files(root):
         text = path.read_text(encoding="utf-8")
         relative = path.relative_to(root).as_posix()
         for marker in _UNFINISHED_MARKERS:
@@ -252,6 +252,17 @@ def _canonical_markdown(root: Path) -> tuple[Path, ...]:
     return tuple(sorted(candidates))
 
 
+def _placeholder_files(root: Path) -> tuple[Path, ...]:
+    candidates = set(_canonical_markdown(root))
+    for directory in (root / "generated/site", root / "generated/wiki"):
+        if directory.exists():
+            candidates.update(directory.rglob("*.md"))
+    config = root / "mkdocs.yml"
+    if config.is_file():
+        candidates.add(config)
+    return tuple(sorted(candidates))
+
+
 def _surface_files(root: Path) -> tuple[tuple[str, Path, bool], ...]:
     values: list[tuple[str, Path, bool]] = []
     for path in _canonical_markdown(root):
@@ -301,21 +312,40 @@ def _without_fenced_code(markdown: str) -> str:
     fence_character = ""
     fence_length = 0
     for line in markdown.splitlines(keepends=True):
-        stripped = line.lstrip()
-        match = re.match(r"(`{3,}|~{3,})", stripped)
+        marker = _fence_marker(line)
         if fence_character:
-            if match and match.group(1)[0] == fence_character and len(match.group(1)) >= fence_length:
+            if (
+                marker is not None
+                and marker[0] == fence_character
+                and marker[1] >= fence_length
+                and not marker[2].strip()
+            ):
                 fence_character = ""
                 fence_length = 0
             lines.append("\n" if line.endswith("\n") else "")
             continue
-        if match:
-            fence_character = match.group(1)[0]
-            fence_length = len(match.group(1))
+        if marker is not None and not (marker[0] == "`" and "`" in marker[2]):
+            fence_character = marker[0]
+            fence_length = marker[1]
             lines.append("\n" if line.endswith("\n") else "")
             continue
         lines.append(line)
     return "".join(lines)
+
+
+def _fence_marker(line: str) -> tuple[str, int, str] | None:
+    content = line.rstrip("\r\n")
+    indentation = len(content) - len(content.lstrip(" "))
+    if indentation > 3:
+        return None
+    content = content[indentation:]
+    if not content or content[0] not in {"`", "~"}:
+        return None
+    character = content[0]
+    length = len(content) - len(content.lstrip(character))
+    if length < 3:
+        return None
+    return character, length, content[length:]
 
 
 def _resolve_local_target(source: Path, target: str) -> tuple[str, Path] | None:
