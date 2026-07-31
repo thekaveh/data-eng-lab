@@ -33,6 +33,18 @@ def test_client_from_env_reads_infra_env(tmp_path: Path):
     assert client.meta.endpoint_url == "http://localhost:64093"
 
 
+def test_client_prefers_exported_minio_endpoint(tmp_path):
+    infra = tmp_path / "infra"
+    infra.mkdir()
+    (infra / ".env").write_text(
+        "MINIO_ROOT_USER=minioadmin\nMINIO_ROOT_PASSWORD=secret\nMINIO_PORT=64093\n"
+    )
+    (tmp_path / "atlas-consumer.env").write_text(
+        "ATLAS_MINIO_HOST_ENDPOINT=http://localhost:65120\n"
+    )
+    assert s3mod.s3_client_from_env(infra).meta.endpoint_url == "http://localhost:65120"
+
+
 def test_client_from_env_missing_creds_raises(tmp_path: Path):
     infra = tmp_path / "infra"
     infra.mkdir()

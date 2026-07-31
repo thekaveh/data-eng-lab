@@ -10,6 +10,24 @@ permissions:
   contents: read
 
 jobs:
+  atlas-consumer-contract:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          submodules: recursive
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86
+        with:
+          enable-cache: true
+      - name: Validate the pinned Atlas consumer contract
+        run: |
+          cp infra/.env.example infra/.env
+          cd infra
+          ./start.sh env backfill
+          ./start.sh --consumer ../atlas.consumer.yml compose validate
+          ./start.sh --consumer ../atlas.consumer.yml doctor --format json
+
   static-and-unit:
     runs-on: ubuntu-24.04
     steps:

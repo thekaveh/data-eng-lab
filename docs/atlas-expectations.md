@@ -4,7 +4,12 @@
 
 **Purpose:** a single, authoritative statement of everything `data-eng-lab` expects from Atlas — what is already **delivered** (so you don't undo it), and the **Iceberg/Spark capabilities** the scenario catalog relies on. This supersedes the ad-hoc `atlas-enablement.md` ledger as the hand-off reference; that file remains the terse A1–A9 origin status table.
 
-`data-eng-lab` consumes Atlas as a **pinned submodule** at `infra/` (currently atlas `2d006cae`, v0.1.0-587) and **never edits it** — enhancements come to you as issues/PRs. Everything below was verified against atlas `72e30d1`, and Atlas's consumer-doc clarifications from **#281** (`85ff46b`) resolved our A7/A9 feedback (see `atlas-feedback-a7a9.md` section F).
+`data-eng-lab` consumes Atlas as a **pinned submodule** at `infra/` (currently
+atlas `985918ce8c805081947d53b1c48bb80610237a5b`) and **never edits it** —
+enhancements come to you as issues/PRs. Historic verification references below
+retain their original SHAs, including the prior `881df596` live-gate baseline;
+Atlas's consumer-doc clarifications from **#281**
+(`85ff46b`) resolved our A7/A9 feedback (see `atlas-feedback-a7a9.md` section F).
 
 ---
 
@@ -22,7 +27,16 @@
 | **A8** | `data-eng` track membership | ✅ delivered (#250) | — |
 | **A9** | **Redpanda (Kafka API) + Spark Kafka connector** | ✅ **delivered** | — |
 
-**Key takeaway:** A1–A9 are now live. **The full scenario catalog can execute** (Spark + Iceberg + Trino + Kafka streaming). See [Delivered deviations](#2-delivered-deviations-from-our-a7a9-asks) for the `%trino` interpreter name and topic-seeding notes.
+**Key takeaway:** A1–A9 are available, and the focused non-Airflow paths are
+validated (including Zeppelin, Trino, and Kafka streaming). The current pin
+includes [#850](https://github.com/thekaveh/atlas/issues/850)'s corrected shared
+`AIRFLOW__API_AUTH__JWT_SECRET` mapping for Airflow 3.3's `[api_auth] jwt_secret`.
+The earlier `af7713ee` failed-gate evidence is retained below; a successful
+Airflow Spark-submit DAG and Gitflow promotion are not yet claimed until this
+new pin is live-retested. #791's in-network Execution API DNS configuration is
+nevertheless validated. See
+[Delivered deviations](#2-delivered-deviations-from-our-a7a9-asks) for the
+`%trino` interpreter name and topic-seeding notes.
 
 ---
 
@@ -158,10 +172,12 @@ When all A1–A9 are delivered, we flip `--trino-source`/`--redpanda-source` on 
 **A7/A9 delivery feedback:** See [`atlas-feedback-a7a9.md`] for a detailed feedback report on the delivered Trino + Redpanda services (atlas `72e30d1`), including what matched the contract, the intentional deviations we've adapted to, and optional documentation polish suggestions.
 
 Of the four Atlas-side issues surfaced during go-live (atlas#308–#311): #309, #310, and #311
-are fixed upstream as of this pin and the corresponding lab workarounds were removed; #308's
-REST endpoint is enabled upstream but is not consumable by SparkSubmitOperator end-to-end,
-so the DAG caveat remains (see `docs/atlas-feedback-go-live.md` for the mapping and the
-2026-07-21 verification findings).
+are fixed upstream and the corresponding lab workarounds were removed. The remaining standalone
+Spark status-poll limitation is resolved in the current pin by Atlas #880's correction to the #792
+consumer pattern: construct `SparkSubmitHook` without an application, then use
+`submit_and_confirm_via_rest()` to submit through `spark_default` on `:7077` and confirm the
+driver ID extracted from the spark-submit log through `spark-master:6066`. The helper raises
+unless the driver is `FINISHED` with `success: true`; it is not a false-success workaround.
 
 ---
 

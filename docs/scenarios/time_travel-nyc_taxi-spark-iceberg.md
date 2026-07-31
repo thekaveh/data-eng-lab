@@ -17,7 +17,7 @@ Source: `s3a://landing/nyc_taxi/taxi_data.csv` (local CSV seed) plus NYC Taxi Tr
 | `VendorID` | double | Vendor identifier |
 | `tpep_pickup_datetime` | timestamp | Pickup timestamp |
 | `tpep_dropoff_datetime` | timestamp | Dropoff timestamp |
-| `passenger_count` | int | Number of passengers |
+| `passenger_count` | double | Number of passengers (canonicalized in Bronze) |
 | `trip_distance` | double | Trip distance in miles |
 | `fare_amount` | double | Fare amount |
 | `total_amount` | double | Total amount |

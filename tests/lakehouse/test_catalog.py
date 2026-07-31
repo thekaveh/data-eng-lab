@@ -24,6 +24,20 @@ def test_catalog_config_from_env(tmp_path: Path):
     assert cfg["s3.secret-access-key"] == "secret"
 
 
+def test_catalog_prefers_exported_minio_endpoint(tmp_path):
+    infra = _write_env(
+        tmp_path,
+        ICEBERG_REST_PORT="64110",
+        MINIO_PORT="64093",
+        MINIO_ROOT_USER="minioadmin",
+        MINIO_ROOT_PASSWORD="secret",
+    )
+    (tmp_path / "atlas-consumer.env").write_text(
+        "ATLAS_MINIO_HOST_ENDPOINT=http://localhost:65120\n"
+    )
+    assert catalog._catalog_config(infra)["s3.endpoint"] == "http://localhost:65120"
+
+
 def test_catalog_config_sets_default_region(tmp_path: Path, monkeypatch):
     """pyiceberg's pyarrow FileIO needs an explicit s3.region against MinIO, or the
     region-probe HeadObject can 400 (issue #51). Defaults to us-east-1 (MinIO's

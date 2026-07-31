@@ -6,6 +6,8 @@ from pathlib import Path
 import boto3
 from botocore.client import Config
 
+from lakehouse.atlas_endpoints import resolve_http_endpoint
+
 
 def _envval(key: str, env_file: Path) -> str:
     if not env_file.exists():
@@ -19,6 +21,7 @@ def _envval(key: str, env_file: Path) -> str:
 
 def s3_client_from_env(infra_dir: Path):
     env_file = Path(infra_dir) / ".env"
+    export_file = Path(infra_dir).parent / "atlas-consumer.env"
     user = _envval("MINIO_ROOT_USER", env_file)
     password = _envval("MINIO_ROOT_PASSWORD", env_file)
     port = _envval("MINIO_PORT", env_file)
@@ -27,9 +30,16 @@ def s3_client_from_env(infra_dir: Path):
             f"MinIO creds/port missing in {env_file} — start the stack (make up) first "
             "so Atlas generates them."
         )
+    minio_endpoint = resolve_http_endpoint(
+        "MINIO_HOST_ENDPOINT",
+        "MINIO_PORT",
+        env_file=env_file,
+        export_key="ATLAS_MINIO_HOST_ENDPOINT",
+        export_file=export_file,
+    )
     return boto3.client(
         "s3",
-        endpoint_url=f"http://localhost:{port}",
+        endpoint_url=minio_endpoint,
         aws_access_key_id=user,
         aws_secret_access_key=password,
         region_name="us-east-1",

@@ -7,6 +7,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parents[2]
 MANIFEST = ROOT / "atlas.consumer.yml"
+OVERLAY = ROOT / "compose" / "data-eng-lab.yml"
 
 SOURCES = ["SPARK", "ZEPPELIN", "AIRFLOW", "MINIO", "JUPYTERHUB",
            "ICEBERG_REST", "JENKINS", "TRINO", "REDPANDA"]
@@ -55,6 +56,13 @@ def test_manifest_uses_host_ollama():
 def test_manifest_overlay_paths_exist():
     for rel in _load()["compose_overlays"]:
         assert (ROOT / rel).is_file(), f"overlay path {rel} does not exist"
+
+
+def test_overlay_patches_required_services_without_legacy_user_service():
+    overlay_text = OVERLAY.read_text(encoding="utf-8")
+    services = yaml.safe_load(overlay_text)["services"]
+    assert {"airflow-scheduler", "airflow-dag-processor", "jupyterhub"} <= services.keys()
+    assert "services/_user" not in overlay_text
 
 
 def test_manifest_declares_test_bucket():

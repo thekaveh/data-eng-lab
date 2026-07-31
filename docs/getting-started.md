@@ -72,14 +72,20 @@ This runs `./scripts/start-all.sh`, a thin wrapper over Atlas's own headless com
 
 1. Removes any stale legacy overlay symlink (pre-manifest layout).
 2. Backfills new upstream `.env` keys (additive; `env backfill`).
-3. Runs the consumer `doctor` (manifest + compose + env lints) against `atlas.consumer.yml`.
-4. Starts the full `data-eng` track detached (`start.sh --consumer … --track data-eng --no-tui --detach`) — Atlas health-gates the whole track before returning, provisions the MinIO buckets (including the `lakehouse-test` bucket declared under the manifest's `storage:` key), and materializes `infra/.env` from the manifest.
-5. Registers Iceberg namespaces (`bronze`, `silver`, `gold`) via `scripts/register_iceberg.py`.
-6. Runs preflight (Layer 1 + Layer 2).
+3. Validates the consumer Compose configuration.
+4. Runs the consumer `doctor` (manifest + compose + env lints) against `atlas.consumer.yml`.
+5. Starts the full `data-eng` track detached (`start.sh --consumer … --track data-eng --no-tui --detach`) — Atlas health-gates the whole track before returning, provisions the MinIO buckets (including the `lakehouse-test` bucket declared under the manifest's `storage:` key), and materializes `infra/.env` from the manifest.
+6. Exports the supported host endpoint into ignored `atlas-consumer.env` and asserts `ATLAS_MINIO_HOST_ENDPOINT`.
+7. Registers Iceberg namespaces (`bronze`, `silver`, `gold`) via `scripts/register_iceberg.py`.
+8. Runs preflight (Layer 1 + Layer 2).
 
 All nine `data-eng` services (Spark, Zeppelin, Airflow, MinIO, JupyterHub, Iceberg REST, Jenkins, Trino, Redpanda) are containerized by default — set in `atlas.consumer.yml`'s `env.values` (`*_SOURCE: container`), not passed as CLI flags. To disable one, edit the manifest and re-run `make up`.
 
-Ports are auto-allocated (`BASE_PORT: auto`) — read them from `infra/.env` or `(cd infra && ./start.sh endpoints export --format env)`.
+Ports are auto-allocated (`BASE_PORT: auto`). `atlas-consumer.env` is a generated,
+ignored contract and currently exports only `ATLAS_MINIO_HOST_ENDPOINT`. Host-side
+code resolves unexported data-eng services through an explicit endpoint override
+or the corresponding port in `infra/.env`; code inside Atlas uses Docker-network
+DNS such as `iceberg-rest:8181` and `trino:8080`.
 
 ---
 

@@ -26,11 +26,13 @@ def test_events_topic_reachable():
     from kafka import KafkaAdminClient  # gated import
     bootstrap = os.environ.get("REDPANDA_BOOTSTRAP")
     if not bootstrap:
-        # REDPANDA_KAFKA_PORT: env var > infra/.env (BASE_PORT: auto means no fixed default).
-        port = _live_exec()._env_val("REDPANDA_KAFKA_PORT")
-        if not port:
-            pytest.skip("REDPANDA_KAFKA_PORT unresolved — is the stack up?")
-        bootstrap = f"localhost:{port}"
+        try:
+            endpoint = _live_exec()._http_endpoint(
+                "REDPANDA_HOST_ENDPOINT", "REDPANDA_KAFKA_PORT"
+            )
+        except RuntimeError as exc:
+            pytest.skip(str(exc))
+        bootstrap = endpoint.removeprefix("http://").removeprefix("https://")
     admin = KafkaAdminClient(bootstrap_servers=bootstrap)
     topics = admin.list_topics()
     assert isinstance(topics, list)  # broker reachable + metadata fetched (topic auto-created on first produce)

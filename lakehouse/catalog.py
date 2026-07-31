@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from lakehouse.atlas_endpoints import resolve_http_endpoint
+
 
 def _envval(key: str, env_file: Path) -> str:
     if not env_file.exists():
@@ -23,6 +25,7 @@ def _region(env_file: Path) -> str:
 
 def _catalog_config(infra_dir: Path) -> dict:
     env_file = Path(infra_dir) / ".env"
+    export_file = Path(infra_dir).parent / "atlas-consumer.env"
     port = _envval("ICEBERG_REST_PORT", env_file)
     minio_port = _envval("MINIO_PORT", env_file)
     user = _envval("MINIO_ROOT_USER", env_file)
@@ -31,10 +34,17 @@ def _catalog_config(infra_dir: Path) -> dict:
         raise RuntimeError(
             f"Iceberg REST / MinIO settings missing in {env_file} — start the enhanced stack first."
         )
+    minio_endpoint = resolve_http_endpoint(
+        "MINIO_HOST_ENDPOINT",
+        "MINIO_PORT",
+        env_file=env_file,
+        export_key="ATLAS_MINIO_HOST_ENDPOINT",
+        export_file=export_file,
+    )
     return {
         "uri": f"http://localhost:{port}",
         "warehouse": "s3a://lakehouse/",
-        "s3.endpoint": f"http://localhost:{minio_port}",
+        "s3.endpoint": minio_endpoint,
         "s3.access-key-id": user,
         "s3.secret-access-key": password,
         "s3.path-style-access": "true",

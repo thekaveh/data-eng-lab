@@ -12,7 +12,7 @@ object NycTaxiEtl {
     try {
       val ns = table.substring(0, table.lastIndexOf('.'))  // e.g. lakehouse.bronze
       spark.sql(s"CREATE NAMESPACE IF NOT EXISTS $ns")
-      val cleaned = TaxiTransforms.clean(spark.read.parquet(landing))
+      val cleaned = TaxiTransforms.clean(TaxiLanding.read(spark, landing))
       cleaned.writeTo(table).using("iceberg").createOrReplace()
       // scalastyle:off println
       println(s"wrote $table: ${spark.table(table).count()} rows")
