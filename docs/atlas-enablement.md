@@ -11,11 +11,16 @@
 > an upstream feature request (and, where practical, a PR made through the submodule),
 > so the capability lands where it belongs: in Atlas, reusable by any project.
 >
-> Until each item is merged to Atlas `main`, `data-eng-lab` pins its submodule to a
-> feature branch (`feat/data-eng-lab-enablement`) that carries these changes, and/or
-> reproduces the *effect* at bootstrap time (e.g. seeding an interpreter via the
-> Zeppelin REST API) — bootstrap actions only, never edits to Atlas source. Once
-> merged, the interim shims are removed and the submodule re-pins to a release tag.
+> The current consumer pin is `985918ce8c805081947d53b1c48bb80610237a5b` from
+> Atlas `main`. This document retains historical request context; current consumer
+> configuration lives in the parent-owned `atlas.consumer.yml`, not in Atlas source.
+> This pin includes Atlas #850's corrected `AIRFLOW__API_AUTH__JWT_SECRET` mapping
+> for Airflow 3.3's `[api_auth] jwt_secret`; [#850](https://github.com/thekaveh/atlas/issues/850)
+> is closed. The prior `af7713ee` retest remains failure evidence, while this
+> corrected pin includes the #880 provider-compatible Spark wrapper, which extracts the driver
+> ID from the spark-submit log before REST confirmation, and awaits a
+> fresh representative DAG run before Airflow acceptance and promotion are
+> claimed. The non-Airflow live checks remain valid.
 
 ---
 
@@ -28,10 +33,14 @@ and the nine containerized `*_SOURCE` selections), the compose overlay
 (`compose/data-eng-lab.yml`, appended to Atlas's compose invocation — no symlink into
 `infra/services/_user/`), and the `lakehouse-test` bucket (provisioned by Atlas's
 minio-init with scoped credentials). `scripts/start-all.sh` is a thin wrapper:
-stale-symlink cleanup → `env backfill` → consumer `doctor` → `start.sh --consumer
-… --track data-eng --no-tui --detach` → namespace registration → preflight.
-Atlas materializes `infra/.env` from the manifest on every start; nothing in this
-repo writes to it.
+stale-symlink cleanup → `env backfill` → consumer `compose validate` → consumer
+`doctor` → `start.sh --consumer … --track data-eng --no-tui --detach` → endpoint
+export/assertion → namespace registration → preflight. The eight-phase launcher
+writes the ignored `atlas-consumer.env` and asserts only
+`ATLAS_MINIO_HOST_ENDPOINT`. Atlas materializes `infra/.env` from the manifest on
+every start; nothing in this repo writes to it. Host-side helpers use explicit
+endpoint overrides or `infra/.env` for unexported data-eng services, while DAGs
+and notebooks use in-network DNS.
 
 The lakehouse target: **medallion architecture** (`landing` → Iceberg `bronze`/`silver`/`gold`)
 on MinIO, cataloged by an **Iceberg REST catalog**, queried from **Zeppelin (Scala Spark)**,

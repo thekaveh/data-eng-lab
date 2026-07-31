@@ -1,5 +1,5 @@
 # data-eng-lab overlay — appended to Atlas's compose invocation via the
-# compose_overlays: entry in atlas.consumer.yml (no symlink into services/_user/).
+# compose_overlays: entry in atlas.consumer.yml (no legacy user-service symlink).
 # Relative host paths resolve against the compose project dir (infra/), so
 # ../scenarios == <repo>/scenarios. Patches existing Atlas services only.
 services:

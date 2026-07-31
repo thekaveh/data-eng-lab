@@ -23,7 +23,7 @@ s3a://landing/nyc_taxi/*.parquet
            ▼                   ▼
     ┌─────────────────────────────┐
     │        Airflow DAG           │
-    │   SparkSubmitOperator        │
+    │ Hook + REST confirmation     │
     └──────────────┬──────────────┘
                    │
                    ▼
@@ -46,7 +46,7 @@ s3a://landing/nyc_taxi/*.parquet
 - **GitHub → Jenkins:** SCM poll or webhook triggers the pipeline.
 - **Jenkins CI:** runs `mvn test` then `mvn package`, producing a shaded JAR.
 - **MinIO:** JAR is published to `s3a://jars/nyc-taxi-etl/0.1.0/nyc-taxi-etl.jar`.
-- **Airflow:** `SparkSubmitOperator` pulls the JAR from MinIO and submits it to the Spark cluster in cluster mode.
+- **Airflow:** `SparkSubmitHook` submits the JAR to the Spark cluster in cluster mode, then confirms the completed driver through Atlas's `spark-master:6066` REST endpoint.
 - **Spark Cluster:** reads Parquet from `s3a://landing/nyc_taxi/`, applies `TaxiTransforms` quality filters, writes Iceberg.
 
 ## 2. Project Structure
@@ -83,11 +83,12 @@ mvn -q -B -f spark-apps/nyc-taxi-etl/pom.xml package
 
 ## 5. Run with Airflow
 
-The DAG (`nyc_taxi_etl`) uses `SparkSubmitOperator` configured with:
+The DAG (`nyc_taxi_etl`) uses `SparkSubmitHook` configured with:
 
 - **application:** `s3a://jars/nyc-taxi-etl/0.1.0/nyc-taxi-etl.jar`
 - **deploy-mode:** `cluster` (Spark runs on cluster YARN/K8s, not driver)
 - **conf:** Iceberg SPARK config (`spark.sql.extensions=org.apache.iceberg.spark.IcebergSparkSessionExtensions`, catalog config)
+- **completion:** Atlas #880's `submit_and_confirm_via_rest()` disables the incompatible provider poll, captures the standalone driver ID from the `spark-submit` log, then requires a `FINISHED` successful driver at `spark-master:6066`.
 - **jars:** the MinIO-published JAR
 - **dependencies:** no external PyPI packages; the JAR ships its shaded dependencies
 
@@ -96,7 +97,7 @@ Spark reads `s3a://landing/nyc_taxi/` and writes to `lakehouse.bronze.nyc_taxi_t
 ## 6. Prerequisites
 
 - Atlas A5 (Jenkins CI pipeline)
-- Atlas A6 (Airflow SparkSubmitOperator)
+- Atlas A6 (Airflow SparkSubmitHook + Spark REST confirmation)
 - JAR published to `s3a://jars/nyc-taxi-etl/0.1.0/nyc-taxi-etl.jar`
 - Preconfigured `minio` `mc` alias and `jars` bucket (A5)
 - S3A credentials available on the Spark cluster (A6)

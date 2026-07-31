@@ -23,6 +23,11 @@ def _live_exec():
 le = _live_exec()
 
 
+def test_http_endpoint_prefers_explicit_override(monkeypatch):
+    monkeypatch.setenv("ZEPPELIN_HOST_ENDPOINT", "http://example.test:8890")
+    assert le._http_endpoint("ZEPPELIN_HOST_ENDPOINT", "ZEPPELIN_PORT") == "http://example.test:8890"
+
+
 def test_strips_lakehouse_catalog_prefix():
     """The Spark 3-part identifier drops its 'lakehouse.' catalog selector."""
     assert le._catalog_identifier("lakehouse.bronze.nyc_taxi_trips") == "bronze.nyc_taxi_trips"

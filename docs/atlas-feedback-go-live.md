@@ -6,7 +6,31 @@ Post-go-live observations from running the full `data-eng-lab` platform in a pro
 
 As of the original go-live run (2026-07-04, atlas `85ff46b`): all A1–A9 capabilities verified during go-live. The platform is fully operational. 19 scenarios executed with parity between Scala and PySpark notebooks where applicable.
 
-Status update (2026-07-21, atlas `2d006cae`): see the live-verification findings below — DAG execution is currently blocked upstream (atlas#791) and the #308 fix is partial (atlas#792).
+Status update (2026-07-28, atlas `882877a4`): the then-current reviewed pin included
+the upstream #791 in-network Execution API URL repair and [Atlas #850](https://github.com/thekaveh/atlas/issues/850)'s
+corrected `AIRFLOW__API_AUTH__JWT_SECRET` mapping for Airflow 3.3's `[api_auth]`
+section. The earlier `af7713ee` focused retest remains recorded below as failed
+evidence for the ineffective `AIRFLOW__API__JWT_SECRET` mapping. Airflow DAG
+live acceptance and promotion are not yet claimed until this corrected pin is
+retested. Non-Airflow focused checks, including Zeppelin, Trino, and streaming,
+remain valid. #792 remained open at that point.
+
+Status update (2026-07-30, atlas `0644a8f3`): Atlas [PR #878](https://github.com/thekaveh/atlas/pull/878)
+merged the #876 correction to the #792 wrapper. The current pin supplies
+`atlas_spark_utils.submit_and_confirm_via_rest()`: the parent DAGs construct `SparkSubmitHook`
+without an application, submit through the required `spark_default` RPC endpoint
+(`spark://spark-master:7077`), and confirm the hook's driver ID through the master's REST
+endpoint (`spark-master:6066`). This bypasses the provider's incompatible post-submit `:7077`
+poll without treating a failed Spark driver as success. The integration is staged for the
+representative live rerun; no Airflow success or promotion is claimed here until that run passes.
+
+Status update (2026-07-30, atlas `985918ce`): Atlas [PR #883](https://github.com/thekaveh/atlas/pull/883)
+resolved the follow-up [#880](https://github.com/thekaveh/atlas/issues/880) defect. The provider
+sets `hook._driver_id` only on the tracking path, so the prior helper could not obtain it after
+correctly disabling the incompatible `:7077` poll. The current helper captures the `spark-submit`
+log, extracts the standalone submission ID, and verifies the driver through `spark-master:6066`.
+The representative live rerun remains the required acceptance gate; no Airflow success or
+promotion is claimed until it passes.
 
 ## Key Observations
 
@@ -15,7 +39,7 @@ Status update (2026-07-21, atlas `2d006cae`): see the live-verification findings
 3. **Spark Connect** — The shared PySpark session in JupyterHub is stable across notebook executions. Each notebook manages its own session lifecycle.
 4. **Trino performance** — Trino performed well on the dataset sizes used. TPC-H at larger scales may need tuning.
 5. **Streaming reliability** — Redpanda handled streaming workloads without issues. The `foreachBatch` CDC pattern produced correct results.
-6. **Airflow orchestration** — Airflow successfully scheduled Spark jobs via `SparkSubmitOperator`. DAG execution was reliable.
+6. **Airflow orchestration** — Airflow schedules Spark jobs through Atlas #880's provider-compatible `SparkSubmitHook` + log-derived driver-ID REST-confirmation pattern. Its new live acceptance remains pending.
 7. **Jenkins CI** — The JAR build and publish pipeline works end-to-end.
 
 ## Recommendations
@@ -68,3 +92,87 @@ Cold-start verification of the consumer-manifest migration surfaced two Atlas-si
    status URL, a documented `deploy_mode=client` recommendation, an Atlas-seeded second
    connection scheme, or tolerating the post-submit poll exception lab-side given
    `waitAppCompletion` already signals completion. Filed as [thekaveh/atlas#792](https://github.com/thekaveh/atlas/issues/792).
+
+## Reviewed-pin update (atlas `881df596`)
+
+Atlas #791 is resolved in the reviewed pin: the scheduler and DAG processor set
+`AIRFLOW__CORE__EXECUTION_API_SERVER_URL=http://airflow-webserver:8080/execution/`.
+That gives Airflow's executor the in-network webserver address instead of a
+container-local `localhost` address. This record does not overclaim a fresh
+lab run: Task 7 must demonstrate a successful `nyc_taxi_etl` DAG without the
+former Pre-Execute connection failure. The distinct SparkSubmitHook driver-status
+poll behavior in [atlas#792](https://github.com/thekaveh/atlas/issues/792) remains
+an open caveat; `spark.standalone.submit.waitAppCompletion=true` remains the
+authoritative completion signal.
+
+## Task 7 live-gate update (2026-07-28, atlas `881df596`)
+
+The Execution API URL repair is active: the scheduler and DAG processor both
+resolve `http://airflow-webserver:8080/execution/`. The representative
+`nyc_taxi_etl` run nevertheless stopped during Pre-Execute because the
+webserver, scheduler, and DAG processor resolved different `api jwt_secret`
+values. The webserver returned 403 with `InvalidSignatureError`, and the
+scheduler recorded `Invalid auth token`; Spark was never reached.
+
+This is an Atlas-internal shared-secret defect, not a consumer endpoint
+override problem. [atlas#850](https://github.com/thekaveh/atlas/issues/850)
+originally tracked the attempted hypothesis that a durable shared
+`AIRFLOW__API__JWT_SECRET` plus cross-service configuration would repair the
+failure. The later retest below proves that hypothesis ineffective: Airflow
+3.3 reads `[api_auth] jwt_secret`. The required pending correction is a shared
+`AIRFLOW__API_AUTH__JWT_SECRET`, effective-configuration regression coverage,
+and successful representative DAG proof. The issue remains open, so the
+consumer must repin to the corrected reviewed upstream fix and rerun the
+focused live suite before promotion.
+
+The same live run exposed a separate consumer-owned notebook/data compatibility
+problem: the declared January–June 2023 NYC Taxi Parquet files disagree on
+`passenger_count` (`INT64` in March, `double` elsewhere). The paired Zeppelin
+and Jupyter batch-ingest notebooks now read each declared object in deterministic
+order, cast that column to `double` at the read boundary, and union by name.
+Their Bronze filtering and Iceberg output contract remain unchanged.
+
+## Focused #850 retest (2026-07-28, atlas `af7713ee`)
+
+The current reviewed pin includes #850's attempted repair: Atlas generates one
+durable `AIRFLOW_JWT_SECRET` and supplies `AIRFLOW__API__JWT_SECRET` with the
+same value to the webserver, scheduler, and DAG processor. That container
+environment value is shared, but the Airflow 3.3 effective configuration is
+`[api_auth] jwt_secret`, not `[api] jwt_secret`. `airflow config get-value api
+jwt_secret` therefore resolves a different shared runtime value, and the
+representative `nyc_taxi_etl` task again fails at Pre-Execute with `Invalid auth
+token` before Spark starts.
+
+The scheduler and DAG processor correctly resolve
+`AIRFLOW__CORE__EXECUTION_API_SERVER_URL=http://airflow-webserver:8080/execution/`,
+so #791's in-network DNS repair is validated. The rest of the focused gate also
+passed: consumer launch/doctor/endpoint assertion, Layer 1 (13/13), Layer 2
+(6/6), datasets, Jenkins JAR build, repaired default-small Zeppelin notebook,
+Trino, and streaming producer/consumer. The paired Jupyter process completed
+cleanly but did not retain a pytest terminal summary and is not claimed as a
+pass.
+
+[atlas#850](https://github.com/thekaveh/atlas/issues/850) is reopened pending
+`AIRFLOW__API_AUTH__JWT_SECRET` plus an effective-configuration regression test
+across the webserver, scheduler, and DAG processor. No Airflow DAG live success
+or Gitflow promotion is permitted until a corrected reviewed pin is retested.
+[atlas#792](https://github.com/thekaveh/atlas/issues/792) remains a separate
+SparkSubmitHook status-poll caveat.
+
+## Corrected #850 pin staged for retest (2026-07-28, atlas `882877a4`)
+
+Atlas [#850](https://github.com/thekaveh/atlas/issues/850) is closed by the
+reviewed correction merged through Atlas PRs #860 and #861. It keeps the durable
+shared `AIRFLOW_JWT_SECRET` but maps it as
+`AIRFLOW__API_AUTH__JWT_SECRET` on the Airflow services, which configures
+Airflow 3.3's effective `[api_auth] jwt_secret` setting. Atlas also updates its
+manifest, Compose, environment reference, baseline, and regression test to lock
+that section mapping.
+
+The parent now pins that immutable merged commit. This records the upstream
+fix's availability, not a successful rerun: `nyc_taxi_etl` must still complete
+on this pin and verify effective secret parity before Airflow live acceptance or
+Gitflow promotion is claimed. The `af7713ee` section above remains the historic
+failed-gate evidence; [atlas#792](https://github.com/thekaveh/atlas/issues/792)
+remained a separate SparkSubmitHook status-poll caveat at this historical pin; the later
+`0644a8f3` update above supplies the provider-compatible REST-confirmation pattern for the pending rerun.

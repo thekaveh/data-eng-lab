@@ -4,7 +4,7 @@ Batch ingestion: read raw NYC taxi Trips Parquet from `s3a://landing/nyc_taxi/*`
 
 ## 1. Purpose
 
-This is the first step in the medallion architecture — ingesting raw Parquet data into Iceberg with full history retention and schema enforcement. The bronze layer mirrors source data exactly, preserving all fields as-is and maintaining the original partitioning structure.
+This is the first step in the medallion architecture — ingesting raw Parquet data into Iceberg with full history retention and schema enforcement. The bronze layer preserves source records while applying the minimum compatibility normalization needed for a stable table schema.
 
 ## 2. Data Model
 
@@ -17,7 +17,7 @@ Source: `s3a://landing/nyc_taxi/*.parquet` (downloaded via `make datasets`).
 | `VendorID` | double | Vendor identifier |
 | `tpep_pickup_datetime` | timestamp | Pickup timestamp |
 | `tpep_dropoff_datetime` | timestamp | Dropoff timestamp |
-| `passenger_count` | int | Number of passengers |
+| `passenger_count` | double | Number of passengers; canonicalized from each source file before union |
 | `trip_distance` | double | Trip distance in miles |
 | `RatecodeID` | double | Rate code |
 | `store_and_fwd_flag` | string | Store and forward flag |
@@ -37,13 +37,13 @@ Source: `s3a://landing/nyc_taxi/*.parquet` (downloaded via `make datasets`).
 
 | Table | Layer | Key Columns |
 |---|---|---|
-| `lakehouse.bronze.nyc_taxi_trips` | Bronze | All columns as in source |
+| `lakehouse.bronze.nyc_taxi_trips` | Bronze | Source columns, with `passenger_count` canonicalized to `double` |
 
 ## 3. Architecture
 
 ![Architecture](../architectures/batch_ingest-nyc_taxi-spark-iceberg.svg)
 
-Raw Parquet trip data flows from the S3 landing zone through Spark batch processing directly into an Iceberg bronze table in the `lakehouse.bronze` namespace, preserving the original schema and all fields without transformation.
+Raw Parquet trip data flows from the S3 landing zone through Spark batch processing into an Iceberg bronze table in the `lakehouse.bronze` namespace. The notebooks select the declared `tiny`, `small`, or `medium` file list deterministically (default `small`, matching `make datasets`), normalize `passenger_count` to `double` per file, and then union by name. This preserves source records while avoiding the known March `INT64` / double incompatibility.
 
 ## 4. Notebooks
 
@@ -59,7 +59,7 @@ Airflow DAG: `batch_ingest_nyc_taxi` — a scheduled batch DAG.
 ## 6. Usage
 
 1. Ensure the `bronze` Iceberg namespace exists: `scripts/register_iceberg.py`
-2. Populate the landing zone: `make datasets`
+2. Populate the landing zone: `make datasets`. The notebooks default to the same `small` tier; change their `taxiDatasetScale` / `taxi_dataset_scale` setting only when you load `tiny` or `medium`.
 3. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
      ```bash
      airflow dags trigger batch_ingest_nyc_taxi

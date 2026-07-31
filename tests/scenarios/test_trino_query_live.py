@@ -1,6 +1,7 @@
 import importlib.util
 import os
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 
@@ -21,12 +22,13 @@ def _live_exec():
                     reason="needs live Atlas Trino (issue #268)")
 def test_trino_counts_bronze():
     from trino.dbapi import connect  # gated import
-    # TRINO_PORT: env var > infra/.env (BASE_PORT: auto means no fixed default).
-    port = _live_exec()._env_val("TRINO_PORT")
-    if not port:
-        pytest.skip("TRINO_PORT unresolved — is the stack up?")
-    cur = connect(host=os.environ.get("TRINO_HOST", "localhost"),
-                  port=int(port),
-                  user="atlas", catalog="lakehouse").cursor()
+    try:
+        endpoint = _live_exec()._http_endpoint("TRINO_HOST_ENDPOINT", "TRINO_PORT")
+    except RuntimeError as exc:
+        pytest.skip(str(exc))
+    parsed = urlparse(endpoint)
+    if not parsed.hostname or not parsed.port:
+        pytest.skip("TRINO_HOST_ENDPOINT unresolved — is the stack up?")
+    cur = connect(host=parsed.hostname, port=parsed.port, user="atlas", catalog="lakehouse").cursor()
     cur.execute("SELECT count(*) FROM lakehouse.bronze.nyc_taxi_trips")
     assert cur.fetchone()[0] >= 0

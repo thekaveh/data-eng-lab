@@ -38,7 +38,7 @@
     },
     {
       "title": "3. Read (code)",
-      "text": "%spark\nval raw = spark.read.parquet(\"s3a://landing/nyc_taxi/\")\nraw.printSchema()",
+      "text": "%spark\nval taxiDatasetScale = \"small\" // match `make datasets SCALE=<tier>`\nval taxiPathsByScale = Map(\n  \"tiny\" -> Seq(\n    \"s3a://landing/nyc_taxi/yellow_tripdata_2023-01.parquet\"\n  ),\n  \"small\" -> Seq(\n    \"s3a://landing/nyc_taxi/yellow_tripdata_2023-01.parquet\",\n    \"s3a://landing/nyc_taxi/yellow_tripdata_2023-02.parquet\",\n    \"s3a://landing/nyc_taxi/yellow_tripdata_2023-03.parquet\"\n  ),\n  \"medium\" -> Seq(\n    \"s3a://landing/nyc_taxi/yellow_tripdata_2023-01.parquet\",\n    \"s3a://landing/nyc_taxi/yellow_tripdata_2023-02.parquet\",\n    \"s3a://landing/nyc_taxi/yellow_tripdata_2023-03.parquet\",\n    \"s3a://landing/nyc_taxi/yellow_tripdata_2023-04.parquet\",\n    \"s3a://landing/nyc_taxi/yellow_tripdata_2023-05.parquet\",\n    \"s3a://landing/nyc_taxi/yellow_tripdata_2023-06.parquet\"\n  )\n)\nval taxiPaths = taxiPathsByScale.getOrElse(\n  taxiDatasetScale,\n  throw new IllegalArgumentException(s\"unsupported NYC Taxi dataset scale: $taxiDatasetScale\")\n)\nval raw = taxiPaths\n  .map(path => spark.read.parquet(path).withColumn(\"passenger_count\", col(\"passenger_count\").cast(\"double\")))\n  .reduce(_.unionByName(_))\nraw.printSchema()",
       "config": {},
       "settings": {
         "params": {},

@@ -80,7 +80,7 @@
         <text x="740" y="176" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Airflow</text>
         <text x="740" y="196" fill="#22d3ee" font-size="10" font-weight="700" text-anchor="middle">DAG: nyc_taxi_medallion</text>
         <line x1="665" y1="210" x2="815" y2="210" stroke="#1e293b" stroke-width="1"/>
-        <text x="740" y="230" fill="#fb923c" font-size="9" font-weight="600" text-anchor="middle">SparkSubmitOperator</text>
+        <text x="740" y="230" fill="#fb923c" font-size="9" font-weight="600" text-anchor="middle">Hook + REST confirm</text>
         <text x="740" y="248" fill="#ffffff" font-size="8" text-anchor="middle">task: submit_…_medallion</text>
         <text x="740" y="266" fill="#94a3b8" font-size="8" text-anchor="middle">schedule: @daily</text>
         <text x="740" y="282" fill="#94a3b8" font-size="8" text-anchor="middle">deploy_mode: cluster</text>

@@ -46,7 +46,7 @@
         <text x="560" y="316" fill="#ffffff" font-size="12" font-weight="600" text-anchor="middle">Bronze Transform</text>
         <text x="560" y="338" fill="#94a3b8" font-size="9" text-anchor="middle">where pickup not null &amp; passenger_count &gt; 0</text>
         <text x="560" y="356" fill="#94a3b8" font-size="9" text-anchor="middle">withColumn("trip_date", to_date(pickup))</text>
-        <text x="560" y="378" fill="#22d3ee" font-size="9" text-anchor="middle">minimal cleaning · schema preserved</text>
+        <text x="560" y="378" fill="#22d3ee" font-size="9" text-anchor="middle">minimal cleaning · passenger_count → double</text>
         <text x="560" y="396" fill="#94a3b8" font-size="9" text-anchor="middle">full-history retention</text>
 
         <!-- ================= STAGE 3: CATALOG ================= -->
