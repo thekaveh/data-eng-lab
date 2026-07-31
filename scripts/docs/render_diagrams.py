@@ -25,6 +25,14 @@ def import_svg_master(svg_text: str, *, title: str, evidence: str) -> str:
     svg = svg_text.strip()
     if not svg.startswith("<svg") or not svg.endswith("</svg>") or len(_SVG_ROOT.findall(svg)) != 1:
         raise DiagramError("legacy diagram must contain one standalone svg root")
+    open_end = svg.find(">")
+    accessible_svg = (
+        svg[:open_end]
+        + ' role="img" aria-labelledby="diagram-title diagram-description">\n'
+        + f'  <title id="diagram-title">{html.escape(title)}</title>\n'
+        + f'  <desc id="diagram-description">{html.escape(evidence)}</desc>\n'
+        + svg[open_end + 1 :]
+    )
     return (
         "<!doctype html>\n"
         '<html lang="en">\n'
@@ -32,7 +40,7 @@ def import_svg_master(svg_text: str, *, title: str, evidence: str) -> str:
         f"<title>{html.escape(title)}</title></head>\n"
         "<body>\n"
         f"  <!-- {html.escape(evidence)} -->\n"
-        f"{svg}\n"
+        f"{accessible_svg}\n"
         "</body>\n"
         "</html>\n"
     )

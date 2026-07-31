@@ -137,13 +137,9 @@ def _rewrite_target(
 
     path_text, suffix = _path_and_suffix(target)
     resolved = _resolve(source.parent, path_text)
-    if resolved.suffix == ".ipynb":
-        return None
     if resolved in source_map:
         return _relative_target(source_destination, source_map[resolved]) + suffix
-    if resolved.suffix == ".md":
-        return None
-    return target
+    return None
 
 
 def _path_and_suffix(target: str) -> tuple[str, str]:

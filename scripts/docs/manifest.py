@@ -88,6 +88,14 @@ def load_manifest(path: Path, repo_root: Path) -> Manifest:
             raise ManifestError(f"manifest path outside repository: {manifest_path}")
         if not resolved.exists():
             raise ManifestError(f"missing manifest path: {manifest_path}")
+    for internal_root in manifest.internal_roots:
+        resolved = (root / internal_root).resolve()
+        if not resolved.is_relative_to(root):
+            raise ManifestError(f"manifest path outside repository: {internal_root}")
+        if not resolved.exists():
+            raise ManifestError(f"missing manifest path: {internal_root}")
+        if not resolved.is_dir():
+            raise ManifestError(f"internal root must be a directory: {internal_root}")
     return manifest
 
 

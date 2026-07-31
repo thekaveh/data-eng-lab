@@ -41,9 +41,16 @@ def test_import_svg_master_preserves_the_complete_svg():
         evidence="Verified against atlas.consumer.yml on 2026-07-31.",
     )
 
-    assert svg in master
     assert master.count("<svg") == 1
+    assert '<path d="M0 0h10v10z"/>' in master
     assert "Verified against atlas.consumer.yml on 2026-07-31." in master
+    assert 'role="img"' in master
+    assert 'aria-labelledby="diagram-title diagram-description"' in master
+    assert '<title id="diagram-title">Overview</title>' in master
+    assert (
+        '<desc id="diagram-description">Verified against atlas.consumer.yml on 2026-07-31.</desc>'
+        in master
+    )
 
 
 def test_import_svg_master_rejects_non_standalone_input():
@@ -114,3 +121,14 @@ def test_copy_assets_copies_only_png_files(tmp_path):
 
     assert (wiki_dir / "overview.png").read_bytes() == b"\x89PNG fixture"
     assert not (wiki_dir / "notes.txt").exists()
+
+
+def test_every_committed_master_has_accessible_svg_metadata():
+    root = Path(__file__).resolve().parents[3]
+
+    for path in sorted((root / "docs/diagrams").glob("*.html")):
+        svg = extract_svg(path.read_text(encoding="utf-8"))
+        assert 'role="img"' in svg, path
+        assert 'aria-labelledby="diagram-title diagram-description"' in svg, path
+        assert '<title id="diagram-title">' in svg, path
+        assert '<desc id="diagram-description">' in svg, path

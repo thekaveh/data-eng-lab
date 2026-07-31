@@ -78,6 +78,25 @@ def test_rewrite_drops_forbidden_and_non_manifest_targets(manifest):
     assert result == "Source Draft Notebook"
 
 
+@pytest.mark.parametrize(
+    "target",
+    [
+        "../datasets/registry.yaml",
+        "../assets/unpublished.png",
+        "../../scripts/helper.py?raw=1#example",
+    ],
+)
+def test_rewrite_drops_every_unmapped_local_target(manifest, target):
+    mapping = build_source_map(manifest, "site")
+
+    assert rewrite_for_surface(
+        f"[Unpublished]({target})",
+        "site",
+        Path("docs/notebooks/example.md"),
+        mapping,
+    ) == "Unpublished"
+
+
 def test_rewrite_changes_only_the_target_when_it_matches_the_label(manifest):
     mapping = build_source_map(manifest, "wiki")
     result = rewrite_for_surface(

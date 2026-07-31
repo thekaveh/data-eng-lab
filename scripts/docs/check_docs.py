@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,9 +21,8 @@ from scripts.docs.links import (
     is_forbidden,
 )
 from scripts.docs.manifest import Manifest, ManifestError, iter_leaf_sections, load_manifest
-from scripts.docs.render_diagrams import DiagramError, extract_svg
+from scripts.docs.render_diagrams import DiagramError, extract_svg, svg_to_png
 
-_INTERNAL_ROOT = Path("docs/superpowers")
 _UNFINISHED_MARKERS = ("TO" + "DO", "TB" + "D", "FIX" + "ME", "X" + "XX")
 _H1 = re.compile(r"^ {0,3}(# [^\r\n]+)$", re.MULTILINE)
 _SVG_OPEN = re.compile(r"<svg\b")
@@ -51,7 +51,7 @@ def check_completeness(repo_root: Path) -> tuple[Finding, ...]:
     }
     for path in sorted((root / "docs").rglob("*.md")):
         relative = path.relative_to(root)
-        if _is_internal(relative):
+        if _is_internal(relative, manifest.internal_roots):
             continue
         if relative not in declared:
             findings += (_error(f"public Markdown is absent from manifest: {relative.as_posix()}"),)
@@ -81,8 +81,10 @@ def check_numbering(repo_root: Path) -> tuple[Finding, ...]:
 def check_placeholders(repo_root: Path) -> tuple[Finding, ...]:
     """Reject unfinished-work markers in canonical and generated public artifacts."""
     root = repo_root.resolve()
-    findings: tuple[Finding, ...] = ()
-    for path in _placeholder_files(root):
+    manifest, findings = _load(root)
+    if manifest is None:
+        return findings
+    for path in _placeholder_files(root, manifest.internal_roots):
         text = path.read_text(encoding="utf-8")
         relative = path.relative_to(root).as_posix()
         for marker in _UNFINISHED_MARKERS:
@@ -96,13 +98,15 @@ def check_placeholders(repo_root: Path) -> tuple[Finding, ...]:
 def check_empty_artifacts(repo_root: Path) -> tuple[Finding, ...]:
     """Reject empty files and directories in the public canonical docs tree."""
     root = repo_root.resolve()
+    manifest, findings = _load(root)
+    if manifest is None:
+        return findings
     docs = root / "docs"
-    findings: tuple[Finding, ...] = ()
     if not docs.exists():
         return (_error("public documentation directory missing: docs"),)
     for path in sorted(docs.rglob("*")):
         relative = path.relative_to(root)
-        if _is_internal(relative):
+        if _is_internal(relative, manifest.internal_roots):
             continue
         if path.is_file() and path.stat().st_size == 0:
             findings += (
@@ -118,8 +122,10 @@ def check_empty_artifacts(repo_root: Path) -> tuple[Finding, ...]:
 def check_self_containment(repo_root: Path) -> tuple[Finding, ...]:
     """Reject cross-surface links and missing surface-local image targets."""
     root = repo_root.resolve()
-    findings: tuple[Finding, ...] = ()
-    for surface, path, restrict_docs in _surface_files(root):
+    manifest, findings = _load(root)
+    if manifest is None:
+        return findings
+    for surface, path, restrict_docs in _surface_files(root, manifest.internal_roots):
         text = path.read_text(encoding="utf-8")
         relative = path.relative_to(root).as_posix()
         findings += _origin_findings(relative, text, surface)
@@ -141,7 +147,8 @@ def check_self_containment(repo_root: Path) -> tuple[Finding, ...]:
                     findings += (
                         _error(f"{relative}: forbidden docs/-relative target {target}"),
                     )
-            if match.group(0).startswith("!") and Path(clean).suffix in {".png", ".svg"}:
+            is_image = match.group(0).startswith("!")
+            if surface in {"site", "wiki"} or (is_image and Path(clean).suffix in {".png", ".svg"}):
                 surface_root = {
                     "repo": root,
                     "site": root / "generated/site",
@@ -149,12 +156,14 @@ def check_self_containment(repo_root: Path) -> tuple[Finding, ...]:
                 }[surface].resolve()
                 if not resolved.is_relative_to(surface_root):
                     label = "repository" if surface == "repo" else surface
+                    kind = "image" if is_image else "target"
                     findings += (
-                        _error(f"{relative}: local image escapes {label} surface: {target}"),
+                        _error(f"{relative}: local {kind} escapes {label} surface: {target}"),
                     )
                     continue
                 if not resolved.is_file():
-                    findings += (_error(f"{relative}: missing local image {target}"),)
+                    kind = "image" if is_image else "target"
+                    findings += (_error(f"{relative}: missing local {kind} {target}"),)
     return _sorted(findings)
 
 
@@ -179,27 +188,51 @@ def check_diagrams(repo_root: Path) -> tuple[Finding, ...]:
     findings += _set_findings("PNG projections", expected, png_ids)
     findings += _set_findings("site SVG projections", expected, svg_ids)
 
-    for identifier, entry in entries.items():
-        expected_master = Path(f"docs/diagrams/{identifier}.html")
-        if entry.master != expected_master:
-            findings += (
-                _error(
-                    f"{identifier}: manifest master must be {expected_master}, got {entry.master}"
-                ),
-            )
-        if identifier in master_ids:
-            findings += _check_master(root / expected_master, identifier)
-        if identifier in png_ids:
-            findings += _check_png(png_dir / f"{identifier}.png", identifier)
-        if identifier in svg_ids:
-            svg_path = svg_dir / f"{identifier}.svg"
-            try:
-                svg = svg_path.read_text(encoding="utf-8")
-            except OSError:
-                findings += (_error(f"{identifier}: missing site SVG {svg_path}"),)
-            else:
-                if not _SVG_OPEN.search(svg):
-                    findings += (_error(f"{identifier}: invalid site SVG projection"),)
+    with tempfile.TemporaryDirectory() as directory:
+        fresh_png_dir = Path(directory)
+        for identifier, entry in entries.items():
+            expected_master = Path(f"docs/diagrams/{identifier}.html")
+            png_findings: tuple[Finding, ...] = ()
+            if identifier in png_ids:
+                png_findings = _check_png(png_dir / f"{identifier}.png", identifier)
+                findings += png_findings
+            if entry.master != expected_master:
+                findings += (
+                    _error(
+                        f"{identifier}: manifest master must be {expected_master}, got {entry.master}"
+                    ),
+                )
+            if identifier in master_ids:
+                master_path = root / expected_master
+                master_findings = _check_master(master_path, identifier)
+                findings += master_findings
+                if not master_findings and not png_findings:
+                    try:
+                        svg = extract_svg(master_path.read_text(encoding="utf-8"))
+                        fresh_png = fresh_png_dir / f"{identifier}.png"
+                        svg_to_png(svg, fresh_png)
+                    except (DiagramError, OSError, ValueError):
+                        pass
+                    else:
+                        committed_png = png_dir / f"{identifier}.png"
+                        if (
+                            committed_png.is_file()
+                            and committed_png.read_bytes() != fresh_png.read_bytes()
+                        ):
+                            findings += (
+                                _error(
+                                    f"{identifier}: committed PNG differs from fresh master render"
+                                ),
+                            )
+            if identifier in svg_ids:
+                svg_path = svg_dir / f"{identifier}.svg"
+                try:
+                    svg = svg_path.read_text(encoding="utf-8")
+                except OSError:
+                    findings += (_error(f"{identifier}: missing site SVG {svg_path}"),)
+                else:
+                    if not _SVG_OPEN.search(svg):
+                        findings += (_error(f"{identifier}: invalid site SVG projection"),)
     return _sorted(findings)
 
 
@@ -234,7 +267,7 @@ def _load(root: Path) -> tuple[Manifest | None, tuple[Finding, ...]]:
         return None, (_error(f"docs/manifest.yaml invalid: {error}"),)
 
 
-def _canonical_markdown(root: Path) -> tuple[Path, ...]:
+def _canonical_markdown(root: Path, internal_roots: tuple[Path, ...]) -> tuple[Path, ...]:
     candidates: set[Path] = set()
     readme = root / "README.md"
     if readme.is_file():
@@ -244,7 +277,7 @@ def _canonical_markdown(root: Path) -> tuple[Path, ...]:
         candidates.update(
             path
             for path in docs.rglob("*.md")
-            if not _is_internal(path.relative_to(root))
+            if not _is_internal(path.relative_to(root), internal_roots)
         )
     for directory in (root / "scenarios", root / "spark-apps"):
         if directory.exists():
@@ -252,8 +285,8 @@ def _canonical_markdown(root: Path) -> tuple[Path, ...]:
     return tuple(sorted(candidates))
 
 
-def _placeholder_files(root: Path) -> tuple[Path, ...]:
-    candidates = set(_canonical_markdown(root))
+def _placeholder_files(root: Path, internal_roots: tuple[Path, ...]) -> tuple[Path, ...]:
+    candidates = set(_canonical_markdown(root, internal_roots))
     for directory in (root / "generated/site", root / "generated/wiki"):
         if directory.exists():
             candidates.update(directory.rglob("*.md"))
@@ -263,9 +296,11 @@ def _placeholder_files(root: Path) -> tuple[Path, ...]:
     return tuple(sorted(candidates))
 
 
-def _surface_files(root: Path) -> tuple[tuple[str, Path, bool], ...]:
+def _surface_files(
+    root: Path, internal_roots: tuple[Path, ...]
+) -> tuple[tuple[str, Path, bool], ...]:
     values: list[tuple[str, Path, bool]] = []
-    for path in _canonical_markdown(root):
+    for path in _canonical_markdown(root, internal_roots):
         restrict_docs = path == root / "README.md" or path.is_relative_to(root / "scenarios") or path.is_relative_to(
             root / "spark-apps"
         )
@@ -437,6 +472,35 @@ def _check_master(path: Path, identifier: str) -> tuple[Finding, ...]:
     width, height = dimensions
     if width <= 0 or height <= 0 or width <= height:
         return (_error(f"{identifier}: SVG is not landscape ({width}x{height})"),)
+    try:
+        root = ET.fromstring(svg)
+    except ET.ParseError:
+        return (_error(f"{identifier}: SVG is not well-formed XML"),)
+    if root.attrib.get("role") != "img":
+        return (_error(f'{identifier}: SVG must have role="img"'),)
+    labelled_by = root.attrib.get("aria-labelledby", "").split()
+    children = {
+        child.tag.rsplit("}", 1)[-1]: child
+        for child in root
+        if child.tag.rsplit("}", 1)[-1] in {"title", "desc"}
+    }
+    title = children.get("title")
+    description = children.get("desc")
+    if (
+        title is None
+        or description is None
+        or not title.attrib.get("id")
+        or not description.attrib.get("id")
+        or title.attrib["id"] not in labelled_by
+        or description.attrib["id"] not in labelled_by
+        or not (title.text or "").strip()
+        or not (description.text or "").strip()
+    ):
+        return (
+            _error(
+                f"{identifier}: SVG must label non-empty title and desc elements with aria-labelledby"
+            ),
+        )
     return ()
 
 
@@ -456,8 +520,8 @@ def _check_png(path: Path, identifier: str) -> tuple[Finding, ...]:
     return ()
 
 
-def _is_internal(relative: Path) -> bool:
-    return relative == _INTERNAL_ROOT or relative.is_relative_to(_INTERNAL_ROOT)
+def _is_internal(relative: Path, internal_roots: tuple[Path, ...]) -> bool:
+    return any(relative == root or relative.is_relative_to(root) for root in internal_roots)
 
 
 def _error(message: str) -> Finding:

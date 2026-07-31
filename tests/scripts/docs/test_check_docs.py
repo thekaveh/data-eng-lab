@@ -13,10 +13,23 @@ from scripts.docs.check_docs import (
     check_placeholders,
     check_self_containment,
 )
+from scripts.docs.render_diagrams import extract_svg, svg_to_png
 
 
-def _master(*, width: int = 800, height: int = 400, svg_count: int = 1) -> str:
-    svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}"></svg>'
+def _master(
+    *, width: int = 800, height: int = 400, svg_count: int = 1, accessible: bool = True
+) -> str:
+    metadata = (
+        ' role="img" aria-labelledby="diagram-title diagram-description">'
+        '<title id="diagram-title">Overview</title>'
+        '<desc id="diagram-description">Overview architecture.</desc>'
+        if accessible
+        else ">"
+    )
+    svg = (
+        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}"'
+        f"{metadata}</svg>"
+    )
     return f"<html><body>{svg * svg_count}</body></html>"
 
 
@@ -33,11 +46,15 @@ def _png(*, width: int = 800, height: int = 400) -> bytes:
 def repo_fixture(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     (repo / "docs/diagrams/img").mkdir(parents=True)
+    (repo / "docs/superpowers").mkdir()
     (repo / "docs/stylesheets").mkdir(parents=True)
     (repo / "docs/overrides").mkdir(parents=True)
     (repo / "docs/index.md").write_text("# 1. Overview\n", encoding="utf-8")
     (repo / "docs/diagrams/overview.html").write_text(_master(), encoding="utf-8")
-    (repo / "docs/diagrams/img/overview.png").write_bytes(_png())
+    svg_to_png(
+        extract_svg((repo / "docs/diagrams/overview.html").read_text(encoding="utf-8")),
+        repo / "docs/diagrams/img/overview.png",
+    )
     (repo / "docs/stylesheets/extra.css").write_text("body { color: cyan; }\n", encoding="utf-8")
     (repo / "docs/overrides/main.html").write_text('{% extends "base.html" %}\n', encoding="utf-8")
     (repo / "docs/manifest.yaml").write_text(
@@ -106,11 +123,38 @@ def test_atlas_acceptance_record_is_consistent(repo_root):
 
 def test_completeness_ignores_only_explicit_internal_root(repo_fixture: Path):
     (repo_fixture / "docs/unmanifested.md").write_text("# Unmanifested\n", encoding="utf-8")
-    (repo_fixture / "docs/superpowers/internal.md").parent.mkdir(parents=True)
+    (repo_fixture / "docs/superpowers/internal.md").parent.mkdir(parents=True, exist_ok=True)
     (repo_fixture / "docs/superpowers/internal.md").write_text("# Internal\n", encoding="utf-8")
 
     assert messages(check_completeness(repo_fixture)) == [
         "public Markdown is absent from manifest: docs/unmanifested.md"
+    ]
+
+
+def test_all_canonical_scans_follow_manifest_internal_roots(repo_fixture: Path):
+    manifest = repo_fixture / "docs/manifest.yaml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace("docs/superpowers", "docs/private"),
+        encoding="utf-8",
+    )
+    private = repo_fixture / "docs/private/internal.md"
+    private.parent.mkdir()
+    private.write_text("TO" + "DO" + ": private\n", encoding="utf-8")
+    legacy = repo_fixture / "docs/superpowers/legacy.md"
+    legacy.parent.mkdir(exist_ok=True)
+    legacy.write_text("TO" + "DO" + ": legacy\n", encoding="utf-8")
+
+    assert messages(check_completeness(repo_fixture)) == [
+        "public Markdown is absent from manifest: docs/superpowers/legacy.md"
+    ]
+    assert messages(check_placeholders(repo_fixture)) == [
+        "unfinished marker TODO in public documentation: docs/superpowers/legacy.md"
+    ]
+
+    private.write_text("", encoding="utf-8")
+    legacy.write_text("", encoding="utf-8")
+    assert messages(check_empty_artifacts(repo_fixture)) == [
+        "empty public documentation file: docs/superpowers/legacy.md"
     ]
 
 
@@ -163,7 +207,7 @@ def test_placeholders_ignore_only_internal_documentation(repo_fixture: Path):
     marker = "TO" + "DO"
     (repo_fixture / "docs/index.md").write_text(f"# 1. Overview\n\n{marker}: finish\n", encoding="utf-8")
     internal = repo_fixture / "docs/superpowers/internal.md"
-    internal.parent.mkdir(parents=True)
+    internal.parent.mkdir(parents=True, exist_ok=True)
     internal.write_text(f"# Internal\n\n{marker}: allowed\n", encoding="utf-8")
 
     assert messages(check_placeholders(repo_fixture)) == [
@@ -324,6 +368,27 @@ def test_surface_local_wiki_image_passes(repo_fixture: Path):
     assert check_self_containment(repo_fixture) == ()
 
 
+@pytest.mark.parametrize("surface", ["site", "wiki"])
+def test_generated_missing_local_link_fails(repo_fixture: Path, surface: str):
+    page = repo_fixture / f"generated/{surface}/Home.md"
+    page.parent.mkdir(parents=True)
+    page.write_text("[Registry](assets/registry.yaml)\n", encoding="utf-8")
+
+    assert messages(check_self_containment(repo_fixture)) == [
+        f"generated/{surface}/Home.md: missing local target assets/registry.yaml"
+    ]
+
+
+def test_generated_existing_local_link_passes(repo_fixture: Path):
+    page = repo_fixture / "generated/wiki/Home.md"
+    target = repo_fixture / "generated/wiki/Runbook.md"
+    page.parent.mkdir(parents=True)
+    page.write_text("[Runbook](Runbook.md#setup)\n", encoding="utf-8")
+    target.write_text("# Setup\n", encoding="utf-8")
+
+    assert check_self_containment(repo_fixture) == ()
+
+
 def test_diagram_inventory_and_file_validation(repo_fixture: Path):
     site_images = repo_fixture / "generated/site/assets/img"
     site_images.mkdir(parents=True)
@@ -339,6 +404,32 @@ def test_diagram_inventory_and_file_validation(repo_fixture: Path):
         "PNG projection overview has invalid PNG magic",
         "site SVG projections missing ids: overview",
     ]
+
+
+def test_diagram_gate_rejects_png_that_is_not_a_fresh_master_render(repo_fixture: Path):
+    pytest.importorskip("cairosvg")
+    site_images = repo_fixture / "generated/site/assets/img"
+    site_images.mkdir(parents=True)
+    (site_images / "overview.svg").write_text(
+        "<svg xmlns=\"http://www.w3.org/2000/svg\"/>", encoding="utf-8"
+    )
+    stale = repo_fixture / "docs/diagrams/img/overview.png"
+    stale.write_bytes(_png())
+
+    assert "overview: committed PNG differs from fresh master render" in messages(
+        check_diagrams(repo_fixture)
+    )
+
+
+def test_diagram_gate_requires_accessible_svg_metadata(repo_fixture: Path):
+    site_images = repo_fixture / "generated/site/assets/img"
+    site_images.mkdir(parents=True)
+    (site_images / "overview.svg").write_text("<svg/>", encoding="utf-8")
+    (repo_fixture / "docs/diagrams/overview.html").write_text(
+        _master(accessible=False), encoding="utf-8"
+    )
+
+    assert "overview: SVG must have role=\"img\"" in messages(check_diagrams(repo_fixture))
 
 
 def test_empty_diagram_manifest_cannot_make_gate_vacuous(repo_fixture: Path):

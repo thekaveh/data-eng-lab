@@ -41,6 +41,7 @@ def tmp_repo(tmp_path):
     repo = tmp_path / "repo"
     (repo / "docs/scenarios").mkdir(parents=True)
     (repo / "docs/diagrams/img").mkdir(parents=True)
+    (repo / "docs/superpowers").mkdir()
     (repo / "docs/stylesheets").mkdir(parents=True)
     (repo / "docs/overrides").mkdir(parents=True)
     (repo / "docs/index.md").write_text(

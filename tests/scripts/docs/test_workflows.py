@@ -136,11 +136,14 @@ def test_publish_workflow_pushes_generated_wiki_after_pages_deploy():
     assert wiki["permissions"] == {"contents": "write"}
     commands = _executable_lines(wiki)
     required = [
+        "sudo apt-get install -y libcairo2",
+        "uv run --group dev python -m scripts.docs.render_diagrams --root .",
         "uv run --group dev python -m scripts.docs.build_docs --wiki --root .",
         "uv run --group dev python -m scripts.docs.push_wiki --push --root .",
     ]
     command_positions = [_command_index(commands, command) for command in required]
     assert command_positions == sorted(command_positions)
+    assert _step_index(wiki["steps"], required[0]) < _step_index(wiki["steps"], required[1])
 
     push_step = next(
         step for step in wiki["steps"] if "scripts.docs.push_wiki" in step.get("run", "")
