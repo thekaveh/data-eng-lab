@@ -32,6 +32,11 @@ def is_forbidden(target: str, surface: str) -> bool:
         return surface != "wiki"
     if target.startswith(REPOSITORY_ORIGIN):
         return surface != "repo"
-    if target.startswith(PAGES_ORIGIN):
+    if _matches_pages_origin(target):
         return surface != "site"
     return False
+
+
+def _matches_pages_origin(target: str) -> bool:
+    pages_base = PAGES_ORIGIN.rstrip("/")
+    return target == pages_base or target.startswith((f"{pages_base}/", f"{pages_base}?", f"{pages_base}#"))

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import posixpath
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Iterator, Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -12,32 +12,42 @@ from scripts.docs.links import MARKDOWN_LINK_RE, is_forbidden
 from scripts.docs.manifest import Manifest, iter_leaf_sections
 
 
-class _SourceMap(dict[Path, Path]):
-    """A source map annotated with the diagram IDs allowed for rewriting."""
+class SourceMap(Mapping[Path, Path]):
+    """Immutable source-path mapping with the manifest diagram IDs."""
 
-    def __init__(self, *args: object, diagram_ids: frozenset[str], **kwargs: object) -> None:
-        super().__init__(*args, **kwargs)
-        self.diagram_ids = diagram_ids
+    def __init__(self, paths: Mapping[Path, Path], *, diagram_ids: Iterable[str]) -> None:
+        self._paths = dict(paths)
+        self.diagram_ids = frozenset(diagram_ids)
+
+    def __getitem__(self, source: Path) -> Path:
+        return self._paths[source]
+
+    def __iter__(self) -> Iterator[Path]:
+        return iter(self._paths)
+
+    def __len__(self) -> int:
+        return len(self._paths)
 
 
-def build_source_map(manifest: Manifest, surface: str) -> dict[Path, Path]:
+def build_source_map(manifest: Manifest, surface: str) -> SourceMap:
     """Map each manifest source page to its destination on *surface*."""
     mapping: dict[Path, Path] = {}
     for section in iter_leaf_sections(manifest.sections):
         assert section.source is not None
         mapping[section.source] = _destination(section.source, section.id, surface)
-    return _SourceMap(mapping, diagram_ids=frozenset(entry.id for entry in manifest.diagrams))
+    return SourceMap(mapping, diagram_ids=(entry.id for entry in manifest.diagrams))
 
 
 def rewrite_for_surface(
     markdown: str,
     surface: str,
     source: Path,
-    source_map: Mapping[Path, Path],
+    source_map: SourceMap,
 ) -> str:
     """Rewrite canonical Markdown links to local targets for *surface*."""
+    if not isinstance(source_map, SourceMap):
+        raise TypeError("source_map must be a SourceMap with diagram metadata")
     source_destination = source_map.get(source, source)
-    diagram_ids = getattr(source_map, "diagram_ids", frozenset())
 
     def replace(match: re.Match[str]) -> str:
         label = match.group("label")
@@ -48,7 +58,7 @@ def rewrite_for_surface(
             source,
             source_destination,
             source_map,
-            diagram_ids,
+            source_map.diagram_ids,
         )
         if replacement is None:
             return label
@@ -76,7 +86,7 @@ def _rewrite_target(
     surface: str,
     source: Path,
     source_destination: Path,
-    source_map: Mapping[Path, Path],
+    source_map: SourceMap,
     diagram_ids: frozenset[str],
 ) -> str | None:
     parsed = urlsplit(target)
