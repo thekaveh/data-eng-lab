@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Assert the three doc surfaces are self-contained (no cross-surface links; diagrams embedded)."""
+"""Assert the three doc surfaces are self-contained and their image targets resolve."""
 from __future__ import annotations
 
 import argparse
@@ -9,8 +9,17 @@ from pathlib import Path
 
 SITE = "thekaveh.github.io"
 BANNER = "Full docs site"
-DOCS_REL = re.compile(r"\]\((\.\./)+docs/|\]\(docs/")
-SVG_REF = re.compile(r"!\[[^\]]*\]\(([^)]+\.svg)\)")
+MARKDOWN_LINK = re.compile(r"(!?)\[[^\]]*\]\(([^)]+)\)")
+DOCS_TARGET = re.compile(r"^(?:\.\./)*docs/")
+
+
+def _allowed_docs_image(root: Path, source: Path, bang: str, target: str) -> bool:
+    """Return whether a docs/-relative target is the committed PNG exception."""
+    if bang != "!" or not target.endswith(".png"):
+        return False
+    canonical = (root / "docs" / "diagrams" / "img").resolve()
+    resolved = (source.parent / target).resolve()
+    return resolved.parent == canonical and resolved.is_file()
 
 
 def _scan(root: Path) -> list[str]:
@@ -25,12 +34,12 @@ def _scan(root: Path) -> list[str]:
         text = f.read_text(encoding="utf-8")
         if SITE in text:
             findings.append(f"{f.relative_to(root)}: links to .io site")
-        if DOCS_REL.search(text):
-            findings.append(f"{f.relative_to(root)}: docs/-relative link")
-        for m in SVG_REF.finditer(text):
-            svg = f.parent / m.group(1)
-            if not svg.exists():
-                findings.append(f"{f.relative_to(root)}: missing local SVG {m.group(1)}")
+        for match in MARKDOWN_LINK.finditer(text):
+            bang, target = match.groups()
+            if DOCS_TARGET.match(target) and not _allowed_docs_image(root, f, bang, target):
+                findings.append(f"{f.relative_to(root)}: forbidden docs/-relative target {target}")
+            if bang == "!" and target.endswith((".png", ".svg")) and not (f.parent / target).is_file():
+                findings.append(f"{f.relative_to(root)}: missing local image {target}")
     # wiki surface
     wdir = root / "wiki"
     if wdir.exists():
@@ -40,12 +49,10 @@ def _scan(root: Path) -> list[str]:
                 findings.append(f"wiki/{f.name}: links to .io site")
             if BANNER in text:
                 findings.append(f"wiki/{f.name}: contains mirror banner")
-            # mirror the README-surface SVG check: every embedded SVG must exist locally
-            # in the wiki dir (render_wiki rewrites diagrams to bare "<name>.svg" refs).
-            for m in SVG_REF.finditer(text):
-                svg = f.parent / m.group(1)
-                if not svg.exists():
-                    findings.append(f"wiki/{f.name}: missing local SVG {m.group(1)}")
+            for match in MARKDOWN_LINK.finditer(text):
+                bang, target = match.groups()
+                if bang == "!" and target.endswith((".png", ".svg")) and not (f.parent / target).is_file():
+                    findings.append(f"wiki/{f.name}: missing local image {target}")
     return findings
 
 

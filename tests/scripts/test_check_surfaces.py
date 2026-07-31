@@ -34,6 +34,41 @@ def test_docs_relative_link_fails(tmp_path):
     assert cs.main(["--root", str(tmp_path)]) == 1
 
 
+def test_root_readme_committed_diagram_png_passes(tmp_path):
+    cs = _load()
+    image = tmp_path / "docs" / "diagrams" / "img" / "overview.png"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"\x89PNG fixture")
+    (tmp_path / "README.md").write_text("![diagram](docs/diagrams/img/overview.png)\n")
+    assert cs.main(["--root", str(tmp_path)]) == 0
+
+
+def test_nested_readme_committed_diagram_png_passes(tmp_path):
+    cs = _load()
+    image = tmp_path / "docs" / "diagrams" / "img" / "scenario.png"
+    image.parent.mkdir(parents=True)
+    image.write_bytes(b"\x89PNG fixture")
+    readme = tmp_path / "scenarios" / "scenario" / "README.md"
+    readme.parent.mkdir(parents=True)
+    readme.write_text("![diagram](../../docs/diagrams/img/scenario.png)\n")
+    assert cs.main(["--root", str(tmp_path)]) == 0
+
+
+def test_missing_committed_diagram_png_fails(tmp_path):
+    cs = _load()
+    (tmp_path / "README.md").write_text("![diagram](docs/diagrams/img/missing.png)\n")
+    assert cs.main(["--root", str(tmp_path)]) == 1
+
+
+def test_wrong_extension_in_committed_diagram_path_fails(tmp_path):
+    cs = _load()
+    image = tmp_path / "docs" / "diagrams" / "img" / "overview.svg"
+    image.parent.mkdir(parents=True)
+    image.write_text("<svg/>")
+    (tmp_path / "README.md").write_text("![diagram](docs/diagrams/img/overview.svg)\n")
+    assert cs.main(["--root", str(tmp_path)]) == 1
+
+
 def test_wiki_banner_fails(tmp_path):
     cs = _load()
     (tmp_path / "wiki").mkdir()
