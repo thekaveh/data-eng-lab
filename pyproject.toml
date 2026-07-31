@@ -41,6 +41,7 @@ select = ["E", "F", "W", "I"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["."]
 addopts = "-ra"
 markers = [
   "infra: requires a live Atlas data-eng stack (deselect with -m 'not infra')",
