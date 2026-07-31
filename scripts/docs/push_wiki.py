@@ -99,7 +99,7 @@ def _validate_source(source: Path) -> None:
 
 
 def _is_ssh_remote(remote: str) -> bool:
-    if re.match(r"^[A-Za-z]:[\\/]", remote):
+    if re.match(r"^[A-Za-z]:", remote):
         return False
     uri = re.match(r"^(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*)://", remote)
     if uri is not None:

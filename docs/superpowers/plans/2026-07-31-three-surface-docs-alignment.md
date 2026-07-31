@@ -693,7 +693,7 @@ Expected: failure identifies the first missing completed-acceptance phrase.
 
 - [ ] **Step 3: Apply baked H1 numbering from the manifest**
 
-For every leaf, make its first heading `# {section.number}. {section.title}` for integer numbers and `# {section.number} {section.title}` when the number already includes a decimal point. Keep child heading hierarchy consistent: H2 has one numeric component below the page context and H3 uses the hierarchical subsection form already required by notebook checks. Do not number code fences or source extracts.
+For every leaf, make its first heading `# {section.number}. {section.title}`. Keep child heading hierarchy consistent: H2 has one numeric component below the page context and H3 uses the hierarchical subsection form already required by notebook checks. Do not number code fences or source extracts.
 
 - [ ] **Step 4: Replace pending Atlas language with the verified outcome**
 

@@ -145,6 +145,8 @@ def test_scp_style_ssh_remote_without_user_uses_supplied_key(
         "file:///tmp/data-eng-lab.wiki.git",
         "C:/repos/data-eng-lab.wiki.git",
         r"C:\repos\data-eng-lab.wiki.git",
+        r"C:repos\data-eng-lab.wiki.git",
+        r"c:repos\data-eng-lab.wiki.git",
         "/tmp/data-eng-lab.wiki.git",
     ],
 )
