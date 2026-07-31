@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import posixpath
 import re
-from collections.abc import Iterable, Iterator, Mapping
+from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -12,41 +12,34 @@ from scripts.docs.links import MARKDOWN_LINK_RE, is_forbidden
 from scripts.docs.manifest import Manifest, iter_leaf_sections
 
 
-class SourceMap(Mapping[Path, Path]):
-    """Immutable source-path mapping with the manifest diagram IDs."""
-
-    def __init__(self, paths: Mapping[Path, Path], *, diagram_ids: Iterable[str]) -> None:
-        self._paths = dict(paths)
-        self.diagram_ids = frozenset(diagram_ids)
-
-    def __getitem__(self, source: Path) -> Path:
-        return self._paths[source]
-
-    def __iter__(self) -> Iterator[Path]:
-        return iter(self._paths)
-
-    def __len__(self) -> int:
-        return len(self._paths)
-
-
-def build_source_map(manifest: Manifest, surface: str) -> SourceMap:
+def build_source_map(manifest: Manifest, surface: str) -> dict[Path, Path]:
     """Map each manifest source page to its destination on *surface*."""
     mapping: dict[Path, Path] = {}
     for section in iter_leaf_sections(manifest.sections):
         assert section.source is not None
         mapping[section.source] = _destination(section.source, section.id, surface)
-    return SourceMap(mapping, diagram_ids=(entry.id for entry in manifest.diagrams))
+    if surface == "site":
+        asset_dir = Path("assets/img")
+        extension = ".svg"
+    elif surface == "wiki":
+        asset_dir = Path("img")
+        extension = ".png"
+    else:
+        return mapping
+    for diagram in manifest.diagrams:
+        destination = asset_dir / f"{diagram.id}{extension}"
+        mapping[Path("docs/architectures") / f"{diagram.id}.svg"] = destination
+        mapping[Path("docs/diagrams/img") / f"{diagram.id}.png"] = destination
+    return mapping
 
 
 def rewrite_for_surface(
     markdown: str,
     surface: str,
     source: Path,
-    source_map: SourceMap,
+    source_map: Mapping[Path, Path],
 ) -> str:
     """Rewrite canonical Markdown links to local targets for *surface*."""
-    if not isinstance(source_map, SourceMap):
-        raise TypeError("source_map must be a SourceMap with diagram metadata")
     source_destination = source_map.get(source, source)
 
     def replace(match: re.Match[str]) -> str:
@@ -58,7 +51,6 @@ def rewrite_for_surface(
             source,
             source_destination,
             source_map,
-            source_map.diagram_ids,
         )
         if replacement is None:
             return label
@@ -86,8 +78,7 @@ def _rewrite_target(
     surface: str,
     source: Path,
     source_destination: Path,
-    source_map: SourceMap,
-    diagram_ids: frozenset[str],
+    source_map: Mapping[Path, Path],
 ) -> str | None:
     parsed = urlsplit(target)
     if parsed.scheme or parsed.netloc:
@@ -101,9 +92,6 @@ def _rewrite_target(
         return None
     if resolved in source_map:
         return _relative_target(source_destination, source_map[resolved]) + suffix
-    if resolved.stem in diagram_ids and resolved.suffix in {".html", ".png", ".svg"}:
-        asset = _diagram_asset(resolved.stem, surface)
-        return _relative_target(source_destination, asset) + suffix if asset else target
     if resolved.suffix == ".md":
         return None
     return target
@@ -123,14 +111,6 @@ def _resolve(parent: Path, target: str) -> Path:
 
 def _relative_target(source_destination: Path, target_destination: Path) -> str:
     return posixpath.relpath(target_destination.as_posix(), source_destination.parent.as_posix())
-
-
-def _diagram_asset(identifier: str, surface: str) -> Path | None:
-    if surface == "site":
-        return Path("assets/img") / f"{identifier}.svg"
-    if surface == "wiki":
-        return Path("img") / f"{identifier}.png"
-    return None
 
 
 def _title(value: str) -> str:

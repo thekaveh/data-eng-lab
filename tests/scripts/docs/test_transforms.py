@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from scripts.docs.manifest import parse_manifest
-from scripts.docs.transforms import SourceMap, build_source_map, rewrite_for_surface
+from scripts.docs.transforms import build_source_map, rewrite_for_surface
 
 
 @pytest.fixture
@@ -29,35 +29,29 @@ diagrams:
 
 def test_build_source_map_uses_home_for_wiki(manifest):
     mapping = build_source_map(manifest, "wiki")
-    assert isinstance(mapping, SourceMap)
+    assert type(mapping) is dict
     assert mapping[Path("docs/index.md")] == Path("Home.md")
     assert mapping[Path("docs/scenarios/index.md")] == Path("Scenarios.md")
 
 
-def test_source_map_publicly_wraps_paths_and_immutable_diagram_ids():
+@pytest.mark.parametrize(
+    "target",
+    [
+        "../architectures/overview.svg",
+        "../diagrams/img/overview.png",
+    ],
+)
+def test_plain_dict_source_map_rewrites_legacy_and_canonical_diagrams(manifest, target):
     source = Path("docs/notebooks/example.md")
-    mapping = SourceMap(
-        {source: Path("notebooks/example.md")},
-        diagram_ids={"overview"},
-    )
-    assert mapping.diagram_ids == frozenset({"overview"})
+    mapping = dict(build_source_map(manifest, "site"))
+    assert mapping[Path("docs/architectures/overview.svg")] == Path("assets/img/overview.svg")
+    assert mapping[Path("docs/diagrams/img/overview.png")] == Path("assets/img/overview.svg")
     assert rewrite_for_surface(
-        "![Flow](../architectures/overview.svg)",
+        f"![Flow]({target})",
         "site",
         source,
         mapping,
     ) == "![Flow](../assets/img/overview.svg)"
-
-
-def test_rewrite_rejects_plain_mapping_without_diagram_metadata():
-    source = Path("docs/notebooks/example.md")
-    with pytest.raises(TypeError, match="SourceMap"):
-        rewrite_for_surface(
-            "![Flow](../architectures/overview.svg)",
-            "site",
-            source,
-            {source: Path("notebooks/example.md")},
-        )
 
 
 def test_rewrite_for_site_preserves_subdirectory_image_prefix(manifest):
