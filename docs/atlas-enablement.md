@@ -172,7 +172,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 - Python client: reaches `localhost:$TRINO_PORT` from host.
 - Member of `data-eng` track; `--trino-source` flag (default `disabled`).
 - Consumers: `scenarios/federated_query-nyc_taxi-trino-iceberg/`, `bi_query-tpch-trino-iceberg` (roadmap), live tests `tests/scenarios/test_trino_query_live.py`.
-- **Deviation:** Interpreter is `%trino`, not `%jdbc(trino)` (Zeppelin 0.12.1 semantics; also no auth, user convention `atlas`). See [`atlas-feedback-a7a9.md`] for the full delivery feedback.
+- **Deviation:** Interpreter is `%trino`, not `%jdbc(trino)` (Zeppelin 0.12.1 semantics; also no auth, user convention `atlas`). See [Atlas feedback for A7/A9](atlas-feedback-a7a9.md) for the full delivery feedback.
 
 ---
 
@@ -187,7 +187,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 - Checkpoints: use existing `s3a://checkpoints/` bucket (MinIO).
 - Member of `data-eng` track; `--redpanda-source` flag (default `disabled`).
 - Consumers: `scenarios/streaming_ingest-events-spark-iceberg/`, `producer.py` (auto-creates topics), live tests `tests/scenarios/test_streaming_live.py`.
-- **Note:** Demo-topic default is only `atlas_stream_events`; projects override `REDPANDA_DEMO_TOPICS` or rely on `auto_create_topics_enabled`. See [`atlas-feedback-a7a9.md`] for the full delivery feedback.
+- **Note:** Demo-topic default is only `atlas_stream_events`; projects override `REDPANDA_DEMO_TOPICS` or rely on `auto_create_topics_enabled`. See [Atlas feedback for A7/A9](atlas-feedback-a7a9.md) for the full delivery feedback.
 
 ---
 

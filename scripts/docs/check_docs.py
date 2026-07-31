@@ -33,6 +33,9 @@ _H1 = re.compile(r"^ {0,3}(# [^\r\n]+)$", re.MULTILINE)
 _SVG_OPEN = re.compile(r"<svg\b")
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _MIRROR_BANNER = "Full docs site"
+_BRACKETED_INLINE_MARKDOWN_PATH = re.compile(
+    r"(?<!!)\[`(?P<path>[^`\r\n]+\.md(?:#[^`\r\n]+)?)`\](?!\s*(?:\(|\[|:))"
+)
 
 
 @dataclass(frozen=True)
@@ -178,6 +181,13 @@ def check_self_containment(repo_root: Path) -> tuple[Finding, ...]:
             findings += (_error(f"{relative}: contains mirror banner"),)
         if path.suffix != ".md":
             continue
+        for malformed in _malformed_inline_path_links(text):
+            findings += (
+                _error(
+                    f"{relative}: malformed Markdown link around inline path "
+                    f"{malformed}"
+                ),
+            )
         for match in MARKDOWN_LINK_RE.finditer(_without_fenced_code(text)):
             target = match.group("target")
             # Exercise the shared classifier as the authoritative origin matrix.
@@ -224,6 +234,18 @@ def check_self_containment(repo_root: Path) -> tuple[Finding, ...]:
                         ),
                     )
     return _sorted(findings)
+
+
+def _malformed_inline_path_links(markdown: str) -> tuple[str, ...]:
+    """Return bracketed inline-code paths that have no link target or definition."""
+    visible = _without_fenced_code(markdown)
+    findings: list[str] = []
+    for match in _BRACKETED_INLINE_MARKDOWN_PATH.finditer(visible):
+        label = re.escape(match.group(0))
+        if re.search(rf"^\s*{label}\s*:", visible, flags=re.MULTILINE):
+            continue
+        findings.append(match.group("path"))
+    return tuple(findings)
 
 
 def check_diagrams(repo_root: Path) -> tuple[Finding, ...]:

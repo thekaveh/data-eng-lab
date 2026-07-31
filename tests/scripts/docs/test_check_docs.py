@@ -448,6 +448,28 @@ def test_repository_missing_local_link_fails(repo_fixture: Path):
     ]
 
 
+def test_bracketed_markdown_path_in_inline_code_is_rejected_as_malformed_link(
+    repo_fixture: Path,
+):
+    (repo_fixture / "README.md").write_text(
+        "See [`docs/index.md`] for details.\n", encoding="utf-8"
+    )
+
+    assert messages(check_self_containment(repo_fixture)) == [
+        "README.md: malformed Markdown link around inline path docs/index.md"
+    ]
+
+
+def test_inline_markdown_paths_and_bracketed_non_path_code_remain_valid(repo_fixture: Path):
+    (repo_fixture / "README.md").write_text(
+        "Open `docs/index.md`; accepted values are [`fast`, `safe`].\n\n"
+        "```markdown\n[`docs/missing.md`]\n```\n",
+        encoding="utf-8",
+    )
+
+    assert check_self_containment(repo_fixture) == ()
+
+
 def test_repository_missing_markdown_fragment_fails(repo_fixture: Path):
     (repo_fixture / "README.md").write_text(
         "[Setup](docs/index.md#missing-setup)\n", encoding="utf-8"

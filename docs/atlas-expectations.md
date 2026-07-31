@@ -173,7 +173,7 @@ When all A1–A9 are delivered, we flip `--trino-source`/`--redpanda-source` on 
 
 ---
 
-**A7/A9 delivery feedback:** See [`atlas-feedback-a7a9.md`] for a detailed feedback report on the delivered Trino + Redpanda services (atlas `72e30d1`), including what matched the contract, the intentional deviations we've adapted to, and optional documentation polish suggestions.
+**A7/A9 delivery feedback:** See [Atlas feedback for A7/A9](atlas-feedback-a7a9.md) for a detailed report on the delivered Trino + Redpanda services (atlas `72e30d1`), including what matched the contract, the intentional deviations we've adapted to, and optional documentation polish suggestions.
 
 Of the four Atlas-side issues surfaced during go-live (atlas#308–#311): #309, #310, and #311
 are fixed upstream and the corresponding lab workarounds were removed. The remaining standalone

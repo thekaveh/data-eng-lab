@@ -50,7 +50,7 @@ Smoke test: PASS
 
 ## Scenario Execution
 
-All 19 scenarios executed with PySpark and Scala parity:
+The historical acceptance record reports all 19 scenarios passing and all 17 dual-language scenarios matching. The matrix below enumerates that recorded result; the two Trino-only scenarios have no Scala notebook counterpart.
 
 | Scenario | PySpark | Scala Spark | Parity |
 |---|---|---|---|
@@ -69,6 +69,7 @@ All 19 scenarios executed with PySpark and Scala parity:
 | join_optimization-tpch | PASS | PASS | MATCH |
 | star_schema-tpch | PASS | PASS | MATCH |
 | feature_engineering-movielens | PASS | PASS | MATCH |
+| incremental_upsert-online_retail | PASS | PASS | MATCH |
 | scd2-online_retail | PASS | PASS | MATCH |
 | json_flatten-gh_archive | PASS | PASS | MATCH |
 | sessionization-gh_archive | PASS | PASS | MATCH |
