@@ -66,6 +66,15 @@ def messages(findings):
 
 def test_atlas_acceptance_record_is_consistent(repo_root):
     required = {
+        "docs/atlas-expectations.md": [
+            "2026-07-31",
+            "TaskFlow",
+            "SparkSubmitHook",
+            "succeeded",
+            "#66",
+            "#67",
+            "#68",
+        ],
         "docs/atlas-enablement.md": ["2026-07-31", "SparkSubmitOperator", "succeeded"],
         "docs/atlas-feedback-go-live.md": ["2026-07-31", "resolved", "FINISHED"],
         "docs/go-live-results.md": ["8,991,502", "passenger_count", "double", "success=true"],
@@ -75,6 +84,24 @@ def test_atlas_acceptance_record_is_consistent(repo_root):
         text = (repo_root / relative).read_text(encoding="utf-8")
         for phrase in phrases:
             assert phrase in text, f"{relative} is missing {phrase!r}"
+
+    current_status_pages = (
+        "docs/atlas-expectations.md",
+        "docs/atlas-enablement.md",
+        "docs/go-live.md",
+        "docs/go-live-results.md",
+        "docs/CHANGELOG.md",
+    )
+    stale_phrases = (
+        "not yet claimed",
+        "pending fresh retest",
+        "awaits a fresh representative DAG run",
+        "pending rerun",
+    )
+    for relative in current_status_pages:
+        text = (repo_root / relative).read_text(encoding="utf-8")
+        for phrase in stale_phrases:
+            assert phrase not in text, f"{relative} retains stale wording {phrase!r}"
 
 
 def test_completeness_ignores_only_explicit_internal_root(repo_fixture: Path):

@@ -31,10 +31,14 @@ Atlas's consumer-doc clarifications from **#281**
 validated (including Zeppelin, Trino, and Kafka streaming). The current pin
 includes [#850](https://github.com/thekaveh/atlas/issues/850)'s corrected shared
 `AIRFLOW__API_AUTH__JWT_SECRET` mapping for Airflow 3.3's `[api_auth] jwt_secret`.
-The earlier `af7713ee` failed-gate evidence is retained below; a successful
-Airflow Spark-submit DAG and Gitflow promotion are not yet claimed until this
-new pin is live-retested. #791's in-network Execution API DNS configuration is
-nevertheless validated. See
+On 2026-07-31, the representative Airflow feature-artifact TaskFlow task, which
+invokes `SparkSubmitHook`, succeeded on its first and only attempt. Spark
+standalone REST reached `FINISHED` with `success=true`, closing the acceptance
+gate for this pin. Gitflow promotion had already completed through PRs #66,
+#67, and #68. The earlier `af7713ee` failed-gate evidence is retained below, and
+#791's in-network Execution API DNS configuration remains validated. For any
+future pin, rerun the gates in [Atlas Pin-Bump Runbook](atlas-pin-bump-runbook.md)
+before promotion. See
 [Delivered deviations](#2-delivered-deviations-from-our-a7a9-asks) for the
 `%trino` interpreter name and topic-seeding notes.
 
