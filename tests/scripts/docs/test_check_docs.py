@@ -22,6 +22,11 @@ from scripts.docs.render_diagrams import (
     svg_to_png,
 )
 
+OVERVIEW_H1_ERROR = (
+    "docs/index.md first heading must be exactly "
+    "'<h1 align=\"center\">data-eng-lab</h1>'"
+)
+
 
 def _master(
     *, width: int = 800, height: int = 400, svg_count: int = 1, accessible: bool = True
@@ -219,9 +224,7 @@ def test_all_canonical_scans_follow_manifest_internal_roots(repo_fixture: Path):
 def test_numbering_matches_manifest_heading(repo_fixture: Path):
     (repo_fixture / "docs/index.md").write_text("preface\n# Overview\n", encoding="utf-8")
 
-    assert messages(check_numbering(repo_fixture)) == [
-        "docs/index.md heading must start with '# data-eng-lab'"
-    ]
+    assert messages(check_numbering(repo_fixture)) == [OVERVIEW_H1_ERROR]
 
 
 def test_numbering_ignores_correct_h1_inside_fenced_code(repo_fixture: Path):
@@ -230,9 +233,7 @@ def test_numbering_ignores_correct_h1_inside_fenced_code(repo_fixture: Path):
         encoding="utf-8",
     )
 
-    assert messages(check_numbering(repo_fixture)) == [
-        "docs/index.md heading must start with '# data-eng-lab'"
-    ]
+    assert messages(check_numbering(repo_fixture)) == [OVERVIEW_H1_ERROR]
 
 
 def test_numbering_uses_canonical_real_h1_after_fenced_example(repo_fixture: Path):
@@ -270,17 +271,13 @@ def test_numbering_rejects_noncanonical_html_h1_before_centered_overview_h1(
         encoding="utf-8",
     )
 
-    assert messages(check_numbering(repo_fixture)) == [
-        "docs/index.md heading must start with '# data-eng-lab'"
-    ]
+    assert messages(check_numbering(repo_fixture)) == [OVERVIEW_H1_ERROR]
 
 
 def test_numbering_requires_canonical_centered_h1_for_overview(repo_fixture: Path):
     (repo_fixture / "docs/index.md").write_text("# data-eng-lab\n", encoding="utf-8")
 
-    assert messages(check_numbering(repo_fixture)) == [
-        "docs/index.md heading must start with '# data-eng-lab'"
-    ]
+    assert messages(check_numbering(repo_fixture)) == [OVERVIEW_H1_ERROR]
 
 
 def test_numbering_preserves_markdown_h1_behavior_for_non_overview_pages(repo_fixture: Path):
@@ -313,9 +310,7 @@ def test_numbering_rejects_wrong_markdown_h1_before_correct_centered_html_h1(
         encoding="utf-8",
     )
 
-    assert messages(check_numbering(repo_fixture)) == [
-        "docs/index.md heading must start with '# data-eng-lab'"
-    ]
+    assert messages(check_numbering(repo_fixture)) == [OVERVIEW_H1_ERROR]
 
 
 def test_numbering_rejects_wrong_centered_html_h1_before_correct_markdown_h1(
@@ -326,9 +321,19 @@ def test_numbering_rejects_wrong_centered_html_h1_before_correct_markdown_h1(
         encoding="utf-8",
     )
 
-    assert messages(check_numbering(repo_fixture)) == [
-        "docs/index.md heading must start with '# data-eng-lab'"
-    ]
+    assert messages(check_numbering(repo_fixture)) == [OVERVIEW_H1_ERROR]
+
+
+def test_numbering_rejects_multiline_html_h1_before_canonical_overview_h1(
+    repo_fixture: Path,
+):
+    (repo_fixture / "docs/index.md").write_text(
+        '<h1\n class="wrong">\nWrong heading\n</h1>\n\n'
+        '<h1 align="center">data-eng-lab</h1>\n',
+        encoding="utf-8",
+    )
+
+    assert messages(check_numbering(repo_fixture)) == [OVERVIEW_H1_ERROR]
 
 
 def test_empty_public_artifacts_are_errors_but_generated_dirs_are_not(repo_fixture: Path):
@@ -489,7 +494,7 @@ def test_missing_repository_image_fails(repo_fixture: Path):
 
 def test_missing_repository_html_image_fails(repo_fixture: Path):
     (repo_fixture / "README.md").write_text(
-        '<img alt="Missing" src="docs/diagrams/img/missing.png">\n',
+        '<img alt="Missing" src = "docs/diagrams/img/missing.png">\n',
         encoding="utf-8",
     )
 
@@ -502,7 +507,7 @@ def test_generated_html_image_cannot_escape_surface(repo_fixture: Path):
     page = repo_fixture / "generated/site/index.md"
     page.parent.mkdir(parents=True)
     page.write_text(
-        '<img alt="Escaping" src="../../docs/diagrams/img/overview.png">\n',
+        '<img alt="Escaping" src = "../../docs/diagrams/img/overview.png">\n',
         encoding="utf-8",
     )
 
@@ -514,9 +519,21 @@ def test_generated_html_image_cannot_escape_surface(repo_fixture: Path):
 
 def test_valid_local_and_remote_html_images_pass(repo_fixture: Path):
     (repo_fixture / "README.md").write_text(
-        '<img alt="Overview" src="docs/diagrams/img/overview.png">\n'
+        '<img data-src="lazy.png" srcset="small.png 1x" '
+        'alt="literal src=\'trap.png\'" '
+        'src = "docs/diagrams/img/overview.png">\n'
         '<img alt="Apache Spark" '
-        'src="https://img.shields.io/badge/Apache%20Spark-compute-E25A1C">\n',
+        'src = "https://img.shields.io/badge/Apache%20Spark-compute-E25A1C">\n',
+        encoding="utf-8",
+    )
+
+    assert check_self_containment(repo_fixture) == ()
+
+
+def test_html_image_source_decoys_without_real_src_are_ignored(repo_fixture: Path):
+    (repo_fixture / "README.md").write_text(
+        '<img data-src="missing-lazy.png" srcset="missing-small.png 1x" '
+        'alt="literal src=\'missing-trap.png\'">\n',
         encoding="utf-8",
     )
 

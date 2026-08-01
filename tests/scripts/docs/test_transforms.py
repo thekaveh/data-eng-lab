@@ -85,12 +85,43 @@ def test_rewrite_maps_local_html_image_sources(manifest, surface, expected):
     assert rewrite_for_surface(markdown, surface, source, mapping) == expected
 
 
+def test_rewrite_maps_html_image_with_whitespace_around_src_equals(manifest):
+    source = Path("docs/notebooks/example.md")
+    mapping = build_source_map(manifest, "site")
+    markdown = (
+        '<img alt="Lakehouse hero" '
+        'src  =  "../diagrams/img/data-eng-lab-hero.png">'
+    )
+
+    assert rewrite_for_surface(markdown, "site", source, mapping) == (
+        '<img alt="Lakehouse hero" src  =  "../assets/img/data-eng-lab-hero.svg">'
+    )
+
+
+def test_rewrite_changes_only_the_real_html_src_attribute(manifest):
+    source = Path("docs/notebooks/example.md")
+    mapping = build_source_map(manifest, "site")
+    markdown = (
+        '<img data-src="../diagrams/img/data-eng-lab-hero.png" '
+        'srcset="small.png 1x" '
+        'alt="literal src=\'../diagrams/img/data-eng-lab-hero.png\'" '
+        'src = "../diagrams/img/data-eng-lab-hero.png">'
+    )
+
+    assert rewrite_for_surface(markdown, "site", source, mapping) == (
+        '<img data-src="../diagrams/img/data-eng-lab-hero.png" '
+        'srcset="small.png 1x" '
+        'alt="literal src=\'../diagrams/img/data-eng-lab-hero.png\'" '
+        'src = "../assets/img/data-eng-lab-hero.svg">'
+    )
+
+
 def test_rewrite_preserves_remote_badge_image_sources(manifest):
     source = Path("docs/index.md")
     mapping = build_source_map(manifest, "site")
     badge = (
-        '<img alt="Apache Spark" '
-        'src="https://img.shields.io/badge/Apache%20Spark-compute-E25A1C">'
+        '<img data-src="lazy.svg" alt="Apache Spark" '
+        'src = "https://img.shields.io/badge/Apache%20Spark-compute-E25A1C">'
     )
 
     assert rewrite_for_surface(badge, "site", source, mapping) == badge

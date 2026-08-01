@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from scripts.docs.links import HTML_IMAGE_SRC_RE, MARKDOWN_LINK_RE, is_forbidden
+from scripts.docs.links import MARKDOWN_LINK_RE, find_html_image_sources, is_forbidden
 from scripts.docs.manifest import (
     Manifest,
     ManifestError,
@@ -22,6 +22,8 @@ _WIKI_STRUCTURAL_DESTINATIONS = {
     "_sidebar": Path("_Sidebar.md"),
     "_footer": Path("_Footer.md"),
 }
+
+
 def build_source_map(manifest: Manifest, surface: str) -> dict[Path, Path]:
     """Map each manifest source page to its destination on *surface*."""
     mapping: dict[Path, Path] = {}
@@ -143,20 +145,18 @@ def rewrite_for_surface(
 
     rewritten = MARKDOWN_LINK_RE.sub(replace, markdown)
 
-    def replace_html_image(match: re.Match[str]) -> str:
-        target = match.group("target")
+    for image in reversed(find_html_image_sources(rewritten)):
         replacement = _rewrite_target(
-            target,
+            image.target,
             surface,
             source,
             source_destination,
             source_map,
         )
-        if replacement is None:
-            return match.group(0)
-        return f'{match.group("prefix")}{replacement}{match.group("suffix")}'
+        if replacement is not None:
+            rewritten = rewritten[: image.start] + replacement + rewritten[image.end :]
 
-    return HTML_IMAGE_SRC_RE.sub(replace_html_image, rewritten)
+    return rewritten
 
 
 def _destination(source: Path, identifier: str, surface: str) -> Path:

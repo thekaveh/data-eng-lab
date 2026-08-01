@@ -30,8 +30,8 @@ from scripts.docs.render_diagrams import (
 _UNFINISHED_MARKERS = ("TO" + "DO", "TB" + "D", "FIX" + "ME", "X" + "XX")
 _H1 = re.compile(r"^ {0,3}(# [^\r\n]+)$", re.MULTILINE)
 _HTML_H1 = re.compile(
-    r"^ {0,3}(?P<heading><h1\b[^\r\n>]*>[^\r\n]*?</h1>)[ \t]*$",
-    re.IGNORECASE | re.MULTILINE,
+    r"^ {0,3}(?P<heading><h1(?=[\s>])[^>]*>.*?</h1\s*>)[ \t]*$",
+    re.DOTALL | re.IGNORECASE | re.MULTILINE,
 )
 _CANONICAL_OVERVIEW_H1 = '<h1 align="center">data-eng-lab</h1>'
 _SVG_OPEN = re.compile(r"<svg\b")
@@ -135,17 +135,17 @@ def check_numbering(repo_root: Path) -> tuple[Finding, ...]:
                 first is html_heading
                 and html_heading.group("heading") == _CANONICAL_OVERVIEW_H1
             )
-            expected = "# data-eng-lab"
+            message = (
+                f"{section.source.as_posix()} first heading must be exactly "
+                f"{_CANONICAL_OVERVIEW_H1!r}"
+            )
         else:
             expected = f"# {section.number}. {section.title}"
             actual = heading.group(1) if heading is not None else None
             valid = actual is not None and actual.startswith(expected)
+            message = f"{section.source.as_posix()} heading must start with {expected!r}"
         if not valid:
-            findings += (
-                _error(
-                    f"{section.source.as_posix()} heading must start with {expected!r}"
-                ),
-            )
+            findings += (_error(message),)
     return _sorted(findings)
 
 

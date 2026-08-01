@@ -27,14 +27,33 @@ def test_surface_link_matrix(surface, target, forbidden):
     assert is_forbidden(target, surface) is forbidden
 
 
-def test_find_links_reads_markdown_links_and_html_images_in_source_order():
-    links = find_links(
-        '[Docs](docs/index.md) <img alt="Hero" src="img/hero.png"> '
-        "![Flow](architectures/overview.svg)"
+def test_find_links_reads_real_html_src_and_preserves_source_offsets():
+    markdown = (
+        '[Docs](docs/index.md) <img data-src="lazy.png" '
+        'srcset="small.png 1x" alt="literal src=\'trap.png\'" '
+        'src = "img/hero.png"> ![Flow](architectures/overview.svg)'
     )
+    links = find_links(markdown)
 
     assert [(link.target, link.is_image) for link in links] == [
         ("docs/index.md", False),
         ("img/hero.png", True),
         ("architectures/overview.svg", True),
     ]
+    assert [markdown[link.start : link.end] for link in links] == [
+        "docs/index.md",
+        "img/hero.png",
+        "architectures/overview.svg",
+    ]
+
+
+@pytest.mark.parametrize(
+    "image",
+    [
+        '<img data-src="lazy.png">',
+        '<img srcset="small.png 1x, large.png 2x">',
+        '<img alt="literal src=\'trap.png\'">',
+    ],
+)
+def test_find_links_ignores_html_src_attribute_decoys(image):
+    assert find_links(image) == ()
