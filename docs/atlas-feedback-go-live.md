@@ -2,7 +2,7 @@
 
 Post-go-live observations from running the full `data-eng-lab` platform in a production-like environment.
 
-## Summary
+## 1. Summary
 
 As of the original go-live run (2026-07-04, atlas `85ff46b`): all A1–A9 capabilities verified during go-live. The platform is fully operational. 19 scenarios executed with parity between Scala and PySpark notebooks where applicable.
 
@@ -34,7 +34,7 @@ standalone Spark REST record reached `FINISHED` with `success=true`, resolving t
 acceptance gate for this pin. The Atlas consumer modernization had already completed Gitflow
 promotion through PRs #66, #67, and #68.
 
-## Key Observations
+## 2. Key Observations
 
 1. **MinIO stability** — MinIO handled the full dataset load (all 5 datasets at medium scale) without issues. Disk usage should be monitored as scenarios are re-run.
 2. **Iceberg REST catalog** — The REST catalog responded to concurrent queries from Spark, Trino, and PyIceberg without contention.
@@ -44,20 +44,20 @@ promotion through PRs #66, #67, and #68.
 6. **Airflow orchestration** — Airflow schedules Spark jobs through Atlas #880's provider-compatible `SparkSubmitHook` plus log-derived driver-ID REST confirmation. The 2026-07-31 representative task completed successfully with terminal Spark confirmation.
 7. **Jenkins CI** — The JAR build and publish pipeline works end-to-end.
 
-## Recommendations
+## 3. Recommendations
 
 - Add a scheduled cleanup for streaming checkpoint directories.
 - Consider implementing dataset versioning for landing data to support reproducible scenario runs.
 - Add observability metrics for the Iceberg REST catalog (query counts, latency).
 - Consider adding a data quality monitoring dashboard for Bronze/Silver/Gold tables.
 
-## Related
+## 4. Related
 
 - [Atlas Expectations](atlas-expectations.md) — Full delivery log
 - [Go-Live Results](go-live-results.md) — Detailed validation results
 - [Atlas Feedback A7/A9](atlas-feedback-a7a9.md) — Streaming and federated query feedback
 
-## Workaround unwind (2026-07-21, atlas pin 2d006cae)
+## 5. Workaround unwind (2026-07-21, atlas pin 2d006cae)
 
 Three of the four issues below (#309–#311) were fixed upstream (atlas#314–#316) and the
 corresponding lab-side workarounds removed; #308's fix is only partial — the REST endpoint
@@ -71,7 +71,7 @@ below and the 2026-07-21 findings section that follows):
 | #310 spark-connect healthcheck | TCP healthcheck on `:15002` | consumer-side `wait_healthy` gate (Atlas `--detach` now health-gates the whole track) |
 | #311 Airflow-3 conn resolution | Documented metadata-DB read (`services/airflow/README.md`) | none required — `probe_airflow.py` docstring now cites the upstream doc |
 
-## 2026-07-21 live verification findings (atlas pin 2d006cae)
+## 6. 2026-07-21 live verification findings (atlas pin 2d006cae)
 
 Cold-start verification of the consumer-manifest migration surfaced two Atlas-side gaps:
 
@@ -95,7 +95,7 @@ Cold-start verification of the consumer-manifest migration surfaced two Atlas-si
    connection scheme, or tolerating the post-submit poll exception lab-side given
    `waitAppCompletion` already signals completion. Filed as [thekaveh/atlas#792](https://github.com/thekaveh/atlas/issues/792).
 
-## Reviewed-pin update (atlas `881df596`)
+## 7. Reviewed-pin update (atlas `881df596`)
 
 Atlas #791 is resolved in the reviewed pin: the scheduler and DAG processor set
 `AIRFLOW__CORE__EXECUTION_API_SERVER_URL=http://airflow-webserver:8080/execution/`.
@@ -108,7 +108,7 @@ distinct SparkSubmitHook driver-status poll behavior in
 pin; `spark.standalone.submit.waitAppCompletion=true` was then the authoritative
 completion signal.
 
-## Task 7 live-gate update (2026-07-28, atlas `881df596`)
+## 8. Task 7 live-gate update (2026-07-28, atlas `881df596`)
 
 The Execution API URL repair is active: the scheduler and DAG processor both
 resolve `http://airflow-webserver:8080/execution/`. The representative
@@ -135,7 +135,7 @@ and Jupyter batch-ingest notebooks now read each declared object in deterministi
 order, cast that column to `double` at the read boundary, and union by name.
 Their Bronze filtering and Iceberg output contract remain unchanged.
 
-## Focused #850 retest (2026-07-28, atlas `af7713ee`)
+## 9. Focused #850 retest (2026-07-28, atlas `af7713ee`)
 
 The current reviewed pin includes #850's attempted repair: Atlas generates one
 durable `AIRFLOW_JWT_SECRET` and supplies `AIRFLOW__API__JWT_SECRET` with the
@@ -162,7 +162,7 @@ live success and Gitflow promotion remained gated on a corrected reviewed pin.
 [atlas#792](https://github.com/thekaveh/atlas/issues/792) was a separate
 SparkSubmitHook status-poll caveat.
 
-## Corrected #850 pin before final retest (2026-07-28, atlas `882877a4`)
+## 10. Corrected #850 pin before final retest (2026-07-28, atlas `882877a4`)
 
 Atlas [#850](https://github.com/thekaveh/atlas/issues/850) is closed by the
 reviewed correction merged through Atlas PRs #860 and #861. It keeps the durable

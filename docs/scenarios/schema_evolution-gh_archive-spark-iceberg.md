@@ -64,7 +64,7 @@ Airflow DAG: `schema_evolution_gh_archive` — a scheduled batch DAG.
 
 Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `silver` namespace must exist; run `scripts/register_iceberg.py` first. Schema evolution relies on Iceberg's native capabilities — ensure Iceberg configuration supports auto-schema evolution.
 
-## See Also
+## 9. See Also
 
 - [Related: json_flatten-gh_archive-spark-iceberg](./json_flatten-gh_archive-spark-iceberg.md) — JSON field extraction (upstream)
 - [Related: sessionization-gh_archive-spark-iceberg](./sessionization-gh_archive-spark-iceberg.md) — Consumes flattened events

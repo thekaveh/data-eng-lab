@@ -2,7 +2,7 @@
 
 Detailed results from the go-live validation of the `data-eng-lab` platform.
 
-## 2026-07-31 Atlas Acceptance
+## 1. 2026-07-31 Atlas Acceptance
 
 The scoped acceptance run used Atlas pin
 `985918ce8c805081947d53b1c48bb80610237a5b`.
@@ -18,9 +18,9 @@ This evidence closes only the acceptance gate for the reviewed Atlas pin. The
 consumer-modernization changes had already completed Gitflow promotion through
 PRs #66, #67, and #68.
 
-## Preflight Results
+## 2. Preflight Results
 
-```
+```text
 Layer 1 — Service existence:
   ✔ MinIO              : http://localhost:9000
   ✔ Postgres/Supabase  : localhost:5432
@@ -40,15 +40,15 @@ Layer 2 — Round-trip probes:
   ✔ Zeppelin ↔ Spark         (Scala notebook execution)
 ```
 
-## Bronze Smoke Test
+## 3. Bronze Smoke Test
 
-```
+```text
 Writing to lakehouse.bronze.smoke_test_table (spark connect) ...
 Read back rows: 100
 Smoke test: PASS
 ```
 
-## Scenario Execution
+## 4. Scenario Execution
 
 The historical acceptance record reports all 19 scenarios passing and all 17 dual-language scenarios matching. The matrix below enumerates that recorded result; the two Trino-only scenarios have no Scala notebook counterpart.
 
@@ -76,7 +76,7 @@ The historical acceptance record reports all 19 scenarios passing and all 17 dua
 
 **Summary: 19/19 scenarios passed. 17/17 dual-language scenarios show parity.**
 
-## Trino Validation
+## 5. Trino Validation
 
 ```sql
 -- federated_query-nyc_taxi
@@ -92,20 +92,20 @@ GROUP BY market_segment;
 -- Result: 5 segments with revenue ✓
 ```
 
-## Streaming Validation
+## 6. Streaming Validation
 
 - `streaming_ingest-events`: 500 events produced to Redpanda `events` topic, consumed by Spark Structured Streaming, written to `lakehouse.bronze.events`. Count matches source. ✓
 - `cdc_streaming-online_retail`: CDC events ingested via `foreachBatch`, `MERGE INTO` applied. Upsert result matches expected state. ✓
 
-## Jenkins CI
+## 7. Jenkins CI
 
-```
+```text
 mvn test ... SUCCESS
 mvn package ... SUCCESS
 mc cp target/nyc-taxi-*.jar s3://jars/ ... SUCCESS
 ```
 
-## Recommendations
+## 8. Recommendations
 
 - Consider adding a cleanup task for streaming checkpoint directories to prevent growth.
 - Monitor MinIO disk usage as scenarios are re-run with larger dataset scales.

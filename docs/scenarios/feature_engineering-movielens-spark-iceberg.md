@@ -70,7 +70,7 @@ Airflow DAG: `feature_engineering_movielens` — a scheduled batch DAG.
 
 Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. Both `silver` and `gold` namespaces must exist; run `scripts/register_iceberg.py` first. `make datasets` is required to populate the MovieLens landing zone before running the notebook.
 
-## See Also
+## 9. See Also
 
 - [Datasets](../datasets.md)
 - [Lakehouse Architecture](../lakehouse.md)

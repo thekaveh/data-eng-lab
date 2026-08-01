@@ -13,7 +13,7 @@ Atlas's consumer-doc clarifications from **#281**
 
 ---
 
-## 0. TL;DR status
+## 1. TL;DR status
 
 | Item | Capability | Status | Blocks |
 |---|---|---|---|
@@ -39,12 +39,12 @@ gate for this pin. Gitflow promotion had already completed through PRs #66,
 #791's in-network Execution API DNS configuration remains validated. For any
 future pin, rerun the gates in [Atlas Pin-Bump Runbook](atlas-pin-bump-runbook.md)
 before promotion. See
-[Delivered deviations](#2-delivered-deviations-from-our-a7a9-asks) for the
+[Delivered deviations](#3-delivered-deviations-from-our-a7a9-asks) for the
 `%trino` interpreter name and topic-seeding notes.
 
 ---
 
-## 1. Delivered capabilities — confirmed reality (do not regress)
+## 2. Delivered capabilities — confirmed reality (do not regress)
 
 ### A1 — Iceberg REST catalog + buckets
 
@@ -78,7 +78,7 @@ before promotion. See
 
 ### A6 — Airflow
 
-- `apache/airflow:3.2.2` with **`hadoop-aws` + the Iceberg runtime baked** (client or cluster submit). Providers: apache-spark, amazon. Default `ATLAS_LAKEHOUSE_SPARK_DEPLOY_MODE=cluster`.
+- `apache/airflow:3.3.0` with **`hadoop-aws` + the Iceberg runtime baked** (client or cluster submit). Providers: apache-spark, amazon. Default `ATLAS_LAKEHOUSE_SPARK_DEPLOY_MODE=cluster`.
 - Connections seeded when the sources are `container`: **`spark_default`** (`spark://spark-master:7077`, extra `deploy-mode: cluster`) and **`minio_default`** (aws, `http://minio:9000`). Reference DAG `dags/lakehouse_spark_submit_smoke.py` — our DAGs mirror its `conf`.
 
 ### A7 — Trino query engine
@@ -109,7 +109,7 @@ before promotion. See
 
 ---
 
-## 2. Delivered deviations from our A7/A9 asks
+## 3. Delivered deviations from our A7/A9 asks
 
 ### Divergence 1: Zeppelin interpreter is `%trino`, not `%jdbc(trino)`
 
@@ -125,7 +125,7 @@ We asked for a topic-creation seam; Atlas delivered it via `REDPANDA_DEMO_TOPICS
 
 ---
 
-## 3. Iceberg and Spark capabilities the scenario catalog relies on
+## 4. Iceberg and Spark capabilities the scenario catalog relies on
 
 These should already be satisfied by **A2** (Spark 4.1.2 + Iceberg 1.11.0 runtime + `IcebergSparkSessionExtensions`). Listed so you can **verify** them when the stack comes up — each maps to a scenario. **None of these need new Atlas services** (they need only the delivered Spark/Iceberg):
 
@@ -145,7 +145,7 @@ These should already be satisfied by **A2** (Spark 4.1.2 + Iceberg 1.11.0 runtim
 
 ---
 
-## 4. Gotchas and Deviations Recap
+## 5. Gotchas and Deviations Recap
 
 1. **Namespaces are not seeded** — apps/bootstrap must `CREATE NAMESPACE`. (section A1)
 2. **Cluster-mode jobs don't inherit the catalog config** — only `spark-connect` has it; DAGs must carry `spark.sql.catalog.lakehouse.*`. (section A2)
@@ -160,7 +160,7 @@ These should already be satisfied by **A2** (Spark 4.1.2 + Iceberg 1.11.0 runtim
 
 ---
 
-## 5. Verification
+## 6. Verification
 
 `data-eng-lab` ships an executable form of this contract:
 

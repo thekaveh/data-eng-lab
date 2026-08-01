@@ -20,7 +20,7 @@ profile_overrides:
 
 brand:
   name: data-eng-lab
-  tagline: "Iceberg lakehouse patterns on the Atlas platform"
+  tagline: "An Iceberg-lakehouse data-engineering lab built on the Atlas platform."
   repo_url: "https://github.com/thekaveh/data-eng-lab"
 
 env:

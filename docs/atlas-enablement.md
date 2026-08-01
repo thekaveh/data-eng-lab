@@ -1,6 +1,6 @@
 # 8.6. Atlas Enablement
 
-**Status:** accepted `v0.2` on 2026-07-31 · **Consumer repo:** `data-eng-lab` (private) · **Target:** [`thekaveh/atlas`](https://github.com/thekaveh/atlas)
+**Status:** accepted `v0.2` on 2026-07-31 · **Consumer repo:** `data-eng-lab` (public) · **Target:** [`thekaveh/atlas`](https://github.com/thekaveh/atlas)
 
 > The authoritative hand-off is [`atlas-expectations.md`](atlas-expectations.md). It records the delivered A1–A9 capabilities; this page retains the original request ledger.
 
@@ -28,7 +28,7 @@
 
 ---
 
-## Context: how `data-eng-lab` uses Atlas
+## 1. Context: how `data-eng-lab` uses Atlas
 
 data-eng-lab consumes Atlas through one committed **`atlas.consumer.yml`** at the
 repo root (Atlas's consumer contract — `infra/docs/deployment/reusing-atlas.md` §6.1).
@@ -70,7 +70,7 @@ There is prior art for the lakehouse direction in
 
 ---
 
-## Summary
+## 2. Summary
 
 | ID | Request | Priority | Unblocks |
 |----|---------|----------|----------|
@@ -88,7 +88,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## A1 — Iceberg REST catalog service + lakehouse buckets   · P0 · **DELIVERED**
+## 3. A1 — Iceberg REST catalog service + lakehouse buckets   · P0 · **DELIVERED**
 
 **Delivered shape:**
 - Service: `apache/iceberg-rest-fixture:1.10.1` (Postgres-JDBC layer → Supabase `iceberg` DB).
@@ -99,13 +99,13 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## A2 — Iceberg Spark runtime on the Spark image   · P0 · **DELIVERED**
+## 4. A2 — Iceberg Spark runtime on the Spark image   · P0 · **DELIVERED**
 
 **Delivered shape:**
 - Spark version: **4.1.2** (base image `apache/spark:4.1.2`).
 - Iceberg runtime: **`iceberg-spark-runtime-4.1_2.13:1.11.0`** + `iceberg-aws-bundle-1.11.0` + `hadoop-aws-3.4.2` (all SHA-512 verified, baked at image build).
 - Default catalog config injected into Spark Connect server conf:
-   ```
+   ```properties
    spark.sql.catalog.lakehouse=org.apache.iceberg.spark.SparkCatalog
    spark.sql.catalog.lakehouse.type=rest
    spark.sql.catalog.lakehouse.uri=http://iceberg-rest:8181
@@ -118,7 +118,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## A3 — Zeppelin Spark interpreter auto-seeded   · P1 · **DELIVERED, with deviation**
+## 5. A3 — Zeppelin Spark interpreter auto-seeded   · P1 · **DELIVERED, with deviation**
 
 **Delivered shape:**
 - Zeppelin uses **standalone `spark.master=spark://spark-master:7077` (client mode)**, NOT Spark Connect (`spark.remote`).
@@ -129,7 +129,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## A4 — Data libraries in the JupyterHub image   · P1 · **DELIVERED**
+## 6. A4 — Data libraries in the JupyterHub image   · P1 · **DELIVERED**
 
 **Delivered shape:**
 - Libraries: `boto3`, `s3fs`, `pyiceberg[s3fs]`, `pyarrow`, `duckdb` all baked into the image.
@@ -139,7 +139,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## A5 — Jenkins CI service   · P2 · **DELIVERED**
+## 7. A5 — Jenkins CI service   · P2 · **DELIVERED**
 
 **Delivered shape:**
 - Base: `jenkins/jenkins:lts-jdk21` with Maven + `mc` + JCasC + plugin set (pipeline, git, config-as-code, job-dsl).
@@ -151,10 +151,10 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## A6 — Airflow as an S3A-capable `spark-submit` client   · P1 · **DELIVERED**
+## 8. A6 — Airflow as an S3A-capable `spark-submit` client   · P1 · **DELIVERED**
 
 **Delivered shape:**
-- Airflow image (3.2.2): `apache-spark` + `amazon` providers + `pyspark-client==4.1.2`.
+- Airflow image (3.3.0): `apache-spark` + `amazon` providers + `pyspark-client==4.1.2`.
 - Connections: `spark_default` (`spark://spark-master:7077`) + `minio_default` (MinIO endpoint + creds).
 - S3A capability: `hadoop-aws-3.4.2` + AWS SDK baked into Airflow's pyspark jars dir (mirrors A2).
 - Deploy mode: **`--deploy-mode cluster`** (driver runs on a worker; only `spark-submit` needed on Airflow).
@@ -162,7 +162,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## A7 — *(stretch)* Trino query engine over Iceberg REST   · P3 · **DELIVERED**
+## 9. A7 — *(stretch)* Trino query engine over Iceberg REST   · P3 · **DELIVERED**
 
 **Delivered shape:**
 - Service: `trinodb/trino:482` with Iceberg REST connector pointed at the `lakehouse` catalog (`iceberg-rest:8181`).
@@ -176,7 +176,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## A9 — *(fast-follow)* Redpanda broker for streaming   · P3 · **DELIVERED**
+## 10. A9 — *(fast-follow)* Redpanda broker for streaming   · P3 · **DELIVERED**
 
 **Delivered shape:**
 - Service: `redpandadata/redpanda:v26.1.12` (Kafka-API compatible broker).
@@ -191,7 +191,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## A8 — Track membership   · P1 · **DELIVERED**
+## 11. A8 — Track membership   · P1 · **DELIVERED**
 
 **Delivered shape:**
 - `data-eng` track members: `spark`, `airflow`, `jupyterhub`, `zeppelin`, `minio`, `iceberg-rest`, `jenkins`, `supavisor`, `weaviate`, `neo4j`.
@@ -200,7 +200,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## Key deviations from our original assumptions
+## 12. Key deviations from our original assumptions
 
 1. **Namespaces not pre-seeded:** Atlas init creates the Iceberg catalog (`lakehouse`) but no namespaces (`bronze`, `silver`, `gold`). They are created at go-live by `scripts/register_iceberg.py` (host-side), a one-time setup step before live validation (see `go-live.md`).
 
@@ -212,7 +212,7 @@ Critical path: **A1 → A2** (lakehouse core), then A3/A4 (notebook UX) and A6/A
 
 ---
 
-## Open questions for the Atlas worker
+## 13. Open questions for the Atlas worker
 
 1. **Iceberg × Spark 4.1.2 compatibility** — is there an Iceberg Spark runtime published for Spark 4.1 / Scala 2.13? If not, what Spark version should we align on? *(Blocks A2.)*
 2. **REST catalog backend** — OK to add an `iceberg` database in Supabase Postgres for a JDBC catalog,

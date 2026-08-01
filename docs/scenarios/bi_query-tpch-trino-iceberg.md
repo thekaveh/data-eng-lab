@@ -71,7 +71,7 @@ Airflow DAG: EmptyOperator placeholder (trigger via notebooks only until TrinoOp
 
 Live execution is gated on Atlas #268 (Trino coordinator integration). The `%trino` Zeppelin interpreter is seeded by Atlas pointing to the Trino coordinator. The `lakehouse.gold` namespace must exist before the Write query runs. Requires the upstream `star_schema-tpch-spark-iceberg` to run first.
 
-## See Also
+## 9. See Also
 
 - [Upstream: star_schema-tpch-spark-iceberg](./star_schema-tpch-spark-iceberg.md) — Populates the gold tables this scenario queries
 - [Related: join_optimization-tpch-spark-iceberg](./join_optimization-tpch-spark-iceberg.md) — Another TPC-H query optimization scenario

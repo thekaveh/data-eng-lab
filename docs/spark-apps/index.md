@@ -4,14 +4,14 @@ This directory documents the production Spark applications in the `data-eng-lab`
 
 The data products form a sequence: `nyc-taxi-etl` creates the Bronze table, and `nyc-taxi-medallion` reads that table to create Silver and Gold tables. The DAGs remain independently scheduled, so operators must ensure the Bronze prerequisite exists before running the medallion DAG.
 
-## Overview
+## 1. Overview
 
 | Application | Description | Source | Target | DAG |
 |---|---|---|---|---|
 | [nyc-taxi-etl](nyc-taxi-etl.md) | Raw Parquet → Bronze Iceberg with quality filtering | `s3a://landing/nyc_taxi/` | `lakehouse.bronze.nyc_taxi_trips` | `nyc_taxi_etl` |
 | [nyc-taxi-medallion](nyc-taxi-medallion.md) | Bronze → Silver dedup → Gold daily aggregation | `lakehouse.bronze.nyc_taxi_trips` | `lakehouse.silver.*`, `lakehouse.gold.*` | `nyc_taxi_medallion` |
 
-## CI/CD Pipeline
+## 2. CI/CD Pipeline
 
 Both apps follow the same CI/CD pattern:
 
@@ -21,7 +21,7 @@ Both apps follow the same CI/CD pattern:
 
 The POMs mark Spark as `provided`. The Atlas Spark image supplies the Spark, S3A, and Iceberg runtime used by the cluster driver.
 
-```
+```text
 GitHub SCM
     │
     ▼
@@ -38,7 +38,7 @@ Airflow (SparkSubmitHook + REST confirmation, cluster mode)
 Spark Cluster (reads from/sinks to Iceberg tables in S3)
 ```
 
-## Prerequisites
+## 3. Prerequisites
 
 - Atlas A5 (Jenkins CI) + A6 (Airflow spark-submit CD)
 - `mvn` installed locally for testing

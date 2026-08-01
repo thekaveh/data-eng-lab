@@ -2,7 +2,7 @@
 
 This document captures observations and feedback from building and testing A7 (Trino federated queries) and A9 (Redpanda + Structured Streaming).
 
-## A7: Trino Federated Query
+## 1. A7: Trino Federated Query
 
 ### What was built
 
@@ -20,11 +20,11 @@ Trino 482 configured with the Iceberg REST connector to query Iceberg tables in 
 - Trino and Spark must use **compatible** Iceberg connector versions. We use `trino-iceberg:1.11.0` matching the Spark Iceberg runtime.
 - Trino has its own SQL dialect — some Spark SQL syntax (e.g., certain window function expressions) may need adjustment.
 
-## A9: Redpanda + Structured Streaming
+## 2. A9: Redpanda + Structured Streaming
 
 ### What was built
 
-Redpanda v26 provides Kafka-compatible streaming. Three scenarios validate this: `streaming_ingest-events` (file-source + Redpanda), `streaming_ingest-gh_archive` (file-source polling), and `streaming_windows-events` (windowed aggregation with watermarks). The `cdc_streaming-online_retail` scenario uses `foreachBatch` with `MERGE INTO` for real-time upserts.
+Redpanda v26 provides Kafka-compatible streaming. Three scenarios validate this: `streaming_ingest-events-spark-iceberg` ingests broker events, `streaming_windows-events-spark-iceberg` performs event-time aggregation with watermarks, and `cdc_streaming-online_retail-spark-iceberg` applies `foreachBatch` with `MERGE INTO` for real-time upserts. `streaming_ingest-gh_archive-spark-iceberg` is a separate incremental file-source scenario and does not validate Redpanda.
 
 ### Findings
 
@@ -39,7 +39,7 @@ Redpanda v26 provides Kafka-compatible streaming. Three scenarios validate this:
 - Streaming scenarios cannot be validated with parity tests (they are infinite streams), so they are gated on Atlas delivery rather than Scala/PySpark parity.
 - Watch checkpoint directory growth — unbounded in production without retention policies.
 
-## See Also
+## 3. See Also
 
 - [Atlas Expectations](atlas-expectations.md) — Full delivery log
 - [Lakehouse Architecture](lakehouse.md) — Platform architecture

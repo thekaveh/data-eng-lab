@@ -108,7 +108,6 @@ def test_make_docs_wiki_regenerates_and_validates_before_staging():
             recipe.append(line.strip())
 
     assert recipe == [
-        "uv run --group dev python -m scripts.docs.render_diagrams --force-png --root .",
         "uv run --group dev python -m scripts.docs.check_docs --root .",
         "uv run --group dev python -m scripts.docs.push_wiki --check --root .",
     ]
@@ -149,7 +148,7 @@ def test_publish_workflow_generates_site_before_pages_deploy():
     )
     required = [
         "sudo apt-get install -y libcairo2",
-        "uv run --group dev python -m scripts.docs.render_diagrams --force-png --root .",
+        "uv run --group dev python -m scripts.docs.check_docs --root .",
         "uv run --group dev python -m scripts.docs.build_docs --site --root .",
         "uv run --group dev mkdocs build --strict",
     ]
@@ -171,7 +170,7 @@ def test_publish_workflow_pushes_generated_wiki_after_pages_deploy():
     commands = _executable_lines(wiki)
     required = [
         "sudo apt-get install -y libcairo2",
-        "uv run --group dev python -m scripts.docs.render_diagrams --force-png --root .",
+        "uv run --group dev python -m scripts.docs.check_docs --root .",
         "uv run --group dev python -m scripts.docs.build_docs --wiki --root .",
         "uv run --group dev python -m scripts.docs.push_wiki --push --root .",
     ]
@@ -188,3 +187,20 @@ def test_publish_workflow_pushes_generated_wiki_after_pages_deploy():
     )
     assert "WIKI_SSH_KEY" not in push_step["env"]
     assert not (WORKFLOWS / "docs-sync.yml").exists()
+
+
+def test_publication_never_regenerates_committed_png_projections():
+    workflow = (WORKFLOWS / "docs-deploy.yml").read_text(encoding="utf-8")
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+
+    assert "--force-png" not in workflow
+    docs_wiki = makefile.split("docs-wiki:", 1)[1].split("\n\n", 1)[0]
+    assert "--force-png" not in docs_wiki
+
+
+def test_mkdocs_dependencies_are_bounded_to_supported_major_lines():
+    text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert '"mkdocs>=1.6,<2"' in text
+    assert '"mkdocs-material>=9.5,<10"' in text
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    assert "export NO_MKDOCS_2_WARNING := 1" in makefile

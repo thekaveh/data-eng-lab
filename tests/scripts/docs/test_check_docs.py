@@ -11,6 +11,7 @@ from scripts.docs.check_docs import (
     check_empty_artifacts,
     check_numbering,
     check_placeholders,
+    check_portability,
     check_self_containment,
 )
 from scripts.docs.manifest import iter_leaf_sections, load_manifest
@@ -55,7 +56,7 @@ def repo_fixture(tmp_path: Path) -> Path:
     (repo / "docs/superpowers").mkdir()
     (repo / "docs/stylesheets").mkdir(parents=True)
     (repo / "docs/overrides").mkdir(parents=True)
-    (repo / "docs/index.md").write_text("# 1. Overview\n", encoding="utf-8")
+    (repo / "docs/index.md").write_text("# data-eng-lab\n", encoding="utf-8")
     (repo / "docs/diagrams/overview.html").write_text(_master(), encoding="utf-8")
     svg = extract_svg((repo / "docs/diagrams/overview.html").read_text(encoding="utf-8"))
     png = repo / "docs/diagrams/img/overview.png"
@@ -216,7 +217,7 @@ def test_numbering_matches_manifest_heading(repo_fixture: Path):
     (repo_fixture / "docs/index.md").write_text("preface\n# Overview\n", encoding="utf-8")
 
     assert messages(check_numbering(repo_fixture)) == [
-        "docs/index.md heading must start with '# 1. Overview'"
+        "docs/index.md heading must start with '# data-eng-lab'"
     ]
 
 
@@ -227,13 +228,13 @@ def test_numbering_ignores_correct_h1_inside_fenced_code(repo_fixture: Path):
     )
 
     assert messages(check_numbering(repo_fixture)) == [
-        "docs/index.md heading must start with '# 1. Overview'"
+        "docs/index.md heading must start with '# data-eng-lab'"
     ]
 
 
 def test_numbering_uses_correct_real_h1_after_fenced_example(repo_fixture: Path):
     (repo_fixture / "docs/index.md").write_text(
-        "~~~markdown\n# Wrong fenced heading\n~~~\n\n# 1. Overview\n",
+        "~~~markdown\n# Wrong fenced heading\n~~~\n\n# data-eng-lab\n",
         encoding="utf-8",
     )
 
@@ -285,6 +286,29 @@ def test_placeholders_scan_renderer_only_pages_and_generated_config(repo_fixture
         "unfinished marker TBD in public documentation: generated/wiki/_Sidebar.md",
         "unfinished marker TODO in public documentation: generated/site/renderer-only.md",
         "unfinished marker XXX in public documentation: mkdocs.yml",
+    ]
+
+
+def test_portability_rejects_surface_syntax_and_unlabeled_fences(repo_fixture: Path):
+    (repo_fixture / "README.md").write_text(
+        '<div class="grid cards" markdown>\n\n    ```\n    example\n    ```\n',
+        encoding="utf-8",
+    )
+
+    assert messages(check_portability(repo_fixture)) == [
+        "README.md: non-portable Markdown marker '<div class=\"grid cards\"'",
+        "README.md:3: unlabeled code fence",
+    ]
+
+
+def test_portability_requires_document_local_h2_numbering(repo_fixture: Path):
+    (repo_fixture / "docs/index.md").write_text(
+        "# data-eng-lab\n\n## 8. Wrong scope\n\n## Unnumbered\n",
+        encoding="utf-8",
+    )
+
+    assert messages(check_portability(repo_fixture)) == [
+        "docs/index.md: H2 headings must use document-local sequential numbering"
     ]
 
 

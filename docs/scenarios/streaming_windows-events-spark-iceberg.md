@@ -64,7 +64,7 @@ Streaming queries are long-running and not scheduled as batch DAGs. The Airflow 
 
 Atlas seeds only the `atlas_stream_events` demo topic; this scenario's topic (`events`) is auto-created on first produce. Notebook execution and Scala/PySpark parity are live-gated on Atlas A9 (Redpanda). Produce events first via `streaming_ingest-events-spark-iceberg/producer.py`. Checkpoints at `s3a://checkpoints/event_windows`. Append mode emits only closed windows (after watermark passes); call `query.awaitTermination()` to block in both Scala and PySpark notebooks. The DAG (`streaming_windows_events`) is an `EmptyOperator` — Structured Streaming is long-running, not scheduled as a batch DAG.
 
-## See Also
+## 9. See Also
 
 - [Upstream: streaming_ingest-events-spark-iceberg](./streaming_ingest-events-spark-iceberg.md) — Produces the events topic this scenario consumes
 - [Related: cdc_streaming-online_retail-spark-iceberg](./cdc_streaming-online_retail-spark-iceberg.md) — Another CDC/streaming scenario

@@ -20,6 +20,9 @@ permissions:
   pages: write
   id-token: write
 
+env:
+  NO_MKDOCS_2_WARNING: "1"
+
 concurrency:
   group: pages
   cancel-in-progress: false
@@ -43,7 +46,7 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv run --group dev python -m scripts.docs.render_diagrams --force-png --root .
+      - run: uv run --group dev python -m scripts.docs.check_docs --root .
 
       - run: uv run --group dev python -m scripts.docs.build_docs --site --root .
 
@@ -87,7 +90,7 @@ jobs:
         with:
           enable-cache: true
 
-      - run: uv run --group dev python -m scripts.docs.render_diagrams --force-png --root .
+      - run: uv run --group dev python -m scripts.docs.check_docs --root .
 
       - run: uv run --group dev python -m scripts.docs.build_docs --wiki --root .
 

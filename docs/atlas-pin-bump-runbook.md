@@ -4,7 +4,7 @@ How to move the `infra` submodule to a newer Atlas commit using only Atlas's
 official headless commands (adapted from tableau's runbook; validated on the
 `85ff46b2 → 2d006cae` bump, 2026-07-21).
 
-## Steps
+## 1. Steps
 
     # 1. Move the pin (target must be an ancestor of atlas origin/main).
     git -C infra fetch origin
@@ -37,7 +37,7 @@ official headless commands (adapted from tableau's runbook; validated on the
     make preflight
     git add infra && git commit -m "chore: bump Atlas pin to <sha> (<why>)"
 
-## Notes
+## 2. Notes
 
 - `BASE_PORT: auto` re-resolves if another stack took the block (atlas#780);
   ports live in `infra/.env` after start.

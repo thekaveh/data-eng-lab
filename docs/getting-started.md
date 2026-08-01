@@ -1,135 +1,112 @@
 # 2. Getting Started
 
-Get the full `data-eng-lab` stack running in five steps.
+Get the full `data-eng-lab` stack running in order from a fresh clone.
 
----
-
-## 2.1 Prerequisites
+## 1. Prerequisites
 
 | Requirement | Notes |
-|-------------|-------|
-| Docker + Docker Compose | Required for the Atlas platform (all services run in containers) |
-| Git with submodule support | The Atlas platform is a git submodule under `infra/` |
-| Python >= 3.11 + [uv](https://docs.astral.sh/uv/) | Used for tooling and local scripts |
-| Java 11+ (optional) | Only needed if you build Maven apps locally with `make build-apps` |
-| ~10 GB free disk | For Docker images, dataset downloads, and Iceberg data |
+|---|---|
+| Docker + Docker Compose | Runs the Atlas platform services |
+| Git with submodule support | Initializes the pinned Atlas submodule under `infra/` |
+| Python 3.11+ and [uv](https://docs.astral.sh/uv/) | Runs repository tooling and tests |
+| Java 17 | Builds the Maven Spark apps with `make build-apps` |
+| About 10 GB free disk | Holds images, downloaded datasets, and Iceberg data |
 
----
+## 2. Architecture
 
-## 2.2 Architecture
+The Atlas Compose cluster provides six working layers:
 
-The `data-eng-lab` platform runs on the Atlas Docker Compose cluster, consisting of ~30 containers across six layers:
+- **Notebook clients:** JupyterHub for PySpark/PyIceberg and Zeppelin for Scala Spark.
+- **Compute:** Spark 4.1.2 Connect server, standalone master, workers, and history server.
+- **Catalog:** Iceberg REST backed by Postgres.
+- **Storage:** MinIO buckets for landing data, the lakehouse, JARs, and checkpoints.
+- **Query and streaming:** Trino plus Redpanda's Kafka-compatible API.
+- **Orchestration:** Airflow DAGs and Jenkins application builds.
 
-- **Notebook clients**: JupyterHub (PySpark/PyIceberg) and Zeppelin (Scala Spark)
-- **Compute**: Spark 4.1.2 (Connect server, standalone master, workers, history)
-- **Catalog**: Iceberg REST catalog with Postgres backend
-- **Storage**: MinIO object storage with four buckets (landing, lakehouse, jars, checkpoints)
-- **Query & streaming**: Trino SQL engine and Redpanda (Kafka API)
-- **Orchestration**: Airflow for DAG-based workflows
-
-The medallion data flow runs at the bottom: bronze (raw) → silver (clean) → gold (aggregated).
+The medallion data flow is landing → bronze → silver → gold.
 
 ![Architecture](diagrams/img/overview.png)
 
----
-
-## 2.3 Step 1 — Clone and initialise the submodule
+## 3. Clone and initialize Atlas
 
 ```bash
 git clone https://github.com/thekaveh/data-eng-lab.git
 cd data-eng-lab
-make setup         # git submodule update --init --recursive infra
+make setup
+uv sync --all-groups
 ```
 
----
+`make setup` runs `git submodule update --init --recursive infra` and checks out the reviewed Atlas commit recorded by this repository.
 
-## 2.4 Step 2 — Download datasets
-
-> **Prerequisite:** `make datasets` uploads into the live MinIO landing bucket, so the
-> stack must be up first — run **Step 3 (`make up`)** below before this step on a fresh
-> clone, then return here. (The steps are numbered in medallion order; on first setup the
-> launch precedes the dataset load.)
-
-The lab ships five curated datasets (NYC Taxi, TPC-H, Online Retail, GitHub Archive, MovieLens). Download the `small` tier (default) into the MinIO landing bucket:
-
-```bash
-make datasets                     # default: --scale small
-make datasets SCALE=tiny          # faster; less data
-make datasets SCALE=medium        # more data; heavier queries
-```
-
-See [Datasets](datasets.md) for the full dataset registry and scale options.
-
----
-
-## 2.5 Step 3 — Launch the stack
+## 4. Launch the stack
 
 ```bash
 make up
 ```
 
-This runs `./scripts/start-all.sh`, a thin wrapper over Atlas's own headless commands:
+`make up` runs `scripts/start-all.sh`, which:
 
-1. Removes any stale legacy overlay symlink (pre-manifest layout).
-2. Backfills new upstream `.env` keys (additive; `env backfill`).
-3. Validates the consumer Compose configuration.
-4. Runs the consumer `doctor` (manifest + compose + env lints) against `atlas.consumer.yml`.
-5. Starts the full `data-eng` track detached (`start.sh --consumer … --track data-eng --no-tui --detach`) — Atlas health-gates the whole track before returning, provisions the MinIO buckets (including the `lakehouse-test` bucket declared under the manifest's `storage:` key), and materializes `infra/.env` from the manifest.
-6. Exports the supported host endpoint into ignored `atlas-consumer.env` and asserts `ATLAS_MINIO_HOST_ENDPOINT`.
-7. Registers Iceberg namespaces (`bronze`, `silver`, `gold`) via `scripts/register_iceberg.py`.
-8. Runs preflight (Layer 1 + Layer 2).
+1. Removes stale legacy overlay links.
+2. Backfills newly introduced upstream environment keys.
+3. Validates the consumer Compose overlay.
+4. Runs Atlas consumer `doctor` against `atlas.consumer.yml`.
+5. Starts the `data-eng` track detached and health-gates the complete track.
+6. Writes the ignored `atlas-consumer.env` host-endpoint contract.
+7. Registers the `bronze`, `silver`, and `gold` Iceberg namespaces.
+8. Runs Layer 1 and Layer 2 preflight checks.
 
-All nine `data-eng` services (Spark, Zeppelin, Airflow, MinIO, JupyterHub, Iceberg REST, Jenkins, Trino, Redpanda) are containerized by default — set in `atlas.consumer.yml`'s `env.values` (`*_SOURCE: container`), not passed as CLI flags. To disable one, edit the manifest and re-run `make up`.
+All nine data-engineering services are containerized by default through the manifest's `*_SOURCE: container` values. This is the default development profile and appears in Atlas as **Data Engineering**. Ports are slot-allocated from `BASE_PORT: auto`; use the values in `infra/.env` from the host and Docker DNS names such as `iceberg-rest:8181` inside the cluster.
 
-Ports are auto-allocated (`BASE_PORT: auto`). `atlas-consumer.env` is a generated,
-ignored contract and currently exports only `ATLAS_MINIO_HOST_ENDPOINT`. Host-side
-code resolves unexported data-eng services through an explicit endpoint override
-or the corresponding port in `infra/.env`; code inside Atlas uses Docker-network
-DNS such as `iceberg-rest:8181` and `trino:8080`.
+## 5. Load datasets
 
----
-
-## 2.6 Step 4 — Verify the stack
+The live MinIO service must exist before the downloader can populate its landing bucket. After `make up` succeeds, load the default `small` tier or select another supported scale:
 
 ```bash
-make preflight     # Layer 1 (service health) + Layer 2 (integration round-trips)
-make verify        # repo-level structural checks
-make test          # offline unit/integration tests (no live stack required)
+make datasets
+make datasets SCALE=tiny
+make datasets SCALE=medium
 ```
 
-A passing `make preflight` confirms end-to-end connectivity: Spark ↔ MinIO ↔ Iceberg, Jupyter ↔ PyIceberg, Airflow ↔ MinIO/Spark, Zeppelin ↔ Spark.
+The downloaded registry contains NYC Taxi, TPC-H, Online Retail, GitHub Archive, and MovieLens. Synthetic event scenarios use their producer instead of a downloaded dataset. See [Datasets](datasets.md) for licenses, formats, and scenario mappings.
 
----
-
-## 2.7 Step 5 — Run notebooks
-
-=== "Zeppelin (Scala Spark)"
-
-     1. Navigate to `http://localhost:${ZEPPELIN_PORT}` (the slot-allocated port from `infra/.env`).
-     2. Open any scenario notebook under `scenarios/<name>/zeppelin/`.
-     3. Use the `%spark` interpreter for Scala Spark cells, `%trino` for SQL via Trino.
-
-=== "JupyterHub (PySpark)"
-
-     1. Navigate to `http://localhost:${JUPYTERHUB_PORT}` (the slot-allocated port from `infra/.env`).
-     2. Open any `scenarios/<name>/jupyter/` notebook.
-     3. The kernel ships PySpark + PyIceberg pre-installed.
-
----
-
-## 2.8 Tear down
+## 6. Verify the stack and repository
 
 ```bash
-make down               # stop containers, preserve volumes
-make down COLD=1        # stop and wipe all volumes (full reset)
+make preflight
+make verify
+make test
 ```
 
----
+A passing preflight confirms Spark ↔ MinIO ↔ Iceberg, Jupyter ↔ PyIceberg, Airflow ↔ MinIO/Spark, and Zeppelin ↔ Spark connectivity. `make test` remains offline and does not require the running stack.
 
-## 2.9 What next?
+## 7. Run notebooks
 
-- Browse the [Scenario Catalog](scenarios/index.md) — 19 end-to-end scenarios across bronze, silver, and gold.
-- Check [Lakehouse Architecture](lakehouse.md) for the medallion design, Iceberg features, and integration matrix.
-- See [Atlas Expectations](atlas-expectations.md) for the delivered platform contract and known deviations.
-- Read [Go-Live Results](go-live-results.md) for the actual validation run with row counts and bug fixes.
-- Review [Go-Live Findings](atlas-feedback-go-live.md) for infrastructure issues surfaced during the live run.
+### Zeppelin (Scala Spark)
+
+1. Open `http://localhost:${ZEPPELIN_PORT}` using the slot-allocated port from `infra/.env`.
+2. Import or open `scenarios/<name>/zeppelin/notebook.zpln`.
+3. Use `%spark` for Scala Spark cells and `%trino` for Trino SQL cells.
+
+### JupyterHub (PySpark)
+
+1. Open `http://localhost:${JUPYTERHUB_PORT}` using the slot-allocated port from `infra/.env`.
+2. Open `scenarios/<name>/jupyter/notebook.ipynb`.
+3. Use the preinstalled PySpark, PyIceberg, and MinIO configuration.
+
+For exhaustive reproducibility evidence after loading all prerequisites, run `make notebooks-reproducibility`. It executes both notebook formats for all 19 scenarios and is intentionally separate from the PR-safe offline suite.
+
+## 8. Tear down
+
+```bash
+make down
+make down COLD=1
+```
+
+The first command preserves volumes. `COLD=1` performs a full local reset and removes the stack's volumes.
+
+## 9. What next?
+
+- Browse the [Scenario catalog](scenarios/index.md).
+- Study the [Lakehouse architecture](lakehouse.md).
+- Review the accepted [Atlas expectations](atlas-expectations.md).
+- Inspect the recorded [Go-live results](go-live-results.md) and [Go-live findings](atlas-feedback-go-live.md).
