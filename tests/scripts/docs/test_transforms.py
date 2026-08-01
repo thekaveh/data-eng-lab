@@ -23,6 +23,7 @@ sections:
   - {id: example, number: '6', title: Example, source: docs/notebooks/example.md}
 diagrams:
   - {id: overview, master: docs/diagrams/overview.html}
+  - {id: data-eng-lab-hero, master: docs/diagrams/data-eng-lab-hero.html}
 """
     )
 
@@ -64,6 +65,35 @@ def test_rewrite_for_site_preserves_subdirectory_image_prefix(manifest):
     )
     assert "[Catalog](../scenarios/index.md)" in result
     assert "![Flow](../assets/img/overview.svg)" in result
+
+
+@pytest.mark.parametrize(
+    ("surface", "expected"),
+    [
+        ("site", '<img src="../assets/img/data-eng-lab-hero.svg" alt="Lakehouse hero">'),
+        ("wiki", '<img src="img/data-eng-lab-hero.png" alt="Lakehouse hero">'),
+    ],
+)
+def test_rewrite_maps_local_html_image_sources(manifest, surface, expected):
+    source = Path("docs/notebooks/example.md")
+    mapping = build_source_map(manifest, surface)
+    markdown = (
+        '<img src="../diagrams/img/data-eng-lab-hero.png" '
+        'alt="Lakehouse hero">'
+    )
+
+    assert rewrite_for_surface(markdown, surface, source, mapping) == expected
+
+
+def test_rewrite_preserves_remote_badge_image_sources(manifest):
+    source = Path("docs/index.md")
+    mapping = build_source_map(manifest, "site")
+    badge = (
+        '<img alt="Apache Spark" '
+        'src="https://img.shields.io/badge/Apache%20Spark-compute-E25A1C">'
+    )
+
+    assert rewrite_for_surface(badge, "site", source, mapping) == badge
 
 
 def test_rewrite_drops_forbidden_and_non_manifest_targets(manifest):

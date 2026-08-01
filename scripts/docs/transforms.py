@@ -22,6 +22,10 @@ _WIKI_STRUCTURAL_DESTINATIONS = {
     "_sidebar": Path("_Sidebar.md"),
     "_footer": Path("_Footer.md"),
 }
+_HTML_IMAGE_SRC_RE = re.compile(
+    r'(?P<prefix><img\b[^>]*?\bsrc=["\'])(?P<target>[^"\']+)(?P<suffix>["\'])',
+    re.IGNORECASE,
+)
 
 
 def build_source_map(manifest: Manifest, surface: str) -> dict[Path, Path]:
@@ -143,7 +147,22 @@ def rewrite_for_surface(
         end = match.end("target") - match.start()
         return match.group(0)[:start] + replacement + match.group(0)[end:]
 
-    return MARKDOWN_LINK_RE.sub(replace, markdown)
+    rewritten = MARKDOWN_LINK_RE.sub(replace, markdown)
+
+    def replace_html_image(match: re.Match[str]) -> str:
+        target = match.group("target")
+        replacement = _rewrite_target(
+            target,
+            surface,
+            source,
+            source_destination,
+            source_map,
+        )
+        if replacement is None:
+            return match.group(0)
+        return f'{match.group("prefix")}{replacement}{match.group("suffix")}'
+
+    return _HTML_IMAGE_SRC_RE.sub(replace_html_image, rewritten)
 
 
 def _destination(source: Path, identifier: str, surface: str) -> Path:
