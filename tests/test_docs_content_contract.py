@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import html
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -21,6 +22,26 @@ PORTABILITY_TOKENS = (
     "!!! ",
     "=== ",
 )
+HERO_H1 = '<h1 align="center">data-eng-lab</h1>'
+HERO_TAGLINE_TEXT = "An Iceberg-lakehouse data-engineering lab built on the Atlas platform."
+HERO_VALUE_PROPOSITION = (
+    "Build, orchestrate, stream, and query production-shaped lakehouse pipelines "
+    "from paired notebooks and deployable Spark applications."
+)
+HERO_BADGES = (
+    "Atlas",
+    "Docker Compose",
+    "Apache Spark",
+    "Apache Iceberg",
+    "MinIO",
+    "Trino",
+    "Redpanda",
+    "Apache Airflow",
+    "Jenkins",
+    "Maven",
+    "Jupyter",
+    "Zeppelin",
+)
 
 
 def _public_sources() -> tuple[Path, ...]:
@@ -34,12 +55,21 @@ def _public_sources() -> tuple[Path, ...]:
 
 def _opener_parts(path: Path) -> tuple[str, str, str]:
     text = path.read_text(encoding="utf-8")
-    lines = text.splitlines()
-    h1 = next(line for line in lines if line.startswith("# "))
-    tagline = next(line for line in lines if line.startswith("**"))
-    tagline_index = lines.index(tagline)
-    summary = next(line for line in lines[tagline_index + 1 :] if line and not line.startswith("---"))
-    return h1, tagline, summary
+    h1 = re.search(r'<h1 align="center">[^<]+</h1>', text)
+    tagline = re.search(
+        r'<p align="center">\s*<strong>(.*?)</strong>\s*</p>',
+        text,
+        re.DOTALL,
+    )
+    value = re.search(
+        r'<p align="center">\s*'
+        r'(Build, orchestrate, stream, and query .*?)\s*</p>',
+        text,
+        re.DOTALL,
+    )
+    assert h1 is not None and tagline is not None and value is not None
+    plain_tagline = re.sub(r"<[^>]+>", "", html.unescape(tagline.group(1)))
+    return h1.group(0), plain_tagline.strip(), " ".join(value.group(1).split())
 
 
 def _opening_fences(text: str) -> tuple[str, ...]:
@@ -82,18 +112,41 @@ def _outside_fences(text: str) -> str:
     return "".join(visible)
 
 
-def test_opener_is_project_first_and_identical_across_canonical_surfaces():
+def test_opener_is_centered_badged_and_identical_across_canonical_surfaces():
     readme = ROOT / "README.md"
     index = ROOT / "docs/index.md"
-    readme_h1, readme_tagline, readme_summary = _opener_parts(readme)
-    index_h1, index_tagline, index_summary = _opener_parts(index)
+    readme_parts = _opener_parts(readme)
+    index_parts = _opener_parts(index)
 
-    assert readme_h1 == index_h1 == "# data-eng-lab"
-    assert readme_tagline == index_tagline
-    assert readme_summary == index_summary
+    assert readme_parts == index_parts == (
+        HERO_H1,
+        HERO_TAGLINE_TEXT,
+        HERO_VALUE_PROPOSITION,
+    )
     manifest = yaml.safe_load((ROOT / "atlas.consumer.yml").read_text(encoding="utf-8"))
-    plain_tagline = re.sub(r"\[([^]]+)]\([^)]+\)", r"\1", readme_tagline.strip("*"))
-    assert manifest["brand"]["tagline"] == plain_tagline
+    assert manifest["brand"]["tagline"] == HERO_TAGLINE_TEXT
+
+    for path in (readme, index):
+        text = path.read_text(encoding="utf-8")
+        first_h2 = text.index("\n## ")
+        hero = text.index("data-eng-lab-hero.png")
+        title = text.index(HERO_H1)
+        value = text.index(HERO_VALUE_PROPOSITION)
+        architecture_h2 = text.index("## 2. Architecture")
+        architecture = text.index("overview.png")
+
+        assert hero < title < value < first_h2
+        assert architecture > architecture_h2
+        assert "| Platform |" not in text[:first_h2]
+        assert text[:first_h2].count("img.shields.io/badge/") == len(HERO_BADGES)
+        for badge in HERO_BADGES:
+            assert f'<img alt="{badge}"' in text[:first_h2]
+
+        opener_images = re.findall(r'<img\s+([^>]+)>', text[:first_h2])
+        assert opener_images
+        assert all(re.search(r'\balt="[^"]+"', attributes) for attributes in opener_images)
+
+    executive_summary = (ROOT / "README.md").read_text(encoding="utf-8").split("</p>", 5)[-1]
     for required in (
         "atlas.consumer.yml",
         "make up",
@@ -108,15 +161,7 @@ def test_opener_is_project_first_and_identical_across_canonical_surfaces():
         "Trino",
         "Redpanda",
     ):
-        assert required in readme_summary
-
-    for path in (readme, index):
-        text = path.read_text(encoding="utf-8")
-        first_h2 = text.index("\n## ")
-        image = text.index("![")
-        assert image < first_h2
-        assert "| Platform |" in text
-        assert "| Query and streaming |" in text
+        assert required in executive_summary
 
 
 def test_public_markdown_is_portable_and_code_fences_are_labeled():
