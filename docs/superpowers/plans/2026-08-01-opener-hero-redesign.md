@@ -512,13 +512,13 @@ Replace everything before `## 1. Quick start` in `README.md` with the following,
 </p>
 
 <p align="center">
-  <img alt="Atlas" src="https://img.shields.io/badge/Atlas-infrastructure-2563EB">
+  <img alt="Atlas" src="https://img.shields.io/badge/Atlas-infrastructure-2563EB?logo=git&logoColor=white">
   <img alt="Docker Compose" src="https://img.shields.io/badge/Docker%20Compose-runtime-2496ED?logo=docker&logoColor=white">
 </p>
 
 <p align="center">
   <img alt="Apache Spark" src="https://img.shields.io/badge/Apache%20Spark-compute-E25A1C?logo=apachespark&logoColor=white">
-  <img alt="Apache Iceberg" src="https://img.shields.io/badge/Apache%20Iceberg-tables-4F46E5">
+  <img alt="Apache Iceberg" src="https://img.shields.io/badge/Apache%20Iceberg-tables-4F46E5?logo=apache&logoColor=white">
   <img alt="MinIO" src="https://img.shields.io/badge/MinIO-object%20storage-C72E49?logo=minio&logoColor=white">
   <img alt="Trino" src="https://img.shields.io/badge/Trino-SQL-DD00A1?logo=trino&logoColor=white">
   <img alt="Redpanda" src="https://img.shields.io/badge/Redpanda-streaming-FF4D5B?logo=redpanda&logoColor=white">
@@ -529,7 +529,7 @@ Replace everything before `## 1. Quick start` in `README.md` with the following,
   <img alt="Jenkins" src="https://img.shields.io/badge/Jenkins-CI-D24939?logo=jenkins&logoColor=white">
   <img alt="Maven" src="https://img.shields.io/badge/Maven-builds-C71A36?logo=apachemaven&logoColor=white">
   <img alt="Jupyter" src="https://img.shields.io/badge/Jupyter-notebooks-F37626?logo=jupyter&logoColor=white">
-  <img alt="Zeppelin" src="https://img.shields.io/badge/Zeppelin-notebooks-FBBF24">
+  <img alt="Zeppelin" src="https://img.shields.io/badge/Zeppelin-notebooks-FBBF24?logo=apache&logoColor=white">
 </p>
 
 `data-eng-lab` consumes Atlas as its pinned `infra/` git submodule through `atlas.consumer.yml`, so `make up` launches the default development profile as the **Data Engineering** workspace. It pairs 19 Zeppelin and Jupyter scenario notebooks—17 Scala/PySpark implementations plus two Trino client pairs—with Iceberg on MinIO, Airflow, Jenkins-built Spark apps, Trino, and Redpanda for three broker-backed streams.
