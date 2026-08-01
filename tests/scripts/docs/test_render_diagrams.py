@@ -1,3 +1,4 @@
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,21 @@ from scripts.docs.render_diagrams import (
     render_all,
     svg_to_png,
 )
+
+
+def test_lakehouse_hero_is_wide_text_free_and_accessible():
+    root = Path(__file__).resolve().parents[3]
+    master = root / "docs/diagrams/data-eng-lab-hero.html"
+
+    svg = extract_svg(master.read_text(encoding="utf-8"))
+    element = ET.fromstring(svg)
+
+    assert element.attrib["width"] == "1800"
+    assert element.attrib["height"] == "560"
+    assert element.attrib["viewBox"] == "0 0 1800 560"
+    assert not any(child.tag.endswith("text") for child in element.iter())
+    assert "lakehouse" in svg.casefold()
+    assert "bronze, silver, and gold" in svg.casefold()
 
 
 def test_extract_svg_sanitizes_html_named_entities_and_preserves_numeric_entities():
