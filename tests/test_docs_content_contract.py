@@ -8,11 +8,254 @@ import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
+import yaml
 
 from scripts.docs.manifest import iter_leaf_sections, load_manifest
 
 ROOT = Path(__file__).resolve().parents[1]
 POM_NAMESPACE = {"m": "http://maven.apache.org/POM/4.0.0"}
+PORTABILITY_TOKENS = (
+    '<div class="grid cards"',
+    ":material-",
+    ":octicons-",
+    "!!! ",
+    "=== ",
+)
+
+
+def _public_sources() -> tuple[Path, ...]:
+    manifest = load_manifest(ROOT / "docs/manifest.yaml", ROOT)
+    return tuple(
+        ROOT / section.source
+        for section in iter_leaf_sections(manifest.sections)
+        if section.source is not None
+    )
+
+
+def _opener_parts(path: Path) -> tuple[str, str, str]:
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    h1 = next(line for line in lines if line.startswith("# "))
+    tagline = next(line for line in lines if line.startswith("**"))
+    tagline_index = lines.index(tagline)
+    summary = next(line for line in lines[tagline_index + 1 :] if line and not line.startswith("---"))
+    return h1, tagline, summary
+
+
+def _opening_fences(text: str) -> tuple[str, ...]:
+    openings: list[str] = []
+    marker = ""
+    width = 0
+    for line in text.splitlines():
+        match = re.match(r"^[ \t]*(`{3,}|~{3,})(.*)$", line)
+        if match is None:
+            continue
+        run, info = match.groups()
+        if marker:
+            if run[0] == marker and len(run) >= width and not info.strip():
+                marker = ""
+                width = 0
+            continue
+        marker = run[0]
+        width = len(run)
+        openings.append(info.strip())
+    return tuple(openings)
+
+
+def _outside_fences(text: str) -> str:
+    visible: list[str] = []
+    marker = ""
+    width = 0
+    for line in text.splitlines(keepends=True):
+        match = re.match(r"^[ \t]*(`{3,}|~{3,})(.*)$", line.rstrip("\r\n"))
+        if match is not None:
+            run, info = match.groups()
+            if not marker:
+                marker = run[0]
+                width = len(run)
+            elif run[0] == marker and len(run) >= width and not info.strip():
+                marker = ""
+                width = 0
+            visible.append("\n" if line.endswith("\n") else "")
+            continue
+        visible.append(("\n" if line.endswith("\n") else "") if marker else line)
+    return "".join(visible)
+
+
+def test_opener_is_project_first_and_identical_across_canonical_surfaces():
+    readme = ROOT / "README.md"
+    index = ROOT / "docs/index.md"
+    readme_h1, readme_tagline, readme_summary = _opener_parts(readme)
+    index_h1, index_tagline, index_summary = _opener_parts(index)
+
+    assert readme_h1 == index_h1 == "# data-eng-lab"
+    assert readme_tagline == index_tagline
+    assert readme_summary == index_summary
+    manifest = yaml.safe_load((ROOT / "atlas.consumer.yml").read_text(encoding="utf-8"))
+    plain_tagline = re.sub(r"\[([^]]+)]\([^)]+\)", r"\1", readme_tagline.strip("*"))
+    assert manifest["brand"]["tagline"] == plain_tagline
+    for required in (
+        "atlas.consumer.yml",
+        "make up",
+        "Data Engineering",
+        "development profile",
+        "Jupyter",
+        "Zeppelin",
+        "17 Scala/PySpark",
+        "two Trino client pairs",
+        "Airflow",
+        "Jenkins",
+        "Trino",
+        "Redpanda",
+    ):
+        assert required in readme_summary
+
+    for path in (readme, index):
+        text = path.read_text(encoding="utf-8")
+        first_h2 = text.index("\n## ")
+        image = text.index("![")
+        assert image < first_h2
+        assert "| Platform |" in text
+        assert "| Query and streaming |" in text
+
+
+def test_public_markdown_is_portable_and_code_fences_are_labeled():
+    for path in (ROOT / "README.md", *_public_sources()):
+        text = path.read_text(encoding="utf-8")
+        visible = _outside_fences(text)
+        for token in PORTABILITY_TOKENS:
+            assert token not in visible, f"{path.relative_to(ROOT)} contains {token!r}"
+        assert all(_opening_fences(text)), f"{path.relative_to(ROOT)} has an unlabeled fence"
+
+
+def test_manifest_pages_use_document_local_sequential_h2_numbering():
+    for path in _public_sources():
+        headings = re.findall(r"^## (\d+)\.\s+", path.read_text(encoding="utf-8"), re.MULTILINE)
+        all_h2 = re.findall(r"^##\s+", path.read_text(encoding="utf-8"), re.MULTILINE)
+        assert len(headings) == len(all_h2), f"{path.relative_to(ROOT)} has an unnumbered H2"
+        assert headings == [str(index) for index in range(1, len(headings) + 1)], (
+            f"{path.relative_to(ROOT)} H2 numbering is not document-local and sequential"
+        )
+
+
+def test_getting_started_order_and_runtime_prerequisite_match_execution_contract():
+    text = (ROOT / "docs/getting-started.md").read_text(encoding="utf-8")
+    assert "Java 17" in text
+    assert "Java 11+" not in text
+    assert text.index("make up") < text.index("make datasets")
+
+
+def test_streaming_taxonomy_names_only_real_broker_consumers():
+    scenarios = (ROOT / "docs/scenarios/index.md").read_text(encoding="utf-8")
+    feedback = (ROOT / "docs/atlas-feedback-a7a9.md").read_text(encoding="utf-8")
+    expected = {
+        "streaming_ingest-events-spark-iceberg",
+        "streaming_windows-events-spark-iceberg",
+        "cdc_streaming-online_retail-spark-iceberg",
+    }
+    for identifier in expected:
+        assert identifier in feedback
+    assert "Three scenarios require Redpanda" in scenarios
+    assert "streaming_ingest-gh_archive-spark-iceberg" in scenarios
+    assert "requires no Kafka broker" in scenarios
+    assert "file-source + Redpanda" not in feedback
+    assert "Three scenarios validate this" in feedback
+
+
+def test_dataset_inventory_and_scenario_mappings_match_sources():
+    text = (ROOT / "docs/datasets.md").read_text(encoding="utf-8")
+    assert "MovieLens" in text
+    sections = {
+        match.group("name"): match.group("body")
+        for match in re.finditer(
+            r"^### (?P<name>[^\n]+)\n(?P<body>.*?)(?=^### |^## |\Z)",
+            text,
+            re.MULTILINE | re.DOTALL,
+        )
+    }
+    expected = {
+        "NYC Taxi": {
+            "batch_ingest-nyc_taxi-spark-iceberg",
+            "medallion-nyc_taxi-spark-iceberg",
+            "data_quality-nyc_taxi-spark-iceberg",
+            "time_travel-nyc_taxi-spark-iceberg",
+            "table_maintenance-nyc_taxi-spark-iceberg",
+            "federated_query-nyc_taxi-trino-iceberg",
+        },
+        "TPC-H": {
+            "star_schema-tpch-spark-iceberg",
+            "join_optimization-tpch-spark-iceberg",
+            "bi_query-tpch-trino-iceberg",
+        },
+        "MovieLens": {"feature_engineering-movielens-spark-iceberg"},
+        "Online Retail": {
+            "incremental_upsert-online_retail-spark-iceberg",
+            "scd2-online_retail-spark-iceberg",
+            "cdc_streaming-online_retail-spark-iceberg",
+        },
+        "GitHub Archive": {
+            "streaming_ingest-gh_archive-spark-iceberg",
+            "schema_evolution-gh_archive-spark-iceberg",
+            "json_flatten-gh_archive-spark-iceberg",
+            "sessionization-gh_archive-spark-iceberg",
+        },
+        "Synthetic Events": {
+            "streaming_ingest-events-spark-iceberg",
+            "streaming_windows-events-spark-iceberg",
+        },
+    }
+    for prefix, scenario_ids in expected.items():
+        body = next(body for name, body in sections.items() if name.startswith(prefix))
+        linked = set(re.findall(r"\[([^]]+)]\(scenarios/[^)]+\)", body))
+        assert linked == scenario_ids
+
+    primary_table = text[text.index("| Dataset |") : text.index("## 3. Adding a Dataset")]
+    for scenario_id in set().union(*expected.values()) - expected["Synthetic Events"]:
+        assert f"`{scenario_id}`" in primary_table
+
+
+def test_atlas_enablement_metadata_matches_current_repository_and_pin():
+    text = (ROOT / "docs/atlas-enablement.md").read_text(encoding="utf-8")
+    assert "`data-eng-lab` (public)" in text
+    assert "Airflow image (3.3.0)" in text
+    assert "Airflow image (3.2.2)" not in text
+
+    expectations = (ROOT / "docs/atlas-expectations.md").read_text(encoding="utf-8")
+    assert "apache/airflow:3.3.0" in expectations
+
+    for path in _public_sources():
+        public_text = path.read_text(encoding="utf-8")
+        assert "apache/airflow:3.2.2" not in public_text
+        assert "Airflow image (3.2.2)" not in public_text
+
+
+def test_notebook_docs_distinguish_spark_parity_from_trino_client_pairs():
+    index = (ROOT / "docs/notebooks/index.md").read_text(encoding="utf-8")
+    assert "Seventeen Spark scenarios" in index
+    assert "two Trino scenarios" in index
+
+    for relative in (
+        "docs/notebooks/bi_query-tpch-trino-iceberg.md",
+        "docs/notebooks/federated_query-nyc_taxi-trino-iceberg.md",
+    ):
+        text = (ROOT / relative).read_text(encoding="utf-8")
+        assert "Scala (Zeppelin)" not in text
+        assert "PySpark (Jupyter)" not in text
+        assert "Scala / PySpark parity" not in text
+        assert "Trino SQL (Zeppelin)" in text
+        assert "Python client (Jupyter)" in text
+
+
+def test_exhaustive_notebook_gate_discloses_destructive_scope_and_stream_safety():
+    text = (ROOT / "docs/go-live.md").read_text(encoding="utf-8")
+    assert "exclusive, disposable lab stack" in text
+    assert "drops each scenario-owned output table" in text
+    assert "Do not use the gate on a shared environment" in text
+    assert "does not edit Atlas source" in text
+    for prefix in ("events/", "gh_events_file/", "event_windows/", "online_retail_cdc/"):
+        assert f"`{prefix}`" in text
+    assert "stops its own `query` in a `finally` block" in text
+    assert "unrelated active queries are not stopped" in text
 
 
 @pytest.mark.parametrize("relative", ["README.md", "docs/index.md"])
@@ -193,7 +436,8 @@ def test_spark_app_overview_matches_publish_and_runtime_ownership_contract():
 
 
 def _scenario_result_rows(markdown: str) -> list[list[str]]:
-    section = markdown.split("## Scenario Execution", 1)[1].split("## Trino Validation", 1)[0]
+    section = re.split(r"^## \d+\. Scenario Execution\s*$", markdown, maxsplit=1, flags=re.MULTILINE)[1]
+    section = re.split(r"^## \d+\. Trino Validation\s*$", section, maxsplit=1, flags=re.MULTILINE)[0]
     rows = []
     for line in section.splitlines():
         if not line.startswith("|") or line.startswith("|---") or "| Scenario |" in line:

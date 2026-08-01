@@ -29,7 +29,8 @@ site_name: data-eng-lab
 site_url: https://thekaveh.github.io/data-eng-lab/
 site_description: >-
   An Apache Iceberg lakehouse data engineering lab —
-  19 Spark scenarios, 2 CI-built Maven apps, Trino BI, Redpanda streaming,
+  19 paired scenarios, 17 Scala/PySpark parity pairs, 2 CI-built Maven apps,
+  Trino BI, Redpanda streaming,
   medallion architecture on Docker Compose.
 docs_dir: generated/site
 site_dir: site

@@ -68,7 +68,7 @@ Airflow DAG: `incremental_upsert_online_retail` — a scheduled batch DAG.
 
 Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `silver` namespace must exist; run `scripts/register_iceberg.py` first. The seed INSERT is not guarded; re-running the full notebook accumulates seed rows. Drop the target table first for a clean demo. At scale, the inline seed can be replaced by the registered `online_retail` dataset.
 
-## See Also
+## 9. See Also
 
 - [Related: scd2-online_retail-spark-iceberg](./scd2-online_retail-spark-iceberg.md) — Another online_retail dimension scenario
 - [Related: cdc_streaming-online_retail-spark-iceberg](./cdc_streaming-online_retail-spark-iceberg.md) — Streaming form of CDC upserts

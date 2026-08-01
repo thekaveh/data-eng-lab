@@ -62,7 +62,7 @@ Airflow DAG: `join_optimization_tpch` — a scheduled batch DAG.
 
 Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `silver` namespace must exist; run `scripts/register_iceberg.py` first. Performance comparison results are illustrative and depend on data volume and cluster configuration. Bucket joins require both tables to be bucketed on the join key.
 
-## See Also
+## 9. See Also
 
 - [Related: bi_query-tpch-trino-iceberg](./bi_query-tpch-trino-iceberg.md) — BI queries on TPCH
 - [Related: bi_query-tpch-trino-iceberg](./bi_query-tpch-trino-iceberg.md) — Trino/SQL queries on TPCH gold marts

@@ -1,6 +1,7 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
-.PHONY: help setup up down datasets verify test preflight lint fmt new-scenario build-apps docs-build docs-check docs-serve docs-wiki
+export NO_MKDOCS_2_WARNING := 1
+.PHONY: help setup up down datasets verify test preflight lint fmt new-scenario build-apps notebooks-reproducibility docs-build docs-check docs-serve docs-wiki
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-12s %s\n",$$1,$$2}'
@@ -43,6 +44,9 @@ build-apps: ## Build (test + shade) the Maven Spark apps
 		echo "$$pom"; mvn -q -B -f "$$pom" package; \
 	done
 
+notebooks-reproducibility: ## Re-execute both notebook formats for all 19 scenarios (live stack)
+	RUN_INFRA=1 uv run --group live pytest tests/scenarios/test_notebook_reproducibility_live.py -v
+
 docs-build: ## Generate diagrams, site input, and build the strict site
 	uv run --group dev python -m scripts.docs.render_diagrams --root .
 	uv run --group dev python -m scripts.docs.build_docs --site --root .
@@ -58,6 +62,5 @@ docs-serve: ## Generate site input and serve it locally
 	uv run --group dev mkdocs serve
 
 docs-wiki: ## Generate and validate the wiki projection without pushing
-	uv run --group dev python -m scripts.docs.render_diagrams --force-png --root .
 	uv run --group dev python -m scripts.docs.check_docs --root .
 	uv run --group dev python -m scripts.docs.push_wiki --check --root .

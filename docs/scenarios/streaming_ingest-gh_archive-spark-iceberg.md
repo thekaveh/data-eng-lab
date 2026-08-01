@@ -69,7 +69,7 @@ Requires `lakehouse.bronze` namespace to exist before running.
 
 Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. This scenario uses a file source, not Kafka, so it does not require Atlas A9. Run `scripts/register_iceberg.py` and `make datasets` before executing standalone.
 
-## See Also
+## 9. See Also
 
 - [Downstream: json_flatten-gh_archive-spark-iceberg](./json_flatten-gh_archive-spark-iceberg.md) — Also consumes GitHub Archive data
 - [Downstream: sessionization-gh_archive-spark-iceberg](./sessionization-gh_archive-spark-iceberg.md) — Consumes stream events

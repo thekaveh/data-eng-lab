@@ -45,7 +45,7 @@ def tmp_repo(tmp_path):
     (repo / "docs/stylesheets").mkdir(parents=True)
     (repo / "docs/overrides").mkdir(parents=True)
     (repo / "docs/index.md").write_text(
-        "# 1. Overview\n\n[Catalog](scenarios/index.md)\n\n![Overview](diagrams/img/overview.png)\n",
+        "# data-eng-lab\n\n[Catalog](scenarios/index.md)\n\n![Overview](diagrams/img/overview.png)\n",
         encoding="utf-8",
     )
     (repo / "docs/scenarios/index.md").write_text(
@@ -73,6 +73,7 @@ def test_render_mkdocs_uses_generated_site_and_has_no_repo_controls(manifest):
     assert '"1. Overview": index.md' in config
     assert "custom_dir: generated/site/overrides" in config
     assert "stylesheets/extra.css" in config
+    assert "19 paired scenarios, 17 Scala/PySpark parity pairs" in config
 
 
 def test_render_site_and_wiki_are_complete(tmp_repo, manifest):

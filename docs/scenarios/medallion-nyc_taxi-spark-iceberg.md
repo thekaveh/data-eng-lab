@@ -72,7 +72,7 @@ Airflow DAG: `medallion_nyc_taxi` — a scheduled batch DAG.
 
 Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. All three namespaces (`bronze`, `silver`, `gold`) must exist; run `scripts/register_iceberg.py` first. Depends on the batch_ingest scenario producing the bronze table first.
 
-## See Also
+## 9. See Also
 
 - [Related: batch_ingest-nyc_taxi-spark-iceberg](./batch_ingest-nyc_taxi-spark-iceberg.md) — Produces the bronze source table
 - [Related: data_quality-nyc_taxi-spark-iceberg](./data_quality-nyc_taxi-spark-iceberg.md) — Quality checks on ingested data

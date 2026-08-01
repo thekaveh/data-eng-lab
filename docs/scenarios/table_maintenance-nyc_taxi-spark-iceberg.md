@@ -69,7 +69,7 @@ Airflow DAG: `table_maintenance_nyc_taxi` — a scheduled batch DAG.
 
 Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. Both `silver` and `gold` namespaces must exist; run `scripts/register_iceberg.py` first. VACUUM retention is set to safety minimums — do not set retention below 1008 minutes (1 day) in production. The `retainLast(1)` ensures at least one history version is always kept.
 
-## See Also
+## 9. See Also
 
 - [Related: batch_ingest-nyc_taxi-spark-iceberg](./batch_ingest-nyc_taxi-spark-iceberg.md) — Produces the bronze source data
 - [Related: medallion-nyc_taxi-spark-iceberg](./medallion-nyc_taxi-spark-iceberg.md) — Full medallion pipeline

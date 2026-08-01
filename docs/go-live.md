@@ -8,7 +8,7 @@ is recorded below; rerun the same gates for every later Atlas pin.
 
 ---
 
-## Phase 1: Launch
+## 1. Phase 1: Launch
 
 Bring up the full data-eng stack with the new lakehouse services.
 
@@ -47,7 +47,7 @@ This launches ~20+ containers including:
 
 ---
 
-## Phase 2: Bootstrap
+## 2. Phase 2: Bootstrap
 
 Prepare the lakehouse namespaces and run preflight checks.
 
@@ -77,7 +77,7 @@ uv run python scripts/register_iceberg.py
 - Creates the `bronze`, `silver`, and `gold` namespaces (idempotent — safe to re-run).
 
 **Expected output:**
-```
+```text
 Registering namespaces in Iceberg REST catalog...
 ✓ Namespace 'bronze' created
 ✓ Namespace 'silver' created
@@ -117,7 +117,7 @@ RUN_INFRA=1 uv run pytest tests/infra/test_layer2_live.py::test_layer2_matrix_al
 
 ---
 
-## Phase 3: Validate Live
+## 3. Phase 3: Validate Live
 
 End-to-end validation of the four key user-facing paths: Zeppelin notebooks, Jupyter notebooks, Jenkins CI, and Airflow orchestration.
 
@@ -262,7 +262,7 @@ bash jenkins/seed-job.sh
 - Points the seed job at the `data-eng-lab` repo (GitHub URL from config).
 
 **Expected output:**
-```
+```text
 Seeding Jenkins job definitions...
 ✓ Seed job created: 'seed-job'
 ✓ Job dsl applied: 'nyc-taxi-etl-build'
@@ -319,7 +319,7 @@ Run the end-to-end lakehouse pipeline via Airflow.
 **Expected output:**
 - DAG run completes with status **Success**.
 - Spark driver logs (in the Spark History UI or Airflow task logs) show:
-   ```
+   ```text
    [spark-submit] ... Reading from s3a://landing/nyc_taxi/ ...
    [spark-submit] ... Writing to iceberg table lakehouse.bronze.nyc_taxi_trips ...
    ```
@@ -355,14 +355,14 @@ Validate Trino's Iceberg connector and CTAS capability:
 1. **Via Zeppelin `%trino` interpreter:**
     - Zeppelin UI → Create a new notebook named `test-trino-federated`.
     - Add a paragraph:
-       ```
+       ```sql
        %trino
        SELECT COUNT(*) FROM lakehouse.bronze.nyc_taxi_trips
        ```
      - Expected output: Row count > 0 (from the Airflow DAG run above).
 
      - Add another paragraph to test CTAS:
-       ```
+       ```sql
        %trino
        CREATE TABLE lakehouse.gold.nyc_taxi_sample AS
        SELECT * FROM lakehouse.bronze.nyc_taxi_trips LIMIT 100
@@ -432,7 +432,7 @@ Validate Redpanda broker and Spark Kafka connector:
 
 ---
 
-## Phase 4: Manual Steps
+## 4. Phase 4: Manual Steps
 
 A few services require one-time UI setup that cannot be automated (yet).
 
@@ -443,7 +443,7 @@ The Zeppelin init script seeds the `%spark` (Scala) interpreter but not the `%tr
 1. Zeppelin UI → Interpreter → Search for `jdbc`.
 2. Click the pencil icon to edit the `jdbc` interpreter.
 3. Add property:
-    ```
+    ```properties
     default.driver = org.postgresql.Driver
     default.url = jdbc:postgresql://supabase-db:5432/iceberg
     default.user = <ICEBERG_DB_USER>
@@ -478,7 +478,34 @@ If Jenkins prompts for CSRF token or credentials during seed:
 
 ---
 
-## Summary: Success Criteria
+## 5. Exhaustive Notebook Reproducibility
+
+The representative parity test is intentionally small enough for routine acceptance. Before a release or Atlas pin promotion, use the separate exhaustive gate to re-execute both the Zeppelin and Jupyter notebook for every scenario.
+
+Run this gate only against an exclusive, disposable lab stack. To give both notebook formats equivalent starting state, it intentionally drops each scenario-owned output table before the Zeppelin run and again before the Jupyter run. The reset is limited to the tables declared in `OUTPUT_TABLES` in `tests/scenarios/test_notebook_reproducibility_live.py`:
+
+- `lakehouse.bronze.nyc_taxi_trips`, `lakehouse.bronze.events`, `lakehouse.bronze.gh_events_stream`
+- `lakehouse.silver.nyc_taxi_trips`, `lakehouse.silver.nyc_taxi_clean`, `lakehouse.silver.nyc_taxi_quarantine`, `lakehouse.silver.gh_events_se`, `lakehouse.silver.nyc_taxi_tt`, `lakehouse.silver.nyc_taxi_tm`, `lakehouse.silver.online_retail_cdc`, `lakehouse.silver.online_retail`, `lakehouse.silver.gh_events`, `lakehouse.silver.gh_sessions`
+- `lakehouse.gold.nyc_taxi_daily`, `lakehouse.gold.event_windows`, `lakehouse.gold.nyc_taxi_daily_trino`, `lakehouse.gold.dim_customer`, `lakehouse.gold.fct_orders`, `lakehouse.gold.bi_segment_revenue`, `lakehouse.gold.tpch_segment_revenue`, `lakehouse.gold.ml_user_features`, `lakehouse.gold.ml_movie_features`, `lakehouse.gold.dim_customer_scd2`
+
+It also deletes only the `events/`, `gh_events_file/`, `event_windows/`, and `online_retail_cdc/` prefixes from the MinIO `checkpoints` bucket before their owning streaming formats run. Do not use the gate on a shared environment where those tables or prefixes contain state you need to preserve. It does not edit Atlas source, drop unrelated tables, or delete unrelated MinIO objects.
+
+Prepare the complete live environment in dependency order:
+
+```bash
+make up
+make datasets
+uv run python scripts/register_iceberg.py
+make notebooks-reproducibility
+```
+
+The Make target sets `RUN_INFRA=1` and runs `tests/scenarios/test_notebook_reproducibility_live.py` with the `live` dependency group. It discovers and cross-checks all 19 paired scenario directories, then executes their Zeppelin and Jupyter notebooks through the same REST/container helpers used by representative acceptance. Seventeen cases are Scala/PySpark pairs; the two Trino cases use SQL/client notebooks. Broker scenarios also require their producers/topics. In the temporary execution copies, each streaming query drains currently available input and stops its own `query` in a `finally` block before the test resets its table and checkpoint; unrelated active queries are not stopped. Budget several hours for a full run; this gate is deliberately separate from the offline PR suite.
+
+**Expected outcome:** 19 parameterized scenario cases pass, meaning both notebook formats completed without an execution error for every current scenario.
+
+---
+
+## 6. Summary: Success Criteria
 
 A successful go-live run should satisfy:
 
@@ -497,7 +524,7 @@ If all above pass, the Atlas enablement is **validated for production use** and 
 
 ---
 
-## Troubleshooting
+## 7. Troubleshooting
 
 ### Service X is not reachable
 
@@ -539,7 +566,7 @@ If all above pass, the Atlas enablement is **validated for production use** and 
 
 ---
 
-## Next Steps
+## 8. Next Steps
 
 After a successful go-live run:
 

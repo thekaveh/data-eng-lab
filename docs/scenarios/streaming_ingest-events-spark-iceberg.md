@@ -63,7 +63,7 @@ Streaming queries are long-running and not scheduled as batch DAGs. The Airflow 
 
 Atlas seeds only the `atlas_stream_events` demo topic; this scenario uses its own topic (`events`), which is auto-created on first produce by `producer.py`. Alternatively, add `events` to `REDPANDA_DEMO_TOPICS` in `infra/.env`. Notebook execution and Scala/PySpark parity are live-gated on Atlas A9 (Redpanda). The streaming query runs indefinitely; call `query.awaitTermination()` to block in both Scala and PySpark notebooks.
 
-## See Also
+## 9. See Also
 
 - Upstream: None — streaming source from Redpanda (no prior scenario)
 - [Downstream: streaming_windows-events-spark-iceberg](./streaming_windows-events-spark-iceberg.md) — Consumes events for windowed aggregation

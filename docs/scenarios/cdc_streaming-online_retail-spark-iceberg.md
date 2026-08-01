@@ -64,7 +64,7 @@ Streaming queries are long-running and not scheduled as batch DAGs. The Airflow 
 
 The `online_retail_cdc` topic is auto-created on first produce. Notebook execution and Scala/PySpark parity are live-gated on Atlas A9 (Redpanda). Produce CDC events to the topic before running. Checkpoints at `s3a://checkpoints/online_retail_cdc`. The `MERGE INTO` SQL is identical to the batch `incremental_upsert-online_retail` scenario — this is its streaming form. The DAG (`cdc_streaming_online_retail`) is an `EmptyOperator`.
 
-## See Also
+## 9. See Also
 
 - [Related: incremental_upsert-online_retail-spark-iceberg](./incremental_upsert-online_retail-spark-iceberg.md) — Batch form of the same CDC upsert pattern
 - [Related: scd2-online_retail-spark-iceberg](./scd2-online_retail-spark-iceberg.md) — Another online_retail dimension scenario

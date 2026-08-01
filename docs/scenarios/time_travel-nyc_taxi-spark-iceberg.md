@@ -69,7 +69,7 @@ Airflow DAG: `time_travel_nyc_taxi` — a scheduled batch DAG.
 
 Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `silver` namespace must exist; run `scripts/register_iceberg.py` first. Time travel snapshots are retained based on Iceberg retention settings — old snapshots may be expired by `VACUUM`. The notebook performs multiple operations on the same table, creating multiple snapshots for time travel demonstration.
 
-## See Also
+## 9. See Also
 
 - [Related: batch_ingest-nyc_taxi-spark-iceberg](./batch_ingest-nyc_taxi-spark-iceberg.md) — Produces the bronze source data
 - [Related: table_maintenance-nyc_taxi-spark-iceberg](./table_maintenance-nyc_taxi-spark-iceberg.md) — Also demonstrates time travel

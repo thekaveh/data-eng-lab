@@ -9,9 +9,11 @@ Container name convention: ``{PROJECT_NAME}-{service}`` (mirrors manifest.py).
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -156,11 +158,63 @@ def drop_table(table: str) -> None:
         pass  # table may not exist yet on first run
 
 
+def clear_checkpoint(prefix: str, bucket: str = "checkpoints") -> None:
+    """Delete one scenario-owned checkpoint prefix from MinIO.
+
+    The reproducibility gate deliberately scopes cleanup to the checkpoint
+    namespace declared by the scenario under test. Other scenario state and
+    user-created objects are left untouched.
+    """
+    import boto3  # noqa: PLC0415
+
+    minio_endpoint = resolve_http_endpoint(
+        "MINIO_HOST_ENDPOINT",
+        "MINIO_PORT",
+        env_file=INFRA_ENV,
+        export_key="ATLAS_MINIO_HOST_ENDPOINT",
+        export_file=ROOT / "atlas-consumer.env",
+    )
+    client = boto3.client(
+        "s3",
+        endpoint_url=minio_endpoint,
+        aws_access_key_id=_env_val("MINIO_ROOT_USER"),
+        aws_secret_access_key=_env_val("MINIO_ROOT_PASSWORD"),
+        region_name=_env_val("MINIO_REGION", "us-east-1"),
+    )
+    object_prefix = f"{prefix.strip('/')}/"
+    paginator = client.get_paginator("list_objects_v2")
+    for page in paginator.paginate(Bucket=bucket, Prefix=object_prefix):
+        objects = [{"Key": item["Key"]} for item in page.get("Contents", [])]
+        if objects:
+            client.delete_objects(Bucket=bucket, Delete={"Objects": objects})
+
+
 # ---------------------------------------------------------------------------
 # run_zeppelin_note
 # ---------------------------------------------------------------------------
 
-def run_zeppelin_note(zpln_path: str, port_env: str = "ZEPPELIN_PORT") -> None:
+def _bound_zeppelin_stream(note_content: str) -> str:
+    """Make one scenario stream drain and stop in its start paragraph."""
+    note = json.loads(note_content)
+    candidates = [
+        paragraph
+        for paragraph in note["paragraphs"]
+        if "val query =" in paragraph.get("text", "")
+        and ".writeStream" in paragraph.get("text", "")
+    ]
+    if len(candidates) != 1:
+        raise ValueError(f"expected one Zeppelin streaming start paragraph, found {len(candidates)}")
+    candidates[0]["text"] += (
+        "\ntry { query.processAllAvailable() } finally { query.stop() }"
+    )
+    return json.dumps(note)
+
+
+def run_zeppelin_note(
+    zpln_path: str,
+    port_env: str = "ZEPPELIN_PORT",
+    bounded_stream: bool = False,
+) -> None:
     """Import a .zpln notebook via Zeppelin REST API, run all paragraphs, then delete.
 
     Zeppelin REST endpoints used:
@@ -179,6 +233,8 @@ def run_zeppelin_note(zpln_path: str, port_env: str = "ZEPPELIN_PORT") -> None:
 
     base = f"{_http_endpoint('ZEPPELIN_HOST_ENDPOINT', port_env)}/api"
     note_content = Path(zpln_path).read_text(encoding="utf-8")
+    if bounded_stream:
+        note_content = _bound_zeppelin_stream(note_content)
 
     # Import note
     resp = requests.post(
@@ -229,7 +285,35 @@ def run_zeppelin_note(zpln_path: str, port_env: str = "ZEPPELIN_PORT") -> None:
 # run_jupyter_note
 # ---------------------------------------------------------------------------
 
-def run_jupyter_note(ipynb_path: str, project: str | None = None) -> None:
+def _bound_jupyter_stream(note_content: str) -> str:
+    """Make one scenario stream drain and stop in its start cell."""
+    note = json.loads(note_content)
+    candidates = [
+        cell
+        for cell in note["cells"]
+        if cell.get("cell_type") == "code"
+        and "query =" in "".join(cell.get("source", []))
+        and ".writeStream" in "".join(cell.get("source", []))
+    ]
+    if len(candidates) != 1:
+        raise ValueError(f"expected one Jupyter streaming start cell, found {len(candidates)}")
+    candidates[0]["source"].extend(
+        [
+            "\n",
+            "try:\n",
+            "    query.processAllAvailable()\n",
+            "finally:\n",
+            "    query.stop()\n",
+        ]
+    )
+    return json.dumps(note)
+
+
+def run_jupyter_note(
+    ipynb_path: str,
+    project: str | None = None,
+    bounded_stream: bool = False,
+) -> None:
     """Execute a Jupyter notebook inside the jupyterhub container.
 
     The scenarios directory is NOT mounted into jupyterhub
@@ -255,11 +339,25 @@ def run_jupyter_note(ipynb_path: str, project: str | None = None) -> None:
     nb_container = f"/tmp/{nb_host.name}"
     out_container = f"/tmp/out_{nb_host.stem}.ipynb"
 
+    temporary_directory = None
+    nb_source = nb_host
+    if bounded_stream:
+        temporary_directory = tempfile.TemporaryDirectory(prefix="data-eng-lab-jupyter-")
+        nb_source = Path(temporary_directory.name) / nb_host.name
+        nb_source.write_text(
+            _bound_jupyter_stream(nb_host.read_text(encoding="utf-8")),
+            encoding="utf-8",
+        )
+
     # Copy notebook into container
-    cp = subprocess.run(
-        ["docker", "cp", str(nb_host), f"{container}:{nb_container}"],
-        capture_output=True, text=True, timeout=30,
-    )
+    try:
+        cp = subprocess.run(
+            ["docker", "cp", str(nb_source), f"{container}:{nb_container}"],
+            capture_output=True, text=True, timeout=30,
+        )
+    finally:
+        if temporary_directory is not None:
+            temporary_directory.cleanup()
     if cp.returncode != 0:
         raise RuntimeError(
             f"docker cp to {container} failed (rc={cp.returncode}): {cp.stderr.strip()}"
