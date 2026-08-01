@@ -31,6 +31,17 @@ def test_lakehouse_hero_is_wide_text_free_and_accessible():
     assert "bronze, silver, and gold" in svg.casefold()
 
 
+def test_lakehouse_hero_output_arrow_points_right():
+    root = Path(__file__).resolve().parents[3]
+    master = root / "docs/diagrams/data-eng-lab-hero.html"
+
+    svg = extract_svg(master.read_text(encoding="utf-8"))
+    element = ET.fromstring(svg)
+    path_data = {child.attrib.get("d") for child in element.iter() if child.tag.endswith("path")}
+
+    assert "M1138 270 l-18 -10 v20 z" in path_data
+
+
 def test_extract_svg_sanitizes_html_named_entities_and_preserves_numeric_entities():
     master = (
         '<html><svg xmlns="http://www.w3.org/2000/svg">'

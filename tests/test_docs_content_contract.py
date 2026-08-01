@@ -32,6 +32,10 @@ HERO_BANNER_PATH = "diagrams/img/data-eng-lab-hero.png"
 HERO_BANNER_ALT = (
     "Abstract data-eng-lab lakehouse with Iceberg crystal, medallion layers, and flowing data"
 )
+REDPANDA_BADGE_URL = (
+    "https://img.shields.io/badge/"
+    "Redpanda-streaming-FF4D5B?logo=apachekafka&logoColor=white"
+)
 HERO_BADGE_ROWS = (
     (
         ("Atlas", "https://img.shields.io/badge/Atlas-infrastructure-2563EB?logo=git&logoColor=white"),
@@ -60,8 +64,7 @@ HERO_BADGE_ROWS = (
         ("Trino", "https://img.shields.io/badge/Trino-SQL-DD00A1?logo=trino&logoColor=white"),
         (
             "Redpanda",
-            "https://img.shields.io/badge/"
-            "Redpanda-streaming-FF4D5B?logo=redpanda&logoColor=white",
+            REDPANDA_BADGE_URL,
         ),
     ),
     (
@@ -256,6 +259,7 @@ def test_opener_is_centered_badged_and_identical_across_canonical_surfaces():
             for row in badge_rows
         )
         assert badge_pairs == HERO_BADGE_ROWS
+        assert badge_pairs[1][4] == ("Redpanda", REDPANDA_BADGE_URL)
         assert all("?logo=" in url for row in badge_pairs for _, url in row)
         assert badge_rows == tuple(_badge_row(row) for row in HERO_BADGE_ROWS)
 
@@ -294,6 +298,14 @@ def test_opener_is_centered_badged_and_identical_across_canonical_surfaces():
         "Redpanda",
     ):
         assert required in executive_summary
+
+
+def test_unreleased_changelog_does_not_claim_the_architecture_poster_is_the_opener():
+    changelog = (ROOT / "docs/CHANGELOG.md").read_text(encoding="utf-8")
+    unreleased = changelog.split("## 1. [Unreleased]", 1)[1].split("\n## ", 1)[0]
+
+    assert "now open with a wide lakehouse brand banner" in unreleased
+    assert "Documentation now opens with a shared project title, architecture poster" not in unreleased
 
 
 def test_public_markdown_is_portable_and_code_fences_are_labeled():

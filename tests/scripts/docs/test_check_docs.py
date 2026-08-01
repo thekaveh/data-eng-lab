@@ -56,7 +56,10 @@ def repo_fixture(tmp_path: Path) -> Path:
     (repo / "docs/superpowers").mkdir()
     (repo / "docs/stylesheets").mkdir(parents=True)
     (repo / "docs/overrides").mkdir(parents=True)
-    (repo / "docs/index.md").write_text("# data-eng-lab\n", encoding="utf-8")
+    (repo / "docs/index.md").write_text(
+        '<h1 align="center">data-eng-lab</h1>\n',
+        encoding="utf-8",
+    )
     (repo / "docs/diagrams/overview.html").write_text(_master(), encoding="utf-8")
     svg = extract_svg((repo / "docs/diagrams/overview.html").read_text(encoding="utf-8"))
     png = repo / "docs/diagrams/img/overview.png"
@@ -232,9 +235,10 @@ def test_numbering_ignores_correct_h1_inside_fenced_code(repo_fixture: Path):
     ]
 
 
-def test_numbering_uses_correct_real_h1_after_fenced_example(repo_fixture: Path):
+def test_numbering_uses_canonical_real_h1_after_fenced_example(repo_fixture: Path):
     (repo_fixture / "docs/index.md").write_text(
-        "~~~markdown\n# Wrong fenced heading\n~~~\n\n# data-eng-lab\n",
+        "~~~markdown\n# Wrong fenced heading\n~~~\n\n"
+        '<h1 align="center">data-eng-lab</h1>\n',
         encoding="utf-8",
     )
 
@@ -244,6 +248,57 @@ def test_numbering_uses_correct_real_h1_after_fenced_example(repo_fixture: Path)
 def test_numbering_accepts_centered_html_h1_for_overview(repo_fixture: Path):
     (repo_fixture / "docs/index.md").write_text(
         '<h1 align="center">data-eng-lab</h1>\n',
+        encoding="utf-8",
+    )
+
+    assert check_numbering(repo_fixture) == ()
+
+
+@pytest.mark.parametrize(
+    "earlier",
+    [
+        "<h1>data-eng-lab</h1>",
+        '<h1 id="project-title">data-eng-lab</h1>',
+    ],
+)
+def test_numbering_rejects_noncanonical_html_h1_before_centered_overview_h1(
+    repo_fixture: Path,
+    earlier: str,
+):
+    (repo_fixture / "docs/index.md").write_text(
+        f'{earlier}\n\n<h1 align="center">data-eng-lab</h1>\n',
+        encoding="utf-8",
+    )
+
+    assert messages(check_numbering(repo_fixture)) == [
+        "docs/index.md heading must start with '# data-eng-lab'"
+    ]
+
+
+def test_numbering_requires_canonical_centered_h1_for_overview(repo_fixture: Path):
+    (repo_fixture / "docs/index.md").write_text("# data-eng-lab\n", encoding="utf-8")
+
+    assert messages(check_numbering(repo_fixture)) == [
+        "docs/index.md heading must start with '# data-eng-lab'"
+    ]
+
+
+def test_numbering_preserves_markdown_h1_behavior_for_non_overview_pages(repo_fixture: Path):
+    manifest = repo_fixture / "docs/manifest.yaml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace(
+            "diagrams:\n",
+            "  - {id: guide, number: '2', title: Guide, source: docs/guide.md}\n"
+            "diagrams:\n",
+        ),
+        encoding="utf-8",
+    )
+    (repo_fixture / "docs/index.md").write_text(
+        '<h1 align="center">data-eng-lab</h1>\n',
+        encoding="utf-8",
+    )
+    (repo_fixture / "docs/guide.md").write_text(
+        '<h1 id="decorative">Ignore me</h1>\n\n# 2. Guide\n',
         encoding="utf-8",
     )
 
@@ -430,6 +485,51 @@ def test_missing_repository_image_fails(repo_fixture: Path):
     assert messages(check_self_containment(repo_fixture)) == [
         "scenarios/example/README.md: missing local image architectures/missing.svg"
     ]
+
+
+def test_missing_repository_html_image_fails(repo_fixture: Path):
+    (repo_fixture / "README.md").write_text(
+        '<img alt="Missing" src="docs/diagrams/img/missing.png">\n',
+        encoding="utf-8",
+    )
+
+    assert messages(check_self_containment(repo_fixture)) == [
+        "README.md: missing local image docs/diagrams/img/missing.png"
+    ]
+
+
+def test_generated_html_image_cannot_escape_surface(repo_fixture: Path):
+    page = repo_fixture / "generated/site/index.md"
+    page.parent.mkdir(parents=True)
+    page.write_text(
+        '<img alt="Escaping" src="../../docs/diagrams/img/overview.png">\n',
+        encoding="utf-8",
+    )
+
+    assert messages(check_self_containment(repo_fixture)) == [
+        "generated/site/index.md: local image escapes site surface: "
+        "../../docs/diagrams/img/overview.png"
+    ]
+
+
+def test_valid_local_and_remote_html_images_pass(repo_fixture: Path):
+    (repo_fixture / "README.md").write_text(
+        '<img alt="Overview" src="docs/diagrams/img/overview.png">\n'
+        '<img alt="Apache Spark" '
+        'src="https://img.shields.io/badge/Apache%20Spark-compute-E25A1C">\n',
+        encoding="utf-8",
+    )
+
+    assert check_self_containment(repo_fixture) == ()
+
+
+def test_html_image_inside_fenced_code_is_ignored(repo_fixture: Path):
+    (repo_fixture / "README.md").write_text(
+        '```html\n<img alt="Example" src="missing.png">\n```\n',
+        encoding="utf-8",
+    )
+
+    assert check_self_containment(repo_fixture) == ()
 
 
 def test_existing_image_outside_surface_fails(repo_fixture: Path):

@@ -22,7 +22,7 @@
   <img alt="Apache Iceberg" src="https://img.shields.io/badge/Apache%20Iceberg-tables-4F46E5?logo=apache&logoColor=white">
   <img alt="MinIO" src="https://img.shields.io/badge/MinIO-object%20storage-C72E49?logo=minio&logoColor=white">
   <img alt="Trino" src="https://img.shields.io/badge/Trino-SQL-DD00A1?logo=trino&logoColor=white">
-  <img alt="Redpanda" src="https://img.shields.io/badge/Redpanda-streaming-FF4D5B?logo=redpanda&logoColor=white">
+  <img alt="Redpanda" src="https://img.shields.io/badge/Redpanda-streaming-FF4D5B?logo=apachekafka&logoColor=white">
 </p>
 
 <p align="center">

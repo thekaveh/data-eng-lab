@@ -13,7 +13,6 @@ from urllib.parse import unquote, urlsplit
 
 from scripts.docs.build_docs import DocumentationDrift, build
 from scripts.docs.links import (
-    MARKDOWN_LINK_RE,
     PAGES_ORIGIN,
     REPOSITORY_ORIGIN,
     WIKI_ORIGIN,
@@ -30,10 +29,11 @@ from scripts.docs.render_diagrams import (
 
 _UNFINISHED_MARKERS = ("TO" + "DO", "TB" + "D", "FIX" + "ME", "X" + "XX")
 _H1 = re.compile(r"^ {0,3}(# [^\r\n]+)$", re.MULTILINE)
-_CENTERED_HTML_H1 = re.compile(
-    r'^<h1 align="center">([^<\r\n]+)</h1>$',
-    re.MULTILINE,
+_HTML_H1 = re.compile(
+    r"^ {0,3}(?P<heading><h1\b[^\r\n>]*>[^\r\n]*?</h1>)[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
 )
+_CANONICAL_OVERVIEW_H1 = '<h1 align="center">data-eng-lab</h1>'
 _SVG_OPEN = re.compile(r"<svg\b")
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _MIRROR_BANNER = "Full docs site"
@@ -127,17 +127,20 @@ def check_numbering(repo_root: Path) -> tuple[Finding, ...]:
         assert section.source is not None
         text = _without_fenced_code((root / section.source).read_text(encoding="utf-8"))
         heading = _H1.search(text)
-        expected = (
-            "# data-eng-lab"
-            if section.id == "overview"
-            else f"# {section.number}. {section.title}"
-        )
-        actual = heading.group(1) if heading is not None else None
         if section.id == "overview":
-            centered = _CENTERED_HTML_H1.search(text)
-            if centered is not None and (heading is None or centered.start() < heading.start()):
-                actual = f"# {centered.group(1)}"
-        if actual is None or not actual.startswith(expected):
+            html_heading = _HTML_H1.search(text)
+            candidates = tuple(match for match in (heading, html_heading) if match is not None)
+            first = min(candidates, key=lambda match: match.start()) if candidates else None
+            valid = (
+                first is html_heading
+                and html_heading.group("heading") == _CANONICAL_OVERVIEW_H1
+            )
+            expected = "# data-eng-lab"
+        else:
+            expected = f"# {section.number}. {section.title}"
+            actual = heading.group(1) if heading is not None else None
+            valid = actual is not None and actual.startswith(expected)
+        if not valid:
             findings += (
                 _error(
                     f"{section.source.as_posix()} heading must start with {expected!r}"
@@ -244,8 +247,8 @@ def check_self_containment(repo_root: Path) -> tuple[Finding, ...]:
                     f"{malformed}"
                 ),
             )
-        for match in MARKDOWN_LINK_RE.finditer(_without_fenced_code(text)):
-            target = match.group("target")
+        for link in find_links(_without_fenced_code(text)):
+            target = link.target
             # Exercise the shared classifier as the authoritative origin matrix.
             if is_forbidden(target, surface):
                 continue
@@ -253,7 +256,7 @@ def check_self_containment(repo_root: Path) -> tuple[Finding, ...]:
             if local is None:
                 continue
             clean, fragment, resolved = local
-            is_image = match.group(0).startswith("!")
+            is_image = link.is_image
             surface_root = {
                 "repo": root,
                 "site": root / "generated/site",

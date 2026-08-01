@@ -12,18 +12,31 @@ PAGES_ORIGIN = "https://thekaveh.github.io/data-eng-lab/"
 MARKDOWN_LINK_RE = re.compile(
     r"!?\[(?P<label>[^\]]*)\]\((?P<target>[^)\s]+)(?:\s+[^)]*)?\)"
 )
+HTML_IMAGE_SRC_RE = re.compile(
+    r'(?P<prefix><img\b[^>]*?\bsrc=["\'])(?P<target>[^"\']+)(?P<suffix>["\'])',
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
 class Link:
-    """A Markdown link target."""
+    """A Markdown link or image target."""
 
     target: str
+    is_image: bool
 
 
 def find_links(markdown: str) -> tuple[Link, ...]:
-    """Return inline Markdown link and image targets in document order."""
-    return tuple(Link(match.group("target")) for match in MARKDOWN_LINK_RE.finditer(markdown))
+    """Return Markdown links and Markdown/HTML images in document order."""
+    discovered = [
+        (match.start(), Link(match.group("target"), match.group(0).startswith("!")))
+        for match in MARKDOWN_LINK_RE.finditer(markdown)
+    ]
+    discovered.extend(
+        (match.start(), Link(match.group("target"), True))
+        for match in HTML_IMAGE_SRC_RE.finditer(markdown)
+    )
+    return tuple(link for _, link in sorted(discovered, key=lambda item: item[0]))
 
 
 def is_forbidden(target: str, surface: str) -> bool:

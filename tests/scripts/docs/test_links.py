@@ -27,6 +27,14 @@ def test_surface_link_matrix(surface, target, forbidden):
     assert is_forbidden(target, surface) is forbidden
 
 
-def test_find_links_reads_markdown_links_and_images():
-    links = find_links("[Docs](docs/index.md) ![Flow](architectures/overview.svg)")
-    assert [link.target for link in links] == ["docs/index.md", "architectures/overview.svg"]
+def test_find_links_reads_markdown_links_and_html_images_in_source_order():
+    links = find_links(
+        '[Docs](docs/index.md) <img alt="Hero" src="img/hero.png"> '
+        "![Flow](architectures/overview.svg)"
+    )
+
+    assert [(link.target, link.is_image) for link in links] == [
+        ("docs/index.md", False),
+        ("img/hero.png", True),
+        ("architectures/overview.svg", True),
+    ]
