@@ -28,19 +28,81 @@ HERO_VALUE_PROPOSITION = (
     "Build, orchestrate, stream, and query production-shaped lakehouse pipelines "
     "from paired notebooks and deployable Spark applications."
 )
-HERO_BADGES = (
-    "Atlas",
-    "Docker Compose",
-    "Apache Spark",
-    "Apache Iceberg",
-    "MinIO",
-    "Trino",
-    "Redpanda",
-    "Apache Airflow",
-    "Jenkins",
-    "Maven",
-    "Jupyter",
-    "Zeppelin",
+HERO_BANNER_PATH = "diagrams/img/data-eng-lab-hero.png"
+HERO_BANNER_ALT = (
+    "Abstract data-eng-lab lakehouse with Iceberg crystal, medallion layers, and flowing data"
+)
+HERO_BADGE_ROWS = (
+    (
+        ("Atlas", "https://img.shields.io/badge/Atlas-infrastructure-2563EB?logo=git&logoColor=white"),
+        (
+            "Docker Compose",
+            "https://img.shields.io/badge/"
+            "Docker%20Compose-runtime-2496ED?logo=docker&logoColor=white",
+        ),
+    ),
+    (
+        (
+            "Apache Spark",
+            "https://img.shields.io/badge/"
+            "Apache%20Spark-compute-E25A1C?logo=apachespark&logoColor=white",
+        ),
+        (
+            "Apache Iceberg",
+            "https://img.shields.io/badge/"
+            "Apache%20Iceberg-tables-4F46E5?logo=apache&logoColor=white",
+        ),
+        (
+            "MinIO",
+            "https://img.shields.io/badge/"
+            "MinIO-object%20storage-C72E49?logo=minio&logoColor=white",
+        ),
+        ("Trino", "https://img.shields.io/badge/Trino-SQL-DD00A1?logo=trino&logoColor=white"),
+        (
+            "Redpanda",
+            "https://img.shields.io/badge/"
+            "Redpanda-streaming-FF4D5B?logo=redpanda&logoColor=white",
+        ),
+    ),
+    (
+        (
+            "Apache Airflow",
+            "https://img.shields.io/badge/"
+            "Apache%20Airflow-orchestration-017CEE?logo=apacheairflow&logoColor=white",
+        ),
+        (
+            "Jenkins",
+            "https://img.shields.io/badge/Jenkins-CI-D24939?logo=jenkins&logoColor=white",
+        ),
+        (
+            "Maven",
+            "https://img.shields.io/badge/Maven-builds-C71A36?logo=apachemaven&logoColor=white",
+        ),
+        (
+            "Jupyter",
+            "https://img.shields.io/badge/Jupyter-notebooks-F37626?logo=jupyter&logoColor=white",
+        ),
+        (
+            "Zeppelin",
+            "https://img.shields.io/badge/"
+            "Zeppelin-notebooks-FBBF24?logo=apache&logoColor=white",
+        ),
+    ),
+)
+HERO_EXECUTIVE_SUMMARY = (
+    "`data-eng-lab` consumes Atlas as its pinned `infra/` git submodule through "
+    "`atlas.consumer.yml`, so `make up` launches the default development profile as the "
+    "**Data Engineering** workspace. It pairs 19 Zeppelin and Jupyter scenario notebooks—17 "
+    "Scala/PySpark implementations plus two Trino client pairs—with Iceberg on MinIO, Airflow, "
+    "Jenkins-built Spark apps, Trino, and Redpanda for three broker-backed streams."
+)
+ARCHITECTURE_LEAD = (
+    "## 2. Architecture\n\n"
+    "The landing zone and the three Iceberg medallion layers are distinct storage stages:\n\n"
+    "```text\n"
+    "s3a://landing/  →  bronze  →  silver  →  gold\n"
+    "raw source data    clean      enriched    aggregated/modelled\n"
+    "```\n\n"
 )
 
 
@@ -70,6 +132,51 @@ def _opener_parts(path: Path) -> tuple[str, str, str]:
     assert h1 is not None and tagline is not None and value is not None
     plain_tagline = re.sub(r"<[^>]+>", "", html.unescape(tagline.group(1)))
     return h1.group(0), plain_tagline.strip(), " ".join(value.group(1).split())
+
+
+def _opener_block(path: Path) -> str:
+    opener, separator, _ = path.read_text(encoding="utf-8").partition("\n## 1. Quick start")
+    assert separator
+    return opener
+
+
+def _badge_row(pairs: tuple[tuple[str, str], ...]) -> str:
+    images = "\n".join(f'  <img alt="{name}" src="{url}">' for name, url in pairs)
+    return f'<p align="center">\n{images}\n</p>'
+
+
+def _expected_opener() -> str:
+    banner = (
+        '<p align="center">\n'
+        f'  <img src="{HERO_BANNER_PATH}" alt="{HERO_BANNER_ALT}" width="100%">\n'
+        "</p>"
+    )
+    tagline = (
+        '<p align="center">\n'
+        '  <strong>An Iceberg-lakehouse data-engineering lab built on the '
+        '<a href="https://github.com/thekaveh/atlas">Atlas</a> platform.</strong>\n'
+        "</p>"
+    )
+    value = f'<p align="center">\n  {HERO_VALUE_PROPOSITION}\n</p>'
+    return (
+        "\n\n".join(
+            (
+                banner,
+                HERO_H1,
+                tagline,
+                value,
+                *(_badge_row(row) for row in HERO_BADGE_ROWS),
+                HERO_EXECUTIVE_SUMMARY,
+            )
+        )
+        + "\n"
+    )
+
+
+def _executive_summary(opener: str) -> str:
+    match = re.search(r"(?m)^(`data-eng-lab` consumes Atlas .+)$", opener)
+    assert match is not None
+    return match.group(1)
 
 
 def _opening_fences(text: str) -> tuple[str, ...]:
@@ -115,9 +222,17 @@ def _outside_fences(text: str) -> str:
 def test_opener_is_centered_badged_and_identical_across_canonical_surfaces():
     readme = ROOT / "README.md"
     index = ROOT / "docs/index.md"
+    readme_opener = _opener_block(readme)
+    index_opener = _opener_block(index)
     readme_parts = _opener_parts(readme)
     index_parts = _opener_parts(index)
 
+    assert readme_opener.count("docs/diagrams/img/data-eng-lab-hero.png") == 1
+    assert index_opener.count(HERO_BANNER_PATH) == 1
+    normalized_readme_opener = readme_opener.replace(
+        "docs/diagrams/img/data-eng-lab-hero.png", HERO_BANNER_PATH
+    )
+    assert normalized_readme_opener == index_opener == _expected_opener()
     assert readme_parts == index_parts == (
         HERO_H1,
         HERO_TAGLINE_TEXT,
@@ -126,27 +241,44 @@ def test_opener_is_centered_badged_and_identical_across_canonical_surfaces():
     manifest = yaml.safe_load((ROOT / "atlas.consumer.yml").read_text(encoding="utf-8"))
     assert manifest["brand"]["tagline"] == HERO_TAGLINE_TEXT
 
-    for path in (readme, index):
+    for path, opener, overview_path in (
+        (readme, readme_opener, "docs/diagrams/img/overview.png"),
+        (index, index_opener, "diagrams/img/overview.png"),
+    ):
         text = path.read_text(encoding="utf-8")
-        first_h2 = text.index("\n## ")
-        hero = text.index("data-eng-lab-hero.png")
-        title = text.index(HERO_H1)
-        value = text.index(HERO_VALUE_PROPOSITION)
-        architecture_h2 = text.index("## 2. Architecture")
-        architecture = text.index("overview.png")
+        badge_rows = tuple(
+            block
+            for block in re.findall(r'<p align="center">.*?</p>', opener, re.DOTALL)
+            if "img.shields.io/badge/" in block
+        )
+        badge_pairs = tuple(
+            tuple(re.findall(r'<img alt="([^"]+)" src="([^"]+)">', row))
+            for row in badge_rows
+        )
+        assert badge_pairs == HERO_BADGE_ROWS
+        assert all("?logo=" in url for row in badge_pairs for _, url in row)
+        assert badge_rows == tuple(_badge_row(row) for row in HERO_BADGE_ROWS)
 
-        assert hero < title < value < first_h2
-        assert architecture > architecture_h2
-        assert "| Platform |" not in text[:first_h2]
-        assert text[:first_h2].count("img.shields.io/badge/") == len(HERO_BADGES)
-        for badge in HERO_BADGES:
-            assert f'<img alt="{badge}"' in text[:first_h2]
-
-        opener_images = re.findall(r'<img\s+([^>]+)>', text[:first_h2])
+        ordered_parts = (
+            opener.index("data-eng-lab-hero.png"),
+            opener.index(HERO_H1),
+            opener.index("<strong>"),
+            opener.index(HERO_VALUE_PROPOSITION),
+            *(opener.index(row) for row in badge_rows),
+            opener.index(HERO_EXECUTIVE_SUMMARY),
+        )
+        assert ordered_parts == tuple(sorted(ordered_parts))
+        assert "| Platform |" not in opener
+        opener_images = re.findall(r'<img\s+([^>]+)>', opener)
         assert opener_images
         assert all(re.search(r'\balt="[^"]+"', attributes) for attributes in opener_images)
+        architecture = text[text.index("## 2. Architecture") :]
+        assert architecture.startswith(
+            ARCHITECTURE_LEAD + f"![data-eng-lab architecture]({overview_path})\n\n"
+        )
 
-    executive_summary = (ROOT / "README.md").read_text(encoding="utf-8").split("</p>", 5)[-1]
+    executive_summary = _executive_summary(readme_opener)
+    assert executive_summary == _executive_summary(index_opener) == HERO_EXECUTIVE_SUMMARY
     for required in (
         "atlas.consumer.yml",
         "make up",
