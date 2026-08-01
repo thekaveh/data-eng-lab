@@ -250,6 +250,32 @@ def test_numbering_accepts_centered_html_h1_for_overview(repo_fixture: Path):
     assert check_numbering(repo_fixture) == ()
 
 
+def test_numbering_rejects_wrong_markdown_h1_before_correct_centered_html_h1(
+    repo_fixture: Path,
+):
+    (repo_fixture / "docs/index.md").write_text(
+        '# Wrong first heading\n\n<h1 align="center">data-eng-lab</h1>\n',
+        encoding="utf-8",
+    )
+
+    assert messages(check_numbering(repo_fixture)) == [
+        "docs/index.md heading must start with '# data-eng-lab'"
+    ]
+
+
+def test_numbering_rejects_wrong_centered_html_h1_before_correct_markdown_h1(
+    repo_fixture: Path,
+):
+    (repo_fixture / "docs/index.md").write_text(
+        '<h1 align="center">Wrong first heading</h1>\n\n# data-eng-lab\n',
+        encoding="utf-8",
+    )
+
+    assert messages(check_numbering(repo_fixture)) == [
+        "docs/index.md heading must start with '# data-eng-lab'"
+    ]
+
+
 def test_empty_public_artifacts_are_errors_but_generated_dirs_are_not(repo_fixture: Path):
     (repo_fixture / "docs/empty.md").touch()
     (repo_fixture / "generated/empty").mkdir(parents=True)
