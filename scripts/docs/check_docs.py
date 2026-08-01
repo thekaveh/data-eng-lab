@@ -30,6 +30,10 @@ from scripts.docs.render_diagrams import (
 
 _UNFINISHED_MARKERS = ("TO" + "DO", "TB" + "D", "FIX" + "ME", "X" + "XX")
 _H1 = re.compile(r"^ {0,3}(# [^\r\n]+)$", re.MULTILINE)
+_CENTERED_HTML_H1 = re.compile(
+    r'^<h1 align="center">([^<\r\n]+)</h1>$',
+    re.MULTILINE,
+)
 _SVG_OPEN = re.compile(r"<svg\b")
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _MIRROR_BANNER = "Full docs site"
@@ -128,7 +132,12 @@ def check_numbering(repo_root: Path) -> tuple[Finding, ...]:
             if section.id == "overview"
             else f"# {section.number}. {section.title}"
         )
-        if heading is None or not heading.group(1).startswith(expected):
+        actual = heading.group(1) if heading is not None else None
+        if section.id == "overview":
+            centered = _CENTERED_HTML_H1.search(text)
+            if centered is not None and (heading is None or centered.start() < heading.start()):
+                actual = f"# {centered.group(1)}"
+        if actual is None or not actual.startswith(expected):
             findings += (
                 _error(
                     f"{section.source.as_posix()} heading must start with {expected!r}"

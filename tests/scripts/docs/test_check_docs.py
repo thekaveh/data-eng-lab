@@ -241,6 +241,15 @@ def test_numbering_uses_correct_real_h1_after_fenced_example(repo_fixture: Path)
     assert check_numbering(repo_fixture) == ()
 
 
+def test_numbering_accepts_centered_html_h1_for_overview(repo_fixture: Path):
+    (repo_fixture / "docs/index.md").write_text(
+        '<h1 align="center">data-eng-lab</h1>\n',
+        encoding="utf-8",
+    )
+
+    assert check_numbering(repo_fixture) == ()
+
+
 def test_empty_public_artifacts_are_errors_but_generated_dirs_are_not(repo_fixture: Path):
     (repo_fixture / "docs/empty.md").touch()
     (repo_fixture / "generated/empty").mkdir(parents=True)
