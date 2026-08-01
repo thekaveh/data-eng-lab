@@ -8,10 +8,13 @@ All notable changes to this project are documented here (Keep a Changelog format
   verifier skeleton, and infra-preflight Layer 1.
 
 ### Changed
-- Documentation now opens with a shared project title, architecture poster,
-  executive summary, and grouped technology stack on all three surfaces. Public
-  pages use neutral Markdown, document-local H2 numbering, labeled fences, and
-  source-backed scenario/dataset/Atlas facts.
+- The repository, site, and wiki now open with a wide lakehouse brand banner,
+  centered project identity, and twelve icon-bearing stack badges. The detailed
+  topology remains available under Architecture instead of occupying the first
+  viewport.
+- Public pages on all three documentation surfaces use neutral Markdown,
+  document-local H2 numbering, labeled fences, and source-backed
+  scenario/dataset/Atlas facts.
 - Documentation publication validates every repository-local file and Markdown
   fragment, rejects manifest path aliases and projection collisions, and tracks
   each committed diagram PNG with a source/render-contract fingerprint. The site

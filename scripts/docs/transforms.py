@@ -8,7 +8,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
-from scripts.docs.links import MARKDOWN_LINK_RE, is_forbidden
+from scripts.docs.links import MARKDOWN_LINK_RE, find_html_image_sources, is_forbidden
 from scripts.docs.manifest import (
     Manifest,
     ManifestError,
@@ -143,7 +143,20 @@ def rewrite_for_surface(
         end = match.end("target") - match.start()
         return match.group(0)[:start] + replacement + match.group(0)[end:]
 
-    return MARKDOWN_LINK_RE.sub(replace, markdown)
+    rewritten = MARKDOWN_LINK_RE.sub(replace, markdown)
+
+    for image in reversed(find_html_image_sources(rewritten)):
+        replacement = _rewrite_target(
+            image.target,
+            surface,
+            source,
+            source_destination,
+            source_map,
+        )
+        if replacement is not None:
+            rewritten = rewritten[: image.start] + replacement + rewritten[image.end :]
+
+    return rewritten
 
 
 def _destination(source: Path, identifier: str, surface: str) -> Path:
