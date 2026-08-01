@@ -69,7 +69,7 @@ Airflow DAG: `data_quality_nyc_taxi` — a scheduled batch DAG.
 
 Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The 30-minute gap threshold is currently hardcoded as 1800 seconds and not externally configurable. The notebook uses a CSV seed which always re-inserts; drop the target table first for a clean demo.
 
-## See Also
+## 9. See Also
 
 - [Related: batch_ingest-nyc_taxi-spark-iceberg](./batch_ingest-nyc_taxi-spark-iceberg.md) — Produces the source table this scenario consumes
 - [Related: medallion-nyc_taxi-spark-iceberg](./medallion-nyc_taxi-spark-iceberg.md) — Transform pipeline that can include quality checks

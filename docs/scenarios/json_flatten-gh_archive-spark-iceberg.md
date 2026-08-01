@@ -66,7 +66,7 @@ Airflow DAG: `json_flatten_gh_archive` — a scheduled batch DAG.
 
 Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `silver` namespace must exist; run `scripts/register_iceberg.py` first. `make datasets` is required to populate the GitHub Archive landing zone before the notebook can read data.
 
-## See Also
+## 9. See Also
 
 - [Related: schema_evolution-gh_archive-spark-iceberg](./schema_evolution-gh_archive-spark-iceberg.md) — Another GitHub Archive processing scenario
 - [Related: sessionization-gh_archive-spark-iceberg](./sessionization-gh_archive-spark-iceberg.md) — Consumes flattened events from this scenario

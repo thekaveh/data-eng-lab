@@ -65,7 +65,7 @@ Airflow DAG: `sessionization_gh_archive` — a scheduled batch DAG.
 
 The 30-minute gap threshold is hardcoded as 1800 seconds and not externally configurable. The `silver` namespace must exist; run `scripts/register_iceberg.py` first. Requires upstream data in `lakehouse.silver.gh_events`; ensure the JSON flatten scenario has run first.
 
-## See Also
+## 9. See Also
 
 - [Upstream: json_flatten-gh_archive-spark-iceberg](./json_flatten-gh_archive-spark-iceberg.md) — Produces the events table this scenario consumes
 - [Related: schema_evolution-gh_archive-spark-iceberg](./schema_evolution-gh_archive-spark-iceberg.md) — Another GitHub Archive processing scenario

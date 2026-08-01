@@ -79,7 +79,7 @@ Airflow DAG: `batch_ingest_nyc_taxi` — a scheduled batch DAG.
 
 Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `bronze` namespace must exist; run `scripts/register_iceberg.py` first. At scale, the inline seed can be replaced by the registered CSV dataset. Drop the target table first for a clean demo if re-running.
 
-## See Also
+## 9. See Also
 
 - [Related: table_maintenance-nyc_taxi-spark-iceberg](./table_maintenance-nyc_taxi-spark-iceberg.md) — Table maintenance patterns
 - [Related: data_quality-nyc_taxi-spark-iceberg](./data_quality-nyc_taxi-spark-iceberg.md) — Quality checks on ingested data

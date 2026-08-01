@@ -6,6 +6,7 @@ TARGETS = [
     "setup", "up", "down", "datasets", "verify", "test",
     "preflight", "lint", "fmt", "new-scenario", "build-apps",
     "docs-build", "docs-check", "docs-serve", "docs-wiki",
+    "notebooks-reproducibility",
 ]
 
 
@@ -37,3 +38,10 @@ def test_docs_targets_use_supported_module_entrypoints():
     assert "python -m scripts.docs.build_docs --site --root ." in text
     assert "python -m scripts.docs.check_docs --root ." in text
     assert "python -m scripts.docs.push_wiki --check --root ." in text
+
+
+def test_notebook_reproducibility_target_runs_only_the_exhaustive_live_suite():
+    text = subprocess.run(["make", "-npq"], cwd=ROOT, capture_output=True, text=True).stdout
+    assert "RUN_INFRA=1" in text
+    assert "tests/scenarios/test_notebook_reproducibility_live.py" in text
+    assert "--group live" in text

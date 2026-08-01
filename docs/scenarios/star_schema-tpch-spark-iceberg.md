@@ -86,7 +86,7 @@ Airflow DAG: `star_schema_tpch` — a scheduled batch DAG.
 
 Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `gold` namespace must exist in the Iceberg REST catalog; run `scripts/register_iceberg.py` before executing standalone. `make datasets` is required to populate the TPC-H landing zone before the notebook can read data.
 
-## See Also
+## 9. See Also
 
 - [Downstream: bi_query-tpch-trino-iceberg](./bi_query-tpch-trino-iceberg.md) — Queries gold marts via Trino
 - [Downstream: join_optimization-tpch-spark-iceberg](./join_optimization-tpch-spark-iceberg.md) — Uses gold tables for join optimization demos

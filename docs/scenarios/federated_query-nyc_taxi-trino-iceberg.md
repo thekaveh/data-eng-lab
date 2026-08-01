@@ -50,7 +50,7 @@ Airflow DAG: EmptyOperator placeholder (trigger via notebooks; TrinoOperator int
 
 Live execution is gated on Atlas #268 (Trino coordinator integration). The `%trino` interpreter is seeded by Atlas pointing to the Trino coordinator. The `lakehouse.gold` namespace must exist in the Iceberg REST catalog before the Write cell runs.
 
-## See Also
+## 9. See Also
 
 - [Upstream: batch_ingest-nyc_taxi-spark-iceberg](./batch_ingest-nyc_taxi-spark-iceberg.md) — Populates the bronze table
 - [Datasets](../datasets.md)

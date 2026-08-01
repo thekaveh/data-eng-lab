@@ -6,7 +6,10 @@ by `namespace.table`, NOT the Spark-style 3-part `lakehouse.namespace.table`.
 either form and pyiceberg receives the 2-part identifier it expects.
 """
 import importlib.util
+import json
+import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -77,3 +80,77 @@ def test_rest_catalog_kwargs_sets_default_region(monkeypatch):
 def test_rest_catalog_kwargs_region_override(monkeypatch):
     _min_env(monkeypatch, MINIO_REGION="eu-west-2")
     assert le._rest_catalog_kwargs()["s3.region"] == "eu-west-2"
+
+
+def test_zeppelin_stream_is_bounded_in_its_start_paragraph():
+    source = json.dumps(
+        {"paragraphs": [{"text": "%spark\nval query = data.writeStream.start()"}]}
+    )
+    rendered = json.loads(le._bound_zeppelin_stream(source))
+
+    start = rendered["paragraphs"][0]["text"]
+    assert "query.processAllAvailable()" in start
+    assert "finally { query.stop() }" in start
+    assert "streams.active" not in start
+
+
+def test_jupyter_stream_is_bounded_in_its_start_cell():
+    source = json.dumps(
+        {
+            "cells": [
+                {"cell_type": "code", "source": ["query = data.writeStream.start()\n"]}
+            ]
+        }
+    )
+    rendered = json.loads(le._bound_jupyter_stream(source))
+
+    start = "".join(rendered["cells"][0]["source"])
+    assert "query.processAllAvailable()" in start
+    assert "finally:\n    query.stop()" in start
+
+
+def test_every_streaming_pair_accepts_the_bounded_execution_transform():
+    scenarios = (
+        "streaming_ingest-events-spark-iceberg",
+        "streaming_ingest-gh_archive-spark-iceberg",
+        "streaming_windows-events-spark-iceberg",
+        "cdc_streaming-online_retail-spark-iceberg",
+    )
+    for scenario in scenarios:
+        root = ROOT / "scenarios" / scenario
+        zeppelin = le._bound_zeppelin_stream(
+            (root / "zeppelin/notebook.zpln").read_text(encoding="utf-8")
+        )
+        jupyter = le._bound_jupyter_stream(
+            (root / "jupyter/notebook.ipynb").read_text(encoding="utf-8")
+        )
+        assert "query.processAllAvailable()" in zeppelin
+        assert "query.processAllAvailable()" in jupyter
+
+
+def test_clear_checkpoint_deletes_only_matching_prefix(monkeypatch):
+    _min_env(monkeypatch)
+    calls = []
+
+    class FakePaginator:
+        def paginate(self, **kwargs):
+            calls.append(("paginate", kwargs))
+            return [{"Contents": [{"Key": "events/offsets/0"}, {"Key": "events/commits/0"}]}]
+
+    class FakeClient:
+        def get_paginator(self, name):
+            calls.append(("paginator", name))
+            return FakePaginator()
+
+        def delete_objects(self, **kwargs):
+            calls.append(("delete", kwargs))
+
+    monkeypatch.setitem(sys.modules, "boto3", SimpleNamespace(client=lambda *args, **kwargs: FakeClient()))
+    le.clear_checkpoint("/events/")
+
+    assert ("paginate", {"Bucket": "checkpoints", "Prefix": "events/"}) in calls
+    delete = next(value for action, value in calls if action == "delete")
+    assert delete == {
+        "Bucket": "checkpoints",
+        "Delete": {"Objects": [{"Key": "events/offsets/0"}, {"Key": "events/commits/0"}]},
+    }

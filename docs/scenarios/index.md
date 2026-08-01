@@ -1,8 +1,8 @@
 # 5.1. Catalog
 
-This page catalogs all 19 scenarios in the `data-eng-lab` lakehouse, organized by functional category. Each scenario is a self-contained folder with Scala Spark (Zeppelin), PySpark (Jupyter), and optional Airflow DAG implementations. Architecture diagrams are linked from each scenario's README.
+This page catalogs all 19 scenarios in the `data-eng-lab` lakehouse, organized by functional category. Each scenario is a self-contained folder with Zeppelin and Jupyter implementations plus an optional Airflow DAG. Seventeen Spark scenarios form Scala/PySpark parity pairs; the two Trino scenarios instead pair `%trino` Zeppelin SQL with a Jupyter client. Architecture diagrams are linked from each scenario's README.
 
-## Categories
+## 1. Categories
 
 The scenarios demonstrate the end-to-end data engineering lifecycle: raw data ingestion through medallion transformation, quality validation, streaming, BI, and advanced Iceberg features.
 
@@ -34,7 +34,7 @@ Schema evolution (ADD/RENAME columns with backward-compatible NULL filling), tim
 
 ### Streaming
 
-Four streaming scenarios covering file-source and Kafka-source structured streaming, windowed aggregation with watermarks, and CDC (Change Data Capture) with MERGE INTO. These require the enhanced-Atlas stack with Redpanda enabled.
+Four Structured Streaming scenarios cover broker ingestion, incremental file ingestion, windowed aggregation with watermarks, and CDC (Change Data Capture) with `MERGE INTO`. Three scenarios require Redpanda: `streaming_ingest-events-spark-iceberg`, `streaming_windows-events-spark-iceberg`, and `cdc_streaming-online_retail-spark-iceberg`. `streaming_ingest-gh_archive-spark-iceberg` polls files incrementally and requires no Kafka broker.
 
 - [streaming_ingest-events-spark-iceberg](streaming_ingest-events-spark-iceberg.md)
 - [streaming_ingest-gh_archive-spark-iceberg](streaming_ingest-gh_archive-spark-iceberg.md)
@@ -84,13 +84,13 @@ Window-based sessionization on timestamped events. Gap-based session boundary de
 
 - [sessionization-gh_archive-spark-iceberg](sessionization-gh_archive-spark-iceberg.md)
 
-## Running Scenarios
+## 2. Running Scenarios
 
-Each scenario follows a dual-notebook pattern: a Scala Spark notebook for Zeppelin and a PySpark notebook for JupyterHub. Both must produce equivalent output, validated by the parity harness (`tests/scenarios/parity.py`). Airflow DAGs provide an orchestration alternative for batch scenarios.
+Each scenario follows a dual-notebook pattern across Zeppelin and JupyterHub. The 17 Spark pairs must produce equivalent output, validated by `tests/scenarios/parity.py`; the two Trino pairs are execution-gated but excluded from Scala/PySpark parity. Airflow DAGs provide an orchestration alternative for batch scenarios.
 
-Streaming scenarios require Redpanda to be running and the appropriate Kafka topic to be created (via `REDPANDA_DEMO_TOPICS` in `.env` or `producer.py`). Checkpoint state is stored in MinIO's `checkpoints` bucket; re-running a streaming notebook without a checkpoint cleanup will resume from the last offset.
+The three broker-backed scenarios require Redpanda and their Kafka topics (created through `REDPANDA_DEMO_TOPICS` or a scenario producer). The GH Archive streaming-ingest scenario instead requires downloaded files in `s3a://landing/gh_archive/`. All four store checkpoint state in MinIO's `checkpoints` bucket, so a rerun resumes from the last processed offset or file unless its checkpoint is intentionally reset.
 
-## See Also
+## 3. See Also
 
 - [Spark Applications](../spark-apps/index.md)
 - [Datasets](../datasets.md)

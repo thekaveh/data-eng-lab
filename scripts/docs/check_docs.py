@@ -33,6 +33,13 @@ _H1 = re.compile(r"^ {0,3}(# [^\r\n]+)$", re.MULTILINE)
 _SVG_OPEN = re.compile(r"<svg\b")
 _PNG_MAGIC = b"\x89PNG\r\n\x1a\n"
 _MIRROR_BANNER = "Full docs site"
+_NON_PORTABLE_MARKERS = (
+    '<div class="grid cards"',
+    ":material-",
+    ":octicons-",
+    "!!! ",
+    "=== ",
+)
 _BRACKETED_INLINE_MARKDOWN_PATH = re.compile(
     r"(?<!!)\[`(?P<path>[^`\r\n]+\.md(?:#[^`\r\n]+)?)`\](?!\s*(?:\(|\[|:))"
 )
@@ -116,7 +123,11 @@ def check_numbering(repo_root: Path) -> tuple[Finding, ...]:
         assert section.source is not None
         text = _without_fenced_code((root / section.source).read_text(encoding="utf-8"))
         heading = _H1.search(text)
-        expected = f"# {section.number}. {section.title}"
+        expected = (
+            "# data-eng-lab"
+            if section.id == "overview"
+            else f"# {section.number}. {section.title}"
+        )
         if heading is None or not heading.group(1).startswith(expected):
             findings += (
                 _error(
@@ -140,6 +151,42 @@ def check_placeholders(repo_root: Path) -> tuple[Finding, ...]:
                 findings += (
                     _error(f"unfinished marker {marker} in public documentation: {relative}"),
                 )
+    return _sorted(findings)
+
+
+def check_portability(repo_root: Path) -> tuple[Finding, ...]:
+    """Reject surface-specific Markdown, unlabeled fences, and inconsistent H2s."""
+    root = repo_root.resolve()
+    manifest, findings = _load(root)
+    if manifest is None:
+        return findings
+
+    for path in _canonical_markdown(root, manifest.internal_roots):
+        relative = path.relative_to(root).as_posix()
+        text = path.read_text(encoding="utf-8")
+        visible = _without_fenced_code(text)
+        for marker in _NON_PORTABLE_MARKERS:
+            if marker in visible:
+                findings += (
+                    _error(f"{relative}: non-portable Markdown marker {marker!r}"),
+                )
+        for line in _unlabeled_opening_fences(text):
+            findings += (_error(f"{relative}:{line}: unlabeled code fence"),)
+
+    for section in iter_leaf_sections(manifest.sections):
+        assert section.source is not None
+        path = root / section.source
+        text = _without_fenced_code(path.read_text(encoding="utf-8"))
+        headings = re.findall(r"^## (\d+)\.\s+", text, flags=re.MULTILINE)
+        all_h2 = re.findall(r"^##\s+", text, flags=re.MULTILINE)
+        expected = [str(index) for index in range(1, len(headings) + 1)]
+        if len(headings) != len(all_h2) or headings != expected:
+            findings += (
+                _error(
+                    f"{section.source.as_posix()}: H2 headings must use "
+                    "document-local sequential numbering"
+                ),
+            )
     return _sorted(findings)
 
 
@@ -331,6 +378,7 @@ def check(repo_root: Path) -> tuple[Finding, ...]:
         check_numbering,
         check_self_containment,
         check_placeholders,
+        check_portability,
         check_empty_artifacts,
         check_diagrams,
     ):
@@ -446,12 +494,34 @@ def _without_fenced_code(markdown: str) -> str:
     return "".join(lines)
 
 
+def _unlabeled_opening_fences(markdown: str) -> tuple[int, ...]:
+    """Return line numbers for opening fences that omit a language/info string."""
+    findings: list[int] = []
+    fence_character = ""
+    fence_length = 0
+    for line_number, line in enumerate(markdown.splitlines(), start=1):
+        marker = _fence_marker(line)
+        if marker is None:
+            continue
+        if fence_character:
+            if (
+                marker[0] == fence_character
+                and marker[1] >= fence_length
+                and not marker[2].strip()
+            ):
+                fence_character = ""
+                fence_length = 0
+            continue
+        fence_character = marker[0]
+        fence_length = marker[1]
+        if not marker[2].strip():
+            findings.append(line_number)
+    return tuple(findings)
+
+
 def _fence_marker(line: str) -> tuple[str, int, str] | None:
     content = line.rstrip("\r\n")
-    indentation = len(content) - len(content.lstrip(" "))
-    if indentation > 3:
-        return None
-    content = content[indentation:]
+    content = content.lstrip(" \t")
     if not content or content[0] not in {"`", "~"}:
         return None
     character = content[0]
