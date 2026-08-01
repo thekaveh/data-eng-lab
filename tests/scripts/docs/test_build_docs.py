@@ -128,6 +128,9 @@ def test_repository_manifest_projects_all_public_pages_and_assets(tmp_path):
     assert len(tuple(wiki.glob("*.md"))) == 57
     assert len(tuple((site / "assets/img").glob("*.svg"))) == len(manifest.diagrams)
     assert len(tuple((wiki / "img").glob("*.png"))) == len(manifest.diagrams)
+    assert "data-eng-lab-hero" in {diagram.id for diagram in manifest.diagrams}
+    assert (site / "assets/img/data-eng-lab-hero.svg").is_file()
+    assert (wiki / "img/data-eng-lab-hero.png").is_file()
 
 
 def test_rendered_mkdocs_config_builds_strictly(tmp_repo, manifest):
