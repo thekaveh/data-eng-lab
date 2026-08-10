@@ -8,6 +8,14 @@ All notable changes to this project are documented here (Keep a Changelog format
   verifier skeleton, and infra-preflight Layer 1.
 
 ### Changed
+- Atlas is now pinned at `c6cf73d7168db1a7840fc45c9ed3e385071996d8`.
+  Both production Spark DAGs again use `SparkSubmitOperator` ownership: their
+  `AtlasSparkSubmitOperator` subclass preserves provider execution and
+  OpenLineage injection while wrapping `super()._get_hook()` with Atlas's
+  `RestConfirmingSparkHook`. Submission remains cluster-mode through
+  `spark_default` on `:7077`, and successful completion still requires the
+  standalone REST record on `spark-master:6066` to report `FINISHED` and
+  `success=true`.
 - The repository, site, and wiki now open with a wide lakehouse brand banner,
   centered project identity, and twelve icon-bearing stack badges. The detailed
   topology remains available under Architecture instead of occupying the first
@@ -21,7 +29,7 @@ All notable changes to this project are documented here (Keep a Changelog format
   generates SVG projections from the HTML masters; the wiki publishes the
   reviewed committed PNG bytes without host-dependent rerendering. Maintainers
   refresh committed PNG projections explicitly when a master changes.
-- On 2026-07-31, Atlas consumer operations accepted pin
+- Historically, on 2026-07-31, Atlas consumer operations accepted pin
   `985918ce8c805081947d53b1c48bb80610237a5b` after the representative Airflow
   feature-artifact task succeeded on its first and only attempt. Spark standalone
   REST reported `FINISHED` with `success=true`; the Bronze table contained
@@ -38,8 +46,8 @@ All notable changes to this project are documented here (Keep a Changelog format
   The corrected reviewed pin closes #850 with
   `AIRFLOW__API_AUTH__JWT_SECRET`. Atlas #880 corrects the remaining #792 wrapper
   defect for the
-  shipped provider: both production cluster-mode DAGs construct
-  `SparkSubmitHook` without an application and call
+  shipped provider: at that historical pin, both production cluster-mode DAGs constructed
+  `SparkSubmitHook` without an application and called
   `submit_and_confirm_via_rest()` to submit on `:7077`, extract the driver ID
   from the spark-submit log, and verify it on `spark-master:6066` without
   masking real driver failures.

@@ -1,9 +1,9 @@
-"""Guards for production JAR DAG Spark submission and Atlas #792/#880 confirmation.
+"""Guards for production JAR DAG Spark submission and Atlas REST confirmation.
 
 Standalone cluster-mode drivers do NOT inherit spark-connect's catalog defaults, so every JAR
-submission must carry its own lakehouse configuration. Atlas #880 provides the provider-compatible
-#792 path: construct ``SparkSubmitHook`` without an application, then submit, extract the driver
-ID from the submission log, and confirm through the master's :6066 REST API with Atlas's helper.
+submission must carry its own lakehouse configuration. Atlas keeps ``SparkSubmitOperator`` in
+charge of normal execution and OpenLineage injection while an operator-owned hook adapter confirms
+the completed driver through the master's :6066 REST API.
 """
 import ast
 from pathlib import Path
@@ -84,38 +84,31 @@ def _imports_name(module: ast.Module, module_name: str, name: str) -> bool:
     )
 
 
-def _is_taskflow_decorator(decorator: ast.expr) -> bool:
-    target = decorator.func if isinstance(decorator, ast.Call) else decorator
-    return isinstance(target, ast.Name) and target.id == "task"
-
-
-def _taskflow_function(module: ast.Module) -> ast.FunctionDef:
-    tasks = [
-        node for node in ast.walk(module)
-        if isinstance(node, ast.FunctionDef)
-        and any(_is_taskflow_decorator(decorator) for decorator in node.decorator_list)
+def _class_definition(module: ast.Module, name: str) -> ast.ClassDef:
+    classes = [
+        node for node in module.body if isinstance(node, ast.ClassDef) and node.name == name
     ]
-    assert len(tasks) == 1, "production JAR DAG must define exactly one TaskFlow task"
-    return tasks[0]
+    assert len(classes) == 1, f"must define exactly one {name}"
+    return classes[0]
 
 
-def _assignment_to(node: ast.stmt, name: str) -> ast.Assign | None:
-    if isinstance(node, ast.Assign) and any(
-        isinstance(target, ast.Name) and target.id == name for target in node.targets
-    ):
-        return node
-    return None
+def _method_definition(class_node: ast.ClassDef, name: str) -> ast.FunctionDef:
+    methods = [
+        node for node in class_node.body if isinstance(node, ast.FunctionDef) and node.name == name
+    ]
+    assert len(methods) == 1, f"{class_node.name} must define exactly one {name} method"
+    return methods[0]
 
 
-def _imports_or_calls_operator(module: ast.Module) -> bool:
-    for node in ast.walk(module):
-        if isinstance(node, ast.ImportFrom) and any(
-            alias.name == "SparkSubmitOperator" for alias in node.names
-        ):
-            return True
-        if isinstance(node, ast.Call) and _called_name(node) == "SparkSubmitOperator":
-            return True
-    return False
+def _super_get_hook_call(node: ast.expr) -> bool:
+    return (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "_get_hook"
+        and isinstance(node.func.value, ast.Call)
+        and isinstance(node.func.value.func, ast.Name)
+        and node.func.value.func.id == "super"
+    )
 
 
 def test_jar_submitting_dags_carry_lakehouse_catalog_conf():
@@ -129,7 +122,7 @@ def test_jar_submitting_dags_carry_lakehouse_catalog_conf():
     assert not offenders, f"DAGs submit the JAR without lakehouse catalog conf: {offenders}"
 
 
-def test_cluster_jar_dags_use_atlas_792_hook_and_rest_confirmation():
+def test_cluster_jar_dags_use_operator_owned_rest_confirmation():
     required_catalog_config = (
         "spark.sql.extensions",
         "spark.sql.catalog.lakehouse",
@@ -164,38 +157,83 @@ def test_cluster_jar_dags_use_atlas_792_hook_and_rest_confirmation():
         "spark.eventLog.enabled",
         "spark.eventLog.dir",
     )
+    expected_apps = {
+        "nyc-taxi-etl": {
+            "task_id": "submit_nyc_taxi_etl",
+            "application": "s3a://jars/nyc-taxi-etl/0.1.0/app.jar",
+            "java_class": "com.thekaveh.dataeng.nyctaxi.NycTaxiEtl",
+            "application_args": [
+                "s3a://landing/nyc_taxi/",
+                "lakehouse.bronze.nyc_taxi_trips",
+            ],
+        },
+        "nyc-taxi-medallion": {
+            "task_id": "submit_nyc_taxi_medallion",
+            "application": "s3a://jars/nyc-taxi-medallion/0.1.0/app.jar",
+            "java_class": "com.thekaveh.dataeng.medallion.NycTaxiMedallion",
+            "application_args": ["lakehouse.bronze.nyc_taxi_trips"],
+        },
+    }
     for path in sorted((ROOT / "spark-apps").rglob("dag.py")):
         module = ast.parse(path.read_text(), filename=str(path))
-        assert not _imports_or_calls_operator(module), (
-            f"{path} must not import or instantiate SparkSubmitOperator"
-        )
+        expected = expected_apps[path.parent.name]
         assert _imports_name(
+            module,
+            "airflow.providers.apache.spark.operators.spark_submit",
+            "SparkSubmitOperator",
+        ), f"{path} must import SparkSubmitOperator from its provider module"
+        assert _imports_name(module, "atlas_spark_utils", "RestConfirmingSparkHook"), (
+            f"{path} must import Atlas's operator-compatible REST-confirming hook adapter"
+        )
+        assert not _imports_name(
             module, "airflow.providers.apache.spark.hooks.spark_submit", "SparkSubmitHook"
-        ), f"{path} must import SparkSubmitHook from its provider module"
+        ), f"{path} must not restore direct-hook ownership"
+        assert not _imports_name(module, "airflow.decorators", "task"), (
+            f"{path} must not restore TaskFlow submission ownership"
+        )
 
-        task_function = _taskflow_function(module)
-        task_body = task_function.body
-        hook_assignments = [
-            (index, assignment)
-            for index, statement in enumerate(task_body)
-            if (assignment := _assignment_to(statement, "hook")) is not None
-            and isinstance(assignment.value, ast.Call)
-            and _called_name(assignment.value) == "SparkSubmitHook"
+        operator_class = _class_definition(module, "AtlasSparkSubmitOperator")
+        assert len(operator_class.bases) == 1
+        assert isinstance(operator_class.bases[0], ast.Name)
+        assert operator_class.bases[0].id == "SparkSubmitOperator"
+        get_hook = _method_definition(operator_class, "_get_hook")
+        returns = [node for node in ast.walk(get_hook) if isinstance(node, ast.Return)]
+        assert len(returns) == 1
+        adapter_call = returns[0].value
+        assert isinstance(adapter_call, ast.Call)
+        assert _called_name(adapter_call) == "RestConfirmingSparkHook"
+        assert len(adapter_call.args) == 1 and _super_get_hook_call(adapter_call.args[0]), (
+            f"{path} must wrap super()._get_hook() with RestConfirmingSparkHook"
+        )
+        rest_host = _keyword(adapter_call, "rest_host")
+        assert (
+            isinstance(rest_host, ast.Attribute)
+            and isinstance(rest_host.value, ast.Name)
+            and rest_host.value.id == "self"
+            and rest_host.attr == "rest_host"
+        ), f"{path} must pass the operator's mandatory REST host to the adapter"
+
+        operator_calls = [
+            node
+            for node in ast.walk(module)
+            if isinstance(node, ast.Call) and _called_name(node) == "AtlasSparkSubmitOperator"
         ]
-        assert len(hook_assignments) == 1, (
-            f"{path} must assign exactly one SparkSubmitHook constructor to hook"
+        assert len(operator_calls) == 1, (
+            f"{path} must instantiate exactly one AtlasSparkSubmitOperator"
         )
-        hook_index, hook_assignment = hook_assignments[0]
-        hook_call = hook_assignment.value
-        assert isinstance(hook_call, ast.Call)
-        assert _string_literal(_keyword(hook_call, "conn_id")) == "spark_default"
-        assert _string_literal(_keyword(hook_call, "deploy_mode")) == "cluster"
-        assert _keyword(hook_call, "application") is None, (
-            f"{path} must pass the application to Atlas's helper, not SparkSubmitHook"
-        )
-        conf = _keyword(hook_call, "conf")
+        operator_call = operator_calls[0]
+        assert _string_literal(_keyword(operator_call, "task_id")) == expected["task_id"]
+        assert _string_literal(_keyword(operator_call, "conn_id")) == "spark_default"
+        assert _string_literal(_keyword(operator_call, "application")) == expected["application"]
+        assert _string_literal(_keyword(operator_call, "java_class")) == expected["java_class"]
+        assert _string_literal(_keyword(operator_call, "deploy_mode")) == "cluster"
+        assert ast.literal_eval(_keyword(operator_call, "application_args")) == expected[
+            "application_args"
+        ]
+        assert _string_literal(_keyword(operator_call, "rest_host")) == "spark-master"
+        conf = _keyword(operator_call, "conf")
         assert isinstance(conf, ast.Name) and conf.id == "spark_conf", (
-            f"{path} must pass its spark_conf to SparkSubmitHook"
+            f"{path} must pass its spark_conf to AtlasSparkSubmitOperator"
         )
 
         spark_conf = _literal_dict_assignment(module, "spark_conf")
@@ -218,35 +256,15 @@ def test_cluster_jar_dags_use_atlas_792_hook_and_rest_confirmation():
         assert _string_literal(spark_conf_values["spark.eventLog.enabled"]) == "true"
         assert _string_literal(spark_conf_values["spark.eventLog.dir"]) == "s3a://spark-history/"
 
-        assert _imports_name(module, "atlas_spark_utils", "submit_and_confirm_via_rest"), (
-            f"{path} must import Atlas's provider-compatible submission helper"
-        )
-        submissions = [
-            statement.value
-            for statement in task_body[hook_index + 1:]
-            if isinstance(statement, ast.Expr)
-            and isinstance(statement.value, ast.Call)
-            and _called_name(statement.value) == "submit_and_confirm_via_rest"
-            and statement.value.args
-            and isinstance(statement.value.args[0], ast.Name)
-            and statement.value.args[0].id == "hook"
-            and _string_literal(_keyword(statement.value, "application")) is not None
-            and _string_literal(_keyword(statement.value, "rest_host")) == "spark-master"
-        ]
-        assert len(submissions) == 1, (
-            f"{path} must use Atlas's canonical Spark submit-and-confirm helper"
-        )
-
-
-def test_parent_dags_can_import_atlas_880_helper_from_the_shared_dags_root():
+def test_parent_dags_can_import_atlas_rest_adapter_from_the_shared_dags_root():
     """The consumer overlay nests parent DAGs below Atlas's `/opt/airflow/dags` mount.
 
-    Atlas #883 supplies ``atlas_spark_utils.py`` at that mount root. Keeping the
-    consumer DAGs in a child directory therefore preserves the canonical direct
-    import documented by Atlas, without copying an upstream helper into the parent.
+    Atlas supplies ``atlas_spark_utils.py`` at that mount root. Keeping the consumer
+    DAGs in a child directory therefore preserves the canonical import documented by
+    Atlas, without copying an upstream helper into the parent.
     """
     overlay = (ROOT / "compose" / "data-eng-lab.yml").read_text()
     assert "/opt/airflow/dags/data_eng_lab_spark_apps:ro" in overlay
     for path in sorted((ROOT / "spark-apps").rglob("dag.py")):
         module = ast.parse(path.read_text(), filename=str(path))
-        assert _imports_name(module, "atlas_spark_utils", "submit_and_confirm_via_rest")
+        assert _imports_name(module, "atlas_spark_utils", "RestConfirmingSparkHook")

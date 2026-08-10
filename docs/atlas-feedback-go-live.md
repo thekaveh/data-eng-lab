@@ -34,6 +34,13 @@ standalone Spark REST record reached `FINISHED` with `success=true`, resolving t
 acceptance gate for this pin. The Atlas consumer modernization had already completed Gitflow
 promotion through PRs #66, #67, and #68.
 
+Current contract update (2026-08-10, atlas `c6cf73d7168db1a7840fc45c9ed3e385071996d8`):
+the production DAGs now preserve `SparkSubmitOperator` ownership. Their
+`AtlasSparkSubmitOperator` subclass wraps the provider hook with Atlas's
+`RestConfirmingSparkHook`, retaining the same `spark_default` cluster submission and
+mandatory `FINISHED` plus `success=true` REST confirmation. The dated direct-hook
+descriptions above and below remain explicitly historical incident evidence.
+
 ## 2. Key Observations
 
 1. **MinIO stability** — MinIO handled the full dataset load (all 5 datasets at medium scale) without issues. Disk usage should be monitored as scenarios are re-run.
@@ -41,7 +48,7 @@ promotion through PRs #66, #67, and #68.
 3. **Spark Connect** — The shared PySpark session in JupyterHub is stable across notebook executions. Each notebook manages its own session lifecycle.
 4. **Trino performance** — Trino performed well on the dataset sizes used. TPC-H at larger scales may need tuning.
 5. **Streaming reliability** — Redpanda handled streaming workloads without issues. The `foreachBatch` CDC pattern produced correct results.
-6. **Airflow orchestration** — Airflow schedules Spark jobs through Atlas #880's provider-compatible `SparkSubmitHook` plus log-derived driver-ID REST confirmation. The 2026-07-31 representative task completed successfully with terminal Spark confirmation.
+6. **Airflow orchestration** — Airflow schedules Spark jobs through an operator-owned `SparkSubmitOperator` subclass whose provider hook is wrapped by Atlas's `RestConfirmingSparkHook`. The 2026-07-31 representative task completed successfully with terminal Spark confirmation under the then-current direct-hook implementation; the current contract retains mandatory terminal REST confirmation.
 7. **Jenkins CI** — The JAR build and publish pipeline works end-to-end.
 
 ## 3. Recommendations

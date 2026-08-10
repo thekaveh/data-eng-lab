@@ -101,18 +101,33 @@ def messages(findings):
 def test_atlas_acceptance_record_is_consistent(repo_root):
     required = {
         "docs/atlas-expectations.md": [
+            "2026-08-10",
+            "c6cf73d7168db1a7840fc45c9ed3e385071996d8",
+            "SparkSubmitOperator",
+            "RestConfirmingSparkHook",
             "2026-07-31",
-            "TaskFlow",
             "SparkSubmitHook",
             "succeeded",
             "#66",
             "#67",
             "#68",
         ],
-        "docs/atlas-enablement.md": ["2026-07-31", "SparkSubmitOperator", "succeeded"],
+        "docs/atlas-enablement.md": [
+            "2026-08-10",
+            "c6cf73d7168db1a7840fc45c9ed3e385071996d8",
+            "SparkSubmitOperator",
+            "RestConfirmingSparkHook",
+            "2026-07-31",
+            "succeeded",
+        ],
         "docs/atlas-feedback-go-live.md": ["2026-07-31", "resolved", "FINISHED"],
         "docs/go-live-results.md": ["8,991,502", "passenger_count", "double", "success=true"],
-        "docs/CHANGELOG.md": ["985918ce8c805081947d53b1c48bb80610237a5b", "2026-07-31"],
+        "docs/CHANGELOG.md": [
+            "c6cf73d7168db1a7840fc45c9ed3e385071996d8",
+            "RestConfirmingSparkHook",
+            "985918ce8c805081947d53b1c48bb80610237a5b",
+            "2026-07-31",
+        ],
     }
     for relative, phrases in required.items():
         text = (repo_root / relative).read_text(encoding="utf-8")
