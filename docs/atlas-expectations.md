@@ -5,7 +5,7 @@
 **Purpose:** a single, authoritative statement of everything `data-eng-lab` expects from Atlas — what is already **delivered** (so you don't undo it), and the **Iceberg/Spark capabilities** the scenario catalog relies on. This supersedes the ad-hoc `atlas-enablement.md` ledger as the hand-off reference; that file remains the terse A1–A9 origin status table.
 
 `data-eng-lab` consumes Atlas as a **pinned submodule** at `infra/` (currently
-atlas `985918ce8c805081947d53b1c48bb80610237a5b`) and **never edits it** —
+atlas `c6cf73d7168db1a7840fc45c9ed3e385071996d8`) and **never edits it** —
 enhancements come to you as issues/PRs. Historic verification references below
 retain their original SHAs, including the prior `881df596` live-gate baseline;
 Atlas's consumer-doc clarifications from **#281**
@@ -28,13 +28,18 @@ Atlas's consumer-doc clarifications from **#281**
 | **A9** | **Redpanda (Kafka API) + Spark Kafka connector** | ✅ **delivered** | — |
 
 **Key takeaway:** A1–A9 are available, and the focused non-Airflow paths are
-validated (including Zeppelin, Trino, and Kafka streaming). The current pin
+validated (including Zeppelin, Trino, and Kafka streaming). As of 2026-08-10,
+the current pin
 includes [#850](https://github.com/thekaveh/atlas/issues/850)'s corrected shared
 `AIRFLOW__API_AUTH__JWT_SECRET` mapping for Airflow 3.3's `[api_auth] jwt_secret`.
-On 2026-07-31, the representative Airflow feature-artifact TaskFlow task, which
+The production DAGs use an `AtlasSparkSubmitOperator` subclass of
+`SparkSubmitOperator`; its `_get_hook()` wraps the provider hook with Atlas's
+`RestConfirmingSparkHook`, so provider execution and OpenLineage injection remain
+operator-owned while REST confirmation stays mandatory. Historically, on
+2026-07-31, the representative Airflow feature-artifact TaskFlow task, which
 invokes `SparkSubmitHook`, succeeded on its first and only attempt. Spark
 standalone REST reached `FINISHED` with `success=true`, closing the acceptance
-gate for this pin. Gitflow promotion had already completed through PRs #66,
+gate for that pin. Gitflow promotion had already completed through PRs #66,
 #67, and #68. The earlier `af7713ee` failed-gate evidence is retained below, and
 #791's in-network Execution API DNS configuration remains validated. For any
 future pin, rerun the gates in [Atlas Pin-Bump Runbook](atlas-pin-bump-runbook.md)
@@ -177,10 +182,10 @@ When all A1–A9 are delivered, we flip `--trino-source`/`--redpanda-source` on 
 
 Of the four Atlas-side issues surfaced during go-live (atlas#308–#311): #309, #310, and #311
 are fixed upstream and the corresponding lab workarounds were removed. The remaining standalone
-Spark status-poll limitation is resolved in the current pin by Atlas #880's correction to the #792
-consumer pattern: construct `SparkSubmitHook` without an application, then use
-`submit_and_confirm_via_rest()` to submit through `spark_default` on `:7077` and confirm the
-driver ID extracted from the spark-submit log through `spark-master:6066`. The helper raises
+Spark status-poll limitation is resolved in the current pin by Atlas #880's corrected #792
+adapter. Each production `SparkSubmitOperator` wraps its provider hook with
+`RestConfirmingSparkHook`; submission travels through `spark_default` on `:7077`, and the
+driver ID extracted from the spark-submit log is confirmed through `spark-master:6066`. The adapter raises
 unless the driver is `FINISHED` with `success: true`; it is not a false-success workaround.
 
 ---

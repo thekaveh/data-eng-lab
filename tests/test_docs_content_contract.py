@@ -493,15 +493,10 @@ def _literal(node: ast.expr | None):
 def _dag_contract(app: str) -> dict[str, object]:
     path = ROOT / "spark-apps" / app / "dag.py"
     module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    hook = next(
+    operator = next(
         node
         for node in ast.walk(module)
-        if isinstance(node, ast.Call) and _called_name(node) == "SparkSubmitHook"
-    )
-    submit = next(
-        node
-        for node in ast.walk(module)
-        if isinstance(node, ast.Call) and _called_name(node) == "submit_and_confirm_via_rest"
+        if isinstance(node, ast.Call) and _called_name(node) == "AtlasSparkSubmitOperator"
     )
     spark_conf = next(
         node.value
@@ -516,10 +511,10 @@ def _dag_contract(app: str) -> dict[str, object]:
         if isinstance(key, ast.Constant) and isinstance(value, ast.Constant)
     }
     return {
-        "application": _literal(_keyword(submit, "application")),
-        "java_class": _literal(_keyword(hook, "java_class")),
-        "deploy_mode": _literal(_keyword(hook, "deploy_mode")),
-        "application_args": _literal(_keyword(hook, "application_args")),
+        "application": _literal(_keyword(operator, "application")),
+        "java_class": _literal(_keyword(operator, "java_class")),
+        "deploy_mode": _literal(_keyword(operator, "deploy_mode")),
+        "application_args": _literal(_keyword(operator, "application_args")),
         "extensions": conf["spark.sql.extensions"],
     }
 
@@ -564,6 +559,12 @@ def test_spark_app_docs_match_build_publish_and_dag_contracts(app: str):
         assert "`dag.py`" in text
         assert f"`{dag['extensions']}`" in text
         assert "Spark standalone cluster mode" in text
+        assert "`AtlasSparkSubmitOperator`" in text
+        assert "`SparkSubmitOperator`" in text
+        assert "`RestConfirmingSparkHook`" in text
+        assert "`driverState=FINISHED` plus `success=true`" in text
+        assert "contains one TaskFlow task" not in text
+        assert "constructs `SparkSubmitHook`" not in text
         assert "src/main/scala/dag.py" not in text
         assert "YARN/K8s" not in text
 
@@ -620,6 +621,9 @@ def test_spark_app_overview_matches_publish_and_runtime_ownership_contract():
     text = (ROOT / "docs/spark-apps/index.md").read_text(encoding="utf-8")
     assert "s3a://jars/<app>/0.1.0/app.jar" in text
     assert "Atlas Spark image supplies the Spark, S3A, and Iceberg runtime" in text
+    assert "operator-owned `SparkSubmitOperator` subclass" in text
+    assert "`RestConfirmingSparkHook`" in text
+    assert "Airflow TaskFlow DAG" not in text
     assert "<app>.jar" not in text
     assert "Iceberg bindings bundled" not in text
 

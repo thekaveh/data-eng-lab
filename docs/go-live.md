@@ -309,7 +309,7 @@ Run the end-to-end lakehouse pipeline via Airflow.
 1. Navigate to Airflow UI: `http://localhost:${AIRFLOW_PORT}` (the host port from `infra/.env`, slot-allocated — not 8080).
 2. Find the `nyc_taxi_etl` DAG (dag_id `nyc_taxi_etl`, auto-discovered from the `spark-apps/` DAG mount).
 3. Manually trigger the DAG (click **Trigger DAG**) or wait for the `@daily` schedule.
-4. The DAG has a **single task**: `submit_nyc_taxi_etl` — a `SparkSubmitHook` task that:
+4. The DAG has a **single task**: `submit_nyc_taxi_etl` — an operator-owned `AtlasSparkSubmitOperator` task that:
     - Submits `s3a://jars/nyc-taxi-etl/0.1.0/app.jar` to the Spark standalone cluster in cluster deploy-mode through `spark_default` (`spark://spark-master:7077`).
     - Passes the full `spark.sql.catalog.lakehouse.*` configuration so the driver finds the Iceberg REST catalog.
     - Confirms the returned driver ID through Atlas's in-network Spark REST endpoint (`spark-master:6066`), requiring `FINISHED` and `success: true`.
@@ -330,16 +330,19 @@ Run the end-to-end lakehouse pipeline via Airflow.
    ```
    Expected output: Row count > 0.
 
-**Accepted baseline (2026-07-31, atlas `985918ce8c805081947d53b1c48bb80610237a5b`):** the reviewed pin includes Atlas
+**Historical accepted baseline (2026-07-31, atlas `985918ce8c805081947d53b1c48bb80610237a5b`):** the reviewed pin included Atlas
 [#850](https://github.com/thekaveh/atlas/issues/850)'s corrected shared
 `AIRFLOW__API_AUTH__JWT_SECRET` mapping and [Atlas #880](https://github.com/thekaveh/atlas/issues/880)'s
-provider-compatible REST-confirmation helper. The DAG constructs the hook without an application
+provider-compatible REST-confirmation helper. At that historical pin, the DAG constructed the hook without an application
 and calls `submit_and_confirm_via_rest()` so it does not run the provider's incompatible post-submit
 `:7077` status poll. The helper captures the standalone driver ID from the spark-submit log before
 checking `:6066`; it still allows genuine submission failures to raise and rejects a failed or
 non-terminal driver. The representative feature-artifact task succeeded on its first and only
 attempt, and Spark reported `FINISHED` with `success=true`. For any later Atlas pin, rerun this
-step and require the same terminal REST evidence before promotion.
+step and require the same terminal REST evidence before promotion. The current
+`c6cf73d7168db1a7840fc45c9ed3e385071996d8` contract instead keeps
+`SparkSubmitOperator.execute()` in charge and wraps `super()._get_hook()` with
+`RestConfirmingSparkHook`; the `:7077` submission and `:6066` terminal criteria are unchanged.
 
 ### 3.7 Trino + streaming validation (A7/A9)
 

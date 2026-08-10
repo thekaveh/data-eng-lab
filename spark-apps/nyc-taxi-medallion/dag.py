@@ -6,9 +6,22 @@ from datetime import timedelta
 
 import pendulum
 from airflow import DAG
-from airflow.decorators import task
-from airflow.providers.apache.spark.hooks.spark_submit import SparkSubmitHook
-from atlas_spark_utils import submit_and_confirm_via_rest
+from airflow.providers.apache.spark.operators.spark_submit import SparkSubmitOperator
+from atlas_spark_utils import RestConfirmingSparkHook
+
+
+class AtlasSparkSubmitOperator(SparkSubmitOperator):
+    """Spark submit operator with standalone-driver REST confirmation."""
+
+    def __init__(self, *, rest_host: str = "spark-master", **kwargs):
+        super().__init__(**kwargs)
+        self.rest_host = rest_host
+
+    def _get_hook(self):
+        return RestConfirmingSparkHook(
+            super()._get_hook(),
+            rest_host=self.rest_host,
+        )
 
 REGION = os.environ.get("MINIO_REGION", "us-east-1")
 MINIO_ENDPOINT = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
@@ -76,23 +89,16 @@ with DAG(
     catchup=False,
     tags=["data-eng-lab", "scenario"],
 ) as dag:
-    @task(task_id="submit_nyc_taxi_medallion")
-    def submit_nyc_taxi_medallion() -> None:
-        """Submit over Spark RPC, then extract and verify the driver ID over REST."""
-        hook = SparkSubmitHook(
-            conn_id="spark_default",
-            java_class="com.thekaveh.dataeng.medallion.NycTaxiMedallion",
-            deploy_mode="cluster",
-            conf=spark_conf,
-            application_args=[
-                "lakehouse.bronze.nyc_taxi_trips",
-            ],
-            verbose=True,
-        )
-        submit_and_confirm_via_rest(
-            hook,
-            application="s3a://jars/nyc-taxi-medallion/0.1.0/app.jar",
-            rest_host="spark-master",
-        )
-
-    submit_nyc_taxi_medallion()
+    AtlasSparkSubmitOperator(
+        task_id="submit_nyc_taxi_medallion",
+        conn_id="spark_default",
+        application="s3a://jars/nyc-taxi-medallion/0.1.0/app.jar",
+        java_class="com.thekaveh.dataeng.medallion.NycTaxiMedallion",
+        deploy_mode="cluster",
+        conf=spark_conf,
+        application_args=[
+            "lakehouse.bronze.nyc_taxi_trips",
+        ],
+        rest_host="spark-master",
+        verbose=True,
+    )
