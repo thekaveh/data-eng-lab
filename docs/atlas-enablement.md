@@ -11,16 +11,19 @@
 > an upstream feature request (and, where practical, a PR made through the submodule),
 > so the capability lands where it belongs: in Atlas, reusable by any project.
 >
-> The current consumer pin is `985918ce8c805081947d53b1c48bb80610237a5b` from
+> The current consumer pin is `c6cf73d7168db1a7840fc45c9ed3e385071996d8` from
 > Atlas `main`. This document retains historical request context; current consumer
 > configuration lives in the parent-owned `atlas.consumer.yml`, not in Atlas source.
 > This pin includes Atlas #850's corrected `AIRFLOW__API_AUTH__JWT_SECRET` mapping
 > for Airflow 3.3's `[api_auth] jwt_secret`; [#850](https://github.com/thekaveh/atlas/issues/850)
 > is closed. The prior `af7713ee` retest remains failure evidence, while this
 > corrected pin includes the #880 provider-compatible Spark wrapper, which extracts the driver
-> ID from the spark-submit log before REST confirmation. The original
-> `SparkSubmitOperator` requirement is now implemented by a TaskFlow task that
-> invokes `SparkSubmitHook`. On 2026-07-31, that representative Airflow
+> ID from the spark-submit log before REST confirmation. As of 2026-08-10, the
+> original `SparkSubmitOperator` requirement is implemented directly: each parent
+> DAG's operator subclass wraps `super()._get_hook()` with Atlas's
+> `RestConfirmingSparkHook`, preserving provider execution and OpenLineage
+> injection. Historically, on 2026-07-31, the prior TaskFlow/SparkSubmitHook
+> representative Airflow
 > feature-artifact task succeeded on its first and only attempt; the standalone
 > Spark REST record was `FINISHED` with `success=true`. This result closes the
 > Airflow acceptance gate for the reviewed pin. The prior failed retest remains

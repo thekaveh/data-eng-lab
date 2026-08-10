@@ -42,14 +42,17 @@ The package step produces `spark-apps/nyc-taxi-medallion/target/nyc-taxi-medalli
 
 ## 5. Run with Airflow
 
-The `nyc_taxi_medallion` DAG contains one TaskFlow task. It constructs `SparkSubmitHook` with these source-backed settings:
+The `nyc_taxi_medallion` DAG contains one `AtlasSparkSubmitOperator` task. This
+`SparkSubmitOperator` subclass preserves the provider's normal execution and
+OpenLineage injection, while `_get_hook()` wraps the provider hook with Atlas's
+`RestConfirmingSparkHook`. The task uses these source-backed settings:
 
 - **application:** `s3a://jars/nyc-taxi-medallion/0.1.0/app.jar`
 - **class:** `com.thekaveh.dataeng.medallion.NycTaxiMedallion`
 - **argument:** `lakehouse.bronze.nyc_taxi_trips`
 - **submission:** Spark standalone cluster mode through `spark://spark-master:7077`
 - **Iceberg extension:** `org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions`
-- **completion:** `submit_and_confirm_via_rest()` captures the standalone driver ID from the submission log and requires a successful terminal result from `spark-master:6066`
+- **completion:** the wrapped hook captures the standalone driver ID from the submission log and requires `driverState=FINISHED` plus `success=true` from `spark-master:6066`
 
 The DAG does not declare cross-DAG orchestration; the Bronze table must exist before it runs. Spark is a `provided` Maven dependency. The Atlas Spark image supplies the Spark, S3A, and Iceberg runtime; the application does not download runtime packages during submission.
 
@@ -59,7 +62,7 @@ The DAG does not declare cross-DAG orchestration; the Bronze table must exist be
 - Jenkins has the MinIO endpoint and Iceberg access credentials used by the publish stage.
 - `lakehouse.bronze.nyc_taxi_trips` exists and includes `trip_date`.
 - `s3a://jars/nyc-taxi-medallion/0.1.0/app.jar` has been published.
-- The consumer overlay mounts `spark-apps/` below `/opt/airflow/dags`, where the DAG can import Atlas's shared `atlas_spark_utils` helper from the DAG root.
+- The consumer overlay mounts `spark-apps/` below `/opt/airflow/dags`, where the DAG can import Atlas's shared `RestConfirmingSparkHook` adapter from the DAG root.
 
 ## 7. Data Flow
 
