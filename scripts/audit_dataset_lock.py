@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Download an HTTP artifact into temporary storage and emit lock metadata."""
+
 from __future__ import annotations
 
 import argparse
@@ -52,10 +53,7 @@ def _validate_url(url: str) -> None:
 
 def _artifact_name(url: str) -> str:
     name = unquote(urlsplit(url).path.rsplit("/", 1)[-1])
-    if (
-        validate_relative_path(name, "url path")
-        or PurePosixPath(name).name != name
-    ):
+    if validate_relative_path(name, "url path") or PurePosixPath(name).name != name:
         raise ValueError("url path must end with a safe artifact name")
     return name
 
@@ -152,9 +150,7 @@ def _validate_directory_member(member: zipfile.ZipInfo) -> str:
     file_type = _unix_file_type(member)
     if file_type not in {0, stat.S_IFDIR}:
         if file_type == stat.S_IFREG:
-            raise ValueError(
-                f"directory/file attribute ambiguity for archive member {member.filename!r}"
-            )
+            raise ValueError(f"directory/file attribute ambiguity for archive member {member.filename!r}")
         raise ValueError(f"archive directory {member.filename!r} has unsafe attributes")
     if not _member_has_directory_attributes(member):
         raise ValueError(f"directory/file attribute ambiguity for archive member {member.filename!r}")
@@ -176,11 +172,7 @@ def _selected_eocd(path: Path) -> tuple[bytes, int]:
         tail = stream.read()
 
     selected = -1
-    if (
-        len(tail) >= _EOCD_SIZE
-        and tail[-_EOCD_SIZE : -_EOCD_SIZE + 4] == _EOCD_SIGNATURE
-        and tail[-2:] == b"\0\0"
-    ):
+    if len(tail) >= _EOCD_SIZE and tail[-_EOCD_SIZE : -_EOCD_SIZE + 4] == _EOCD_SIGNATURE and tail[-2:] == b"\0\0":
         selected = len(tail) - _EOCD_SIZE
     else:
         selected = tail.rfind(_EOCD_SIGNATURE)
@@ -287,9 +279,7 @@ def _stream_validate_central_directory(
                 raise ValueError(f"archive contains more than {MAX_ARCHIVE_MEMBERS} members")
 
     if actual_entries != declared_entries:
-        raise ValueError(
-            f"central directory contains {actual_entries} records but declares {declared_entries}"
-        )
+        raise ValueError(f"central directory contains {actual_entries} records but declares {declared_entries}")
 
 
 def _preflight_zip(path: Path) -> None:
@@ -345,8 +335,7 @@ def _validate_archive_members(members: list[zipfile.ZipInfo]) -> list[zipfile.Zi
             raise ValueError(f"encrypted archive member {member.filename} is not supported")
         if member.compress_type not in _SUPPORTED_ZIP_COMPRESSION:
             raise ValueError(
-                f"archive member {member.filename} uses unsupported compression method "
-                f"{member.compress_type}"
+                f"archive member {member.filename} uses unsupported compression method {member.compress_type}"
             )
         if _member_is_symlink(member):
             raise ValueError(f"archive member {member.filename!r} must not be a symlink")
@@ -375,12 +364,9 @@ def _validate_archive_members(members: list[zipfile.ZipInfo]) -> list[zipfile.Zi
         if total_size > MAX_TOTAL_UNCOMPRESSED_BYTES:
             raise ValueError(f"archive exceeds {MAX_TOTAL_UNCOMPRESSED_BYTES} uncompressed bytes")
         if member.file_size and (
-            member.compress_size == 0
-            or member.file_size > MAX_COMPRESSION_RATIO * member.compress_size
+            member.compress_size == 0 or member.file_size > MAX_COMPRESSION_RATIO * member.compress_size
         ):
-            raise ValueError(
-                f"archive member {member.filename} exceeds compression ratio {MAX_COMPRESSION_RATIO}"
-            )
+            raise ValueError(f"archive member {member.filename} exceeds compression ratio {MAX_COMPRESSION_RATIO}")
 
     if ambiguous_paths := directory_paths & file_paths:
         ambiguous_path = sorted(ambiguous_paths)[0]
@@ -393,10 +379,7 @@ def _validate_archive_members(members: list[zipfile.ZipInfo]) -> list[zipfile.Zi
     )
     if ancestor_conflicts:
         file_path, directory_path = ancestor_conflicts[0]
-        raise ValueError(
-            f"archive file path {file_path!r} is an ancestor of structural directory "
-            f"{directory_path!r}"
-        )
+        raise ValueError(f"archive file path {file_path!r} is an ancestor of structural directory {directory_path!r}")
     return file_members
 
 
@@ -419,20 +402,14 @@ def _archive_outputs(raw_path: Path, temporary_root: Path) -> list[dict[str, obj
                         member_size += len(chunk)
                         total_extracted += len(chunk)
                         if member_size > MAX_MEMBER_BYTES:
-                            raise ValueError(
-                                f"archive member {member.filename} exceeds {MAX_MEMBER_BYTES} bytes"
-                            )
+                            raise ValueError(f"archive member {member.filename} exceeds {MAX_MEMBER_BYTES} bytes")
                         if total_extracted > MAX_TOTAL_UNCOMPRESSED_BYTES:
-                            raise ValueError(
-                                f"archive exceeds {MAX_TOTAL_UNCOMPRESSED_BYTES} uncompressed bytes"
-                            )
+                            raise ValueError(f"archive exceeds {MAX_TOTAL_UNCOMPRESSED_BYTES} uncompressed bytes")
                         if member_size and (
-                            member.compress_size == 0
-                            or member_size > MAX_COMPRESSION_RATIO * member.compress_size
+                            member.compress_size == 0 or member_size > MAX_COMPRESSION_RATIO * member.compress_size
                         ):
                             raise ValueError(
-                                f"archive member {member.filename} exceeds compression ratio "
-                                f"{MAX_COMPRESSION_RATIO}"
+                                f"archive member {member.filename} exceeds compression ratio {MAX_COMPRESSION_RATIO}"
                             )
                         target.write(chunk)
                 size, sha256 = _metadata(extracted_path)
