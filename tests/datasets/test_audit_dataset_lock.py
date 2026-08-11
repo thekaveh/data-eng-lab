@@ -560,16 +560,182 @@ def test_audit_zip_rejects_symlinks():
 
 
 @responses.activate
-def test_audit_zip_rejects_non_file_members():
+def test_audit_zip_accepts_grouplens_structural_directory_and_excludes_it_from_metadata():
+    source = "https://source.invalid/ml-latest-small.zip"
     responses.add(
         responses.GET,
-        "https://source.invalid/data.zip",
-        body=zip_bytes({"directory/": b""}),
+        source,
+        body=zip_bytes(
+            {
+                "ml-latest-small/": b"",
+                "ml-latest-small/README.txt": b"GroupLens README",
+                "ml-latest-small/ratings.csv": b"userId,movieId,rating\n1,1,4.0\n",
+            }
+        ),
         status=200,
     )
 
-    with pytest.raises(ValueError, match="regular file"):
-        audit.audit_http("https://source.invalid/data.zip", archive=True)
+    result = audit.audit_http(source, archive=True)
+
+    assert [output["member_path"] for output in result["outputs"]] == [
+        "ml-latest-small/README.txt",
+        "ml-latest-small/ratings.csv",
+    ]
+    assert [output["object_name"] for output in result["outputs"]] == ["README.txt", "ratings.csv"]
+
+
+@pytest.mark.parametrize(
+    "directory",
+    ["/", "//", "/absolute/", "../escape/", "a/../escape/", "a\\directory/", "double//", "a/./"],
+)
+@responses.activate
+def test_audit_zip_rejects_unsafe_directory_paths(directory: str):
+    source = "https://source.invalid/data.zip"
+    responses.add(
+        responses.GET,
+        source,
+        body=zip_bytes({directory: b"", "data.csv": b"locked"}),
+        status=200,
+    )
+
+    with pytest.raises(ValueError, match="archive directory: must be a safe relative POSIX path"):
+        audit.audit_http(source, archive=True)
+
+
+@responses.activate
+def test_audit_zip_rejects_directory_with_payload():
+    source = "https://source.invalid/data.zip"
+    responses.add(
+        responses.GET,
+        source,
+        body=zip_bytes({"directory/": b"payload", "data.csv": b"locked"}),
+        status=200,
+    )
+
+    with pytest.raises(ValueError, match="archive directory 'directory/' must be empty"):
+        audit.audit_http(source, archive=True)
+
+
+def directory_policy_zip(kind: str) -> bytes:
+    with tempfile.SpooledTemporaryFile() as stream:
+        with zipfile.ZipFile(stream, "w") as archive:
+            if kind == "regular-attributes":
+                member = zipfile.ZipInfo("ambiguous/")
+                member.create_system = 3
+                member.external_attr = (stat.S_IFREG | 0o644) << 16
+            elif kind == "special-attributes":
+                member = zipfile.ZipInfo("special/")
+                member.create_system = 3
+                member.external_attr = (stat.S_IFIFO | 0o600) << 16
+            elif kind == "symlink":
+                member = zipfile.ZipInfo("link/")
+                member.create_system = 3
+                member.external_attr = (stat.S_IFLNK | 0o777) << 16
+            elif kind == "directory-attributes-on-file":
+                member = zipfile.ZipInfo("ambiguous")
+                member.create_system = 3
+                member.external_attr = ((stat.S_IFDIR | 0o755) << 16) | 0x10
+            else:
+                raise AssertionError(f"unknown directory policy kind {kind}")
+            archive.writestr(member, b"")
+            archive.writestr("data.csv", b"locked")
+        stream.seek(0)
+        payload = bytearray(stream.read())
+
+    if kind == "symlink":
+        return bytes(payload)
+    return bytes(payload)
+
+
+@pytest.mark.parametrize(
+    ("kind", "message"),
+    [
+        ("regular-attributes", "directory/file attribute ambiguity for archive member 'ambiguous/'"),
+        ("special-attributes", "archive directory 'special/' has unsafe attributes"),
+        ("symlink", "archive member 'link/' must not be a symlink"),
+        ("directory-attributes-on-file", "directory/file attribute ambiguity for archive member 'ambiguous'"),
+    ],
+)
+@responses.activate
+def test_audit_zip_rejects_unsafe_or_ambiguous_directory_attributes(kind: str, message: str):
+    source = "https://source.invalid/data.zip"
+    responses.add(responses.GET, source, body=directory_policy_zip(kind), status=200)
+
+    with pytest.raises(ValueError, match=message):
+        audit.audit_http(source, archive=True)
+
+
+@responses.activate
+def test_audit_zip_rejects_encrypted_directory():
+    source = "https://source.invalid/data.zip"
+    payload = bytearray(zip_bytes({"secret/": b"", "data.csv": b"locked"}))
+    local_header = payload.index(b"PK\x03\x04")
+    central_header = payload.index(b"PK\x01\x02")
+    local_flags = struct.unpack_from("<H", payload, local_header + 6)[0]
+    central_flags = struct.unpack_from("<H", payload, central_header + 8)[0]
+    struct.pack_into("<H", payload, local_header + 6, local_flags | 1)
+    struct.pack_into("<H", payload, central_header + 8, central_flags | 1)
+    responses.add(responses.GET, source, body=bytes(payload), status=200)
+
+    with pytest.raises(ValueError, match="encrypted archive member secret/ is not supported"):
+        audit.audit_http(source, archive=True)
+
+
+@responses.activate
+def test_audit_zip_rejects_directory_file_namespace_ambiguity():
+    source = "https://source.invalid/data.zip"
+    responses.add(
+        responses.GET,
+        source,
+        body=zip_bytes({"node/": b"", "node": b"locked"}),
+        status=200,
+    )
+
+    with pytest.raises(ValueError, match="archive path 'node' is both a directory and a file"):
+        audit.audit_http(source, archive=True)
+
+
+@responses.activate
+def test_audit_zip_rejects_normalized_directory_file_namespace_ambiguity():
+    source = "https://source.invalid/data.zip"
+    responses.add(
+        responses.GET,
+        source,
+        body=zip_bytes({"a//node/": b"", "a/node": b"locked"}),
+        status=200,
+    )
+
+    with pytest.raises(ValueError, match="archive path 'a/node' is both a directory and a file"):
+        audit.audit_http(source, archive=True)
+
+
+@responses.activate
+def test_audit_zip_ignores_directory_in_flattened_name_collisions():
+    source = "https://source.invalid/data.zip"
+    responses.add(
+        responses.GET,
+        source,
+        body=zip_bytes({"a/data.csv/": b"", "b/data.csv": b"locked"}),
+        status=200,
+    )
+
+    result = audit.audit_http(source, archive=True)
+
+    assert [output["member_path"] for output in result["outputs"]] == ["b/data.csv"]
+
+
+@responses.activate
+def test_audit_zip_rejects_archive_containing_only_directories():
+    source = "https://source.invalid/data.zip"
+    responses.add(
+        responses.GET,
+        source,
+        body=zip_bytes({"root/": b"", "root/nested/": b""}),
+        status=200,
+    )
+
+    with pytest.raises(ValueError, match="archive must contain at least one regular file"):
+        audit.audit_http(source, archive=True)
 
 
 @responses.activate

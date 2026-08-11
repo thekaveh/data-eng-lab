@@ -129,6 +129,36 @@ def _member_is_regular_file(member: zipfile.ZipInfo) -> bool:
     return file_type == 0 or stat.S_ISREG(mode)
 
 
+def _unix_file_type(member: zipfile.ZipInfo) -> int:
+    if member.create_system != 3:
+        return 0
+    return stat.S_IFMT(member.external_attr >> 16)
+
+
+def _member_has_directory_attributes(member: zipfile.ZipInfo) -> bool:
+    return _unix_file_type(member) == stat.S_IFDIR or bool(member.external_attr & 0x10)
+
+
+def _validate_directory_member(member: zipfile.ZipInfo) -> str:
+    directory_path = member.filename[:-1]
+    errors = validate_relative_path(directory_path, "archive directory")
+    if errors:
+        raise ValueError(errors[0])
+    if member.file_size != 0 or member.compress_size != 0:
+        raise ValueError(f"archive directory {member.filename!r} must be empty")
+
+    file_type = _unix_file_type(member)
+    if file_type not in {0, stat.S_IFDIR}:
+        if file_type == stat.S_IFREG:
+            raise ValueError(
+                f"directory/file attribute ambiguity for archive member {member.filename!r}"
+            )
+        raise ValueError(f"archive directory {member.filename!r} has unsafe attributes")
+    if not _member_has_directory_attributes(member):
+        raise ValueError(f"directory/file attribute ambiguity for archive member {member.filename!r}")
+    return directory_path
+
+
 def _bounded_zip_metadata(entries: int, central_directory_size: int) -> None:
     if entries > MAX_ARCHIVE_MEMBERS:
         raise ValueError(f"archive contains more than {MAX_ARCHIVE_MEMBERS} members")
@@ -299,12 +329,15 @@ def _preflight_zip(path: Path) -> None:
     )
 
 
-def _validate_archive_members(members: list[zipfile.ZipInfo]) -> None:
+def _validate_archive_members(members: list[zipfile.ZipInfo]) -> list[zipfile.ZipInfo]:
     if len(members) > MAX_ARCHIVE_MEMBERS:
         raise ValueError(f"archive contains more than {MAX_ARCHIVE_MEMBERS} members")
 
     total_size = 0
     object_names: set[str] = set()
+    directory_paths: set[str] = set()
+    file_paths: set[str] = set()
+    file_members: list[zipfile.ZipInfo] = []
     for member in members:
         if member.flag_bits & ((1 << 0) | (1 << 6)):
             raise ValueError(f"encrypted archive member {member.filename} is not supported")
@@ -315,11 +348,19 @@ def _validate_archive_members(members: list[zipfile.ZipInfo]) -> None:
             )
         if _member_is_symlink(member):
             raise ValueError(f"archive member {member.filename!r} must not be a symlink")
+        if member.is_dir():
+            directory_path = _validate_directory_member(member)
+            directory_paths.add(PurePosixPath(directory_path).as_posix())
+            continue
+        if _member_has_directory_attributes(member):
+            raise ValueError(f"directory/file attribute ambiguity for archive member {member.filename!r}")
         if not _member_is_regular_file(member):
             raise ValueError(f"archive member {member.filename!r} must be a regular file")
         errors = validate_relative_path(member.filename, "archive member")
         if errors:
             raise ValueError(errors[0])
+        file_paths.add(PurePosixPath(member.filename).as_posix())
+        file_members.append(member)
 
         object_name = PurePosixPath(member.filename).name
         if object_name in object_names:
@@ -339,6 +380,11 @@ def _validate_archive_members(members: list[zipfile.ZipInfo]) -> None:
                 f"archive member {member.filename} exceeds compression ratio {MAX_COMPRESSION_RATIO}"
             )
 
+    if ambiguous_paths := directory_paths & file_paths:
+        ambiguous_path = sorted(ambiguous_paths)[0]
+        raise ValueError(f"archive path {ambiguous_path!r} is both a directory and a file")
+    return file_members
+
 
 def _archive_outputs(raw_path: Path, temporary_root: Path) -> list[dict[str, object]]:
     outputs: list[dict[str, object]] = []
@@ -346,12 +392,12 @@ def _archive_outputs(raw_path: Path, temporary_root: Path) -> list[dict[str, obj
     try:
         with zipfile.ZipFile(raw_path) as archive_file:
             members = archive_file.infolist()
-            _validate_archive_members(members)
+            file_members = _validate_archive_members(members)
 
             extracted_root = temporary_root / "members"
             extracted_root.mkdir()
             total_extracted = 0
-            for index, member in enumerate(members):
+            for index, member in enumerate(file_members):
                 extracted_path = extracted_root / str(index)
                 member_size = 0
                 with archive_file.open(member) as source, extracted_path.open("wb") as target:
