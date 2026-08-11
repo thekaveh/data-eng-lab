@@ -68,22 +68,34 @@ def test_load_registry_rejects_version_1_even_when_otherwise_complete(tmp_path: 
 
 def test_real_registry_preserves_all_downloader_facing_scale_selections():
     datasets = reg.load_registry(REAL)
-    expected_url_counts = {
-        "nyc_taxi": {"tiny": 1, "small": 3, "medium": 6},
-        "gh_archive": {"tiny": 1, "small": 3, "medium": 6},
-        "movielens": {"tiny": 1, "small": 1, "medium": 1},
-        "online_retail": {"tiny": 1, "small": 1, "medium": 1},
+    taxi = tuple(
+        f"https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-{month}.parquet"
+        for month in ("01", "02", "03", "04", "05", "06")
+    )
+    gh = tuple(f"https://data.gharchive.org/2023-01-01-{hour}.json.gz" for hour in range(6))
+    expected_urls = {
+        "nyc_taxi": {"tiny": taxi[:1], "small": taxi[:3], "medium": taxi},
+        "gh_archive": {"tiny": gh[:1], "small": gh[:3], "medium": gh},
+        "movielens": {
+            "tiny": ("https://files.grouplens.org/datasets/movielens/ml-latest-small.zip",),
+            "small": ("https://files.grouplens.org/datasets/movielens/ml-latest-small.zip",),
+            "medium": ("https://files.grouplens.org/datasets/movielens/ml-25m.zip",),
+        },
+        "online_retail": {
+            tier: ("https://archive.ics.uci.edu/static/public/502/online+retail+ii.zip",)
+            for tier in ("tiny", "small", "medium")
+        },
     }
-    for dataset_name, scales in expected_url_counts.items():
-        for scale, count in scales.items():
+    for dataset_name, scales in expected_urls.items():
+        for scale, expected in scales.items():
             plan = reg.resolve_scale(datasets[dataset_name], scale)
-            assert len(plan.urls) == count
-            assert len(plan.artifacts) == count
-    assert [reg.resolve_scale(datasets["tpch"], tier).sf for tier in ("tiny", "small", "medium")] == [
-        0.01,
-        1,
-        10,
-    ]
+            assert plan.urls == expected
+            assert tuple(artifact.url for artifact in plan.artifacts) == expected
+    assert tuple((tier, reg.resolve_scale(datasets["tpch"], tier).sf) for tier in ("tiny", "small", "medium")) == (
+        ("tiny", 0.01),
+        ("small", 1),
+        ("medium", 10),
+    )
 
 
 def test_load_v2_resolves_shared_http_artifacts_without_duplication():

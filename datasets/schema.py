@@ -2,27 +2,29 @@
 
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import ipaddress
 import re
 from datetime import date, datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from urllib.parse import urlsplit
 
-try:
-    from datasets.locking import (
+if __package__:
+    from .locking import (
         schema_fingerprint,
         validate_relative_path,
         validate_sha256,
         validate_size,
     )
-except ModuleNotFoundError as exc:
-    if exc.name != "datasets":
-        raise
-    _locking_path = Path(__file__).with_name("locking.py")
-    _locking_spec = importlib.util.spec_from_file_location("_dataset_locking", _locking_path)
+else:
+    _locking_path = Path(__file__).resolve().with_name("locking.py")
+    _locking_module_name = (
+        "_data_eng_lab_dataset_locking_" + hashlib.sha256(str(_locking_path).encode()).hexdigest()[:16]
+    )
+    _locking_spec = importlib.util.spec_from_file_location(_locking_module_name, _locking_path)
     if _locking_spec is None or _locking_spec.loader is None:
-        raise ImportError(f"cannot load dataset locking helpers from {_locking_path}") from exc
+        raise ImportError(f"cannot load dataset locking helpers from {_locking_path}")
     _locking = importlib.util.module_from_spec(_locking_spec)
     _locking_spec.loader.exec_module(_locking)
     schema_fingerprint = _locking.schema_fingerprint
@@ -467,6 +469,13 @@ def _validate_http_dataset(dataset: dict[str, object], path: str) -> list[str]:
             if is_archive:
                 if "member_path" in output:
                     errors += validate_relative_path(output["member_path"], f"{output_path}.member_path")
+                    member_path = output["member_path"]
+                    if isinstance(member_path, str) and isinstance(object_name, str):
+                        member_basename = PurePosixPath(member_path).name
+                        if object_name != member_basename:
+                            errors.append(
+                                f"{output_path}.object_name: must equal archive member basename '{member_basename}'"
+                            )
             else:
                 if "raw_identity" in output:
                     errors += _exact(output["raw_identity"], True, f"{output_path}.raw_identity")
@@ -704,6 +713,7 @@ def validate_registry_v2(doc: object) -> list[str]:
         "provenance",
         "schemas",
     )
+    authoritative_urls: dict[str, str] = {}
     for dataset_id, raw_dataset in datasets.items():
         path = f"datasets.{dataset_id}"
         errors += _identifier(dataset_id, path)
@@ -747,6 +757,20 @@ def validate_registry_v2(doc: object) -> list[str]:
             errors += _validate_schemas(dataset["schemas"], f"{path}.schemas")
         if kind == "http":
             errors += _validate_http_dataset(dataset, path)
+            artifacts = dataset.get("artifacts")
+            if isinstance(artifacts, dict):
+                for artifact_id, artifact in artifacts.items():
+                    if not isinstance(artifact, dict):
+                        continue
+                    url = artifact.get("url")
+                    if not isinstance(url, str):
+                        continue
+                    url_path = f"{path}.artifacts.{artifact_id}.url"
+                    first_path = authoritative_urls.get(url)
+                    if first_path is None:
+                        authoritative_urls[url] = url_path
+                    else:
+                        errors.append(f"{url_path}: duplicate authoritative URL first defined at {first_path}")
         elif kind == "tpch":
             errors += _validate_tpch_dataset(dataset, path)
         else:

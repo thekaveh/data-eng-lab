@@ -173,17 +173,53 @@ def test_v2_fixture_contains_exact_label_derived_locks():
         assert lock["sha256"] == hashlib.sha256(label.encode()).hexdigest()
 
 
-def test_schema_supports_verifier_file_path_import_outside_repo(tmp_path: Path):
+def _run_schema_file_path_probe(tmp_path: Path) -> subprocess.CompletedProcess[str]:
     code = (
-        "import importlib.util\n"
+        "import importlib.util, sys\n"
+        f"sys.path.insert(0, {str(tmp_path)!r})\n"
         f"path = {str(ROOT / 'datasets' / 'schema.py')!r}\n"
         "spec = importlib.util.spec_from_file_location('_dataset_schema', path)\n"
         "module = importlib.util.module_from_spec(spec)\n"
         "spec.loader.exec_module(module)\n"
         "assert callable(module.validate_registry)\n"
     )
+    return subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_schema_supports_verifier_file_path_import_outside_repo(tmp_path: Path):
+    result = _run_schema_file_path_probe(tmp_path)
+    assert result.returncode == 0, result.stderr
+
+
+def test_schema_file_path_import_ignores_shadow_datasets_module(tmp_path: Path):
+    (tmp_path / "datasets.py").write_text("raise AssertionError('shadow datasets.py imported')\n", encoding="utf-8")
+    result = _run_schema_file_path_probe(tmp_path)
+    assert result.returncode == 0, result.stderr
+
+
+def test_schema_file_path_import_ignores_shadow_datasets_package_without_locking(tmp_path: Path):
+    shadow = tmp_path / "datasets"
+    shadow.mkdir()
+    (shadow / "__init__.py").write_text("SHADOW = True\n", encoding="utf-8")
+    result = _run_schema_file_path_probe(tmp_path)
+    assert result.returncode == 0, result.stderr
+
+
+def test_schema_package_import_uses_package_locking_module(tmp_path: Path):
+    code = (
+        "import sys\n"
+        f"sys.path.insert(0, {str(ROOT)!r})\n"
+        "from datasets import schema\n"
+        "assert schema.schema_fingerprint.__module__ == 'datasets.locking'\n"
+    )
     result = subprocess.run(
-        [sys.executable, "-I", "-c", code],
+        [sys.executable, "-c", code],
         cwd=tmp_path,
         capture_output=True,
         text=True,
@@ -868,6 +904,60 @@ def test_v2_allows_same_landing_object_name_in_mutually_exclusive_releases():
         "sha256": "a" * 64,
     }
     archive["scales"]["small"] = {"artifacts": ["other_release"]}
+    assert schema.validate_registry_v2(doc) == []
+
+
+def test_v2_rejects_duplicate_authoritative_url_across_mutually_exclusive_scales():
+    doc = _v2()
+    archive = doc["datasets"]["archive"]
+    archive["artifacts"]["other_release"] = deepcopy(archive["artifacts"]["release"])
+    archive["artifacts"]["other_release"]["version"] = {
+        "kind": "publication-date",
+        "value": "2026-08-11",
+    }
+    archive["artifacts"]["other_release"]["raw"]["name"] = "other-release.zip"
+    archive["scales"]["small"] = {"artifacts": ["other_release"]}
+    errors = schema.validate_registry_v2(doc)
+    assert (
+        "datasets.archive.artifacts.other_release.url: duplicate authoritative URL first defined at "
+        "datasets.archive.artifacts.release.url"
+    ) in errors
+
+
+def test_v2_rejects_duplicate_authoritative_url_across_datasets():
+    doc = _v2()
+    doc["datasets"]["archive"]["artifacts"]["release"]["url"] = doc["datasets"]["direct"]["artifacts"]["sample"]["url"]
+    errors = schema.validate_registry_v2(doc)
+    assert (
+        "datasets.archive.artifacts.release.url: duplicate authoritative URL first defined at "
+        "datasets.direct.artifacts.sample.url"
+    ) in errors
+
+
+def test_v2_allows_one_normalized_artifact_to_be_reused_across_scales():
+    doc = _v2()
+    direct = doc["datasets"]["direct"]
+    direct["scales"].update(
+        small={"artifacts": ["sample"]},
+        medium={"artifacts": ["sample"]},
+    )
+    assert schema.validate_registry_v2(doc) == []
+
+
+def test_v2_archive_output_name_must_equal_member_basename():
+    doc = _v2()
+    output = doc["datasets"]["archive"]["artifacts"]["release"]["outputs"][0]
+    output["member_path"] = "archive/nested/ratings.csv"
+    output["object_name"] = "renamed.csv"
+    assert (
+        "datasets.archive.artifacts.release.outputs[0].object_name: must equal archive member basename 'ratings.csv'"
+    ) in schema.validate_registry_v2(doc)
+
+
+def test_v2_archive_output_accepts_exact_nested_member_basename():
+    doc = _v2()
+    output = doc["datasets"]["archive"]["artifacts"]["release"]["outputs"][0]
+    output["member_path"] = "archive/nested/ratings.csv"
     assert schema.validate_registry_v2(doc) == []
 
 
