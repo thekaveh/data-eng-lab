@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import argparse
 import os
-import tempfile
+import secrets
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -121,29 +121,63 @@ def _prepare_destinations(output_dir: Path, metadata_path: Path) -> None:
     output_dir.mkdir(parents=True, exist_ok=False)
 
 
-def _fsync_directory(path: Path) -> None:
+def _open_directory(path: Path) -> int:
     flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    descriptor = os.open(path, flags)
+    flags |= getattr(os, "O_CLOEXEC", 0)
+    return os.open(path, flags)
+
+
+def _verify_directory_identity(path: Path, directory_fd: int) -> None:
+    stable = os.fstat(directory_fd)
     try:
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
+        current = path.stat()
+    except OSError as error:
+        raise ValueError("metadata parent changed during publication") from error
+    if (current.st_dev, current.st_ino) != (stable.st_dev, stable.st_ino):
+        raise ValueError("metadata parent changed during publication")
+
+
+def _open_unique_temp(directory_fd: int, destination_name: str) -> tuple[int, str]:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    for _ in range(100):
+        temp_name = f".{destination_name}.{secrets.token_hex(8)}.tmp"
+        try:
+            return os.open(temp_name, flags, 0o600, dir_fd=directory_fd), temp_name
+        except FileExistsError:
+            continue
+    raise RuntimeError("could not allocate unique metadata temporary file")
 
 
 def _atomic_write_metadata(path: Path, document: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     serialized = yaml.safe_dump(document, sort_keys=False, allow_unicode=True)
-    descriptor, raw_temp_path = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    temp_path = Path(raw_temp_path)
+    directory_fd = _open_directory(path.parent)
+    temp_name: str | None = None
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as stream:
+        temp_fd, temp_name = _open_unique_temp(directory_fd, path.name)
+        with os.fdopen(temp_fd, "w", encoding="utf-8", newline="\n") as stream:
             stream.write(serialized)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temp_path, path)
-        _fsync_directory(path.parent)
+        _verify_directory_identity(path.parent, directory_fd)
+        os.link(
+            temp_name,
+            path.name,
+            src_dir_fd=directory_fd,
+            dst_dir_fd=directory_fd,
+            follow_symlinks=False,
+        )
+        os.unlink(temp_name, dir_fd=directory_fd)
+        temp_name = None
+        os.fsync(directory_fd)
     finally:
-        temp_path.unlink(missing_ok=True)
+        if temp_name is not None:
+            try:
+                os.unlink(temp_name, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
+        os.close(directory_fd)
 
 
 def _parser() -> argparse.ArgumentParser:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import stat
 from pathlib import Path
 
 import pytest
@@ -415,13 +416,22 @@ def test_metadata_write_is_atomic_for_fresh_path(tmp_path: Path, monkeypatch: py
     _configure_runtime(monkeypatch, tmp_path)
     metadata = tmp_path / "metadata.yaml"
 
-    def fail_replace(source: Path, destination: Path):
-        assert source.parent == metadata.parent
-        assert destination == metadata
-        raise OSError("simulated replace failure")
+    def fail_link(
+        source: str,
+        destination: str,
+        *,
+        src_dir_fd: int,
+        dst_dir_fd: int,
+        follow_symlinks: bool,
+    ):
+        assert source.startswith(".metadata.yaml.")
+        assert destination == metadata.name
+        assert src_dir_fd == dst_dir_fd
+        assert follow_symlinks is False
+        raise OSError("simulated link failure")
 
-    monkeypatch.setattr(exporter.os, "replace", fail_replace)
-    with pytest.raises(OSError, match="simulated replace failure"):
+    monkeypatch.setattr(exporter.os, "link", fail_link)
+    with pytest.raises(OSError, match="simulated link failure"):
         exporter.main(
             [
                 "--scale",
@@ -436,39 +446,111 @@ def test_metadata_write_is_atomic_for_fresh_path(tmp_path: Path, monkeypatch: py
     assert [path for path in tmp_path.iterdir() if path.name.startswith(".metadata.yaml.")] == []
 
 
-def test_metadata_parent_is_fsynced_after_atomic_replace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize("concurrent_kind", ["file", "dangling-symlink"])
+def test_metadata_publication_never_overwrites_concurrent_destination(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    concurrent_kind: str,
+):
     _configure_runtime(monkeypatch, tmp_path)
     output_dir = tmp_path / "output"
     metadata = tmp_path / "metadata.yaml"
-    events: list[tuple[str, Path]] = []
-    real_replace = exporter.os.replace
+    real_link = exporter.os.link
 
-    def recording_replace(source: Path, destination: Path):
-        real_replace(source, destination)
-        events.append(("replace", destination))
+    def race_link(
+        source: str,
+        destination: str,
+        *,
+        src_dir_fd: int,
+        dst_dir_fd: int,
+        follow_symlinks: bool,
+    ):
+        if concurrent_kind == "file":
+            metadata.write_bytes(b"concurrent evidence")
+        else:
+            metadata.symlink_to(tmp_path / "missing-evidence.yaml")
+        return real_link(
+            source,
+            destination,
+            src_dir_fd=src_dir_fd,
+            dst_dir_fd=dst_dir_fd,
+            follow_symlinks=follow_symlinks,
+        )
 
-    def recording_fsync_directory(path: Path):
-        assert metadata.exists()
-        events.append(("fsync-directory", path))
+    monkeypatch.setattr(exporter.os, "link", race_link)
 
-    monkeypatch.setattr(exporter.os, "replace", recording_replace)
-    monkeypatch.setattr(exporter, "_fsync_directory", recording_fsync_directory)
+    with pytest.raises(FileExistsError):
+        exporter.main(_cli_args(output_dir, metadata))
+
+    if concurrent_kind == "file":
+        assert metadata.read_bytes() == b"concurrent evidence"
+    else:
+        assert metadata.is_symlink()
+        assert metadata.readlink() == tmp_path / "missing-evidence.yaml"
+    assert [path for path in tmp_path.iterdir() if path.name.startswith(".metadata.yaml.")] == []
+
+
+def test_metadata_publication_rejects_parent_alias_swap_and_cleans_owned_temp(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _configure_runtime(monkeypatch, tmp_path)
+    output_dir = tmp_path / "output"
+    parent = tmp_path / "metadata-parent"
+    parent.mkdir()
+    attacker = tmp_path / "attacker"
+    attacker.mkdir()
+    displaced = tmp_path / "displaced-parent"
+    metadata = parent / "metadata.yaml"
+    real_verify = exporter._verify_directory_identity
+
+    def swap_then_verify(path: Path, directory_fd: int):
+        path.rename(displaced)
+        path.symlink_to(attacker, target_is_directory=True)
+        real_verify(path, directory_fd)
+
+    monkeypatch.setattr(exporter, "_verify_directory_identity", swap_then_verify)
+
+    with pytest.raises(ValueError, match="metadata parent changed during publication"):
+        exporter.main(_cli_args(output_dir, metadata))
+
+    assert not (attacker / metadata.name).exists()
+    assert not (displaced / metadata.name).exists()
+    assert list(attacker.iterdir()) == []
+    assert list(displaced.iterdir()) == []
+
+
+def test_metadata_publication_fsyncs_stable_directory_after_link_and_temp_cleanup(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _configure_runtime(monkeypatch, tmp_path)
+    output_dir = tmp_path / "output"
+    metadata = tmp_path / "metadata.yaml"
+    events: list[str] = []
+    real_fsync = exporter.os.fsync
+    real_link = exporter.os.link
+    real_unlink = exporter.os.unlink
+
+    def recording_fsync(descriptor: int):
+        mode = exporter.os.fstat(descriptor).st_mode
+        events.append("fsync-directory" if stat.S_ISDIR(mode) else "fsync-file")
+        real_fsync(descriptor)
+
+    def recording_link(source: str, destination: str, **kwargs):
+        result = real_link(source, destination, **kwargs)
+        events.append("link-destination")
+        return result
+
+    def recording_unlink(path: str, **kwargs):
+        result = real_unlink(path, **kwargs)
+        events.append("unlink-temp")
+        return result
+
+    monkeypatch.setattr(exporter.os, "fsync", recording_fsync)
+    monkeypatch.setattr(exporter.os, "link", recording_link)
+    monkeypatch.setattr(exporter.os, "unlink", recording_unlink)
 
     assert exporter.main(_cli_args(output_dir, metadata)) == 0
-    assert events == [("replace", metadata), ("fsync-directory", metadata.parent)]
 
-
-def test_fsync_directory_uses_portable_readonly_directory_descriptor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    opened: list[tuple[Path, int]] = []
-    synced: list[int] = []
-    closed: list[int] = []
-    monkeypatch.setattr(exporter.os, "open", lambda path, flags: opened.append((path, flags)) or 731)
-    monkeypatch.setattr(exporter.os, "fsync", synced.append)
-    monkeypatch.setattr(exporter.os, "close", closed.append)
-
-    exporter._fsync_directory(tmp_path)
-
-    expected_flags = exporter.os.O_RDONLY | getattr(exporter.os, "O_DIRECTORY", 0)
-    assert opened == [(tmp_path, expected_flags)]
-    assert synced == [731]
-    assert closed == [731]
+    assert events == ["fsync-file", "link-destination", "unlink-temp", "fsync-directory"]
+    assert metadata.exists()
+    assert [path for path in tmp_path.iterdir() if path.name.startswith(".metadata.yaml.")] == []
