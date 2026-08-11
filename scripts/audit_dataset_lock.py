@@ -37,9 +37,11 @@ _SUPPORTED_ZIP_COMPRESSION = frozenset({zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED
 _EOCD_SIGNATURE = b"PK\x05\x06"
 _ZIP64_EOCD_SIGNATURE = b"PK\x06\x06"
 _ZIP64_LOCATOR_SIGNATURE = b"PK\x06\x07"
+_CENTRAL_DIRECTORY_SIGNATURE = b"PK\x01\x02"
 _EOCD_SIZE = 22
 _ZIP64_EOCD_SIZE = 56
 _ZIP64_LOCATOR_SIZE = 20
+_CENTRAL_DIRECTORY_HEADER_SIZE = 46
 
 
 def _validate_url(url: str) -> None:
@@ -134,25 +136,66 @@ def _bounded_zip_metadata(entries: int, central_directory_size: int) -> None:
         raise ValueError(f"archive central directory exceeds {MAX_CENTRAL_DIRECTORY_BYTES} bytes")
 
 
-def _zip64_metadata(path: Path, eocd_offset: int) -> tuple[int, int]:
+def _selected_eocd(path: Path) -> tuple[bytes, int]:
+    file_size = path.stat().st_size
+    tail_start = max(file_size - (1 << 16) - _EOCD_SIZE, 0)
+    with path.open("rb") as stream:
+        stream.seek(tail_start)
+        tail = stream.read()
+
+    selected = -1
+    if (
+        len(tail) >= _EOCD_SIZE
+        and tail[-_EOCD_SIZE : -_EOCD_SIZE + 4] == _EOCD_SIGNATURE
+        and tail[-2:] == b"\0\0"
+    ):
+        selected = len(tail) - _EOCD_SIZE
+    else:
+        selected = tail.rfind(_EOCD_SIGNATURE)
+    if selected < 0 or len(tail) - selected < _EOCD_SIZE:
+        raise ValueError("artifact is not a valid ZIP archive")
+
+    record = tail[selected : selected + _EOCD_SIZE]
+    comment_size = struct.unpack_from("<H", record, 20)[0]
+    if selected + _EOCD_SIZE + comment_size != len(tail):
+        raise ValueError("artifact has an inconsistent end-of-central-directory record")
+
+    search_end = selected
+    while search_end:
+        candidate = tail.rfind(_EOCD_SIGNATURE, 0, search_end)
+        if candidate < 0:
+            break
+        candidate_record = tail[candidate : candidate + _EOCD_SIZE]
+        if len(candidate_record) == _EOCD_SIZE:
+            candidate_comment_size = struct.unpack_from("<H", candidate_record, 20)[0]
+            if candidate + _EOCD_SIZE + candidate_comment_size == len(tail):
+                raise ValueError("artifact has an ambiguous end-of-central-directory record")
+        search_end = candidate
+    return record, tail_start + selected
+
+
+def _zip64_metadata(path: Path, eocd_offset: int) -> tuple[int, int, int] | None:
     locator_offset = eocd_offset - _ZIP64_LOCATOR_SIZE
     if locator_offset < 0:
-        raise ValueError("artifact is not a valid ZIP archive")
+        return None
     with path.open("rb") as stream:
         stream.seek(locator_offset)
         locator = stream.read(_ZIP64_LOCATOR_SIZE)
         if len(locator) != _ZIP64_LOCATOR_SIZE:
-            raise ValueError("artifact is not a valid ZIP archive")
+            return None
         signature, disk, zip64_offset, disk_count = struct.unpack("<4sLQL", locator)
-        if signature != _ZIP64_LOCATOR_SIGNATURE or disk != 0 or disk_count != 1:
+        if signature != _ZIP64_LOCATOR_SIGNATURE:
+            return None
+        if disk != 0 or disk_count != 1:
             raise ValueError("multi-disk ZIP archives are not supported")
-        if zip64_offset + _ZIP64_EOCD_SIZE > locator_offset:
-            raise ValueError("artifact is not a valid ZIP archive")
-        stream.seek(zip64_offset)
+        record_offset = locator_offset - _ZIP64_EOCD_SIZE
+        if record_offset < 0:
+            raise ValueError("ZIP64 record layout is inconsistent")
+        stream.seek(record_offset)
         record = stream.read(_ZIP64_EOCD_SIZE)
 
     if len(record) != _ZIP64_EOCD_SIZE:
-        raise ValueError("artifact is not a valid ZIP archive")
+        raise ValueError("ZIP64 record layout is inconsistent")
     (
         signature,
         record_size,
@@ -163,41 +206,62 @@ def _zip64_metadata(path: Path, eocd_offset: int) -> tuple[int, int]:
         entries_on_disk,
         entries,
         central_directory_size,
-        _central_directory_offset,
+        central_directory_offset,
     ) = struct.unpack("<4sQ2H2L4Q", record)
-    if signature != _ZIP64_EOCD_SIGNATURE or record_size < 44:
-        raise ValueError("artifact is not a valid ZIP archive")
-    if zip64_offset + 12 + record_size > locator_offset:
-        raise ValueError("artifact is not a valid ZIP archive")
+    if signature != _ZIP64_EOCD_SIGNATURE or record_size != 44:
+        raise ValueError("ZIP64 record layout is inconsistent")
     if disk != 0 or central_directory_disk != 0 or entries_on_disk != entries:
         raise ValueError("multi-disk ZIP archives are not supported")
-    return entries, central_directory_size
+    _bounded_zip_metadata(entries, central_directory_size)
+    if zip64_offset != central_directory_offset + central_directory_size:
+        raise ValueError("ZIP64 record layout is inconsistent")
+    return entries, central_directory_size, record_offset
+
+
+def _stream_validate_central_directory(
+    path: Path,
+    start: int,
+    size: int,
+    declared_entries: int,
+) -> None:
+    if start < 0:
+        raise ValueError("artifact has an invalid central-directory offset")
+    remaining = size
+    actual_entries = 0
+    with path.open("rb") as stream:
+        stream.seek(start)
+        while remaining:
+            if remaining < _CENTRAL_DIRECTORY_HEADER_SIZE:
+                raise ValueError("central directory has a truncated fixed header")
+            header = stream.read(_CENTRAL_DIRECTORY_HEADER_SIZE)
+            if len(header) != _CENTRAL_DIRECTORY_HEADER_SIZE:
+                raise ValueError("central directory has a truncated fixed header")
+            if header[:4] != _CENTRAL_DIRECTORY_SIGNATURE:
+                raise ValueError("central directory has an invalid file-header signature")
+
+            filename_size, extra_size, comment_size = struct.unpack_from("<3H", header, 28)
+            variable_size = filename_size + extra_size + comment_size
+            record_size = _CENTRAL_DIRECTORY_HEADER_SIZE + variable_size
+            if record_size > remaining:
+                raise ValueError("central directory record exceeds declared region")
+            while variable_size:
+                chunk = stream.read(min(variable_size, 1 << 20))
+                if not chunk:
+                    raise ValueError("central directory record exceeds declared region")
+                variable_size -= len(chunk)
+            remaining -= record_size
+            actual_entries += 1
+            if actual_entries > MAX_ARCHIVE_MEMBERS:
+                raise ValueError(f"archive contains more than {MAX_ARCHIVE_MEMBERS} members")
+
+    if actual_entries != declared_entries:
+        raise ValueError(
+            f"central directory contains {actual_entries} records but declares {declared_entries}"
+        )
 
 
 def _preflight_zip(path: Path) -> None:
-    file_size = path.stat().st_size
-    tail_size = min(file_size, _EOCD_SIZE + 0xFFFF)
-    with path.open("rb") as stream:
-        stream.seek(file_size - tail_size)
-        tail = stream.read(tail_size)
-
-    search_end = len(tail)
-    eocd_index = -1
-    eocd = b""
-    while search_end:
-        candidate = tail.rfind(_EOCD_SIGNATURE, 0, search_end)
-        if candidate < 0:
-            break
-        candidate_record = tail[candidate : candidate + _EOCD_SIZE]
-        if len(candidate_record) == _EOCD_SIZE:
-            comment_size = struct.unpack_from("<H", candidate_record, 20)[0]
-            if candidate + _EOCD_SIZE + comment_size == len(tail):
-                eocd_index = candidate
-                eocd = candidate_record
-                break
-        search_end = candidate
-    if eocd_index < 0:
-        raise ValueError("artifact is not a valid ZIP archive")
+    eocd, eocd_offset = _selected_eocd(path)
 
     (
         _signature,
@@ -209,19 +273,30 @@ def _preflight_zip(path: Path) -> None:
         central_directory_offset,
         _comment_size,
     ) = struct.unpack("<4s4H2LH", eocd)
-    if disk != 0 or central_directory_disk != 0 or entries_on_disk != entries:
-        raise ValueError("multi-disk ZIP archives are not supported")
-
-    uses_zip64 = (
+    sentinel_metadata = (
         entries_on_disk == 0xFFFF
         or entries == 0xFFFF
         or central_directory_size == 0xFFFFFFFF
         or central_directory_offset == 0xFFFFFFFF
     )
-    if uses_zip64:
-        eocd_offset = file_size - tail_size + eocd_index
-        entries, central_directory_size = _zip64_metadata(path, eocd_offset)
-    _bounded_zip_metadata(entries, central_directory_size)
+    zip64_metadata = _zip64_metadata(path, eocd_offset)
+    if zip64_metadata is not None:
+        entries, central_directory_size, central_directory_end = zip64_metadata
+    else:
+        if sentinel_metadata:
+            raise ValueError("ZIP64 record layout is inconsistent")
+        if disk != 0 or central_directory_disk != 0 or entries_on_disk != entries:
+            raise ValueError("multi-disk ZIP archives are not supported")
+        _bounded_zip_metadata(entries, central_directory_size)
+        central_directory_end = eocd_offset
+
+    central_directory_start = central_directory_end - central_directory_size
+    _stream_validate_central_directory(
+        path,
+        central_directory_start,
+        central_directory_size,
+        entries,
+    )
 
 
 def _validate_archive_members(members: list[zipfile.ZipInfo]) -> None:

@@ -77,6 +77,107 @@ def bounded_zip_metadata_bytes(*, zip64: bool, entries: int, central_directory_s
     return zip64_eocd + locator + eocd
 
 
+def zip64_record_bytes(*, entries: int, central_directory_size: int, central_directory_offset: int) -> bytes:
+    return struct.pack(
+        "<4sQ2H2L4Q",
+        b"PK\x06\x06",
+        44,
+        45,
+        45,
+        0,
+        0,
+        entries,
+        entries,
+        central_directory_size,
+        central_directory_offset,
+    )
+
+
+def sentinel_eocd_bytes() -> bytes:
+    return struct.pack(
+        "<4s4H2LH",
+        b"PK\x05\x06",
+        0,
+        0,
+        0xFFFF,
+        0xFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0,
+    )
+
+
+def valid_zip64_bytes(members: dict[str, bytes]) -> bytes:
+    payload = bytearray(zip_bytes(members))
+    eocd_offset = payload.rfind(b"PK\x05\x06")
+    eocd = struct.unpack_from("<4s4H2LH", payload, eocd_offset)
+    entries = eocd[4]
+    central_directory_size = eocd[5]
+    central_directory_offset = eocd[6]
+    record = zip64_record_bytes(
+        entries=entries,
+        central_directory_size=central_directory_size,
+        central_directory_offset=central_directory_offset,
+    )
+    locator = struct.pack("<4sLQL", b"PK\x06\x07", 0, eocd_offset, 1)
+    return bytes(payload[:eocd_offset] + record + locator + sentinel_eocd_bytes())
+
+
+def zip_with_false_eocd_in_comment() -> bytes:
+    with tempfile.SpooledTemporaryFile() as stream:
+        with zipfile.ZipFile(stream, "w") as archive:
+            archive.writestr("data.csv", b"locked")
+            archive.comment = b"comment-prefix" + struct.pack(
+                "<4s4H2LH",
+                b"PK\x05\x06",
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+                0,
+            )
+        stream.seek(0)
+        return stream.read()
+
+
+def divergent_zip64_layout_bytes(kind: str) -> bytes:
+    safe_record = zip64_record_bytes(
+        entries=0,
+        central_directory_size=0,
+        central_directory_offset=0,
+    )
+    locator = struct.pack("<4sLQL", b"PK\x06\x07", 0, 0, 1)
+    if kind == "non-adjacent":
+        return safe_record + b"GAP!" + locator + sentinel_eocd_bytes()
+    if kind == "divergent-offset":
+        consumed_record = zip64_record_bytes(
+            entries=1,
+            central_directory_size=1,
+            central_directory_offset=0,
+        )
+        return safe_record + consumed_record + locator + sentinel_eocd_bytes()
+    raise AssertionError(f"unknown ZIP64 layout {kind}")
+
+
+def zip_with_central_directory_violation(kind: str) -> bytes:
+    payload = bytearray(zip_bytes({"data.csv": b"locked"}))
+    eocd_offset = payload.rfind(b"PK\x05\x06")
+    central_header = payload.index(b"PK\x01\x02")
+    if kind == "count-mismatch":
+        struct.pack_into("<H", payload, eocd_offset + 8, 2)
+        struct.pack_into("<H", payload, eocd_offset + 10, 2)
+    elif kind == "truncated-fixed-header":
+        struct.pack_into("<L", payload, eocd_offset + 12, 10)
+    elif kind == "variable-record-overrun":
+        filename_size = struct.unpack_from("<H", payload, central_header + 28)[0]
+        struct.pack_into("<H", payload, central_header + 28, filename_size + 100)
+    else:
+        raise AssertionError(f"unknown central-directory violation {kind}")
+    return bytes(payload)
+
+
 def zip_bytes_with_member_policy_violation(kind: str) -> bytes:
     payload = bytearray(zip_bytes({"data.csv": b"locked"}))
     local_header = payload.index(b"PK\x03\x04")
@@ -556,6 +657,102 @@ def test_audit_zip_preflights_metadata_bounds_before_zipfile_construction(
         nonlocal zipfile_constructed
         zipfile_constructed = True
         raise AssertionError("ZipFile metadata parsing was reached before preflight")
+
+    monkeypatch.setattr(audit.zipfile, "ZipFile", forbidden_zipfile)
+
+    with pytest.raises(ValueError, match=message):
+        audit.audit_http(source, archive=True)
+
+    assert not zipfile_constructed
+
+
+@responses.activate
+def test_audit_zip_accepts_valid_fixed_layout_zip64_archive():
+    source = "https://source.invalid/data.zip"
+    responses.add(
+        responses.GET,
+        source,
+        body=valid_zip64_bytes({"data.csv": b"locked"}),
+        status=200,
+    )
+
+    result = audit.audit_http(source, archive=True)
+
+    assert result["outputs"][0]["object_name"] == "data.csv"
+    assert result["outputs"][0]["size_bytes"] == 6
+
+
+@responses.activate
+def test_audit_zip_rejects_false_eocd_signature_in_comment_before_zipfile(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = "https://source.invalid/data.zip"
+    responses.add(responses.GET, source, body=zip_with_false_eocd_in_comment(), status=200)
+    zipfile_constructed = False
+
+    def forbidden_zipfile(*args: object, **kwargs: object):
+        nonlocal zipfile_constructed
+        zipfile_constructed = True
+        raise AssertionError("ZipFile was constructed for ambiguous EOCD")
+
+    monkeypatch.setattr(audit.zipfile, "ZipFile", forbidden_zipfile)
+
+    with pytest.raises(ValueError, match="ambiguous end-of-central-directory record"):
+        audit.audit_http(source, archive=True)
+
+    assert not zipfile_constructed
+
+
+@pytest.mark.parametrize("kind", ["non-adjacent", "divergent-offset"])
+@responses.activate
+def test_audit_zip_rejects_divergent_zip64_layout_before_zipfile(
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+):
+    source = "https://source.invalid/data.zip"
+    responses.add(responses.GET, source, body=divergent_zip64_layout_bytes(kind), status=200)
+    zipfile_constructed = False
+
+    def forbidden_zipfile(*args: object, **kwargs: object):
+        nonlocal zipfile_constructed
+        zipfile_constructed = True
+        raise AssertionError("ZipFile was constructed for divergent ZIP64 metadata")
+
+    monkeypatch.setattr(audit.zipfile, "ZipFile", forbidden_zipfile)
+
+    with pytest.raises(ValueError, match="ZIP64 record layout is inconsistent"):
+        audit.audit_http(source, archive=True)
+
+    assert not zipfile_constructed
+
+
+@pytest.mark.parametrize(
+    ("kind", "message"),
+    [
+        ("count-mismatch", "central directory contains 1 records but declares 2"),
+        ("truncated-fixed-header", "central directory has a truncated fixed header"),
+        ("variable-record-overrun", "central directory record exceeds declared region"),
+    ],
+)
+@responses.activate
+def test_audit_zip_stream_validates_central_directory_before_zipfile(
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+    message: str,
+):
+    source = "https://source.invalid/data.zip"
+    responses.add(
+        responses.GET,
+        source,
+        body=zip_with_central_directory_violation(kind),
+        status=200,
+    )
+    zipfile_constructed = False
+
+    def forbidden_zipfile(*args: object, **kwargs: object):
+        nonlocal zipfile_constructed
+        zipfile_constructed = True
+        raise AssertionError("ZipFile was constructed before central-directory validation")
 
     monkeypatch.setattr(audit.zipfile, "ZipFile", forbidden_zipfile)
 
