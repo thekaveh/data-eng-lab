@@ -39,7 +39,14 @@ the production DAGs now preserve `SparkSubmitOperator` ownership. Their
 `AtlasSparkSubmitOperator` subclass wraps the provider hook with Atlas's
 `RestConfirmingSparkHook`, retaining the same `spark_default` cluster submission and
 mandatory `FINISHED` plus `success=true` REST confirmation. The dated direct-hook
-descriptions above and below remain explicitly historical incident evidence.
+descriptions above and below remain explicitly historical incident evidence. PRs #95,
+#96, and #97 promoted this current contract after Airflow runs
+`issue78_nyc_taxi_etl_20260810T233212Z` and
+`issue78_nyc_taxi_medallion_20260810T233242Z` succeeded. Spark REST drivers
+`driver-20260810233215-0003` and `driver-20260810233245-0004` both reached
+`FINISHED` with `success=true`. Jenkins ETL build #5 and medallion build #1
+succeeded, while preflight passed Layer 1 at 13/13 and Layer 2 at 6/6. No false
+driver-status polling failure or exception was present.
 
 ## 2. Key Observations
 
@@ -66,41 +73,50 @@ descriptions above and below remain explicitly historical incident evidence.
 
 ## 5. Workaround unwind (2026-07-21, atlas pin 2d006cae)
 
-Three of the four issues below (#309–#311) were fixed upstream (atlas#314–#316) and the
-corresponding lab-side workarounds removed; #308's fix is only partial — the REST endpoint
-is enabled but not consumable by SparkSubmitHook, so the DAG caveat remains (see the row
-below and the 2026-07-21 findings section that follows):
+At the dated 2026-07-21 pin, three of the four issues below (#309–#311) had been
+fixed upstream (atlas#314–#316) and their lab-side workarounds removed. The table
+records that historical state, including the then-incomplete #308 path; it is not
+a list of current limitations. Atlas #880 later supplied the accepted REST-confirmation
+path, and the current 2026-08-10 operator-owned contract is recorded in section 1.
 
-| Atlas issue | Upstream fix | Lab workaround removed |
+| Atlas issue | Dated upstream state | Dated lab action and later resolution |
 |---|---|---|
-| #308 Spark master REST `:6066` | REST endpoint enabled + documented upstream — but not usable end-to-end by SparkSubmitHook (see 2026-07-21 findings below) | 6-line caveat comment replaced by an updated caveat: the false-negative still reproduces; `waitAppCompletion` remains the completion signal |
+| #308 Spark master REST `:6066` | On 2026-07-21, the endpoint was enabled and documented but the provider hook could not use separate `:7077` submission and `:6066` status endpoints (see section 6) | The dated caveat relied on `waitAppCompletion`; Atlas #880 later resolved the path, and the current DAGs use `RestConfirmingSparkHook` under `SparkSubmitOperator` ownership |
 | #309 Spark Connect core monopoly | `SPARK_CONNECT_CORES_MAX=1` default cap | `spark.cores.max: "1"` removed from both spark-apps DAGs |
 | #310 spark-connect healthcheck | TCP healthcheck on `:15002` | consumer-side `wait_healthy` gate (Atlas `--detach` now health-gates the whole track) |
 | #311 Airflow-3 conn resolution | Documented metadata-DB read (`services/airflow/README.md`) | none required — `probe_airflow.py` docstring now cites the upstream doc |
 
 ## 6. 2026-07-21 live verification findings (atlas pin 2d006cae)
 
-Cold-start verification of the consumer-manifest migration surfaced two Atlas-side gaps:
+This section is a historical record of the cold-start verification at pin
+`2d006cae`; both Atlas-side gaps described here are resolved at the current pin.
+The dated run surfaced these two conditions:
 
-1. **Airflow 3.3.0 Execution API unreachable across the container split (severe — blocks all DAG tasks).**
-   `LocalExecutor` resolves the Execution API to `http://localhost:8080/execution/` when
-   `[core] execution_api_server_url` is unset, but Atlas runs `airflow api-server` in the
-   separate `airflow-webserver` container. Every task dies at Pre-Execute (supervisor
+1. **Airflow 3.3.0 Execution API was unreachable across the container split (severe — blocked all DAG tasks).**
+   `LocalExecutor` resolved the Execution API to `http://localhost:8080/execution/` when
+   `[core] execution_api_server_url` was unset, but Atlas ran `airflow api-server` in the
+   separate `airflow-webserver` container. Every task died at Pre-Execute (supervisor
    `ConnectionError` → SIGKILL). Verified in-container: `curl http://airflow-webserver:8080/execution/`
-   → 404 (reachable); `http://localhost:8080/execution/` → 000. Fix belongs in Atlas's
-   airflow compose: set `AIRFLOW__CORE__EXECUTION_API_SERVER_URL=http://airflow-webserver:8080/execution/`
-   on `airflow-scheduler` and `airflow-dag-processor`. Filed as [thekaveh/atlas#791](https://github.com/thekaveh/atlas/issues/791).
+   → 404 (reachable); `http://localhost:8080/execution/` → 000. The required fix belonged
+   in Atlas's Airflow Compose: set
+   `AIRFLOW__CORE__EXECUTION_API_SERVER_URL=http://airflow-webserver:8080/execution/`
+   on `airflow-scheduler` and `airflow-dag-processor`. It was filed as
+   [thekaveh/atlas#791](https://github.com/thekaveh/atlas/issues/791).
 
-2. **atlas#308 is not consumable by SparkSubmitHook (structural).** The REST endpoint works
+2. **atlas#308 was not consumable by SparkSubmitHook (structural).** The REST endpoint worked
    (`curl http://spark-master:6066/v1/submissions/status/<driver-id>` → `success: true`), but the
-   hook polls via the `spark_default` connection's port: 7077 is required for cluster-mode
-   submission (RPC), while status polling needs 6066 (REST) — one connection cannot satisfy
-   both, so the legacy `spark-submit --status` path runs against 7077 and always fails.
-   The lab keeps its DAG caveat and relies on `spark.standalone.submit.waitAppCompletion=true`
-   as the completion signal. Resolution requires either provider support for a separate
+   hook polled via the `spark_default` connection's port: 7077 was required for cluster-mode
+   submission (RPC), while status polling required 6066 (REST) — one connection could not
+   satisfy both, so the legacy `spark-submit --status` path ran against 7077 and always failed.
+   The lab kept its dated DAG caveat and relied on
+   `spark.standalone.submit.waitAppCompletion=true` as the completion signal. At that time,
+   resolution required either provider support for a separate
    status URL, a documented `deploy_mode=client` recommendation, an Atlas-seeded second
    connection scheme, or tolerating the post-submit poll exception lab-side given
-   `waitAppCompletion` already signals completion. Filed as [thekaveh/atlas#792](https://github.com/thekaveh/atlas/issues/792).
+   `waitAppCompletion` already signaled completion. It was filed as
+   [thekaveh/atlas#792](https://github.com/thekaveh/atlas/issues/792). Atlas #880 later
+   supplied the accepted REST-confirmation path, which the current contract in section 1
+   retains under `SparkSubmitOperator` ownership.
 
 ## 7. Reviewed-pin update (atlas `881df596`)
 
