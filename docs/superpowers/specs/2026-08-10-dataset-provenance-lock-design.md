@@ -71,8 +71,9 @@ Every dataset retains its existing description, format, license,
 | `source_stability` | `immutable` or `mutable` |
 | `update_policy` | Fixed value `reviewed-lock-update` |
 
-Credentials, host ports, temporary paths, MinIO endpoints, and other
-machine-local values are prohibited from the committed provenance mapping.
+Committed provenance free text prohibits non-global IP addresses,
+user-home or temporary paths, host ports, MinIO endpoints, URI credentials,
+and credential key/value forms.
 An HTTP artifact may carry a complete `provenance` override with the same
 validated fields. When present, the artifact-level terms govern that release;
 the dataset-level mapping remains the conservative default for artifacts that
@@ -122,7 +123,8 @@ HTTP datasets define unique entries in an `artifacts` mapping. Each entry has:
   publisher, license, attribution, and stability terms;
 - a `version` selector with `kind` equal to `revision` or `publication-date`
   and a non-empty string value;
-- source stability inherited from, or more restrictive than, the dataset;
+- source stability that must exactly match its effective provenance: the
+  artifact-level override when present, otherwise the dataset provenance;
 - optional upstream ETag or Last-Modified value as supporting evidence only.
 
 ETag and Last-Modified never replace the required size and SHA-256 digest.

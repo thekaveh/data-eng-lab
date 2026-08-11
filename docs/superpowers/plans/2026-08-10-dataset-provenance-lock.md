@@ -84,6 +84,9 @@ must use this exact field tree. Every mapping rejects unknown keys.
 `license_url`, `attribution`, `source_stability`, and `update_policy`.
 Human-readable strings must be non-empty. `source_stability` is `mutable` or
 `immutable`; `update_policy` is `reviewed-lock-update`.
+Provenance free text rejects non-global IP addresses,
+user-home or temporary paths, host ports, MinIO endpoints, URI credentials,
+and credential key/value forms.
 An HTTP artifact may optionally include one complete `provenance` override with
 the same exact field set and validation. When present, that artifact-level
 mapping governs the selected release; dataset provenance is the conservative
@@ -103,8 +106,8 @@ Each HTTP artifact requires exactly `url`, `version`, `stability`, `evidence`,
   or revision of the bytes acquired, never the alias text or retrieval time.
   If authoritative release identity cannot be established, acquisition is
   blocked and the artifact is not committed.
-- `stability` is `mutable` or `immutable`. An artifact may be stricter than its
-  dataset (`mutable` dataset plus `immutable` artifact), never weaker.
+- `stability` is `mutable` or `immutable` and must exactly match its effective provenance:
+  the artifact-level override when present, otherwise the dataset provenance.
 - `evidence` allows only optional non-empty `etag`, `last_modified`, and
   `observed_at` strings. `observed_at` is an ISO-8601 UTC timestamp and is
   supporting evidence, not source identity.

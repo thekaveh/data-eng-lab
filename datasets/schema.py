@@ -35,14 +35,25 @@ else:
 _IDENTIFIER_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _DECIMAL_RE = re.compile(r"^decimal\(([0-9]+),([0-9]+)\)$")
+_IP_CANDIDATE_RE = re.compile(r"(?<![0-9A-Za-z_])\[?([0-9A-Fa-f:.]*[.:][0-9A-Fa-f:.]+)\]?(?![0-9A-Za-z_])")
+_CREDENTIAL_KEY = (
+    r"(?:aws[_-]?access[_-]?key[_-]?id|aws[_-]?secret[_-]?access[_-]?key|"
+    r"database[_-]?password|api[_-]?key|private[_-]?key|token|password|secret|key)"
+)
+_UPPERCASE_CREDENTIAL_KEY = (
+    r"(?:AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|DATABASE_PASSWORD|API_KEY|PRIVATE_KEY|TOKEN|PASSWORD|SECRET)"
+)
 _PROVENANCE_LOCAL_PATTERNS = (
     re.compile(r"(?i)(?<![a-z0-9])(?:localhost|loopback|minio)(?![a-z0-9])"),
-    re.compile(r"(?<![0-9])127(?:\.[0-9]{1,3}){3}(?![0-9])"),
-    re.compile(r"(?i)(?<![0-9a-f:])::1(?![0-9a-f:])"),
     re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://"),
-    re.compile(r"(?i)(?:/private)?/tmp(?:/|\b)|/var/folders(?:/|\b)"),
-    re.compile(r"(?i)(?<![\w.-])(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?|\[[0-9a-f:]+\]):[0-9]{1,5}(?![0-9])"),
-    re.compile(r"(?i)(?<![\w-])(?:api[_-]?key|access[_-]?key|token|password|secret|key)\s*[:=]\s*\S"),
+    re.compile(
+        r"(?i)(?:/(?:users|home)/\S+|(?:/private)?/tmp(?:/|\b)|/var/folders(?:/|\b)|"
+        r"(?<![a-z0-9])[a-z]:\\users\\)"
+    ),
+    re.compile(r"(?i)(?<![\w.:-])(?:[a-z][a-z0-9.-]*|\[[0-9a-f:]+\]):[0-9]{1,5}(?![0-9:])"),
+    re.compile(r"(?i)(?<![\w])[^\s:/@]+:[^\s/@]+@(?:[a-z0-9-]+\.)+[a-z0-9-]+"),
+    re.compile(rf"(?i)(?<![\w-]){_CREDENTIAL_KEY}\s*[:=]\s*\S"),
+    re.compile(rf"(?<![A-Z0-9_]){_UPPERCASE_CREDENTIAL_KEY}[ \t]+\S"),
 )
 _LOGICAL_TYPES = frozenset(
     {
@@ -195,7 +206,17 @@ def _provenance_text(value: object, path: str) -> list[str]:
     errors = _nonempty_string(value, path)
     if errors or not isinstance(value, str):
         return errors
-    if any(pattern.search(value) for pattern in _PROVENANCE_LOCAL_PATTERNS):
+    has_non_global_address = False
+    for match in _IP_CANDIDATE_RE.finditer(value):
+        candidate = match.group(1).strip(".")
+        try:
+            address = ipaddress.ip_address(candidate)
+        except ValueError:
+            continue
+        if not address.is_global:
+            has_non_global_address = True
+            break
+    if has_non_global_address or any(pattern.search(value) for pattern in _PROVENANCE_LOCAL_PATTERNS):
         errors.append(f"{path}: must not contain machine-local or credential-like values")
     return errors
 
@@ -444,8 +465,9 @@ def _validate_http_dataset(dataset: dict[str, object], path: str) -> list[str]:
         if not isinstance(raw_artifact, dict):
             continue
         errors += _unknown(artifact, artifact_path, allowed_artifact_fields)
+        artifact_provenance = artifact.get("provenance")
         if "provenance" in artifact:
-            errors += _validate_provenance(artifact["provenance"], f"{artifact_path}.provenance")
+            errors += _validate_provenance(artifact_provenance, f"{artifact_path}.provenance")
         authoritative_basename: str | None = None
         if "url" in artifact:
             errors += _https(artifact["url"], f"{artifact_path}.url")
@@ -461,8 +483,20 @@ def _validate_http_dataset(dataset: dict[str, object], path: str) -> list[str]:
         stability = artifact.get("stability")
         if "stability" in artifact and (not isinstance(stability, str) or stability not in {"mutable", "immutable"}):
             errors.append(f"{artifact_path}.stability: must be 'mutable' or 'immutable'")
-        if source_stability == "immutable" and stability == "mutable":
-            errors.append(f"{artifact_path}.stability: cannot be weaker than immutable source stability")
+        effective_source_stability = (
+            artifact_provenance.get("source_stability") if isinstance(artifact_provenance, dict) else source_stability
+        )
+        if (
+            isinstance(stability, str)
+            and stability in {"mutable", "immutable"}
+            and isinstance(effective_source_stability, str)
+            and effective_source_stability in {"mutable", "immutable"}
+            and stability != effective_source_stability
+        ):
+            errors.append(
+                f"{artifact_path}.stability: must match effective provenance source stability "
+                f"{effective_source_stability!r}"
+            )
         if "evidence" in artifact:
             errors += _validate_evidence(artifact["evidence"], f"{artifact_path}.evidence")
         raw = artifact.get("raw")

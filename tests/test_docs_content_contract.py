@@ -408,6 +408,23 @@ def test_dataset_docs_describe_versioned_fail_closed_provenance_contract():
     assert "does not verify downloaded, extracted, generated, uploaded, or reused bytes" in text
 
 
+def test_dataset_design_and_plan_define_effective_stability_and_safe_provenance_text():
+    paths = (
+        ROOT / "docs/superpowers/specs/2026-08-10-dataset-provenance-lock-design.md",
+        ROOT / "docs/superpowers/plans/2026-08-10-dataset-provenance-lock.md",
+    )
+    for path in paths:
+        text = path.read_text(encoding="utf-8")
+        assert "must exactly match its effective provenance" in text
+        assert "non-global IP addresses" in text
+        assert "user-home or temporary paths" in text
+        assert "credential key/value forms" in text
+
+    combined = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+    assert "more restrictive than" not in combined
+    assert "may be stricter than" not in combined
+
+
 def _provenance_table_rows(markdown: str) -> tuple[tuple[str, ...], ...]:
     section = markdown.split("## 5. Authoritative Sources, Licenses, and Attribution", 1)[1]
     section = section.split("\n## ", 1)[0]

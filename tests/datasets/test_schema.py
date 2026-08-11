@@ -386,6 +386,28 @@ def test_v2_rejects_active_machine_local_values():
         "secret = value",
         "key=credential",
         "api_key: credential",
+        "reviewed from 10.42.0.9",
+        "reviewed from 172.16.0.1",
+        "reviewed from 172.31.255.254",
+        "reviewed from 192.168.10.20",
+        "reviewed from 169.254.20.30",
+        "reviewed from 0.0.0.0",
+        "reviewed from 240.0.0.1",
+        "reviewed from [fc00::1]",
+        "reviewed from fd12:3456:789a::1",
+        "reviewed from fe80::a:b:c:d",
+        "reviewed from ::",
+        "read /Users/alice/review/license.txt",
+        "read /home/runner/review/license.txt",
+        r"read C:\Users\alice\review\license.txt",
+        "AWS_ACCESS_KEY_ID AKIAEXAMPLE",
+        "AWS_SECRET_ACCESS_KEY = example",
+        "DATABASE_PASSWORD: example",
+        "TOKEN example",
+        "API_KEY\texample",
+        "PRIVATE_KEY = example",
+        "SECRET: example",
+        "PASSWORD example",
     ],
 )
 def test_v2_rejects_machine_local_or_credential_like_provenance_text(field: str, value: str):
@@ -411,6 +433,10 @@ def test_v2_rejects_machine_local_or_credential_like_provenance_text(field: str,
         ),
         ("attribution", "Transaction Processing Performance Council"),
         ("attribution", "Key ordering and secretariat review are documented"),
+        ("publisher", "Secret Garden Research Foundation"),
+        ("publisher", "Token Press and API Key Studies Group"),
+        ("license_name", "Password research corpus terms"),
+        ("attribution", "Globally reviewed at 8.8.8.8 and 2606:4700:4700::1111"),
     ],
 )
 def test_v2_accepts_legitimate_provenance_free_text(field: str, value: str):
@@ -708,9 +734,41 @@ def test_v2_rejects_empty_optional_evidence_strings(field):
     )
 
 
-def test_v2_accepts_stricter_artifact_stability():
+@pytest.mark.parametrize(
+    ("source_stability", "artifact_stability"),
+    [("mutable", "immutable"), ("immutable", "mutable")],
+)
+def test_v2_rejects_artifact_stability_that_contradicts_effective_override(
+    source_stability: str, artifact_stability: str
+):
     doc = _v2()
-    doc["datasets"]["archive"]["artifacts"]["release"]["stability"] = "immutable"
+    artifact = doc["datasets"]["archive"]["artifacts"]["release"]
+    artifact["provenance"]["source_stability"] = source_stability
+    artifact["stability"] = artifact_stability
+    assert (
+        "datasets.archive.artifacts.release.stability: must match effective provenance "
+        f"source stability {source_stability!r}"
+    ) in schema.validate_registry_v2(doc)
+
+
+def test_v2_artifact_provenance_override_governs_stability_instead_of_dataset_default():
+    doc = _v2()
+    artifact = doc["datasets"]["direct"]["artifacts"]["sample"]
+    artifact["provenance"] = deepcopy(doc["datasets"]["archive"]["artifacts"]["release"]["provenance"])
+    artifact["stability"] = "mutable"
+    assert schema.validate_registry_v2(doc) == []
+
+
+@pytest.mark.parametrize(
+    ("dataset_id", "remove_override"),
+    [("direct", False), ("archive", True)],
+)
+def test_v2_accepts_artifact_stability_inherited_from_dataset_provenance(dataset_id: str, remove_override: bool):
+    doc = _v2()
+    artifact_id = "sample" if dataset_id == "direct" else "release"
+    artifact = doc["datasets"][dataset_id]["artifacts"][artifact_id]
+    if remove_override:
+        del artifact["provenance"]
     assert schema.validate_registry_v2(doc) == []
 
 
