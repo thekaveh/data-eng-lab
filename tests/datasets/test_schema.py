@@ -453,6 +453,9 @@ def test_v2_accepts_stricter_artifact_stability():
         ("https://build.localhost/source",),
         ("https://host.local/source",),
         ("https://127.0.0.1/source",),
+        ("https://127.1/source",),
+        ("https://127.0.0.01/source",),
+        ("https://0127.0.0.1/source",),
         ("https://169.254.1.1/source",),
         ("https://10.0.0.1/source",),
         ("https://172.16.0.1/source",),
@@ -495,6 +498,7 @@ def test_v2_applies_https_rule_to_every_url_field(path):
     ("path", "value", "error_path"),
     [
         (("version",), True, "registry.version"),
+        (("version",), 2.0, "registry.version"),
         (("version",), 1, "registry.version"),
         (("lock", "algorithm"), "md5", "registry.lock.algorithm"),
         (("lock", "source_drift"), "warn", "registry.lock.source_drift"),

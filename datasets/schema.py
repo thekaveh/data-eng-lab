@@ -128,7 +128,12 @@ def _https(value: object, path: str) -> list[str]:
         address = ipaddress.ip_address(host)
     except ValueError:
         labels = host.split(".")
-        if "." not in host or len(host) > 253 or any(_DNS_LABEL_RE.fullmatch(label) is None for label in labels):
+        if (
+            re.fullmatch(r"[0-9.]+", host) is not None
+            or "." not in host
+            or len(host) > 253
+            or any(_DNS_LABEL_RE.fullmatch(label) is None for label in labels)
+        ):
             return error
     else:
         if not address.is_global:
@@ -626,7 +631,7 @@ def validate_registry_v2(doc: object) -> list[str]:
     if not isinstance(doc, dict):
         return errors
     errors += _unknown(root, "registry", frozenset({"version", "lock", "datasets"}))
-    if "version" in root and (isinstance(root["version"], bool) or root["version"] != 2):
+    if "version" in root and (type(root["version"]) is not int or root["version"] != 2):
         errors.append("registry.version: must be integer 2")
     lock_fields = (
         "algorithm",
