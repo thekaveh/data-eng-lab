@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import stat
 import tempfile
 import zipfile
@@ -22,6 +23,35 @@ def zip_bytes(members: dict[str, bytes]) -> bytes:
                 archive.writestr(name, payload)
         stream.seek(0)
         return stream.read()
+
+
+def compressed_zip_bytes(members: dict[str, bytes]) -> bytes:
+    with tempfile.SpooledTemporaryFile() as stream:
+        with zipfile.ZipFile(stream, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            for name, payload in members.items():
+                archive.writestr(name, payload)
+        stream.seek(0)
+        return stream.read()
+
+
+def record_audit_temp_directories(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
+    real_temporary_directory = tempfile.TemporaryDirectory
+    created: list[Path] = []
+
+    class RecordingTemporaryDirectory:
+        def __init__(self) -> None:
+            self._temporary_directory = real_temporary_directory()
+
+        def __enter__(self) -> str:
+            path = self._temporary_directory.__enter__()
+            created.append(Path(path))
+            return path
+
+        def __exit__(self, *args: object) -> object:
+            return self._temporary_directory.__exit__(*args)
+
+    monkeypatch.setattr(audit.tempfile, "TemporaryDirectory", RecordingTemporaryDirectory)
+    return created
 
 
 @responses.activate
@@ -70,34 +100,72 @@ def test_audit_http_streams_with_120_second_timeout(monkeypatch: pytest.MonkeyPa
 
     audit.audit_http("https://source.invalid/data.csv", archive=False)
 
-    assert arguments == {"stream": True, "timeout": 120}
+    assert arguments["stream"] is True
+    assert arguments["allow_redirects"] is False
+    assert 119 < arguments["timeout"] <= 120
 
 
 @responses.activate
 def test_audit_http_owns_and_cleans_temporary_directory(monkeypatch: pytest.MonkeyPatch):
     responses.add(responses.GET, "https://source.invalid/data.csv", body=b"locked", status=200)
-    real_temporary_directory = tempfile.TemporaryDirectory
-    created: list[Path] = []
-
-    class RecordingTemporaryDirectory:
-        def __init__(self) -> None:
-            self._temporary_directory = real_temporary_directory()
-
-        def __enter__(self) -> str:
-            path = self._temporary_directory.__enter__()
-            created.append(Path(path))
-            return path
-
-        def __exit__(self, *args: object) -> object:
-            return self._temporary_directory.__exit__(*args)
-
-    monkeypatch.setattr(audit.tempfile, "TemporaryDirectory", RecordingTemporaryDirectory)
+    created = record_audit_temp_directories(monkeypatch)
 
     result = audit.audit_http("https://source.invalid/data.csv", archive=False)
 
     assert result["raw"]["size_bytes"] == 6
     assert len(created) == 1
     assert not created[0].exists()
+
+
+@responses.activate
+def test_audit_http_rejects_unsafe_redirect_before_requesting_target():
+    source = "https://source.invalid/data.csv"
+    responses.add(responses.GET, source, status=302, headers={"Location": "http://127.0.0.1/private"})
+
+    with pytest.raises(ValueError, match="must be an authoritative HTTPS URL"):
+        audit.audit_http(source, archive=False)
+
+    assert [call.request.url for call in responses.calls] == [source]
+
+
+@responses.activate
+def test_audit_http_follows_valid_relative_https_redirect():
+    source = "https://source.invalid/data.csv"
+    target = "https://source.invalid/releases/data.csv"
+    responses.add(responses.GET, source, status=302, headers={"Location": "/releases/data.csv"})
+    responses.add(responses.GET, target, body=b"locked", status=200)
+
+    result = audit.audit_http(source, archive=False)
+
+    assert result["raw"]["size_bytes"] == 6
+    assert [call.request.url for call in responses.calls] == [source, target]
+
+
+@responses.activate
+def test_audit_http_rejects_redirect_without_location():
+    source = "https://source.invalid/data.csv"
+    responses.add(responses.GET, source, status=302)
+
+    with pytest.raises(ValueError, match="redirect response is missing Location"):
+        audit.audit_http(source, archive=False)
+
+
+@responses.activate
+def test_audit_http_rejects_redirect_overflow(monkeypatch: pytest.MonkeyPatch):
+    source = "https://source.invalid/data.csv"
+    monkeypatch.setattr(audit, "MAX_REDIRECTS", 1)
+    responses.add(responses.GET, source, status=302, headers={"Location": "/next.csv"})
+    responses.add(
+        responses.GET,
+        "https://source.invalid/next.csv",
+        status=302,
+        headers={"Location": "/overflow.csv"},
+    )
+
+    with pytest.raises(ValueError, match="too many redirects"):
+        audit.audit_http(source, archive=False)
+
+    assert len(responses.calls) == 2
 
 
 @pytest.mark.parametrize(
@@ -122,6 +190,44 @@ def test_audit_http_rejects_empty_artifact():
 
     with pytest.raises(ValueError, match="artifact must not be empty"):
         audit.audit_http("https://source.invalid/empty.csv", archive=False)
+
+
+@responses.activate
+def test_audit_http_rejects_download_over_limit_and_cleans_temp(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = "https://source.invalid/data.csv"
+    responses.add(responses.GET, source, body=b"123456", status=200)
+    monkeypatch.setattr(audit, "MAX_DOWNLOAD_BYTES", 5)
+    created = record_audit_temp_directories(monkeypatch)
+
+    with pytest.raises(ValueError, match="download exceeds 5 bytes"):
+        audit.audit_http(source, archive=False)
+
+    assert created and all(not path.exists() for path in created)
+
+
+@responses.activate
+def test_audit_http_enforces_overall_streaming_deadline_and_cleans_temp(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = "https://source.invalid/data.csv"
+    responses.add(responses.GET, source, body=b"locked", status=200)
+    ticks = iter([0.0, 0.0, 121.0])
+    last_tick = 121.0
+
+    def monotonic() -> float:
+        nonlocal last_tick
+        last_tick = next(ticks, last_tick)
+        return last_tick
+
+    monkeypatch.setattr(audit.time, "monotonic", monotonic)
+    created = record_audit_temp_directories(monkeypatch)
+
+    with pytest.raises(ValueError, match="download deadline exceeded"):
+        audit.audit_http(source, archive=False)
+
+    assert created and all(not path.exists() for path in created)
 
 
 @responses.activate
@@ -204,6 +310,103 @@ def test_audit_zip_rejects_non_file_members():
         audit.audit_http("https://source.invalid/data.zip", archive=True)
 
 
+@responses.activate
+def test_audit_zip_rejects_member_count_limit_and_cleans_temp(monkeypatch: pytest.MonkeyPatch):
+    source = "https://source.invalid/data.zip"
+    responses.add(responses.GET, source, body=zip_bytes({"a.csv": b"a", "b.csv": b"b"}), status=200)
+    monkeypatch.setattr(audit, "MAX_ARCHIVE_MEMBERS", 1)
+    created = record_audit_temp_directories(monkeypatch)
+
+    with pytest.raises(ValueError, match="archive contains more than 1 members"):
+        audit.audit_http(source, archive=True)
+
+    assert created and all(not path.exists() for path in created)
+
+
+@responses.activate
+def test_audit_zip_rejects_declared_member_size_limit_and_cleans_temp(monkeypatch: pytest.MonkeyPatch):
+    source = "https://source.invalid/data.zip"
+    responses.add(responses.GET, source, body=zip_bytes({"large.csv": b"ab"}), status=200)
+    monkeypatch.setattr(audit, "MAX_MEMBER_BYTES", 1)
+    created = record_audit_temp_directories(monkeypatch)
+
+    with pytest.raises(ValueError, match="member large.csv exceeds 1 bytes"):
+        audit.audit_http(source, archive=True)
+
+    assert created and all(not path.exists() for path in created)
+
+
+@responses.activate
+def test_audit_zip_rejects_total_uncompressed_limit_and_cleans_temp(monkeypatch: pytest.MonkeyPatch):
+    source = "https://source.invalid/data.zip"
+    responses.add(responses.GET, source, body=zip_bytes({"a.csv": b"aa", "b.csv": b"bb"}), status=200)
+    monkeypatch.setattr(audit, "MAX_TOTAL_UNCOMPRESSED_BYTES", 3)
+    created = record_audit_temp_directories(monkeypatch)
+
+    with pytest.raises(ValueError, match="archive exceeds 3 uncompressed bytes"):
+        audit.audit_http(source, archive=True)
+
+    assert created and all(not path.exists() for path in created)
+
+
+@responses.activate
+def test_audit_zip_rejects_compression_ratio_limit_and_cleans_temp(monkeypatch: pytest.MonkeyPatch):
+    source = "https://source.invalid/data.zip"
+    payload = compressed_zip_bytes({"dense.csv": b"0" * 1_000})
+    responses.add(responses.GET, source, body=payload, status=200)
+    monkeypatch.setattr(audit, "MAX_COMPRESSION_RATIO", 2)
+    created = record_audit_temp_directories(monkeypatch)
+
+    with pytest.raises(ValueError, match="member dense.csv exceeds compression ratio 2"):
+        audit.audit_http(source, archive=True)
+
+    assert created and all(not path.exists() for path in created)
+
+
+@responses.activate
+def test_audit_zip_converts_corrupt_content_to_value_error():
+    source = "https://source.invalid/data.zip"
+    responses.add(responses.GET, source, body=b"not a zip", status=200)
+
+    with pytest.raises(ValueError, match="artifact is not a valid ZIP archive"):
+        audit.audit_http(source, archive=True)
+
+
+@responses.activate
+def test_audit_http_omits_blank_response_evidence():
+    source = "https://source.invalid/data.csv"
+    responses.add(
+        responses.GET,
+        source,
+        body=b"locked",
+        status=200,
+        headers={"ETag": ' " " ', "Last-Modified": "   "},
+    )
+
+    result = audit.audit_http(source, archive=False)
+
+    assert result["evidence"] == {}
+
+
+@responses.activate
+def test_audit_http_strips_response_evidence_whitespace():
+    source = "https://source.invalid/data.csv"
+    responses.add(
+        responses.GET,
+        source,
+        body=b"locked",
+        status=200,
+        headers={"ETag": '  "locked"  ', "Last-Modified": "  Mon, 01 Jan 2024 00:00:00 GMT  "},
+    )
+
+    result = audit.audit_http(source, archive=False)
+
+    assert result["evidence"] == {
+        "etag": '"locked"',
+        "last_modified": "Mon, 01 Jan 2024 00:00:00 GMT",
+    }
+
+
 def test_cli_requires_explicit_output_and_never_changes_registry(tmp_path: Path):
     registry = ROOT / "datasets" / "registry.yaml"
     before = registry.read_bytes()
@@ -237,6 +440,91 @@ def test_cli_rejects_hard_link_to_registry_without_fetching(tmp_path: Path):
     ) == 2
 
     assert registry.read_bytes() == before
+
+
+@pytest.mark.parametrize("alias_kind", ["symlink", "hardlink"])
+@responses.activate
+def test_cli_rechecks_registry_alias_immediately_before_atomic_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    alias_kind: str,
+):
+    source = "https://source.invalid/data.csv"
+    responses.add(responses.GET, source, body=b"locked", status=200)
+    registry = ROOT / "datasets" / "registry.yaml"
+    before = registry.read_bytes()
+    output = tmp_path / "candidate.yaml"
+    real_fsync = os.fsync
+
+    def swap_output(file_descriptor: int) -> None:
+        real_fsync(file_descriptor)
+        if alias_kind == "symlink":
+            output.symlink_to(registry)
+        else:
+            output.hardlink_to(registry)
+
+    monkeypatch.setattr(audit.os, "fsync", swap_output)
+
+    assert audit.main(["http", "--url", source, "--output", str(output)]) == 2
+
+    assert registry.read_bytes() == before
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["candidate.yaml"]
+
+
+@responses.activate
+def test_cli_leaves_existing_output_unchanged_when_serialization_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = "https://source.invalid/data.csv"
+    responses.add(responses.GET, source, body=b"locked", status=200)
+    output = tmp_path / "candidate.yaml"
+    output.write_text("previous\n")
+
+    def fail_serialization(*args: object, **kwargs: object) -> str:
+        raise RuntimeError("serialization failed")
+
+    monkeypatch.setattr(audit.yaml, "safe_dump", fail_serialization)
+
+    with pytest.raises(RuntimeError, match="serialization failed"):
+        audit.main(["http", "--url", source, "--output", str(output)])
+
+    assert output.read_text() == "previous\n"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["candidate.yaml"]
+
+
+@responses.activate
+def test_cli_leaves_existing_output_unchanged_and_cleans_temp_when_replace_fails(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    source = "https://source.invalid/data.csv"
+    responses.add(responses.GET, source, body=b"locked", status=200)
+    output = tmp_path / "candidate.yaml"
+    output.write_text("previous\n")
+
+    def fail_replace(source_path: object, destination_path: object) -> None:
+        raise OSError("replace failed")
+
+    monkeypatch.setattr(audit.os, "replace", fail_replace)
+
+    with pytest.raises(OSError, match="replace failed"):
+        audit.main(["http", "--url", source, "--output", str(output)])
+
+    assert output.read_text() == "previous\n"
+    assert sorted(path.name for path in tmp_path.iterdir()) == ["candidate.yaml"]
+
+
+@responses.activate
+def test_cli_returns_2_for_corrupt_archive_without_output(tmp_path: Path):
+    source = "https://source.invalid/data.zip"
+    responses.add(responses.GET, source, body=b"not a zip", status=200)
+    output = tmp_path / "candidate.yaml"
+
+    assert audit.main(["http", "--url", source, "--archive", "--output", str(output)]) == 2
+
+    assert not output.exists()
+    assert list(tmp_path.iterdir()) == []
 
 
 @responses.activate
