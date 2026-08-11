@@ -164,6 +164,17 @@ def _configure_runtime(
     return connection
 
 
+def _cli_args(output_dir: Path, metadata: Path, *, scale: str = "1") -> list[str]:
+    return [
+        "--scale",
+        scale,
+        "--output-dir",
+        str(output_dir),
+        "--metadata",
+        str(metadata),
+    ]
+
+
 @pytest.mark.parametrize(
     ("scale", "dbgen"),
     [("0.01", "CALL dbgen(sf=0.01)"), ("1", "CALL dbgen(sf=1)"), ("10", "CALL dbgen(sf=10)")],
@@ -267,11 +278,142 @@ def test_metadata_is_not_written_when_an_output_fails(tmp_path: Path, monkeypatc
     assert not metadata.exists()
 
 
-def test_metadata_write_is_atomic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+@pytest.mark.parametrize("with_stale_file", [False, True])
+def test_cli_rejects_preexisting_output_directory_before_connect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    with_stale_file: bool,
+):
+    _configure_runtime(monkeypatch, tmp_path)
+    output_dir = tmp_path / "output"
+    output_dir.mkdir()
+    if with_stale_file:
+        (output_dir / "stale.parquet").write_bytes(b"stale")
+    metadata = tmp_path / "metadata.yaml"
+    connect_calls: list[None] = []
+    monkeypatch.setattr(exporter.duckdb, "connect", lambda: connect_calls.append(None))
+
+    with pytest.raises(ValueError, match="output directory must not exist"):
+        exporter.main(_cli_args(output_dir, metadata))
+
+    assert connect_calls == []
+    assert not metadata.exists()
+    assert sorted(path.name for path in output_dir.iterdir()) == (["stale.parquet"] if with_stale_file else [])
+
+
+@pytest.mark.parametrize("kind", ["file", "dangling-symlink"])
+def test_cli_rejects_preexisting_metadata_before_connect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    kind: str,
+):
+    _configure_runtime(monkeypatch, tmp_path)
+    output_dir = tmp_path / "output"
+    metadata = tmp_path / "metadata.yaml"
+    if kind == "file":
+        metadata.write_text("stale: evidence\n", encoding="utf-8")
+    else:
+        metadata.symlink_to(tmp_path / "missing-target.yaml")
+    connect_calls: list[None] = []
+    monkeypatch.setattr(exporter.duckdb, "connect", lambda: connect_calls.append(None))
+
+    with pytest.raises(ValueError, match="metadata path must not exist"):
+        exporter.main(_cli_args(output_dir, metadata))
+
+    assert connect_calls == []
+    assert not output_dir.exists()
+
+
+def test_cli_rejects_direct_metadata_output_collision_before_connect(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    _configure_runtime(monkeypatch, tmp_path)
+    output_dir = tmp_path / "output"
+    metadata = output_dir / "customer.parquet"
+    connect_calls: list[None] = []
+    monkeypatch.setattr(exporter.duckdb, "connect", lambda: connect_calls.append(None))
+
+    with pytest.raises(ValueError, match="metadata path collides with TPC-H output"):
+        exporter.main(_cli_args(output_dir, metadata))
+
+    assert connect_calls == []
+    assert not output_dir.exists()
+
+
+def test_cli_rejects_aliased_parent_metadata_output_collision_before_connect(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    _configure_runtime(monkeypatch, tmp_path)
+    real_parent = tmp_path / "real"
+    real_parent.mkdir()
+    alias_parent = tmp_path / "alias"
+    alias_parent.symlink_to(real_parent, target_is_directory=True)
+    output_dir = real_parent / "output"
+    metadata = alias_parent / "output" / "lineitem.parquet"
+    connect_calls: list[None] = []
+    monkeypatch.setattr(exporter.duckdb, "connect", lambda: connect_calls.append(None))
+
+    with pytest.raises(ValueError, match="metadata path collides with TPC-H output"):
+        exporter.main(_cli_args(output_dir, metadata))
+
+    assert connect_calls == []
+    assert not output_dir.exists()
+
+
+@pytest.mark.parametrize("metadata_position", ["same-as-output", "parent-of-output"])
+def test_cli_rejects_metadata_directory_collision_before_connect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    metadata_position: str,
+):
+    _configure_runtime(monkeypatch, tmp_path)
+    metadata = tmp_path / "fresh"
+    output_dir = metadata if metadata_position == "same-as-output" else metadata / "output"
+    connect_calls: list[None] = []
+    monkeypatch.setattr(exporter.duckdb, "connect", lambda: connect_calls.append(None))
+
+    with pytest.raises(ValueError, match="metadata path collides with output directory"):
+        exporter.main(_cli_args(output_dir, metadata))
+
+    assert connect_calls == []
+    assert not metadata.exists()
+
+
+def test_failed_export_leaves_no_metadata_and_rerun_refuses_partial_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    first_connection = _configure_runtime(monkeypatch, tmp_path, fail_table="part")
+    output_dir = tmp_path / "output"
+    metadata = tmp_path / "metadata.yaml"
+    with pytest.raises(RuntimeError, match="simulated COPY failure"):
+        exporter.main(_cli_args(output_dir, metadata))
+    assert not metadata.exists()
+    assert list(output_dir.glob("*.parquet"))
+    assert first_connection.statements[-1] == "CLOSE"
+
+    connect_calls: list[None] = []
+    monkeypatch.setattr(exporter.duckdb, "connect", lambda: connect_calls.append(None))
+    with pytest.raises(ValueError, match="output directory must not exist"):
+        exporter.main(_cli_args(output_dir, metadata))
+    assert connect_calls == []
+    assert not metadata.exists()
+
+
+def test_successful_rerun_refuses_prior_outputs_and_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    _configure_runtime(monkeypatch, tmp_path)
+    output_dir = tmp_path / "output"
+    metadata = tmp_path / "metadata.yaml"
+    assert exporter.main(_cli_args(output_dir, metadata)) == 0
+
+    connect_calls: list[None] = []
+    monkeypatch.setattr(exporter.duckdb, "connect", lambda: connect_calls.append(None))
+    with pytest.raises(ValueError, match="output directory must not exist"):
+        exporter.main(_cli_args(output_dir, metadata))
+    assert connect_calls == []
+    assert metadata.exists()
+
+
+def test_metadata_write_is_atomic_for_fresh_path(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     _configure_runtime(monkeypatch, tmp_path)
     metadata = tmp_path / "metadata.yaml"
-    metadata.write_text("previous: evidence\n", encoding="utf-8")
-    real_replace = exporter.os.replace
 
     def fail_replace(source: Path, destination: Path):
         assert source.parent == metadata.parent
@@ -290,6 +432,43 @@ def test_metadata_write_is_atomic(tmp_path: Path, monkeypatch: pytest.MonkeyPatc
                 str(metadata),
             ]
         )
-    assert metadata.read_text(encoding="utf-8") == "previous: evidence\n"
+    assert not metadata.exists()
     assert [path for path in tmp_path.iterdir() if path.name.startswith(".metadata.yaml.")] == []
-    monkeypatch.setattr(exporter.os, "replace", real_replace)
+
+
+def test_metadata_parent_is_fsynced_after_atomic_replace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    _configure_runtime(monkeypatch, tmp_path)
+    output_dir = tmp_path / "output"
+    metadata = tmp_path / "metadata.yaml"
+    events: list[tuple[str, Path]] = []
+    real_replace = exporter.os.replace
+
+    def recording_replace(source: Path, destination: Path):
+        real_replace(source, destination)
+        events.append(("replace", destination))
+
+    def recording_fsync_directory(path: Path):
+        assert metadata.exists()
+        events.append(("fsync-directory", path))
+
+    monkeypatch.setattr(exporter.os, "replace", recording_replace)
+    monkeypatch.setattr(exporter, "_fsync_directory", recording_fsync_directory)
+
+    assert exporter.main(_cli_args(output_dir, metadata)) == 0
+    assert events == [("replace", metadata), ("fsync-directory", metadata.parent)]
+
+
+def test_fsync_directory_uses_portable_readonly_directory_descriptor(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    opened: list[tuple[Path, int]] = []
+    synced: list[int] = []
+    closed: list[int] = []
+    monkeypatch.setattr(exporter.os, "open", lambda path, flags: opened.append((path, flags)) or 731)
+    monkeypatch.setattr(exporter.os, "fsync", synced.append)
+    monkeypatch.setattr(exporter.os, "close", closed.append)
+
+    exporter._fsync_directory(tmp_path)
+
+    expected_flags = exporter.os.O_RDONLY | getattr(exporter.os, "O_DIRECTORY", 0)
+    assert opened == [(tmp_path, expected_flags)]
+    assert synced == [731]
+    assert closed == [731]

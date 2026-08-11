@@ -97,6 +97,39 @@ def _verify_runtime_environment() -> None:
         raise ValueError("timezone must be UTC")
 
 
+def _path_lexists(path: Path) -> bool:
+    return os.path.lexists(path)
+
+
+def _validate_metadata_destination(output_dir: Path, metadata_path: Path) -> None:
+    if _path_lexists(metadata_path):
+        raise ValueError(f"metadata path must not exist: {metadata_path}")
+    resolved_metadata = metadata_path.resolve(strict=False)
+    resolved_output_dir = output_dir.resolve(strict=False)
+    if resolved_metadata == resolved_output_dir or resolved_metadata in resolved_output_dir.parents:
+        raise ValueError(f"metadata path collides with output directory: {output_dir}")
+    for table in TABLE_ORDER_BY:
+        target = output_dir / f"{table}.parquet"
+        if resolved_metadata == target.resolve(strict=False):
+            raise ValueError(f"metadata path collides with TPC-H output: {target}")
+
+
+def _prepare_destinations(output_dir: Path, metadata_path: Path) -> None:
+    if _path_lexists(output_dir):
+        raise ValueError(f"output directory must not exist: {output_dir}")
+    _validate_metadata_destination(output_dir, metadata_path)
+    output_dir.mkdir(parents=True, exist_ok=False)
+
+
+def _fsync_directory(path: Path) -> None:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    descriptor = os.open(path, flags)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def _atomic_write_metadata(path: Path, document: dict[str, object]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     serialized = yaml.safe_dump(document, sort_keys=False, allow_unicode=True)
@@ -108,6 +141,7 @@ def _atomic_write_metadata(path: Path, document: dict[str, object]) -> None:
             stream.flush()
             os.fsync(stream.fileno())
         os.replace(temp_path, path)
+        _fsync_directory(path.parent)
     finally:
         temp_path.unlink(missing_ok=True)
 
@@ -129,7 +163,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     _verify_runtime_environment()
     verify_runtime_inputs(UV_LOCK_PATH, TPCH_EXTENSION_PATH)
-    output_dir.mkdir(parents=True, exist_ok=True)
+    _prepare_destinations(output_dir, metadata_path)
 
     connection = duckdb.connect()
     try:
@@ -151,6 +185,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     finally:
         connection.close()
 
+    _validate_metadata_destination(output_dir, metadata_path)
     _atomic_write_metadata(
         metadata_path,
         {
