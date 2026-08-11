@@ -1,0 +1,226 @@
+version: 2
+lock:
+  algorithm: sha256
+  source_drift: fail
+  object_drift: fail
+  schema_fingerprint: sha256-canonical-json
+  update_policy: reviewed-lock-update
+datasets:
+  direct:
+    description: Direct fixture
+    format: parquet
+    license: Test license
+    landing_prefix: direct
+    fetch: {kind: http, unzip: false}
+    provenance:
+      publisher: Example Publisher
+      homepage: https://example.com/direct
+      license_name: Test License
+      license_url: https://example.com/license
+      attribution: Example Publisher
+      source_stability: immutable
+      update_policy: reviewed-lock-update
+    schemas:
+      sample:
+        format: parquet
+        mode: exact
+        fields:
+          - {name: id, logical_type: int64, nullable: false}
+        options: {}
+        fingerprint: 461985269ae8c918f57558497a5f99f13964b7859f1ed36060f99e9620480064
+    artifacts:
+      sample:
+        url: https://example.com/direct.parquet
+        version: {kind: revision, value: direct-v1}
+        stability: immutable
+        evidence: {}
+        raw:
+          name: direct.parquet
+          size_bytes: 10
+          sha256: 25826f2106ef1119e5c737c8f58b5d9957bdca8886bdf14a27d0a119e3ed974f
+        outputs:
+          - object_name: direct.parquet
+            size_bytes: 10
+            sha256: 25826f2106ef1119e5c737c8f58b5d9957bdca8886bdf14a27d0a119e3ed974f
+            schema: sample
+            raw_identity: true
+    scales:
+      tiny: {artifacts: [sample]}
+  archive:
+    description: Archive fixture
+    format: csv
+    license: Test license
+    landing_prefix: archive
+    fetch: {kind: http, unzip: true}
+    provenance:
+      publisher: Example Publisher
+      homepage: https://example.com/archive
+      license_name: Test License
+      license_url: https://example.com/license
+      attribution: Example Publisher
+      source_stability: mutable
+      update_policy: reviewed-lock-update
+    schemas:
+      ratings:
+        format: csv
+        mode: exact
+        fields:
+          - {name: user_id, logical_type: int64, nullable: false}
+          - {name: rating, logical_type: float64, nullable: false}
+        options: {header: true, delimiter: ',', encoding: utf-8}
+        fingerprint: 604c35b27ede3cacffb0c568244a85b87f1b9e2c705d2b13f009590f8da6d3d1
+    artifacts:
+      release:
+        url: https://example.com/archive.zip
+        version: {kind: publication-date, value: '2026-08-10'}
+        stability: mutable
+        evidence:
+          etag: archive-v1
+          last_modified: Mon, 10 Aug 2026 00:00:00 GMT
+          observed_at: '2026-08-10T12:00:00Z'
+        raw:
+          name: archive.zip
+          size_bytes: 11
+          sha256: d9422e229af65d6010446c0eab8e54a127c12075f7ddd389414d8005d5a03c83
+        outputs:
+          - member_path: archive/ratings.csv
+            object_name: ratings.csv
+            size_bytes: 15
+            sha256: b92b6300c0ed1247d1712a5be50fb98a21f098fb08e9809af024e7573058fa71
+            schema: ratings
+    scales:
+      tiny: {artifacts: [release]}
+  generated:
+    description: Generated TPC-H fixture
+    format: parquet
+    license: TPC-H license
+    landing_prefix: tpch
+    fetch: {kind: tpch}
+    provenance:
+      publisher: Transaction Processing Performance Council
+      homepage: https://www.tpc.org/tpch/
+      license_name: TPC-H License
+      license_url: https://www.tpc.org/tpc_documents_current_versions/current_specifications5.asp
+      attribution: Transaction Processing Performance Council
+      source_stability: immutable
+      update_policy: reviewed-lock-update
+    schemas:
+      customer:
+        format: parquet
+        mode: exact
+        fields: [{name: c_custkey, logical_type: int64, nullable: false}]
+        options: {}
+        fingerprint: bb3fc62bf1c55849da949288aa7468f58e418e4368ef72d37e85f61da4de70ef
+      lineitem:
+        format: parquet
+        mode: exact
+        fields:
+          - {name: l_orderkey, logical_type: int64, nullable: false}
+          - {name: l_linenumber, logical_type: int32, nullable: false}
+        options: {}
+        fingerprint: 9afc274cc8d26fa4e05cb382a7cd4f8ea2c503622c5fd506b1f6f36cc447b6e1
+      nation:
+        format: parquet
+        mode: exact
+        fields: [{name: n_nationkey, logical_type: int32, nullable: false}]
+        options: {}
+        fingerprint: a275d8a8062a46c277969c501d3e38ce7361558d1fb2edcddeac1053b0b7dcee
+      orders:
+        format: parquet
+        mode: exact
+        fields: [{name: o_orderkey, logical_type: int64, nullable: false}]
+        options: {}
+        fingerprint: e40a921f555affa09be12a8cfb7901eea52e1b4c7624cfa46d1c6568326def03
+      part:
+        format: parquet
+        mode: exact
+        fields: [{name: p_partkey, logical_type: int64, nullable: false}]
+        options: {}
+        fingerprint: c156d84921957d8b7fca807363a20f77b934e7f994ba585c8205cd53efb587f7
+      partsupp:
+        format: parquet
+        mode: exact
+        fields:
+          - {name: ps_partkey, logical_type: int64, nullable: false}
+          - {name: ps_suppkey, logical_type: int64, nullable: false}
+        options: {}
+        fingerprint: 7ae8a4aa8a05a03dadbd4164f4170b9ea2505026944b237742074ebd9fe08d14
+      region:
+        format: parquet
+        mode: exact
+        fields: [{name: r_regionkey, logical_type: int32, nullable: false}]
+        options: {}
+        fingerprint: 086d4ca4a8e3dae6fb674c9e00ab0405483a4fb1b48e2c9c29d993db9dda512a
+      supplier:
+        format: parquet
+        mode: exact
+        fields: [{name: s_suppkey, logical_type: int64, nullable: false}]
+        options: {}
+        fingerprint: 8e753ad285084c07400d02d7a6c0b3599024d2b956283b115de2716ca983ca21
+    generator:
+      engine:
+        name: duckdb
+        version: 1.5.4
+        wheel_sha256: ccc7f2694d02b4763fee61021d45e12f7bc5743993686563957df0cef799fbae
+      extension:
+        name: tpch
+        version_relation: engine-version
+        repository_url: https://extensions.duckdb.org/v1.5.4/linux_amd64/tpch.duckdb_extension.gz
+        sha256: a6516e487106b4f95bd6d85da4364debdcb2db536d015784bc43209af6ed0125
+      environment:
+        image: python:3.11.13-slim-bookworm
+        image_digest: sha256:cec9aa7aa96eea4fa036e9b82be1e6b325f2e3707f462d885868df51ec0a4b47
+        platform: linux/amd64
+        uv_lock_sha256: a376ce1b5bd5621290aaded68c22572690395419876da41814e28469bb4186b1
+        locale: C.UTF-8
+        timezone: UTC
+        threads: 1
+        preserve_insertion_order: true
+      command: {procedure: dbgen, scale_parameter: sf}
+      export:
+        format: parquet
+        compression: zstd
+        row_group_size: 100000
+        order_by:
+          customer: [c_custkey]
+          lineitem: [l_orderkey, l_linenumber]
+          nation: [n_nationkey]
+          orders: [o_orderkey]
+          part: [p_partkey]
+          partsupp: [ps_partkey, ps_suppkey]
+          region: [r_regionkey]
+          supplier: [s_suppkey]
+      scales:
+        tiny:
+          scale_factor: 0.01
+          outputs:
+            - {table: customer, object_name: customer.parquet, size_bytes: 18, sha256: 0a146ced7f61274ee85441a13d0a5b2c58118812e22d58db8a6f192a60683d28, schema: customer}
+            - {table: lineitem, object_name: lineitem.parquet, size_bytes: 18, sha256: cadbe90ae2ea56ac944544790e6f8fee676414173693461617df4ddc912bf44a, schema: lineitem}
+            - {table: nation, object_name: nation.parquet, size_bytes: 16, sha256: 298b233d68128e648f57166ecbc9d83538bc02362be10b991fb6827ddac8726e, schema: nation}
+            - {table: orders, object_name: orders.parquet, size_bytes: 16, sha256: 9a135635ad9098f134f45fee6f9af365e1d8f52cf4da79fd82596eb0264aa7f5, schema: orders}
+            - {table: part, object_name: part.parquet, size_bytes: 14, sha256: e963c351208dad89f42977329daaaf5d17d1e8bdb8db9f63c9748b73a853c953, schema: part}
+            - {table: partsupp, object_name: partsupp.parquet, size_bytes: 18, sha256: 964edc00a4a17a49ca379089b3018750ee75eaeee9e8e5719b983532c01288e5, schema: partsupp}
+            - {table: region, object_name: region.parquet, size_bytes: 16, sha256: a4f870e376187a451d5ef25cf1d03578328ed8bb2a42758fdd812f719d42f4bc, schema: region}
+            - {table: supplier, object_name: supplier.parquet, size_bytes: 18, sha256: 457e854a2ef1242dbecd7845402507ed65f5ba0ecc0cc27dd7d53e7ec932e216, schema: supplier}
+        small:
+          scale_factor: 1
+          outputs:
+            - {table: customer, object_name: customer.parquet, size_bytes: 19, sha256: 3bb02a8ad8376d006964cf32ea1b6908603b1fbbeae397ddfc442e9b450c6437, schema: customer}
+            - {table: lineitem, object_name: lineitem.parquet, size_bytes: 19, sha256: 70764cf80560d9b3a73f03387360345718b221433b0d091ff559be1bef4ecae0, schema: lineitem}
+            - {table: nation, object_name: nation.parquet, size_bytes: 17, sha256: 4298ece4c6876682e3342550498aed105b2cd5d7f5575566fdfef2ae0d3827c7, schema: nation}
+            - {table: orders, object_name: orders.parquet, size_bytes: 17, sha256: ea7d73b8207b0d9e8a64f1b36f0f10f160f780c852c39d5cf9972de83cecc122, schema: orders}
+            - {table: part, object_name: part.parquet, size_bytes: 15, sha256: 472aca562519553424bf6858b76fc49b7e21e5a8ebbd7b93950ec31b8cc60a73, schema: part}
+            - {table: partsupp, object_name: partsupp.parquet, size_bytes: 19, sha256: 5335a5af43b361497cac554da8ae82c8f2856e8035796f7b05ac862e7b9bf322, schema: partsupp}
+            - {table: region, object_name: region.parquet, size_bytes: 17, sha256: 7b9977077e11eb4ba5780155ade8a44d5fd3948d801d7aace261ecb8a8663bf7, schema: region}
+            - {table: supplier, object_name: supplier.parquet, size_bytes: 19, sha256: 501dfd83f6582acb7229ec051f7bbd2245ffe040931d547a21b96767ca867a45, schema: supplier}
+        medium:
+          scale_factor: 10
+          outputs:
+            - {table: customer, object_name: customer.parquet, size_bytes: 20, sha256: 1a0f10d78a099c6ef0a360c85c0e2a530cfc10c1b82dde82e0722714aaae5f98, schema: customer}
+            - {table: lineitem, object_name: lineitem.parquet, size_bytes: 20, sha256: 750c9d305536e380d68726d2f1c3670f8e2f11ae3a2a235c0bcc79041bfc5e85, schema: lineitem}
+            - {table: nation, object_name: nation.parquet, size_bytes: 18, sha256: 7d50d3f13cf1c8d0a086e09b20bb5cc68b9bb2cc186ffcb400211d74e83f8816, schema: nation}
+            - {table: orders, object_name: orders.parquet, size_bytes: 18, sha256: a20ce86bed0ea3413cf5c4023ef0dd27af3d61bbe74f18701fbd7135401320fa, schema: orders}
+            - {table: part, object_name: part.parquet, size_bytes: 16, sha256: cf94f49fe7c665d1fc62bd07ecb6f685987a509186179566acd4f67728db6b66, schema: part}
+            - {table: partsupp, object_name: partsupp.parquet, size_bytes: 20, sha256: d78f39c4082d8a16a4af4e1a60a83b3bd1c2ba82ab6df401b9dbea69910efc86, schema: partsupp}
+            - {table: region, object_name: region.parquet, size_bytes: 18, sha256: 5aeab534b70e55e0f991a93f286749eb56a599645878cbb8540ef30a77f7de7b, schema: region}
+            - {table: supplier, object_name: supplier.parquet, size_bytes: 20, sha256: 062f5c504739c964fca5a6d1f0f5cc5b0a4b31023488826851bfbdf0c4d7bdfe, schema: supplier}
