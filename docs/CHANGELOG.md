@@ -8,6 +8,14 @@ All notable changes to this project are documented here (Keep a Changelog format
   verifier skeleton, and infra-preflight Layer 1.
 
 ### Changed
+- The dataset catalog now uses registry version 2 with normalized source,
+  raw/archive, landing-object, generator-output, and schema locks for every
+  supported tier. The reviewed contract records authoritative provenance,
+  per-object SHA-256 and size identities, canonical generator inputs, and schema
+  fingerprints. MovieLens now carries exact artifact-level provenance for each
+  mutually exclusive release while retaining intentional scale-local flattened
+  names; runtime enforcement remains explicitly deferred to issue #81,
+  including atomic release replacement and stale-object prevention.
 - Atlas is now pinned at `c6cf73d7168db1a7840fc45c9ed3e385071996d8`.
   Both production Spark DAGs again use `SparkSubmitOperator` ownership: their
   `AtlasSparkSubmitOperator` subclass preserves provider execution and
@@ -60,7 +68,7 @@ All notable changes to this project are documented here (Keep a Changelog format
   masking real driver failures.
 - Batch NYC Taxi notebook ingestion now normalizes `passenger_count` to `double`
   per declared Parquet object before unioning, so the January–June 2023 input
-  set retains Scala/PySpark parity despite March's `INT64` schema.
+  set retains Scala/PySpark parity despite January's distinct physical schema.
 - Atlas consumption modernized: pin bumped `85ff46b2` → `2d006cae` (v0.1.0-587);
   adopted the `atlas.consumer.yml` consumer manifest (replaces the `_user/`
   symlink, `.env` injection, wrapper source flags, and `create_buckets.sh`);

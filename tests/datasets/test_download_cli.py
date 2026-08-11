@@ -31,14 +31,12 @@ def test_run_uploads_http_dataset(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(cli, "fetch_http", fake_fetch)
 
-    n = cli.run(REG, infra_dir=tmp_path, scale="tiny", only=["nyc_taxi"],
-                force=False, dry_run=False, client=client)
+    n = cli.run(REG, infra_dir=tmp_path, scale="tiny", only=["nyc_taxi"], force=False, dry_run=False, client=client)
     assert n == 1
     assert cli.object_exists(client, "landing", "nyc_taxi/part-0.parquet")
 
     # idempotent: second run skips the existing object
-    n2 = cli.run(REG, infra_dir=tmp_path, scale="tiny", only=["nyc_taxi"],
-                 force=False, dry_run=False, client=client)
+    n2 = cli.run(REG, infra_dir=tmp_path, scale="tiny", only=["nyc_taxi"], force=False, dry_run=False, client=client)
     assert n2 == 0
 
 
@@ -58,6 +56,5 @@ def test_run_skips_fetch_when_objects_present(tmp_path, monkeypatch):
         raise AssertionError("fetch_http must not run when all objects already exist")
 
     monkeypatch.setattr(cli, "fetch_http", boom)
-    n = cli.run(REG, infra_dir=tmp_path, scale="tiny", only=["nyc_taxi"],
-                force=False, dry_run=False, client=client)
+    n = cli.run(REG, infra_dir=tmp_path, scale="tiny", only=["nyc_taxi"], force=False, dry_run=False, client=client)
     assert n == 0
