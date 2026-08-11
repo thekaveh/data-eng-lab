@@ -73,6 +73,10 @@ Every dataset retains its existing description, format, license,
 
 Credentials, host ports, temporary paths, MinIO endpoints, and other
 machine-local values are prohibited from the committed provenance mapping.
+An HTTP artifact may carry a complete `provenance` override with the same
+validated fields. When present, the artifact-level terms govern that release;
+the dataset-level mapping remains the conservative default for artifacts that
+do not override it.
 
 ## 5. Schema contracts
 
@@ -100,9 +104,10 @@ must remain compatible, while additional fields may appear. Artifact byte
 digests still detect any upstream byte change even when schema mode is
 `minimum`.
 
-Schema identity is per artifact where required. This is necessary for the known
-NYC Taxi source variation in which March 2023 encodes `passenger_count`
-differently from adjacent months. The registry must record the source schemas;
+Schema identity is per artifact where required. This is necessary for the
+reviewed NYC Taxi source variation: January 2023 encodes `passenger_count` and
+several identifier fields differently from February through June. The registry
+must record the source schemas;
 normalization performed later by notebooks or Spark jobs does not erase that
 provenance.
 
@@ -113,6 +118,8 @@ HTTP datasets define unique entries in an `artifacts` mapping. Each entry has:
 ### 6.1 Source identity
 
 - canonical HTTPS URL;
+- an optional complete artifact-level provenance override for release-specific
+  publisher, license, attribution, and stability terms;
 - a `version` selector with `kind` equal to `revision` or `publication-date`
   and a non-empty string value;
 - source stability inherited from, or more restrictive than, the dataset;
@@ -140,8 +147,11 @@ Each output records:
 Direct downloads therefore lock both the source identity and the landing object
 identity, while the validator guarantees that their size and digest agree.
 Archives lock the downloaded archive plus every extracted object independently.
-Flattened archive filenames must be unique, so extraction cannot overwrite one
-member with another unnoticed.
+Flattened archive filenames must be unique within one artifact and across all
+artifacts selected by one scale, so extraction cannot overwrite one member with
+another unnoticed. The same flattened name may occur in mutually exclusive
+release artifacts because only one is selected for a scale; this scale-local
+landing identity is intentional.
 
 Each HTTP scale contains only an ordered `artifacts` list. Shared artifacts are
 referenced, not copied.
@@ -223,7 +233,8 @@ path-qualified errors in one pass. It rejects:
 - non-positive or non-integer byte sizes;
 - non-lowercase or non-64-character SHA-256 values;
 - missing schemas or schema-fingerprint mismatches;
-- duplicate landing object names;
+- duplicate landing object names within an artifact or across artifacts
+  selected by the same scale;
 - unknown scale artifact or schema references;
 - direct-object size/digest disagreement;
 - archive outputs without member paths;
@@ -302,8 +313,10 @@ are yet checked.
 
 Issue #81 then consumes this exact contract to implement fail-before-use
 verification for HTTP download, archive extraction, TPC-H generation, upload,
-and existing-object reuse. Scheduled live acceptance remains downstream of both
-children.
+and existing-object reuse. For release alternatives such as MovieLens, #81 must
+atomically replace the selected release and prevent mixed stale-release objects
+under the shared landing prefix. Scheduled live acceptance remains downstream
+of both children.
 
 ## 14. Acceptance mapping
 

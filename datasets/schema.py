@@ -435,6 +435,7 @@ def _validate_http_dataset(dataset: dict[str, object], path: str) -> list[str]:
     elif not artifacts:
         errors.append(f"{path}.artifacts: must be a non-empty mapping")
     artifact_fields = ("url", "version", "stability", "evidence", "raw", "outputs")
+    allowed_artifact_fields = frozenset(artifact_fields + ("provenance",))
     for artifact_id, raw_artifact in artifacts.items():
         artifact_path = f"{path}.artifacts.{artifact_id}"
         errors += _identifier(artifact_id, artifact_path)
@@ -442,7 +443,9 @@ def _validate_http_dataset(dataset: dict[str, object], path: str) -> list[str]:
         errors += artifact_errors
         if not isinstance(raw_artifact, dict):
             continue
-        errors += _unknown(artifact, artifact_path, frozenset(artifact_fields))
+        errors += _unknown(artifact, artifact_path, allowed_artifact_fields)
+        if "provenance" in artifact:
+            errors += _validate_provenance(artifact["provenance"], f"{artifact_path}.provenance")
         authoritative_basename: str | None = None
         if "url" in artifact:
             errors += _https(artifact["url"], f"{artifact_path}.url")

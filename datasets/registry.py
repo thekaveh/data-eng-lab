@@ -91,6 +91,7 @@ class HttpArtifact:
     evidence: Mapping[str, str]
     raw: RawArtifact
     outputs: tuple[LandingObject, ...]
+    provenance: Provenance | None = None
 
 
 @dataclass(frozen=True)
@@ -239,6 +240,7 @@ def _parse_artifacts(raw: Mapping[str, object]) -> Mapping[str, HttpArtifact]:
                 sha256=cast(str, raw_artifact["sha256"]),
             ),
             outputs=outputs,
+            provenance=(_parse_provenance(_as_mapping(artifact["provenance"])) if "provenance" in artifact else None),
         )
     return MappingProxyType(artifacts)
 

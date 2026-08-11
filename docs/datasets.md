@@ -51,6 +51,7 @@ The issue #80 review acquired 15 unique HTTP artifacts, recorded 25 HTTP landing
 - **GH Archive:** the minimum JSON contract locks the fields consumed by the scenarios while permitting additional event fields. Exact artifact digests still detect any byte change.
 - **Online Retail II:** the archive contains one `online_retail_II.xlsx` workbook, not CSV. Its two exact sheets are `Year 2009-2010` and `Year 2010-2011`, both with the locked header and nullability contract.
 - **MovieLens:** `ml-latest-small.zip` is a mutable alias and `latest-small` is not a source revision. Its bundled README supplies publication identity `2018-09-26`. Latest-small and 25M have distinct bundled usage terms, so release-specific terms control rather than a shared label being treated as permission for every archive.
+- **MovieLens release identity:** artifact-level provenance governs the selected release. Both mutually exclusive archives intentionally use scale-local landing identity for shared flattened names such as `ratings.csv`. Runtime issue #81 must atomically replace the selected release and prevent mixed stale-release objects under the shared prefix.
 - **TPC-H:** all three scales use the same eight complete Parquet schemas and the same locked generator environment. Reference runs load the preverified extension offline; they do not install it at runtime.
 
 ## 5. Authoritative Sources, Licenses, and Attribution
@@ -63,7 +64,7 @@ The issue #80 review acquired 15 unique HTTP artifacts, recorded 25 HTTP landing
 | Online Retail II | UCI Machine Learning Repository; creator Daqing Chen — [dataset 502](https://archive.ics.uci.edu/dataset/502/online%2Bretail%2Bii) | [Creative Commons Attribution 4.0 International (CC BY 4.0)](https://creativecommons.org/licenses/by/4.0/) | Chen, D. (2012). Online Retail II [Dataset]. UCI Machine Learning Repository. DOI 10.24432/C5CG6D |
 | TPC-H | Transaction Processing Performance Council — [TPC-H](https://www.tpc.org/tpch/) | [TPC-H specification](https://www.tpc.org/tpc_documents_current_versions/current_specifications5.asp) | Transaction Processing Performance Council |
 
-MovieLens terms must be read per release. The [latest-small README](https://files.grouplens.org/datasets/movielens/ml-latest-small-README.html) permits redistribution only under its stated conditions. The [25M README](https://files.grouplens.org/datasets/movielens/ml-25m-README.html) states that redistribution requires separate permission. The registry uses the conservative 25M terms at dataset level without extending those terms into a broader permission claim.
+MovieLens terms must be read per release. The [latest-small README](https://files.grouplens.org/datasets/movielens/ml-latest-small-README.html) permits redistribution only under its stated conditions. The [25M README](https://files.grouplens.org/datasets/movielens/ml-25m-README.html) states that redistribution requires separate permission. The registry uses the conservative 25M terms at dataset level without extending those terms into a broader permission claim, while each artifact records its exact controlling release terms.
 
 ## 6. Reviewed Lock Update
 

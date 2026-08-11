@@ -12,7 +12,10 @@ All notable changes to this project are documented here (Keep a Changelog format
   raw/archive, landing-object, generator-output, and schema locks for every
   supported tier. The reviewed contract records authoritative provenance,
   per-object SHA-256 and size identities, canonical generator inputs, and schema
-  fingerprints; runtime enforcement remains explicitly deferred to issue #81.
+  fingerprints. MovieLens now carries exact artifact-level provenance for each
+  mutually exclusive release while retaining intentional scale-local flattened
+  names; runtime enforcement remains explicitly deferred to issue #81,
+  including atomic release replacement and stale-object prevention.
 - Atlas is now pinned at `c6cf73d7168db1a7840fc45c9ed3e385071996d8`.
   Both production Spark DAGs again use `SparkSubmitOperator` ownership: their
   `AtlasSparkSubmitOperator` subclass preserves provider execution and

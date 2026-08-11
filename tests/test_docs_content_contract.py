@@ -29,37 +29,28 @@ HERO_VALUE_PROPOSITION = (
     "from paired notebooks and deployable Spark applications."
 )
 HERO_BANNER_PATH = "diagrams/img/data-eng-lab-hero.png"
-HERO_BANNER_ALT = (
-    "Abstract data-eng-lab lakehouse with Iceberg crystal, medallion layers, and flowing data"
-)
-REDPANDA_BADGE_URL = (
-    "https://img.shields.io/badge/"
-    "Redpanda-streaming-FF4D5B?logo=apachekafka&logoColor=white"
-)
+HERO_BANNER_ALT = "Abstract data-eng-lab lakehouse with Iceberg crystal, medallion layers, and flowing data"
+REDPANDA_BADGE_URL = "https://img.shields.io/badge/Redpanda-streaming-FF4D5B?logo=apachekafka&logoColor=white"
 HERO_BADGE_ROWS = (
     (
         ("Atlas", "https://img.shields.io/badge/Atlas-infrastructure-2563EB?logo=git&logoColor=white"),
         (
             "Docker Compose",
-            "https://img.shields.io/badge/"
-            "Docker%20Compose-runtime-2496ED?logo=docker&logoColor=white",
+            "https://img.shields.io/badge/Docker%20Compose-runtime-2496ED?logo=docker&logoColor=white",
         ),
     ),
     (
         (
             "Apache Spark",
-            "https://img.shields.io/badge/"
-            "Apache%20Spark-compute-E25A1C?logo=apachespark&logoColor=white",
+            "https://img.shields.io/badge/Apache%20Spark-compute-E25A1C?logo=apachespark&logoColor=white",
         ),
         (
             "Apache Iceberg",
-            "https://img.shields.io/badge/"
-            "Apache%20Iceberg-tables-4F46E5?logo=apache&logoColor=white",
+            "https://img.shields.io/badge/Apache%20Iceberg-tables-4F46E5?logo=apache&logoColor=white",
         ),
         (
             "MinIO",
-            "https://img.shields.io/badge/"
-            "MinIO-object%20storage-C72E49?logo=minio&logoColor=white",
+            "https://img.shields.io/badge/MinIO-object%20storage-C72E49?logo=minio&logoColor=white",
         ),
         ("Trino", "https://img.shields.io/badge/Trino-SQL-DD00A1?logo=trino&logoColor=white"),
         (
@@ -70,8 +61,7 @@ HERO_BADGE_ROWS = (
     (
         (
             "Apache Airflow",
-            "https://img.shields.io/badge/"
-            "Apache%20Airflow-orchestration-017CEE?logo=apacheairflow&logoColor=white",
+            "https://img.shields.io/badge/Apache%20Airflow-orchestration-017CEE?logo=apacheairflow&logoColor=white",
         ),
         (
             "Jenkins",
@@ -87,8 +77,7 @@ HERO_BADGE_ROWS = (
         ),
         (
             "Zeppelin",
-            "https://img.shields.io/badge/"
-            "Zeppelin-notebooks-FBBF24?logo=apache&logoColor=white",
+            "https://img.shields.io/badge/Zeppelin-notebooks-FBBF24?logo=apache&logoColor=white",
         ),
     ),
 )
@@ -112,9 +101,7 @@ ARCHITECTURE_LEAD = (
 def _public_sources() -> tuple[Path, ...]:
     manifest = load_manifest(ROOT / "docs/manifest.yaml", ROOT)
     return tuple(
-        ROOT / section.source
-        for section in iter_leaf_sections(manifest.sections)
-        if section.source is not None
+        ROOT / section.source for section in iter_leaf_sections(manifest.sections) if section.source is not None
     )
 
 
@@ -128,7 +115,7 @@ def _opener_parts(path: Path) -> tuple[str, str, str]:
     )
     value = re.search(
         r'<p align="center">\s*'
-        r'(Build, orchestrate, stream, and query .*?)\s*</p>',
+        r"(Build, orchestrate, stream, and query .*?)\s*</p>",
         text,
         re.DOTALL,
     )
@@ -149,14 +136,10 @@ def _badge_row(pairs: tuple[tuple[str, str], ...]) -> str:
 
 
 def _expected_opener() -> str:
-    banner = (
-        '<p align="center">\n'
-        f'  <img src="{HERO_BANNER_PATH}" alt="{HERO_BANNER_ALT}" width="100%">\n'
-        "</p>"
-    )
+    banner = f'<p align="center">\n  <img src="{HERO_BANNER_PATH}" alt="{HERO_BANNER_ALT}" width="100%">\n</p>'
     tagline = (
         '<p align="center">\n'
-        '  <strong>An Iceberg-lakehouse data-engineering lab built on the '
+        "  <strong>An Iceberg-lakehouse data-engineering lab built on the "
         '<a href="https://github.com/thekaveh/atlas">Atlas</a> platform.</strong>\n'
         "</p>"
     )
@@ -232,14 +215,16 @@ def test_opener_is_centered_badged_and_identical_across_canonical_surfaces():
 
     assert readme_opener.count("docs/diagrams/img/data-eng-lab-hero.png") == 1
     assert index_opener.count(HERO_BANNER_PATH) == 1
-    normalized_readme_opener = readme_opener.replace(
-        "docs/diagrams/img/data-eng-lab-hero.png", HERO_BANNER_PATH
-    )
+    normalized_readme_opener = readme_opener.replace("docs/diagrams/img/data-eng-lab-hero.png", HERO_BANNER_PATH)
     assert normalized_readme_opener == index_opener == _expected_opener()
-    assert readme_parts == index_parts == (
-        HERO_H1,
-        HERO_TAGLINE_TEXT,
-        HERO_VALUE_PROPOSITION,
+    assert (
+        readme_parts
+        == index_parts
+        == (
+            HERO_H1,
+            HERO_TAGLINE_TEXT,
+            HERO_VALUE_PROPOSITION,
+        )
     )
     manifest = yaml.safe_load((ROOT / "atlas.consumer.yml").read_text(encoding="utf-8"))
     assert manifest["brand"]["tagline"] == HERO_TAGLINE_TEXT
@@ -254,10 +239,7 @@ def test_opener_is_centered_badged_and_identical_across_canonical_surfaces():
             for block in re.findall(r'<p align="center">.*?</p>', opener, re.DOTALL)
             if "img.shields.io/badge/" in block
         )
-        badge_pairs = tuple(
-            tuple(re.findall(r'<img alt="([^"]+)" src="([^"]+)">', row))
-            for row in badge_rows
-        )
+        badge_pairs = tuple(tuple(re.findall(r'<img alt="([^"]+)" src="([^"]+)">', row)) for row in badge_rows)
         assert badge_pairs == HERO_BADGE_ROWS
         assert badge_pairs[1][4] == ("Redpanda", REDPANDA_BADGE_URL)
         assert all("?logo=" in url for row in badge_pairs for _, url in row)
@@ -273,13 +255,11 @@ def test_opener_is_centered_badged_and_identical_across_canonical_surfaces():
         )
         assert ordered_parts == tuple(sorted(ordered_parts))
         assert "| Platform |" not in opener
-        opener_images = re.findall(r'<img\s+([^>]+)>', opener)
+        opener_images = re.findall(r"<img\s+([^>]+)>", opener)
         assert opener_images
         assert all(re.search(r'\balt="[^"]+"', attributes) for attributes in opener_images)
         architecture = text[text.index("## 2. Architecture") :]
-        assert architecture.startswith(
-            ARCHITECTURE_LEAD + f"![data-eng-lab architecture]({overview_path})\n\n"
-        )
+        assert architecture.startswith(ARCHITECTURE_LEAD + f"![data-eng-lab architecture]({overview_path})\n\n")
 
     executive_summary = _executive_summary(readme_opener)
     assert executive_summary == _executive_summary(index_opener) == HERO_EXECUTIVE_SUMMARY
@@ -531,6 +511,10 @@ def test_dataset_docs_record_reviewed_evidence_counts_and_source_realities():
         "`latest-small` is not a source revision",
         "2018-09-26",
         "release-specific terms control",
+        "artifact-level provenance governs the selected release",
+        "scale-local landing identity",
+        "atomically replace the selected release",
+        "prevent mixed stale-release objects",
     ):
         assert phrase in evidence
 
@@ -608,13 +592,9 @@ def test_overviews_distinguish_kafka_and_file_source_streaming(relative: str):
     text = (ROOT / relative).read_text(encoding="utf-8")
 
     assert "drives all streaming scenarios" not in text
+    assert ("Redpanda (Kafka-compatible) backs the event-ingest, windowing, and CDC streaming scenarios.") in text
     assert (
-        "Redpanda (Kafka-compatible) backs the event-ingest, windowing, and CDC "
-        "streaming scenarios."
-    ) in text
-    assert (
-        "`streaming_ingest-gh_archive-spark-iceberg` uses an incremental file "
-        "source and requires no Kafka broker."
+        "`streaming_ingest-gh_archive-spark-iceberg` uses an incremental file source and requires no Kafka broker."
     ) in text
 
 
@@ -679,15 +659,9 @@ def _jenkins_contract(app: str) -> dict[str, str]:
     text = (ROOT / "spark-apps" / app / "Jenkinsfile").read_text(encoding="utf-8")
     app_name = re.search(r"APP = '([^']+)'", text)
     version = re.search(r"VERSION = '([^']+)'", text)
-    destination = re.search(
-        r'MINIO_BUCKET_ICEBERG_JARS}/\$\{APP}/\$\{VERSION}/(app\.jar)', text
-    )
+    destination = re.search(r"MINIO_BUCKET_ICEBERG_JARS}/\$\{APP}/\$\{VERSION}/(app\.jar)", text)
     assert app_name and version and destination
-    return {
-        "application": (
-            f"s3a://jars/{app_name.group(1)}/{version.group(1)}/{destination.group(1)}"
-        )
-    }
+    return {"application": (f"s3a://jars/{app_name.group(1)}/{version.group(1)}/{destination.group(1)}")}
 
 
 @pytest.mark.parametrize("app", ["nyc-taxi-etl", "nyc-taxi-medallion"])
@@ -726,9 +700,7 @@ def test_spark_app_docs_match_build_publish_and_dag_contracts(app: str):
 
 
 def test_etl_docs_match_transform_and_positional_argument_contract():
-    transform = (
-        "src/main/scala/com/thekaveh/dataeng/nyctaxi/transforms/TaxiTransforms.scala"
-    )
+    transform = "src/main/scala/com/thekaveh/dataeng/nyctaxi/transforms/TaxiTransforms.scala"
     source = (ROOT / "spark-apps/nyc-taxi-etl" / transform).read_text(encoding="utf-8")
     assert "def clean(df: DataFrame)" in source
     assert 'F.col("tpep_pickup_datetime")' in source
@@ -750,12 +722,8 @@ def test_etl_docs_match_transform_and_positional_argument_contract():
 
 
 def test_medallion_docs_match_transform_output_and_fixed_table_contract():
-    transform = (
-        "src/main/scala/com/thekaveh/dataeng/medallion/transforms/MedallionTransforms.scala"
-    )
-    source = (ROOT / "spark-apps/nyc-taxi-medallion" / transform).read_text(
-        encoding="utf-8"
-    )
+    transform = "src/main/scala/com/thekaveh/dataeng/medallion/transforms/MedallionTransforms.scala"
+    source = (ROOT / "spark-apps/nyc-taxi-medallion" / transform).read_text(encoding="utf-8")
     assert 'F.count("*").as("trips")' in source
 
     for relative in (

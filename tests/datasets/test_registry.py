@@ -155,7 +155,16 @@ def test_v2_models_have_exact_contract_fields():
             "member_path",
             "raw_identity",
         ),
-        reg.HttpArtifact: ("id", "url", "version", "stability", "evidence", "raw", "outputs"),
+        reg.HttpArtifact: (
+            "id",
+            "url",
+            "version",
+            "stability",
+            "evidence",
+            "raw",
+            "outputs",
+            "provenance",
+        ),
         reg.GeneratorEnvironment: (
             "image",
             "image_digest",
@@ -207,6 +216,18 @@ def test_v2_contract_is_deeply_read_only():
         direct.artifacts["other"] = artifact
     with pytest.raises(FrozenInstanceError):
         artifact.url = "https://example.com/changed.parquet"
+
+    archive_artifact = reg.load_registry_v2(V2_FIXTURE)["archive"].artifacts["release"]
+    assert archive_artifact.provenance == reg.Provenance(
+        publisher="Archive Release Publisher",
+        homepage="https://example.com/archive-release",
+        license_name="Archive Release License",
+        license_url="https://example.com/archive-release-license",
+        attribution="Archive Release Publisher",
+        source_stability="mutable",
+        update_policy="reviewed-lock-update",
+    )
+    assert direct.artifacts["sample"].provenance is None
 
     generator = reg.load_registry_v2(V2_FIXTURE)["generated"].generator
     assert isinstance(generator.order_by, MappingProxyType)

@@ -84,6 +84,10 @@ must use this exact field tree. Every mapping rejects unknown keys.
 `license_url`, `attribution`, `source_stability`, and `update_policy`.
 Human-readable strings must be non-empty. `source_stability` is `mutable` or
 `immutable`; `update_policy` is `reviewed-lock-update`.
+An HTTP artifact may optionally include one complete `provenance` override with
+the same exact field set and validation. When present, that artifact-level
+mapping governs the selected release; dataset provenance is the conservative
+default.
 
 Authoritative URLs must use HTTPS and a public DNS host. Reject credentials,
 explicit ports, `localhost`, `.localhost`, `.local`, loopback/link-local/private
@@ -91,7 +95,7 @@ IP literals, fragments, and empty hosts. This rule applies to provenance,
 license, source, and extension-repository URLs.
 
 Each HTTP artifact requires exactly `url`, `version`, `stability`, `evidence`,
-`raw`, and `outputs`:
+`raw`, and `outputs`, and optionally accepts `provenance`:
 
 - `version` requires `kind` (`revision` or `publication-date`) and a non-empty
   `value`; publication dates are strict ISO `YYYY-MM-DD` values. A mutable URL
@@ -110,8 +114,10 @@ Each HTTP artifact requires exactly `url`, `version`, `stability`, `evidence`,
   lowercase `sha256`, and a known `schema`. A direct artifact additionally
   requires `raw_identity: true`, forbids `member_path`, and exactly matches raw
   name, size, and digest. An archive output requires `member_path`, forbids
-  `raw_identity`, and preserves the exact safe member path. All object names
-  within a dataset are unique after the current flattening behavior.
+  `raw_identity`, and preserves the exact safe member path. Object names are
+  unique within each artifact and across artifacts selected by the same scale.
+  Mutually exclusive release artifacts may deliberately reuse the same
+  flattened names because their landing identity is scale-local.
 - Each HTTP scale contains exactly `artifacts`, a non-empty ordered list of
   known artifact IDs with no duplicates.
 
@@ -504,7 +510,7 @@ read-only at the contract boundary:
 | `SourceVersion` | `kind`, `value` |
 | `RawArtifact` | `name`, `size_bytes`, `sha256` |
 | `LandingObject` | `object_name`, `size_bytes`, `sha256`, `schema_id`, `member_path: str | None`, `raw_identity: bool` |
-| `HttpArtifact` | `id`, `url`, `version`, `stability`, `evidence: Mapping[str, str]`, `raw`, `outputs: tuple[LandingObject, ...]` |
+| `HttpArtifact` | `id`, `url`, `version`, `stability`, `evidence: Mapping[str, str]`, `raw`, `outputs: tuple[LandingObject, ...]`, `provenance: Provenance | None` |
 | `GeneratorEnvironment` | `image`, `image_digest`, `platform`, `uv_lock_sha256`, `locale`, `timezone`, `threads`, `preserve_insertion_order` |
 | `GeneratorOutput` | `table`, `object_name`, `size_bytes`, `sha256`, `schema_id` |
 | `GeneratorScale` | `name`, `scale_factor`, `outputs: tuple[GeneratorOutput, ...]` |
@@ -936,7 +942,8 @@ registry population and must be diagnosed before continuing.
 
 Create schema candidates for:
 
-- each distinct NYC Taxi Parquet physical schema, preserving the March `passenger_count` distinction;
+- each distinct NYC Taxi Parquet physical schema, preserving January's reviewed
+  `passenger_count` and identifier-width distinction from February through June;
 - one minimum GH Archive JSON contract covering fields actually consumed by repository scenarios;
 - each MovieLens extracted CSV shape in each release and a `text` contract for
   every README/license/non-tabular member that the current fetcher lands;
@@ -1030,6 +1037,11 @@ For TPC-H:
 - preserve scale factors `0.01`, `1`, and `10`.
 
 Use exact authoritative licenses and attribution. If Task 6 discovers that the current `format` or archive outputs are inaccurate, update the registry description/format to the observed authoritative shape and record the correction in the report and changelog; do not alter production extraction behavior in this issue.
+
+For mutually exclusive releases that share flattened names under one landing
+prefix, record complete artifact-level provenance. Issue #81 must consume the
+selected release as one atomic identity, replace it atomically, and prevent
+mixed stale-release objects; issue #80 does not change downloader behavior.
 
 - [ ] **Step 4: Atomically switch production validation/parsing to v2**
 

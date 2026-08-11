@@ -74,6 +74,14 @@ datasets:
     artifacts:
       release:
         url: https://example.com/archive.zip
+        provenance:
+          publisher: Archive Release Publisher
+          homepage: https://example.com/archive-release
+          license_name: Archive Release License
+          license_url: https://example.com/archive-release-license
+          attribution: Archive Release Publisher
+          source_stability: mutable
+          update_policy: reviewed-lock-update
         version: {kind: publication-date, value: '2026-08-10'}
         stability: mutable
         evidence:

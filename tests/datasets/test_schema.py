@@ -115,6 +115,52 @@ def test_real_registry_records_reviewed_source_identity_and_release_terms():
         "kind": "publication-date",
         "value": "2019-11-21",
     }
+    assert movielens["artifacts"]["latest_small"]["provenance"] == {
+        "publisher": "GroupLens Research, University of Minnesota",
+        "homepage": "https://grouplens.org/datasets/movielens/",
+        "license_name": (
+            "MovieLens latest-small usage license (research use; attribution; "
+            "same-terms redistribution; no commercial use without permission)"
+        ),
+        "license_url": "https://files.grouplens.org/datasets/movielens/ml-latest-small-README.html",
+        "attribution": (
+            "F. Maxwell Harper and Joseph A. Konstan, The MovieLens Datasets: "
+            "History and Context (2015), plus GroupLens Research"
+        ),
+        "source_stability": "mutable",
+        "update_policy": "reviewed-lock-update",
+    }
+    assert movielens["artifacts"]["release_25m"]["provenance"] == {
+        "publisher": "GroupLens Research, University of Minnesota",
+        "homepage": "https://grouplens.org/datasets/movielens/",
+        "license_name": (
+            "MovieLens 25M usage license (research use; attribution; no redistribution "
+            "without permission; no commercial use without permission)"
+        ),
+        "license_url": "https://files.grouplens.org/datasets/movielens/ml-25m-README.html",
+        "attribution": (
+            "F. Maxwell Harper and Joseph A. Konstan, The MovieLens Datasets: "
+            "History and Context (2015), plus GroupLens Research"
+        ),
+        "source_stability": "immutable",
+        "update_policy": "reviewed-lock-update",
+    }
+
+
+def test_v2_validates_optional_artifact_provenance_override():
+    doc = _v2()
+    override = doc["datasets"]["archive"]["artifacts"]["release"]["provenance"]
+    override["attribution"] = "token=release-secret"
+    assert (
+        "datasets.archive.artifacts.release.provenance.attribution: must not contain "
+        "machine-local or credential-like values"
+    ) in schema.validate_registry_v2(doc)
+
+
+def test_v2_requires_complete_artifact_provenance_override_when_present():
+    doc = _v2()
+    del doc["datasets"]["archive"]["artifacts"]["release"]["provenance"]["license_url"]
+    assert "datasets.archive.artifacts.release.provenance: missing 'license_url'" in schema.validate_registry_v2(doc)
 
 
 @pytest.mark.parametrize(

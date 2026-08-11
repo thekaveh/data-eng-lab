@@ -691,6 +691,16 @@ datasets:
     artifacts:
       latest_small:
         url: https://files.grouplens.org/datasets/movielens/ml-latest-small.zip
+        provenance:
+          publisher: GroupLens Research, University of Minnesota
+          homepage: https://grouplens.org/datasets/movielens/
+          license_name: MovieLens latest-small usage license (research use; attribution; same-terms redistribution;
+            no commercial use without permission)
+          license_url: https://files.grouplens.org/datasets/movielens/ml-latest-small-README.html
+          attribution: 'F. Maxwell Harper and Joseph A. Konstan, The MovieLens Datasets: History and Context (2015),
+            plus GroupLens Research'
+          source_stability: mutable
+          update_policy: reviewed-lock-update
         version:
           kind: publication-date
           value: '2018-09-26'
@@ -731,6 +741,16 @@ datasets:
           schema: movielens_latest_small_movies
       release_25m:
         url: https://files.grouplens.org/datasets/movielens/ml-25m.zip
+        provenance:
+          publisher: GroupLens Research, University of Minnesota
+          homepage: https://grouplens.org/datasets/movielens/
+          license_name: MovieLens 25M usage license (research use; attribution; no redistribution without permission;
+            no commercial use without permission)
+          license_url: https://files.grouplens.org/datasets/movielens/ml-25m-README.html
+          attribution: 'F. Maxwell Harper and Joseph A. Konstan, The MovieLens Datasets: History and Context (2015),
+            plus GroupLens Research'
+          source_stability: immutable
+          update_policy: reviewed-lock-update
         version:
           kind: publication-date
           value: '2019-11-21'
