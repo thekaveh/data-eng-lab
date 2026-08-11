@@ -1,0 +1,295 @@
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+
+import pytest
+import yaml
+
+from datasets import tpch_lock_export as exporter
+
+ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.mark.parametrize(
+    ("table", "order_by"),
+    [
+        ("customer", "c_custkey"),
+        ("lineitem", "l_orderkey, l_linenumber"),
+        ("nation", "n_nationkey"),
+        ("orders", "o_orderkey"),
+        ("part", "p_partkey"),
+        ("partsupp", "ps_partkey, ps_suppkey"),
+        ("region", "r_regionkey"),
+        ("supplier", "s_suppkey"),
+    ],
+)
+def test_copy_query_is_fully_deterministic(table: str, order_by: str):
+    query = exporter.copy_query(table, Path(f"/{table}.parquet"))
+    assert f"SELECT * FROM {table} ORDER BY {order_by}" in query
+    assert "COMPRESSION ZSTD" in query
+    assert "ROW_GROUP_SIZE 100000" in query
+
+
+def test_copy_query_quotes_target_and_rejects_unknown_table():
+    assert "TO '/tmp/it''s.parquet'" in exporter.copy_query("customer", Path("/tmp/it's.parquet"))
+    with pytest.raises(ValueError, match="unknown TPC-H table"):
+        exporter.copy_query("not_a_table", Path("/tmp/output.parquet"))
+
+
+def test_metadata_contains_all_locked_environment_inputs(monkeypatch):
+    monkeypatch.setattr(exporter, "DUCKDB_VERSION", "1.5.4")
+    metadata = exporter.environment_metadata()
+    assert metadata == {
+        "platform": "linux/amd64",
+        "base_image_digest": ("sha256:cec9aa7aa96eea4fa036e9b82be1e6b325f2e3707f462d885868df51ec0a4b47"),
+        "duckdb_version": "1.5.4",
+        "duckdb_wheel_sha256": ("ccc7f2694d02b4763fee61021d45e12f7bc5743993686563957df0cef799fbae"),
+        "uv_lock_sha256": ("a376ce1b5bd5621290aaded68c22572690395419876da41814e28469bb4186b1"),
+        "tpch_extension_sha256": ("a6516e487106b4f95bd6d85da4364debdcb2db536d015784bc43209af6ed0125"),
+        "locale": "C.UTF-8",
+        "timezone": "UTC",
+        "threads": 1,
+        "preserve_insertion_order": True,
+        "format": "parquet",
+        "compression": "zstd",
+        "row_group_size": 100000,
+    }
+
+
+def test_session_settings_force_single_threaded_ordered_export():
+    assert exporter.session_statements() == (
+        "SET threads=1",
+        "SET preserve_insertion_order=true",
+    )
+
+
+def test_runtime_inputs_fail_closed_on_lock_or_extension_drift(tmp_path: Path):
+    uv_lock = tmp_path / "uv.lock"
+    extension = tmp_path / "tpch.duckdb_extension"
+    uv_lock.write_bytes(b"drifted-lock")
+    extension.write_bytes(b"drifted-extension")
+    with pytest.raises(ValueError, match="uv.lock SHA-256 mismatch"):
+        exporter.verify_runtime_inputs(uv_lock, extension)
+
+
+def test_runtime_inputs_check_extension_after_valid_lock(tmp_path: Path, monkeypatch):
+    uv_lock = tmp_path / "uv.lock"
+    extension = tmp_path / "tpch.duckdb_extension"
+    uv_lock.write_bytes(b"reviewed lock")
+    extension.write_bytes(b"drifted extension")
+    monkeypatch.setattr(exporter, "UV_LOCK_SHA256", hashlib.sha256(b"reviewed lock").hexdigest())
+    with pytest.raises(ValueError, match="TPC-H extension SHA-256 mismatch"):
+        exporter.verify_runtime_inputs(uv_lock, extension)
+
+
+def test_runtime_inputs_accept_exact_hashes(tmp_path: Path, monkeypatch):
+    uv_lock = tmp_path / "uv.lock"
+    extension = tmp_path / "tpch.duckdb_extension"
+    uv_lock.write_bytes(b"reviewed lock")
+    extension.write_bytes(b"reviewed extension")
+    monkeypatch.setattr(exporter, "UV_LOCK_SHA256", hashlib.sha256(b"reviewed lock").hexdigest())
+    monkeypatch.setattr(
+        exporter,
+        "TPCH_EXTENSION_SHA256",
+        hashlib.sha256(b"reviewed extension").hexdigest(),
+    )
+    exporter.verify_runtime_inputs(uv_lock, extension)
+
+
+def test_dockerfile_pins_and_verifies_offline_runtime_inputs():
+    text = (ROOT / "datasets" / "tpch-lock.Dockerfile").read_text(encoding="utf-8")
+    assert text.startswith(
+        "FROM --platform=linux/amd64 python@sha256:cec9aa7aa96eea4fa036e9b82be1e6b325f2e3707f462d885868df51ec0a4b47"
+    )
+    assert "pip install --no-cache-dir --require-hashes" in text
+    assert "a376ce1b5bd5621290aaded68c22572690395419876da41814e28469bb4186b1" in text
+    assert "a6516e487106b4f95bd6d85da4364debdcb2db536d015784bc43209af6ed0125" in text
+    assert "INSTALL tpch" in text
+    assert 'ENTRYPOINT ["python", "-m", "datasets.tpch_lock_export"]' in text
+
+
+def test_requirements_match_reviewed_linux_wheel_hashes():
+    assert (ROOT / "datasets" / "tpch-lock-requirements.txt").read_text(encoding="utf-8") == (
+        "duckdb==1.5.4 "
+        "--hash=sha256:ccc7f2694d02b4763fee61021d45e12f7bc5743993686563957df0cef799fbae\n"
+        "PyYAML==6.0.3 "
+        "--hash=sha256:b8bb0864c5a28024fac8a632c443c87c5aa6f215c0b126c449ae1a150412f31d\n"
+    )
+
+
+class _FakeConnection:
+    def __init__(self, output_dir: Path, *, fail_table: str | None = None):
+        self.output_dir = output_dir
+        self.fail_table = fail_table
+        self.statements: list[str] = []
+
+    def execute(self, statement: str):
+        self.statements.append(statement)
+        if self.fail_table and f"FROM {self.fail_table} " in statement:
+            raise RuntimeError("simulated COPY failure")
+        if statement.startswith("COPY "):
+            target = statement.split(" TO '", 1)[1].split("' (FORMAT", 1)[0]
+            Path(target.replace("''", "'")).write_bytes(statement.encode())
+        return self
+
+    def close(self):
+        self.statements.append("CLOSE")
+
+
+def _configure_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    fail_table: str | None = None,
+) -> _FakeConnection:
+    uv_lock = tmp_path / "uv.lock"
+    extension = tmp_path / "tpch.duckdb_extension"
+    uv_lock.write_bytes(b"reviewed lock")
+    extension.write_bytes(b"reviewed extension")
+    monkeypatch.setattr(exporter, "UV_LOCK_PATH", uv_lock)
+    monkeypatch.setattr(exporter, "TPCH_EXTENSION_PATH", extension)
+    monkeypatch.setattr(exporter, "UV_LOCK_SHA256", hashlib.sha256(b"reviewed lock").hexdigest())
+    monkeypatch.setattr(
+        exporter,
+        "TPCH_EXTENSION_SHA256",
+        hashlib.sha256(b"reviewed extension").hexdigest(),
+    )
+    monkeypatch.setattr(exporter.duckdb, "__version__", exporter.DUCKDB_VERSION)
+    monkeypatch.setenv("LANG", "C.UTF-8")
+    monkeypatch.setenv("LC_ALL", "C.UTF-8")
+    monkeypatch.setenv("TZ", "UTC")
+    connection = _FakeConnection(tmp_path, fail_table=fail_table)
+    monkeypatch.setattr(exporter.duckdb, "connect", lambda: connection)
+    return connection
+
+
+@pytest.mark.parametrize(
+    ("scale", "dbgen"),
+    [("0.01", "CALL dbgen(sf=0.01)"), ("1", "CALL dbgen(sf=1)"), ("10", "CALL dbgen(sf=10)")],
+)
+def test_cli_generates_all_tables_and_deterministic_metadata(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    scale: str,
+    dbgen: str,
+):
+    connection = _configure_runtime(monkeypatch, tmp_path)
+    output_dir = tmp_path / "output"
+    metadata = tmp_path / "metadata.yaml"
+
+    assert exporter.main(["--scale", scale, "--output-dir", str(output_dir), "--metadata", str(metadata)]) == 0
+
+    assert connection.statements[:4] == [
+        "SET threads=1",
+        "SET preserve_insertion_order=true",
+        "LOAD tpch",
+        dbgen,
+    ]
+    assert all("INSTALL" not in statement for statement in connection.statements)
+    assert connection.statements[-1] == "CLOSE"
+    assert sorted(path.name for path in output_dir.iterdir()) == [
+        f"{table}.parquet" for table in sorted(exporter.TABLE_ORDER_BY)
+    ]
+    document = yaml.safe_load(metadata.read_text(encoding="utf-8"))
+    assert document["scale_factor"] == float(scale)
+    assert document["environment"] == exporter.environment_metadata()
+    assert list(document["outputs"]) == list(exporter.TABLE_ORDER_BY)
+    for table, output in document["outputs"].items():
+        path = output_dir / f"{table}.parquet"
+        assert output == {
+            "object_name": f"{table}.parquet",
+            "size_bytes": path.stat().st_size,
+            "sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+        }
+
+
+@pytest.mark.parametrize("scale", ["0", "0.1", "1.0", "nan", "inf"])
+def test_cli_rejects_noncanonical_scale(scale: str, tmp_path: Path):
+    with pytest.raises(SystemExit) as error:
+        exporter.main(
+            [
+                "--scale",
+                scale,
+                "--output-dir",
+                str(tmp_path / "output"),
+                "--metadata",
+                str(tmp_path / "metadata.yaml"),
+            ]
+        )
+    assert error.value.code == 2
+
+
+def test_cli_fails_closed_on_version_or_environment_drift(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    _configure_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(exporter.duckdb, "__version__", "1.5.5")
+    with pytest.raises(ValueError, match="DuckDB version mismatch"):
+        exporter.main(
+            [
+                "--scale",
+                "1",
+                "--output-dir",
+                str(tmp_path / "output"),
+                "--metadata",
+                str(tmp_path / "metadata.yaml"),
+            ]
+        )
+
+    monkeypatch.setattr(exporter.duckdb, "__version__", exporter.DUCKDB_VERSION)
+    monkeypatch.setenv("TZ", "America/New_York")
+    with pytest.raises(ValueError, match="timezone must be UTC"):
+        exporter.main(
+            [
+                "--scale",
+                "1",
+                "--output-dir",
+                str(tmp_path / "output-2"),
+                "--metadata",
+                str(tmp_path / "metadata-2.yaml"),
+            ]
+        )
+
+
+def test_metadata_is_not_written_when_an_output_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    _configure_runtime(monkeypatch, tmp_path, fail_table="part")
+    metadata = tmp_path / "metadata.yaml"
+    with pytest.raises(RuntimeError, match="simulated COPY failure"):
+        exporter.main(
+            [
+                "--scale",
+                "1",
+                "--output-dir",
+                str(tmp_path / "output"),
+                "--metadata",
+                str(metadata),
+            ]
+        )
+    assert not metadata.exists()
+
+
+def test_metadata_write_is_atomic(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    _configure_runtime(monkeypatch, tmp_path)
+    metadata = tmp_path / "metadata.yaml"
+    metadata.write_text("previous: evidence\n", encoding="utf-8")
+    real_replace = exporter.os.replace
+
+    def fail_replace(source: Path, destination: Path):
+        assert source.parent == metadata.parent
+        assert destination == metadata
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(exporter.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="simulated replace failure"):
+        exporter.main(
+            [
+                "--scale",
+                "1",
+                "--output-dir",
+                str(tmp_path / "output"),
+                "--metadata",
+                str(metadata),
+            ]
+        )
+    assert metadata.read_text(encoding="utf-8") == "previous: evidence\n"
+    assert [path for path in tmp_path.iterdir() if path.name.startswith(".metadata.yaml.")] == []
+    monkeypatch.setattr(exporter.os, "replace", real_replace)
