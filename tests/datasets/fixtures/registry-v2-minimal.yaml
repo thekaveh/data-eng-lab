@@ -46,6 +46,8 @@ datasets:
             raw_identity: true
     scales:
       tiny: {artifacts: [sample]}
+      small: {artifacts: [sample]}
+      medium: {artifacts: [sample]}
   archive:
     description: Archive fixture
     format: csv
@@ -90,6 +92,8 @@ datasets:
             schema: ratings
     scales:
       tiny: {artifacts: [release]}
+      small: {artifacts: [release]}
+      medium: {artifacts: [release]}
   generated:
     description: Generated TPC-H fixture
     format: parquet

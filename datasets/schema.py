@@ -8,7 +8,7 @@ import ipaddress
 import re
 from datetime import date, datetime, timedelta
 from pathlib import Path, PurePosixPath
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 if __package__:
     from .locking import (
@@ -35,6 +35,15 @@ else:
 _IDENTIFIER_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _DECIMAL_RE = re.compile(r"^decimal\(([0-9]+),([0-9]+)\)$")
+_PROVENANCE_LOCAL_PATTERNS = (
+    re.compile(r"(?i)(?<![a-z0-9])(?:localhost|loopback|minio)(?![a-z0-9])"),
+    re.compile(r"(?<![0-9])127(?:\.[0-9]{1,3}){3}(?![0-9])"),
+    re.compile(r"(?i)(?<![0-9a-f:])::1(?![0-9a-f:])"),
+    re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://"),
+    re.compile(r"(?i)(?:/private)?/tmp(?:/|\b)|/var/folders(?:/|\b)"),
+    re.compile(r"(?i)(?<![\w.-])(?:[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?|\[[0-9a-f:]+\]):[0-9]{1,5}(?![0-9])"),
+    re.compile(r"(?i)(?<![\w-])(?:api[_-]?key|access[_-]?key|token|password|secret|key)\s*[:=]\s*\S"),
+)
 _LOGICAL_TYPES = frozenset(
     {
         "boolean",
@@ -182,6 +191,15 @@ def _nonempty_string(value: object, path: str) -> list[str]:
     return []
 
 
+def _provenance_text(value: object, path: str) -> list[str]:
+    errors = _nonempty_string(value, path)
+    if errors or not isinstance(value, str):
+        return errors
+    if any(pattern.search(value) for pattern in _PROVENANCE_LOCAL_PATTERNS):
+        errors.append(f"{path}: must not contain machine-local or credential-like values")
+    return errors
+
+
 def _exact(value: object, expected: object, path: str) -> list[str]:
     if type(value) is not type(expected) or value != expected:
         return [f"{path}: must be {expected!r}"]
@@ -210,7 +228,7 @@ def _validate_provenance(value: object, path: str) -> list[str]:
     errors += _unknown(provenance, path, frozenset(fields))
     for field in ("publisher", "license_name", "attribution"):
         if field in provenance:
-            errors += _nonempty_string(provenance[field], f"{path}.{field}")
+            errors += _provenance_text(provenance[field], f"{path}.{field}")
     for field in ("homepage", "license_url"):
         if field in provenance:
             errors += _https(provenance[field], f"{path}.{field}")
@@ -425,8 +443,16 @@ def _validate_http_dataset(dataset: dict[str, object], path: str) -> list[str]:
         if not isinstance(raw_artifact, dict):
             continue
         errors += _unknown(artifact, artifact_path, frozenset(artifact_fields))
+        authoritative_basename: str | None = None
         if "url" in artifact:
             errors += _https(artifact["url"], f"{artifact_path}.url")
+            if isinstance(artifact["url"], str):
+                authoritative_basename = unquote(urlsplit(artifact["url"]).path.rsplit("/", 1)[-1])
+                if (
+                    validate_relative_path(authoritative_basename, f"{artifact_path}.url")
+                    or PurePosixPath(authoritative_basename).name != authoritative_basename
+                ):
+                    errors.append(f"{artifact_path}.url: decoded basename must be a safe artifact name")
         if "version" in artifact:
             errors += _validate_version(artifact["version"], f"{artifact_path}.version")
         stability = artifact.get("stability")
@@ -448,6 +474,11 @@ def _validate_http_dataset(dataset: dict[str, object], path: str) -> list[str]:
             )
             if "name" in raw_map:
                 errors += validate_relative_path(raw_map["name"], f"{artifact_path}.raw.name")
+                if authoritative_basename is not None and raw_map["name"] != authoritative_basename:
+                    errors.append(
+                        f"{artifact_path}.raw.name: must equal decoded authoritative URL basename "
+                        f"{authoritative_basename!r}"
+                    )
             if "size_bytes" in raw_map:
                 errors += validate_size(raw_map["size_bytes"], f"{artifact_path}.raw.size_bytes")
             if "sha256" in raw_map:
@@ -510,6 +541,9 @@ def _validate_http_dataset(dataset: dict[str, object], path: str) -> list[str]:
         return errors
     if not scales:
         errors.append(f"{path}.scales: must be a non-empty mapping")
+    for required_scale in _SCALES:
+        if required_scale not in scales:
+            errors.append(f"{path}.scales: missing '{required_scale}'")
     for scale_id, raw_scale in scales.items():
         scale_path = f"{path}.scales.{scale_id}"
         if scale_id not in _SCALES:

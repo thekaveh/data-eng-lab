@@ -117,6 +117,61 @@ def test_real_registry_records_reviewed_source_identity_and_release_terms():
     }
 
 
+@pytest.mark.parametrize(
+    ("scales", "expected"),
+    [
+        (
+            {"tiny": {"artifacts": ["sample"]}, "small": {"artifacts": ["sample"]}},
+            "datasets.direct.scales: missing 'medium'",
+        ),
+        (
+            {
+                "tiny": {"artifacts": ["sample"]},
+                "small": {"artifacts": ["sample"]},
+                "medium": {"artifacts": ["sample"]},
+                "large": {"artifacts": ["sample"]},
+            },
+            "datasets.direct.scales.large: unknown scale 'large'",
+        ),
+    ],
+)
+def test_v2_http_scales_must_be_exactly_tiny_small_medium(scales: dict, expected: str):
+    doc = _v2()
+    doc["datasets"]["direct"]["scales"] = scales
+    assert expected in schema.validate_registry_v2(doc)
+
+
+def test_v2_raw_name_must_equal_decoded_authoritative_url_basename():
+    doc = _v2()
+    artifact = doc["datasets"]["direct"]["artifacts"]["sample"]
+    artifact["url"] = "https://example.com/release%20data.parquet"
+    artifact["raw"]["name"] = "renamed.parquet"
+    errors = schema.validate_registry_v2(doc)
+    assert (
+        "datasets.direct.artifacts.sample.raw.name: must equal decoded authoritative URL basename "
+        "'release data.parquet'"
+    ) in errors
+
+
+def test_v2_accepts_raw_name_equal_to_safe_decoded_authoritative_url_basename():
+    doc = _v2()
+    artifact = doc["datasets"]["direct"]["artifacts"]["sample"]
+    artifact["url"] = "https://example.com/release%20data.parquet"
+    artifact["raw"]["name"] = "release data.parquet"
+    artifact["outputs"][0]["object_name"] = "release data.parquet"
+    assert schema.validate_registry_v2(doc) == []
+
+
+@pytest.mark.parametrize("encoded_name", ["%2E%2E", "%2Fetc%2Fpasswd", "bad%00name.parquet"])
+def test_v2_rejects_unsafe_percent_decoded_authoritative_url_basename(encoded_name: str):
+    doc = _v2()
+    artifact = doc["datasets"]["direct"]["artifacts"]["sample"]
+    artifact["url"] = f"https://example.com/{encoded_name}"
+    artifact["raw"]["name"] = "safe.parquet"
+    errors = schema.validate_registry_v2(doc)
+    assert "datasets.direct.artifacts.sample.url: decoded basename must be a safe artifact name" in errors
+
+
 def test_real_registry_records_canonical_tpch_environment_and_output_order():
     doc = yaml.safe_load(REAL.read_text(encoding="utf-8"))
     generator = doc["datasets"]["tpch"]["generator"]
@@ -262,6 +317,60 @@ def test_v2_rejects_active_machine_local_values():
     doc = _v2()
     doc["datasets"]["direct"]["provenance"]["homepage"] = "http://localhost:9000/source"
     assert "datasets.direct.provenance.homepage: must be an authoritative HTTPS URL" in schema.validate_registry_v2(doc)
+
+
+@pytest.mark.parametrize("field", ["publisher", "license_name", "attribution"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "served by localhost",
+        "loopback endpoint",
+        "publisher at 127.0.0.42",
+        "publisher at ::1",
+        "MinIO bucket owner",
+        "internal.service:9000",
+        "https://internal.service/catalog",
+        "file:///tmp/license.txt",
+        "read /tmp/provenance.json",
+        "read /private/tmp/provenance.json",
+        "read /var/folders/ab/session/provenance.json",
+        "https://user:password@example.com/catalog",
+        "token=abc123",
+        "password: hunter2",
+        "secret = value",
+        "key=credential",
+        "api_key: credential",
+    ],
+)
+def test_v2_rejects_machine_local_or_credential_like_provenance_text(field: str, value: str):
+    doc = _v2()
+    doc["datasets"]["direct"]["provenance"][field] = value
+    assert (
+        f"datasets.direct.provenance.{field}: must not contain machine-local or credential-like values"
+        in schema.validate_registry_v2(doc)
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("publisher", "GroupLens Research, University of Minnesota"),
+        (
+            "license_name",
+            "NYC Open Data Terms of Use (unrestricted open-data use, no warranty)",
+        ),
+        (
+            "attribution",
+            "Chen, D. (2012). Online Retail II [Dataset]. DOI 10.24432/C5CG6D",
+        ),
+        ("attribution", "Transaction Processing Performance Council"),
+        ("attribution", "Key ordering and secretariat review are documented"),
+    ],
+)
+def test_v2_accepts_legitimate_provenance_free_text(field: str, value: str):
+    doc = _v2()
+    doc["datasets"]["direct"]["provenance"][field] = value
+    assert schema.validate_registry_v2(doc) == []
 
 
 @pytest.mark.parametrize("root", [None, [], "registry", 2])
@@ -600,7 +709,7 @@ def test_v2_rejects_non_authoritative_urls(url):
 
 def test_v2_accepts_canonical_public_ip_url_without_resolution():
     doc = _v2()
-    doc["datasets"]["direct"]["artifacts"]["sample"]["url"] = "https://8.8.8.8/source"
+    doc["datasets"]["direct"]["artifacts"]["sample"]["url"] = "https://8.8.8.8/direct.parquet"
     assert schema.validate_registry_v2(doc) == []
 
 

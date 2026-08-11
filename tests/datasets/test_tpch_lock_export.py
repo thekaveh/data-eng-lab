@@ -339,6 +339,37 @@ def test_cli_rejects_direct_metadata_output_collision_before_connect(tmp_path: P
     assert not output_dir.exists()
 
 
+@pytest.mark.parametrize(
+    "metadata_factory",
+    [
+        lambda output_dir: output_dir / "metadata.yaml",
+        lambda output_dir: output_dir / "customer.parquet" / "metadata.yaml",
+        lambda output_dir: output_dir.parent / "metadata" / "customer.parquet",
+    ],
+    ids=("inside-output-directory", "descendant-of-output-target", "separate-same-basename"),
+)
+def test_cli_rejects_metadata_that_overlaps_output_namespace_before_connect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    metadata_factory,
+):
+    _configure_runtime(monkeypatch, tmp_path)
+    output_dir = tmp_path / "output"
+    metadata = metadata_factory(output_dir)
+    connect_calls: list[None] = []
+    monkeypatch.setattr(exporter.duckdb, "connect", lambda: connect_calls.append(None))
+
+    if metadata == tmp_path / "metadata" / "customer.parquet":
+        exporter._validate_metadata_destination(output_dir, metadata)
+        return
+
+    with pytest.raises(ValueError, match="metadata path collides with"):
+        exporter.main(_cli_args(output_dir, metadata))
+
+    assert connect_calls == []
+    assert not output_dir.exists()
+
+
 def test_cli_rejects_aliased_parent_metadata_output_collision_before_connect(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

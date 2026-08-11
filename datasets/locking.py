@@ -1,4 +1,5 @@
 """Pure canonicalization and scalar validation for dataset provenance locks."""
+
 from __future__ import annotations
 
 import hashlib
@@ -50,13 +51,13 @@ def validate_relative_path(value: object, path: str) -> list[str]:
     if not isinstance(value, str) or not value:
         return [f"{path}: must be a safe relative POSIX path"]
     candidate = PurePosixPath(value)
+    components = value.split("/")
     if (
         candidate == PurePosixPath(".")
         or candidate.is_absolute()
-        or ".." in candidate.parts
+        or any(component in {"", ".", ".."} for component in components)
         or "\\" in value
-        or value.endswith("/")
-        or value.endswith("/.")
+        or any(ord(character) < 32 or ord(character) == 127 for character in value)
     ):
         return [f"{path}: must be a safe relative POSIX path"]
     return []

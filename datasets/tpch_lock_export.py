@@ -106,12 +106,20 @@ def _validate_metadata_destination(output_dir: Path, metadata_path: Path) -> Non
         raise ValueError(f"metadata path must not exist: {metadata_path}")
     resolved_metadata = metadata_path.resolve(strict=False)
     resolved_output_dir = output_dir.resolve(strict=False)
+    targets = tuple(
+        (output_dir / f"{table}.parquet", (output_dir / f"{table}.parquet").resolve(strict=False))
+        for table in TABLE_ORDER_BY
+    )
+    for target, resolved_target in targets:
+        if resolved_metadata == resolved_target:
+            raise ValueError(f"metadata path collides with TPC-H output: {target}")
     if resolved_metadata == resolved_output_dir or resolved_metadata in resolved_output_dir.parents:
         raise ValueError(f"metadata path collides with output directory: {output_dir}")
-    for table in TABLE_ORDER_BY:
-        target = output_dir / f"{table}.parquet"
-        if resolved_metadata == target.resolve(strict=False):
+    for target, resolved_target in targets:
+        if resolved_metadata in resolved_target.parents or resolved_target in resolved_metadata.parents:
             raise ValueError(f"metadata path collides with TPC-H output: {target}")
+    if resolved_output_dir in resolved_metadata.parents:
+        raise ValueError(f"metadata path collides with output directory: {output_dir}")
 
 
 def _prepare_destinations(output_dir: Path, metadata_path: Path) -> None:

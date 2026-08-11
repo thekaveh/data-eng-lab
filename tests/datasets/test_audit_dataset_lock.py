@@ -18,6 +18,24 @@ from scripts import audit_dataset_lock as audit
 ROOT = Path(__file__).resolve().parents[2]
 
 
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://example.com/%2E%2E",
+        "https://example.com/%2Fetc%2Fpasswd",
+        "https://example.com/bad%00name.zip",
+        "https://example.com/nested%2Fartifact.zip",
+    ],
+)
+def test_artifact_name_rejects_unsafe_percent_decoded_basename(url: str):
+    with pytest.raises(ValueError, match="url path must end with a safe artifact name"):
+        audit._artifact_name(url)
+
+
+def test_artifact_name_accepts_safe_percent_decoded_basename():
+    assert audit._artifact_name("https://example.com/release%20data.zip") == "release data.zip"
+
+
 def zip_bytes(members: dict[str, bytes]) -> bytes:
     with tempfile.SpooledTemporaryFile() as stream:
         with zipfile.ZipFile(stream, "w") as archive:
@@ -750,10 +768,7 @@ def test_audit_zip_rejects_file_that_is_ancestor_of_structural_directory(
 
     with pytest.raises(
         ValueError,
-        match=(
-            f"archive file path {file_path!r} is an ancestor of structural directory "
-            f"{directory_path!r}"
-        ),
+        match=(f"archive file path {file_path!r} is an ancestor of structural directory {directory_path!r}"),
     ):
         audit.audit_http(source, archive=True)
 
@@ -1071,9 +1086,7 @@ def test_cli_rejects_registry_as_output_without_fetching():
     registry = ROOT / "datasets" / "registry.yaml"
     before = registry.read_bytes()
 
-    assert audit.main(
-        ["http", "--url", "https://source.invalid/data.csv", "--output", str(registry)]
-    ) == 2
+    assert audit.main(["http", "--url", "https://source.invalid/data.csv", "--output", str(registry)]) == 2
 
     assert registry.read_bytes() == before
 
@@ -1085,9 +1098,7 @@ def test_cli_rejects_hard_link_to_registry_without_fetching(tmp_path: Path):
     output = tmp_path / "registry-alias.yaml"
     output.hardlink_to(registry)
 
-    assert audit.main(
-        ["http", "--url", "https://source.invalid/data.csv", "--output", str(output)]
-    ) == 2
+    assert audit.main(["http", "--url", "https://source.invalid/data.csv", "--output", str(output)]) == 2
 
     assert registry.read_bytes() == before
 
