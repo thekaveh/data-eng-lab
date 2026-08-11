@@ -19,6 +19,9 @@ def test_load_real_registry_has_core_datasets():
     assert ds["movielens"].unzip is True
     assert ds["online_retail"].kind == "http"
     assert ds["online_retail"].unzip is True
+    assert all(dataset.provenance is not None for dataset in ds.values())
+    assert sum(len(dataset.schemas) for dataset in ds.values()) == 24
+    assert sum(len(dataset.artifacts) for dataset in ds.values()) == 15
 
 
 def test_resolve_http_scale_returns_urls():
@@ -26,12 +29,15 @@ def test_resolve_http_scale_returns_urls():
     plan = reg.resolve_scale(ds, "tiny")
     assert plan.urls and plan.sf is None
     assert all(u.startswith("http") for u in plan.urls)
+    assert [artifact.id for artifact in plan.artifacts] == ["yellow_2023_01"]
 
 
 def test_resolve_tpch_scale_returns_sf():
     ds = reg.load_registry(REAL)["tpch"]
     plan = reg.resolve_scale(ds, "small")
     assert plan.sf == 1 and plan.urls == ()
+    assert plan.generator_scale is ds.generator.scales["small"]
+    assert len(plan.generator_scale.outputs) == 8
 
 
 def test_unknown_scale_raises():
@@ -45,6 +51,39 @@ def test_invalid_registry_raises(tmp_path: Path):
     bad.write_text("version: 1\ndatasets: {}\n")
     with pytest.raises(ValueError):
         reg.load_registry(bad)
+
+
+def test_load_registry_rejects_version_1_even_when_otherwise_complete(tmp_path: Path):
+    candidate = tmp_path / "registry.yaml"
+    candidate.write_text(
+        "version: 1\ndatasets:\n  sample:\n"
+        "    description: old\n    format: csv\n    license: old\n"
+        "    landing_prefix: sample\n    fetch: {kind: http}\n"
+        "    scales: {tiny: {urls: [https://example.com/old.csv]}}\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="registry.version: must be integer 2"):
+        reg.load_registry(candidate)
+
+
+def test_real_registry_preserves_all_downloader_facing_scale_selections():
+    datasets = reg.load_registry(REAL)
+    expected_url_counts = {
+        "nyc_taxi": {"tiny": 1, "small": 3, "medium": 6},
+        "gh_archive": {"tiny": 1, "small": 3, "medium": 6},
+        "movielens": {"tiny": 1, "small": 1, "medium": 1},
+        "online_retail": {"tiny": 1, "small": 1, "medium": 1},
+    }
+    for dataset_name, scales in expected_url_counts.items():
+        for scale, count in scales.items():
+            plan = reg.resolve_scale(datasets[dataset_name], scale)
+            assert len(plan.urls) == count
+            assert len(plan.artifacts) == count
+    assert [reg.resolve_scale(datasets["tpch"], tier).sf for tier in ("tiny", "small", "medium")] == [
+        0.01,
+        1,
+        10,
+    ]
 
 
 def test_load_v2_resolves_shared_http_artifacts_without_duplication():

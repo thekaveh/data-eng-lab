@@ -1,4 +1,5 @@
 """Load and resolve datasets/registry.yaml."""
+
 from __future__ import annotations
 
 from collections.abc import Mapping
@@ -9,7 +10,7 @@ from typing import TypeVar, cast
 
 import yaml
 
-from datasets.schema import validate_registry, validate_registry_v2
+from datasets.schema import validate_registry_v2
 
 _Value = TypeVar("_Value")
 
@@ -166,28 +167,7 @@ class ScalePlan:
 
 
 def load_registry(path: Path) -> dict[str, Dataset]:
-    doc = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
-    errors = validate_registry(doc)
-    if errors:
-        raise ValueError("invalid registry:\n  - " + "\n  - ".join(errors))
-    out: dict[str, Dataset] = {}
-    for name, ds in doc["datasets"].items():
-        fetch = ds["fetch"]
-        frozen_scales = cast(
-            Mapping[str, tuple[str, ...] | GeneratorScale],
-            _freeze(ds["scales"]),
-        )
-        out[name] = Dataset(
-            name=name,
-            description=ds["description"],
-            format=ds["format"],
-            license=ds["license"],
-            landing_prefix=ds["landing_prefix"],
-            kind=fetch["kind"],
-            unzip=bool(fetch.get("unzip", False)),
-            scales=frozen_scales,
-        )
-    return out
+    return load_registry_v2(path)
 
 
 def _parse_provenance(raw: Mapping[str, object]) -> Provenance:
@@ -290,12 +270,7 @@ def _parse_generator(raw: Mapping[str, object]) -> GeneratorContract:
         )
     frozen_scales = MappingProxyType(scales)
     raw_order_by = _as_mapping(export["order_by"])
-    order_by = MappingProxyType(
-        {
-            table: tuple(cast(list[str], columns))
-            for table, columns in raw_order_by.items()
-        }
-    )
+    order_by = MappingProxyType({table: tuple(cast(list[str], columns)) for table, columns in raw_order_by.items()})
     return GeneratorContract(
         engine_name=cast(str, engine["name"]),
         engine_version=cast(str, engine["version"]),
@@ -384,19 +359,11 @@ def resolve_scale(ds: Dataset, scale: str) -> ScalePlan:
             sf=spec.scale_factor,
             generator_scale=spec,
         )
-    if isinstance(spec, tuple):
-        if ds.artifacts:
-            artifacts = tuple(ds.artifacts[artifact_id] for artifact_id in spec)
-            return ScalePlan(
-                dataset=ds,
-                scale=scale,
-                urls=tuple(artifact.url for artifact in artifacts),
-                sf=None,
-                artifacts=artifacts,
-            )
-        return ScalePlan(dataset=ds, scale=scale, urls=cast(tuple[str, ...], spec), sf=None)
-
-    legacy = cast(Mapping[str, object], spec)
-    urls = tuple(cast(tuple[str, ...], legacy.get("urls", ())))
-    sf = float(cast(float | int, legacy["sf"])) if "sf" in legacy else None
-    return ScalePlan(dataset=ds, scale=scale, urls=urls, sf=sf)
+    artifacts = tuple(ds.artifacts[artifact_id] for artifact_id in spec)
+    return ScalePlan(
+        dataset=ds,
+        scale=scale,
+        urls=tuple(artifact.url for artifact in artifacts),
+        sf=None,
+        artifacts=artifacts,
+    )

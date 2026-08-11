@@ -1,5 +1,7 @@
 import hashlib
 import importlib.util
+import subprocess
+import sys
 from copy import deepcopy
 from pathlib import Path
 
@@ -12,47 +14,7 @@ schema = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(schema)
 
 FIXTURE = Path(__file__).parent / "fixtures" / "registry-v2-minimal.yaml"
-
-
-def _valid_doc():
-    return {
-        "version": 1,
-        "datasets": {
-            "nyc_taxi": {
-                "description": "d",
-                "format": "parquet",
-                "license": "public",
-                "landing_prefix": "nyc_taxi",
-                "fetch": {"kind": "http"},
-                "scales": {"tiny": {"urls": ["https://x/a.parquet"]}},
-            }
-        },
-    }
-
-
-def test_valid_registry_has_no_errors():
-    assert schema.validate_registry(_valid_doc()) == []
-
-
-def test_missing_landing_prefix_is_error():
-    doc = _valid_doc()
-    del doc["datasets"]["nyc_taxi"]["landing_prefix"]
-    errs = schema.validate_registry(doc)
-    assert any("landing_prefix" in e for e in errs), errs
-
-
-def test_unknown_fetch_kind_is_error():
-    doc = _valid_doc()
-    doc["datasets"]["nyc_taxi"]["fetch"]["kind"] = "ftp"
-    errs = schema.validate_registry(doc)
-    assert any("fetch.kind" in e for e in errs), errs
-
-
-def test_http_scale_requires_urls():
-    doc = _valid_doc()
-    doc["datasets"]["nyc_taxi"]["scales"]["tiny"] = {}
-    errs = schema.validate_registry(doc)
-    assert any("urls" in e for e in errs), errs
+REAL = ROOT / "datasets" / "registry.yaml"
 
 
 def _v2() -> dict:
@@ -85,6 +47,103 @@ def test_minimal_v2_registry_is_valid():
     assert schema.validate_registry_v2(_v2()) == []
 
 
+def test_real_registry_is_version_2_and_fully_locked():
+    doc = yaml.safe_load(REAL.read_text(encoding="utf-8"))
+    assert doc["version"] == 2
+    assert schema.validate_registry(doc) == []
+    http_artifacts = sum(
+        len(dataset.get("artifacts", {})) for dataset in doc["datasets"].values() if dataset["fetch"]["kind"] == "http"
+    )
+    http_outputs = sum(
+        len(artifact["outputs"])
+        for dataset in doc["datasets"].values()
+        if dataset["fetch"]["kind"] == "http"
+        for artifact in dataset["artifacts"].values()
+    )
+    generated_outputs = sum(
+        len(scale["outputs"])
+        for dataset in doc["datasets"].values()
+        if dataset["fetch"]["kind"] == "tpch"
+        for scale in dataset["generator"]["scales"].values()
+    )
+    schema_count = sum(len(dataset["schemas"]) for dataset in doc["datasets"].values())
+    assert (http_artifacts, http_outputs, generated_outputs, schema_count) == (15, 25, 24, 24)
+
+
+def test_real_registry_has_no_sentinel_or_unreviewed_lock_values():
+    text = REAL.read_text(encoding="utf-8")
+    for forbidden in ("TBD", "TODO", "unknown", "placeholder", "0" * 64, "f" * 64):
+        assert forbidden not in text
+
+
+def test_real_registry_records_reviewed_physical_schema_assignments():
+    doc = yaml.safe_load(REAL.read_text(encoding="utf-8"))
+    datasets = doc["datasets"]
+    taxi = datasets["nyc_taxi"]
+    assert taxi["artifacts"]["yellow_2023_01"]["outputs"][0]["schema"] == "nyc_yellow_2023_01"
+    assert {
+        taxi["artifacts"][f"yellow_2023_{month}"]["outputs"][0]["schema"] for month in ("02", "03", "04", "05", "06")
+    } == {"nyc_yellow_2023_02_06"}
+    retail = datasets["online_retail"]
+    assert retail["format"] == "xlsx"
+    workbook = retail["schemas"]["online_retail_ii_workbook"]
+    assert workbook["options"] == {
+        "sheets": ["Year 2009-2010", "Year 2010-2011"],
+        "header_row": 1,
+    }
+
+
+def test_real_registry_records_reviewed_source_identity_and_release_terms():
+    doc = yaml.safe_load(REAL.read_text(encoding="utf-8"))
+    datasets = doc["datasets"]
+    taxi_versions = {artifact["version"]["kind"] for artifact in datasets["nyc_taxi"]["artifacts"].values()}
+    gh_versions = {artifact["version"]["kind"] for artifact in datasets["gh_archive"]["artifacts"].values()}
+    assert taxi_versions == {"revision"}
+    assert gh_versions == {"revision"}
+    retail = datasets["online_retail"]["artifacts"]["uci_502"]
+    assert retail["version"] == {
+        "kind": "revision",
+        "value": "uci-502-last-updated-2024-01-05",
+    }
+    movielens = datasets["movielens"]
+    assert "no redistribution without permission" in movielens["provenance"]["license_name"]
+    assert movielens["artifacts"]["latest_small"]["version"] == {
+        "kind": "publication-date",
+        "value": "2018-09-26",
+    }
+    assert movielens["artifacts"]["release_25m"]["version"] == {
+        "kind": "publication-date",
+        "value": "2019-11-21",
+    }
+
+
+def test_real_registry_records_canonical_tpch_environment_and_output_order():
+    doc = yaml.safe_load(REAL.read_text(encoding="utf-8"))
+    generator = doc["datasets"]["tpch"]["generator"]
+    assert generator["environment"] == {
+        "image": "python:3.11.13-slim-bookworm",
+        "image_digest": "sha256:cec9aa7aa96eea4fa036e9b82be1e6b325f2e3707f462d885868df51ec0a4b47",
+        "platform": "linux/amd64",
+        "uv_lock_sha256": "a376ce1b5bd5621290aaded68c22572690395419876da41814e28469bb4186b1",
+        "locale": "C.UTF-8",
+        "timezone": "UTC",
+        "threads": 1,
+        "preserve_insertion_order": True,
+    }
+    expected_tables = list(schema._TABLES)
+    assert [generator["scales"][tier]["scale_factor"] for tier in ("tiny", "small", "medium")] == [
+        0.01,
+        1,
+        10,
+    ]
+    for tier in ("tiny", "small", "medium"):
+        assert [item["table"] for item in generator["scales"][tier]["outputs"]] == expected_tables
+
+
+def test_version_1_registry_is_rejected():
+    assert schema.validate_registry({"version": 1, "datasets": {}}) == ["registry: 'version' must be 2"]
+
+
 def test_v2_fixture_contains_exact_label_derived_locks():
     doc = _v2()
     direct = doc["datasets"]["direct"]["artifacts"]["sample"]
@@ -112,6 +171,25 @@ def test_v2_fixture_contains_exact_label_derived_locks():
     for label, lock in locks:
         assert lock["size_bytes"] == len(label.encode())
         assert lock["sha256"] == hashlib.sha256(label.encode()).hexdigest()
+
+
+def test_schema_supports_verifier_file_path_import_outside_repo(tmp_path: Path):
+    code = (
+        "import importlib.util\n"
+        f"path = {str(ROOT / 'datasets' / 'schema.py')!r}\n"
+        "spec = importlib.util.spec_from_file_location('_dataset_schema', path)\n"
+        "module = importlib.util.module_from_spec(spec)\n"
+        "spec.loader.exec_module(module)\n"
+        "assert callable(module.validate_registry)\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-I", "-c", code],
+        cwd=tmp_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_v2_rejects_missing_provenance_field():
@@ -773,6 +851,24 @@ def test_v2_rejects_duplicate_http_objects_and_artifact_references():
     errors = schema.validate_registry_v2(doc)
     assert "datasets.direct.artifacts.sample.outputs[1].object_name: duplicate object name 'direct.parquet'" in errors
     assert "datasets.direct.scales.tiny.artifacts[1]: duplicate artifact 'sample'" in errors
+
+
+def test_v2_allows_same_landing_object_name_in_mutually_exclusive_releases():
+    doc = _v2()
+    archive = doc["datasets"]["archive"]
+    archive["artifacts"]["other_release"] = deepcopy(archive["artifacts"]["release"])
+    archive["artifacts"]["other_release"]["url"] = "https://example.com/other-release.zip"
+    archive["artifacts"]["other_release"]["version"] = {
+        "kind": "publication-date",
+        "value": "2026-08-11",
+    }
+    archive["artifacts"]["other_release"]["raw"] = {
+        "name": "other-release.zip",
+        "size_bytes": 13,
+        "sha256": "a" * 64,
+    }
+    archive["scales"]["small"] = {"artifacts": ["other_release"]}
+    assert schema.validate_registry_v2(doc) == []
 
 
 @pytest.mark.parametrize("field", ["object_name", "size_bytes", "sha256"])

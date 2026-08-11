@@ -2,19 +2,33 @@
 
 from __future__ import annotations
 
+import importlib.util
 import ipaddress
 import re
 from datetime import date, datetime, timedelta
+from pathlib import Path
 from urllib.parse import urlsplit
 
-from datasets.locking import (
-    schema_fingerprint,
-    validate_relative_path,
-    validate_sha256,
-    validate_size,
-)
-
-VALID_KINDS = {"http", "tpch"}
+try:
+    from datasets.locking import (
+        schema_fingerprint,
+        validate_relative_path,
+        validate_sha256,
+        validate_size,
+    )
+except ModuleNotFoundError as exc:
+    if exc.name != "datasets":
+        raise
+    _locking_path = Path(__file__).with_name("locking.py")
+    _locking_spec = importlib.util.spec_from_file_location("_dataset_locking", _locking_path)
+    if _locking_spec is None or _locking_spec.loader is None:
+        raise ImportError(f"cannot load dataset locking helpers from {_locking_path}") from exc
+    _locking = importlib.util.module_from_spec(_locking_spec)
+    _locking_spec.loader.exec_module(_locking)
+    schema_fingerprint = _locking.schema_fingerprint
+    validate_relative_path = _locking.validate_relative_path
+    validate_sha256 = _locking.validate_sha256
+    validate_size = _locking.validate_size
 
 _IDENTIFIER_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
@@ -384,7 +398,6 @@ def _validate_http_dataset(dataset: dict[str, object], path: str) -> list[str]:
         artifacts = {}
     elif not artifacts:
         errors.append(f"{path}.artifacts: must be a non-empty mapping")
-    object_names: set[str] = set()
     artifact_fields = ("url", "version", "stability", "evidence", "raw", "outputs")
     for artifact_id, raw_artifact in artifacts.items():
         artifact_path = f"{path}.artifacts.{artifact_id}"
@@ -426,6 +439,7 @@ def _validate_http_dataset(dataset: dict[str, object], path: str) -> list[str]:
             errors.append(f"{artifact_path}.outputs: must be a non-empty list")
         if not isinstance(outputs, list):
             continue
+        object_names: set[str] = set()
         for index, raw_output in enumerate(outputs):
             output_path = f"{artifact_path}.outputs[{index}]"
             common_fields = ("object_name", "size_bytes", "sha256", "schema")
@@ -486,6 +500,7 @@ def _validate_http_dataset(dataset: dict[str, object], path: str) -> list[str]:
         if not isinstance(references, list):
             continue
         seen_references: set[str] = set()
+        scale_objects: set[str] = set()
         for index, artifact_id in enumerate(references):
             reference_path = f"{scale_path}.artifacts[{index}]"
             if not isinstance(artifact_id, str) or artifact_id not in artifacts:
@@ -494,6 +509,21 @@ def _validate_http_dataset(dataset: dict[str, object], path: str) -> list[str]:
                 errors.append(f"{reference_path}: duplicate artifact '{artifact_id}'")
             elif isinstance(artifact_id, str):
                 seen_references.add(artifact_id)
+                referenced = artifacts.get(artifact_id)
+                if isinstance(referenced, dict):
+                    outputs = referenced.get("outputs")
+                    if isinstance(outputs, list):
+                        for output in outputs:
+                            if not isinstance(output, dict):
+                                continue
+                            object_name = output.get("object_name")
+                            if isinstance(object_name, str) and object_name in scale_objects:
+                                errors.append(
+                                    f"{reference_path}: landing object '{object_name}' conflicts "
+                                    f"with another artifact selected by this scale"
+                                )
+                            elif isinstance(object_name, str):
+                                scale_objects.add(object_name)
     return errors
 
 
@@ -731,35 +761,7 @@ def validate_registry_v2(doc: object) -> list[str]:
 
 
 def validate_registry(doc: dict) -> list[str]:
-    """Return a list of human-readable error strings; empty means valid."""
-    errors: list[str] = []
-    if doc.get("version") != 1:
-        errors.append("registry: 'version' must be 1")
-    datasets = doc.get("datasets")
-    if not isinstance(datasets, dict) or not datasets:
-        errors.append("registry: 'datasets' must be a non-empty mapping")
-        return errors
-
-    for name, ds in datasets.items():
-        p = f"datasets.{name}"
-        for field in ("description", "format", "license", "landing_prefix", "fetch", "scales"):
-            if field not in ds:
-                errors.append(f"{p}: missing '{field}'")
-        if "fetch" in ds:
-            kind = (ds.get("fetch") or {}).get("kind")
-            if kind not in VALID_KINDS:
-                errors.append(f"{p}: fetch.kind '{kind}' not in {sorted(VALID_KINDS)}")
-        else:
-            kind = None
-        if "scales" in ds:
-            scales = ds.get("scales") or {}
-            if not scales:
-                errors.append(f"{p}: 'scales' must define at least one tier")
-        else:
-            scales = {}
-        for tier, spec in scales.items():
-            if kind == "http" and not spec.get("urls"):
-                errors.append(f"{p}.scales.{tier}: http datasets require a non-empty 'urls' list")
-            if kind == "tpch" and "sf" not in spec:
-                errors.append(f"{p}.scales.{tier}: tpch datasets require 'sf'")
-    return errors
+    """Validate the production registry, which accepts only the lock-grade v2 contract."""
+    if not isinstance(doc, dict) or doc.get("version") != 2:
+        return ["registry: 'version' must be 2"]
+    return validate_registry_v2(doc)
