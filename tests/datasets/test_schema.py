@@ -1,5 +1,6 @@
 import hashlib
 import importlib.util
+import ipaddress
 import subprocess
 import sys
 from copy import deepcopy
@@ -162,6 +163,17 @@ def test_v2_applies_provenance_safety_to_every_artifact_override_free_text_field
     doc = _v2()
     override = doc["datasets"]["archive"]["artifacts"]["release"]["provenance"]
     override[field] = "source 10.0.0.1: reviewed"
+    assert (
+        f"datasets.archive.artifacts.release.provenance.{field}: must not contain "
+        "machine-local or credential-like values"
+    ) in schema.validate_registry_v2(doc)
+
+
+@pytest.mark.parametrize("field", ["publisher", "license_name", "attribution"])
+def test_v2_applies_complete_provenance_policy_to_every_artifact_override_free_text_field(field: str):
+    doc = _v2()
+    override = doc["datasets"]["archive"]["artifacts"]["release"]["provenance"]
+    override[field] = "buildbox:9000 via ${USERPROFILE} with GOOGLE_APPLICATION_CREDENTIALS value"
     assert (
         f"datasets.archive.artifacts.release.provenance.{field}: must not contain "
         "machine-local or credential-like values"
@@ -376,6 +388,38 @@ def test_v2_rejects_active_machine_local_values():
     assert "datasets.direct.provenance.homepage: must be an authoritative HTTPS URL" in schema.validate_registry_v2(doc)
 
 
+@pytest.mark.parametrize("field", ["homepage", "license_url"])
+@pytest.mark.parametrize(
+    ("host", "authoritative"),
+    [
+        ("192.0.0.8", False),
+        ("192.88.99.1", False),
+        ("224.0.0.1", False),
+        ("64:ff9b:1::1", False),
+        ("ff02::1", False),
+        ("2002::1", False),
+        ("fec0::1", False),
+        ("10.0.0.1", False),
+        ("169.254.1.1", False),
+        ("127.0.0.1", False),
+        ("0.0.0.0", False),
+        ("::ffff:192.168.1.1", False),
+        ("8.8.8.8", True),
+        ("192.0.0.9", True),
+        ("192.0.0.10", True),
+        ("2606:4700:4700::1111", True),
+        ("::ffff:8.8.8.8", True),
+    ],
+)
+def test_v2_url_fields_share_authoritative_public_ip_policy(field: str, host: str, authoritative: bool):
+    doc = _v2()
+    authority = f"[{host}]" if ":" in host else host
+    doc["datasets"]["direct"]["provenance"][field] = f"https://{authority}/source"
+    error = f"datasets.direct.provenance.{field}: must be an authoritative HTTPS URL"
+    errors = schema.validate_registry_v2(doc)
+    assert (error not in errors) is authoritative
+
+
 @pytest.mark.parametrize("field", ["publisher", "license_name", "attribution"])
 @pytest.mark.parametrize(
     "value",
@@ -416,11 +460,19 @@ def test_v2_rejects_active_machine_local_values():
         "source fe80::1: reviewed",
         "reviewed from 64:ff9b:1::1",
         "reviewed from ff02::1",
+        "reviewed from 2002::1",
+        "reviewed from fec0::1",
+        "reviewed from ::ffff:192.168.1.1",
         "reviewed from ::",
         "read ~/.aws/credentials",
         "read $HOME/.aws/credentials",
         "read ${HOME}/.aws/credentials",
         "read /root/.aws/credentials",
+        "read /var/tmp/provenance.json",
+        "read $USERPROFILE/.aws/credentials",
+        "read ${USERPROFILE}\\.aws\\credentials",
+        "read %USERPROFILE%/.aws/credentials",
+        "read %USERPROFILE%\\.aws\\credentials",
         "read /Users/alice/review/license.txt",
         "read /home/runner/review/license.txt",
         r"read C:\Users\alice\review\license.txt",
@@ -436,7 +488,13 @@ def test_v2_rejects_active_machine_local_values():
         "API_KEY\texample",
         "private_key example",
         "PRIVATE_KEY = example",
+        "PGPASSWORD example",
+        "MYSQL_PWD example",
+        "GOOGLE_APPLICATION_CREDENTIALS example",
+        "release_credentials example",
         "SECRET: example",
+        "internal-service:9000",
+        "buildbox:9000",
     ],
 )
 def test_v2_rejects_machine_local_or_credential_like_provenance_text(field: str, value: str):
@@ -471,6 +529,8 @@ def test_v2_rejects_machine_local_or_credential_like_provenance_text(field: str,
         ("attribution", "TOKEN review terminology"),
         ("attribution", "PASSWORD policy terminology"),
         ("attribution", "Globally reviewed at 8.8.8.8 and 2606:4700:4700::1111"),
+        ("attribution", "IANA public services 192.0.0.9 and 192.0.0.10"),
+        ("attribution", "Mapped public service ::ffff:8.8.8.8"),
     ],
 )
 def test_v2_accepts_legitimate_provenance_free_text(field: str, value: str):
@@ -490,20 +550,59 @@ def test_v2_accepts_legitimate_provenance_free_text(field: str, value: str):
         ("224.0.0.1", True),
         ("64:ff9b:1::1", True),
         ("ff02::1", True),
+        ("2002::1", True),
+        ("fec0::1", True),
+        ("::ffff:192.168.1.1", True),
         ("GITHUB_TOKEN value", True),
         ("api_key value", True),
         ("~/.aws/credentials", True),
+        ("$USERPROFILE/.aws/credentials", True),
+        ("%USERPROFILE%\\.aws\\credentials", True),
+        ("PGPASSWORD value", True),
+        ("MYSQL_PWD value", True),
+        ("GOOGLE_APPLICATION_CREDENTIALS value", True),
+        ("internal-service:9000", True),
+        ("buildbox:9000", True),
         ("DOI:10.24432/C5CG6D", False),
         ("Version:2", False),
         ("Volume:12", False),
         ("8.8.8.8", False),
         ("2606:4700:4700::1111", False),
+        ("192.0.0.9 and 192.0.0.10", False),
+        ("::ffff:8.8.8.8", False),
         ("Secret Garden / Token Press / Password policy", False),
     ],
 )
 def test_provenance_text_detection_has_boundary_safe_negative_and_positive_controls(value: str, unsafe: bool):
     errors = schema._provenance_text(value, "provenance")
     assert bool(errors) is unsafe
+
+
+@pytest.mark.parametrize(
+    ("value", "authoritative"),
+    [
+        ("192.0.0.8", False),
+        ("192.88.99.1", False),
+        ("224.0.0.1", False),
+        ("64:ff9b:1::1", False),
+        ("ff02::1", False),
+        ("2002::1", False),
+        ("fec0::1", False),
+        ("10.0.0.1", False),
+        ("169.254.1.1", False),
+        ("127.0.0.1", False),
+        ("0.0.0.0", False),
+        ("::ffff:192.168.1.1", False),
+        ("8.8.8.8", True),
+        ("192.0.0.9", True),
+        ("192.0.0.10", True),
+        ("2606:4700:4700::1111", True),
+        ("::ffff:8.8.8.8", True),
+    ],
+)
+def test_authoritative_public_ip_classifier(value: str, authoritative: bool):
+    address = ipaddress.ip_address(value)
+    assert schema._is_authoritative_public_address(address) is authoritative
 
 
 @pytest.mark.parametrize("root", [None, [], "registry", 2])

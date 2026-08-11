@@ -36,37 +36,49 @@ _IDENTIFIER_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _DECIMAL_RE = re.compile(r"^decimal\(([0-9]+),([0-9]+)\)$")
 _IPV4_CANDIDATE_RE = re.compile(r"(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9.])")
-_IPV6_CANDIDATE_RE = re.compile(r"(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{0,4}:){2,}[0-9A-Fa-f:]*(?![0-9A-Fa-f:])")
+_IPV6_CANDIDATE_RE = re.compile(r"(?<![0-9A-Fa-f:.])(?=[0-9A-Fa-f:.]*:[0-9A-Fa-f:.]*:)[0-9A-Fa-f:.]+(?![0-9A-Fa-f:.])")
 _EXPLICIT_NON_PUBLIC_NETWORKS = tuple(
-    ipaddress.ip_network(network) for network in ("192.0.0.0/24", "192.88.99.0/24", "64:ff9b:1::/48")
+    ipaddress.ip_network(network)
+    for network in (
+        "192.0.0.0/24",
+        "192.88.99.0/24",
+        "64:ff9b:1::/48",
+        "2002::/16",
+        "fec0::/10",
+    )
 )
+_EXPLICIT_PUBLIC_ADDRESSES = frozenset({ipaddress.ip_address("192.0.0.9"), ipaddress.ip_address("192.0.0.10")})
 _CREDENTIAL_KEY = (
     r"(?:[a-z0-9]+[_-])*(?:secret[_-]access[_-]key|access[_-]key[_-]id|"
     r"access[_-]key|session[_-]token|api[_-]key|private[_-]key|"
-    r"database[_-]password|token|password|secret|key)"
+    r"database[_-]password|token|password|secret|credentials|key)"
 )
+_VENDOR_CREDENTIAL_KEY = r"(?:pgpassword|mysql[_-]pwd|google[_-]application[_-]credentials)"
+_CREDENTIAL_IDENTIFIER = rf"(?:{_VENDOR_CREDENTIAL_KEY}|{_CREDENTIAL_KEY})"
 _PROVENANCE_LOCAL_PATTERNS = (
     re.compile(r"(?i)(?<![a-z0-9])(?:localhost|loopback|minio)(?![a-z0-9])"),
     re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://"),
     re.compile(
         r"(?i)(?<![\w])(?:~/\S*|\$(?:home|\{home\})(?:/|\b)|"
+        r"\$(?:userprofile|\{userprofile\})(?:[\\/]|\b)|%userprofile%(?:[\\/]|\b)|"
         r"/(?:root|home|users)(?:/|\b)|[a-z]:\\users(?:\\|\b)|"
-        r"(?:/private)?/tmp(?:/|\b)|/var/folders(?:/|\b))"
+        r"(?:/private)?/tmp(?:/|\b)|/var/tmp(?:/|\b)|/var/folders(?:/|\b))"
     ),
     re.compile(
         r"(?i)(?<![\w.-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+"
         r"[a-z](?:[a-z0-9-]*[a-z0-9])?:[0-9]{1,5}(?![0-9])"
     ),
     re.compile(
-        r"(?i)(?<![\w.-])(?:host|server|service|endpoint|database|db|redis|"
+        r"(?<![\w.-])(?:host|server|service|endpoint|database|db|redis|"
         r"postgres|postgresql|mysql|spark-master|spark-worker|airflow|trino|"
-        r"jupyter|jenkins):[0-9]{1,5}(?![0-9])"
+        r"jupyter|jenkins|buildbox):[0-9]{1,5}(?![0-9])"
     ),
+    re.compile(r"(?<![\w.-])[a-z0-9]+(?:-[a-z0-9]+)+:[0-9]{1,5}(?![0-9])"),
     re.compile(r"(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{1,5}(?![0-9])"),
     re.compile(r"(?i)\[[0-9a-f:]+\]:[0-9]{1,5}(?![0-9])"),
     re.compile(r"(?i)(?<![\w])[^\s:/@]+:[^\s/@]+@(?:[a-z0-9-]+\.)+[a-z0-9-]+"),
-    re.compile(rf"(?i)(?<![\w-]){_CREDENTIAL_KEY}\s*[:=]\s*\S"),
-    re.compile(rf"(?i)(?<![\w-])(?=[a-z0-9_-]*[_-]){_CREDENTIAL_KEY}[ \t]+\S"),
+    re.compile(rf"(?i)(?<![\w-]){_CREDENTIAL_IDENTIFIER}\s*[:=]\s*\S"),
+    re.compile(rf"(?i)(?<![\w-])(?:{_VENDOR_CREDENTIAL_KEY}|(?=[a-z0-9_-]*[_-]){_CREDENTIAL_KEY})[ \t]+\S"),
 )
 _LOGICAL_TYPES = frozenset(
     {
@@ -137,6 +149,19 @@ _TPCH_CONSTANTS = {
 }
 
 
+def _is_authoritative_public_address(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Apply one explicit public-address policy across URLs and provenance text."""
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        return _is_authoritative_public_address(address.ipv4_mapped)
+    if address in _EXPLICIT_PUBLIC_ADDRESSES:
+        return True
+    if address.is_multicast:
+        return False
+    if any(address.version == network.version and address in network for network in _EXPLICIT_NON_PUBLIC_NETWORKS):
+        return False
+    return address.is_global
+
+
 def _required(mapping: object, path: str, fields: tuple[str, ...]) -> tuple[dict[str, object], list[str]]:
     if not isinstance(mapping, dict):
         return {}, [f"{path}: must be a mapping"]
@@ -188,7 +213,7 @@ def _https(value: object, path: str) -> list[str]:
         ):
             return error
     else:
-        if not address.is_global:
+        if not _is_authoritative_public_address(address):
             return error
     return []
 
@@ -236,12 +261,7 @@ def _provenance_text(value: object, path: str) -> list[str]:
             except ValueError:
                 continue
             break
-    has_non_public_address = any(
-        not address.is_global
-        or address.is_multicast
-        or any(address.version == network.version and address in network for network in _EXPLICIT_NON_PUBLIC_NETWORKS)
-        for address in addresses
-    )
+    has_non_public_address = any(not _is_authoritative_public_address(address) for address in addresses)
     if has_non_public_address or any(pattern.search(value) for pattern in _PROVENANCE_LOCAL_PATTERNS):
         errors.append(f"{path}: must not contain machine-local or credential-like values")
     return errors
