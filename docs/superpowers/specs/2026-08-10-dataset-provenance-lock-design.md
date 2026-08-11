@@ -74,6 +74,8 @@ Every dataset retains its existing description, format, license,
 Committed provenance free text prohibits non-global IP addresses,
 user-home or temporary paths, host ports, MinIO endpoints, URI credentials,
 and credential key/value forms.
+Provenance free text prohibits unambiguous endpoint-shaped machine-local values;
+it permits arbitrary semantic `Label:number` references.
 An HTTP artifact may carry a complete `provenance` override with the same
 validated fields. When present, the artifact-level terms govern that release;
 the dataset-level mapping remains the conservative default for artifacts that

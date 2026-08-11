@@ -191,6 +191,14 @@ def test_v2_applies_case_insensitive_single_label_endpoint_policy_to_artifact_ov
     ) in schema.validate_registry_v2(doc)
 
 
+@pytest.mark.parametrize("field", ["publisher", "license_name", "attribution"])
+def test_v2_accepts_semantic_label_references_in_artifact_override_free_text(field: str):
+    doc = _v2()
+    override = doc["datasets"]["archive"]["artifacts"]["release"]["provenance"]
+    override[field] = "Year:2026"
+    assert schema.validate_registry_v2(doc) == []
+
+
 def test_v2_requires_complete_artifact_provenance_override_when_present():
     doc = _v2()
     del doc["datasets"]["archive"]["artifacts"]["release"]["provenance"]["license_url"]
@@ -507,12 +515,20 @@ def test_v2_url_fields_share_authoritative_public_ip_policy(field: str, host: st
         "internal-service:9000",
         "buildbox:9000",
         "HOST:9000",
+        "Host:9000",
+        "hOsT:9000",
         "BuildBox:9000",
+        "BUILDBOX:9000",
         "REDIS:6379",
+        "Redis:6379",
         "INTERNAL-SERVICE:9000",
         "Internal-Service:9000",
         "worker1:4040",
         "internal_service:9000",
+        "1worker:4040",
+        "3scale:9000",
+        "9buildbox:9000",
+        "host.:9000",
     ],
 )
 def test_v2_rejects_machine_local_or_credential_like_provenance_text(field: str, value: str):
@@ -555,12 +571,28 @@ def test_v2_rejects_machine_local_or_credential_like_provenance_text(field: str,
         ("attribution", "Page:42"),
         ("attribution", "Chapter:7"),
         ("attribution", "ISBN:12345"),
+        ("attribution", "ISSN:2049"),
+        ("attribution", "PMID:12345"),
+        ("attribution", "Year:2026"),
+        ("attribution", "Edition:2"),
+        ("attribution", "Figure:3"),
+        ("attribution", "Table:4"),
+        ("attribution", "Article:5"),
+        ("attribution", "AS:64512"),
+        ("attribution", "Standard:9000"),
         ("attribution", "BuildBox:65536 is not a valid endpoint port"),
     ],
 )
 def test_v2_accepts_legitimate_provenance_free_text(field: str, value: str):
     doc = _v2()
     doc["datasets"]["direct"]["provenance"][field] = value
+    assert schema.validate_registry_v2(doc) == []
+
+
+@pytest.mark.parametrize("field", ["publisher", "license_name", "attribution"])
+def test_v2_accepts_semantic_label_references_in_every_dataset_free_text_field(field: str):
+    doc = _v2()
+    doc["datasets"]["direct"]["provenance"][field] = "Year:2026"
     assert schema.validate_registry_v2(doc) == []
 
 
@@ -635,12 +667,20 @@ def test_authoritative_public_ip_classifier(value: str, authoritative: bool):
     [
         ("host:9000", True),
         ("HOST:9000", True),
+        ("Host:9000", True),
+        ("hOsT:9000", True),
         ("BuildBox:9000", True),
+        ("BUILDBOX:9000", True),
         ("REDIS:6379", True),
+        ("Redis:6379", True),
         ("INTERNAL-SERVICE:9000", True),
         ("Internal-Service:9000", True),
         ("worker1:4040", True),
         ("internal_service:9000", True),
+        ("1worker:4040", True),
+        ("3scale:9000", True),
+        ("9buildbox:9000", True),
+        ("host.:9000", True),
         ("DOI:10.24432/C5CG6D", False),
         ("Version:2", False),
         ("Volume:12", False),
@@ -650,6 +690,15 @@ def test_authoritative_public_ip_classifier(value: str, authoritative: bool):
         ("Page:42", False),
         ("Chapter:7", False),
         ("ISBN:12345", False),
+        ("ISSN:2049", False),
+        ("PMID:12345", False),
+        ("Year:2026", False),
+        ("Edition:2", False),
+        ("Figure:3", False),
+        ("Table:4", False),
+        ("Article:5", False),
+        ("AS:64512", False),
+        ("Standard:9000", False),
         ("BuildBox:0", False),
         ("BuildBox:65536", False),
         ("BuildBox:99999", False),

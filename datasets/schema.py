@@ -55,9 +55,34 @@ _CREDENTIAL_KEY = (
 )
 _VENDOR_CREDENTIAL_KEY = r"(?:pgpassword|mysql[_-]pwd|google[_-]application[_-]credentials)"
 _CREDENTIAL_IDENTIFIER = rf"(?:{_VENDOR_CREDENTIAL_KEY}|{_CREDENTIAL_KEY})"
-_SINGLE_LABEL_ENDPOINT_RE = re.compile(r"(?<![\w.:-])(?P<label>[A-Za-z][A-Za-z0-9_-]*):(?P<port>[0-9]+)(?![0-9])")
-_SEMANTIC_REFERENCE_LABELS = frozenset(
-    {"doi", "version", "volume", "rfc", "issue", "section", "page", "chapter", "isbn"}
+_SINGLE_LABEL_ENDPOINT_RE = re.compile(
+    r"(?<![\w.:-])(?P<label>[A-Za-z0-9][A-Za-z0-9_-]*)(?P<terminal_dot>\.)?:"
+    r"(?P<port>[0-9]+)(?![0-9:])"
+)
+_KNOWN_LOCAL_SERVICE_LABELS = frozenset(
+    {
+        "localhost",
+        "minio",
+        "host",
+        "server",
+        "service",
+        "endpoint",
+        "database",
+        "db",
+        "redis",
+        "postgres",
+        "postgresql",
+        "mysql",
+        "airflow",
+        "trino",
+        "jupyter",
+        "jenkins",
+        "buildbox",
+        "devbox",
+        "worker",
+        "node",
+        "master",
+    }
 )
 _PROVENANCE_LOCAL_PATTERNS = (
     re.compile(r"(?i)(?<![a-z0-9])(?:localhost|loopback|minio)(?![a-z0-9])"),
@@ -161,10 +186,22 @@ def _is_authoritative_public_address(address: ipaddress.IPv4Address | ipaddress.
 
 
 def _has_single_label_endpoint(value: str) -> bool:
-    """Reject plausible single-label machine endpoints without blocking citations."""
+    """Classify unambiguous machine-label ports without enumerating citations."""
     for match in _SINGLE_LABEL_ENDPOINT_RE.finditer(value):
         port = int(match.group("port"))
-        if 1 <= port <= 65535 and match.group("label").lower() not in _SEMANTIC_REFERENCE_LABELS:
+        if not 1 <= port <= 65535:
+            continue
+        label = match.group("label")
+        label_lower = label.lower()
+        if (
+            label_lower in _KNOWN_LOCAL_SERVICE_LABELS
+            or match.group("terminal_dot") is not None
+            or label[0].isdigit()
+            or any(character.isdigit() for character in label)
+            or "-" in label
+            or "_" in label
+            or label.islower()
+        ):
             return True
     return False
 

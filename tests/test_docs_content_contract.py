@@ -419,6 +419,8 @@ def test_dataset_design_and_plan_define_effective_stability_and_safe_provenance_
         assert "non-global IP addresses" in text
         assert "user-home or temporary paths" in text
         assert "credential key/value forms" in text
+        assert "unambiguous endpoint-shaped machine-local values" in text
+        assert "arbitrary semantic `Label:number` references" in text
 
     combined = "\n".join(path.read_text(encoding="utf-8") for path in paths)
     assert "more restrictive than" not in combined

@@ -87,6 +87,8 @@ Human-readable strings must be non-empty. `source_stability` is `mutable` or
 Provenance free text rejects non-global IP addresses,
 user-home or temporary paths, host ports, MinIO endpoints, URI credentials,
 and credential key/value forms.
+Provenance free text rejects unambiguous endpoint-shaped machine-local values;
+it preserves arbitrary semantic `Label:number` references.
 An HTTP artifact may optionally include one complete `provenance` override with
 the same exact field set and validation. When present, that artifact-level
 mapping governs the selected release; dataset provenance is the conservative
