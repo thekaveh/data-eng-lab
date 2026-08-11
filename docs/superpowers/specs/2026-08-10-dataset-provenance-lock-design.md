@@ -154,6 +154,7 @@ TPC-H has no downloaded data artifact. Its provenance instead locks:
 - engine name (`duckdb`);
 - exact DuckDB package version resolved by `uv.lock`;
 - extension name and version relationship;
+- the reviewed installed extension artifact SHA-256 and official repository URL;
 - an OCI image identified by immutable digest and platform `linux/amd64`;
 - the repository `uv.lock` SHA-256, locale, and timezone used by the generator;
 - generator command and fixed parameters;
@@ -165,10 +166,15 @@ TPC-H has no downloaded data artifact. Its provenance instead locks:
 - one schema identifier per table.
 
 The canonical generation environment is the locked `linux/amd64` OCI image plus
-the committed `uv.lock` digest and recorded locale/timezone. The deterministic
-export contract includes stable row ordering and explicit Parquet settings
-rather than relying on unspecified DuckDB defaults. Issue #80 records and parses
-these settings and the reviewed reference outputs. Issue #81 will make
+the committed `uv.lock` digest and recorded locale/timezone. The image copies
+and verifies that lockfile, acquires the version-matched TPC-H extension once at
+build time, and verifies the installed extension artifact digest. Reference
+generation runs with networking disabled and loads that verified extension; it
+never installs an extension at runtime. The deterministic export contract sets
+one DuckDB thread, preserves insertion order, and includes stable row ordering
+and explicit Parquet settings rather than relying on host CPU count, scheduling,
+or DuckDB defaults. Issue #80 records and parses these settings and the reviewed
+reference outputs. Issue #81 will make
 `generate_tpch` consume them and verify the produced bytes before upload. Until
 #81 merges, the production downloader continues its current generation behavior
 and makes no new verification claim.
@@ -278,6 +284,8 @@ TDD starts with failing schema and model tests. Coverage includes:
 - artifact and schema reference resolution;
 - shared-artifact scale resolution without metadata duplication;
 - preservation of the current downloader-facing URL and scale-factor views;
+- fail-closed validation of the copied `uv.lock` and installed TPC-H extension,
+  plus repeat generation of every scale under network isolation;
 - documentation claims and three-surface projection checks.
 
 The full completion matrix is `make lint`, `make test`, `make verify`,
