@@ -16,6 +16,13 @@ All notable changes to this project are documented here (Keep a Changelog format
   `spark_default` on `:7077`, and successful completion still requires the
   standalone REST record on `spark-master:6066` to report `FINISHED` and
   `success=true`.
+  Current-pin acceptance promoted through PRs #95, #96, and #97 after Airflow
+  runs `issue78_nyc_taxi_etl_20260810T233212Z` and
+  `issue78_nyc_taxi_medallion_20260810T233242Z` succeeded. Spark REST drivers
+  `driver-20260810233215-0003` and `driver-20260810233245-0004` both reached
+  `FINISHED` with `success=true`; Jenkins ETL build #5 and medallion build #1
+  succeeded; and preflight passed Layer 1 at 13/13 and Layer 2 at 6/6. No false
+  driver-status polling failure or exception was present.
 - The repository, site, and wiki now open with a wide lakehouse brand banner,
   centered project identity, and twelve icon-bearing stack badges. The detailed
   topology remains available under Architecture instead of occupying the first
