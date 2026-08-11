@@ -55,6 +55,10 @@ _CREDENTIAL_KEY = (
 )
 _VENDOR_CREDENTIAL_KEY = r"(?:pgpassword|mysql[_-]pwd|google[_-]application[_-]credentials)"
 _CREDENTIAL_IDENTIFIER = rf"(?:{_VENDOR_CREDENTIAL_KEY}|{_CREDENTIAL_KEY})"
+_SINGLE_LABEL_ENDPOINT_RE = re.compile(r"(?<![\w.:-])(?P<label>[A-Za-z][A-Za-z0-9_-]*):(?P<port>[0-9]+)(?![0-9])")
+_SEMANTIC_REFERENCE_LABELS = frozenset(
+    {"doi", "version", "volume", "rfc", "issue", "section", "page", "chapter", "isbn"}
+)
 _PROVENANCE_LOCAL_PATTERNS = (
     re.compile(r"(?i)(?<![a-z0-9])(?:localhost|loopback|minio)(?![a-z0-9])"),
     re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://"),
@@ -68,12 +72,6 @@ _PROVENANCE_LOCAL_PATTERNS = (
         r"(?i)(?<![\w.-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+"
         r"[a-z](?:[a-z0-9-]*[a-z0-9])?:[0-9]{1,5}(?![0-9])"
     ),
-    re.compile(
-        r"(?<![\w.-])(?:host|server|service|endpoint|database|db|redis|"
-        r"postgres|postgresql|mysql|spark-master|spark-worker|airflow|trino|"
-        r"jupyter|jenkins|buildbox):[0-9]{1,5}(?![0-9])"
-    ),
-    re.compile(r"(?<![\w.-])[a-z0-9]+(?:-[a-z0-9]+)+:[0-9]{1,5}(?![0-9])"),
     re.compile(r"(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{1,5}(?![0-9])"),
     re.compile(r"(?i)\[[0-9a-f:]+\]:[0-9]{1,5}(?![0-9])"),
     re.compile(r"(?i)(?<![\w])[^\s:/@]+:[^\s/@]+@(?:[a-z0-9-]+\.)+[a-z0-9-]+"),
@@ -160,6 +158,15 @@ def _is_authoritative_public_address(address: ipaddress.IPv4Address | ipaddress.
     if any(address.version == network.version and address in network for network in _EXPLICIT_NON_PUBLIC_NETWORKS):
         return False
     return address.is_global
+
+
+def _has_single_label_endpoint(value: str) -> bool:
+    """Reject plausible single-label machine endpoints without blocking citations."""
+    for match in _SINGLE_LABEL_ENDPOINT_RE.finditer(value):
+        port = int(match.group("port"))
+        if 1 <= port <= 65535 and match.group("label").lower() not in _SEMANTIC_REFERENCE_LABELS:
+            return True
+    return False
 
 
 def _required(mapping: object, path: str, fields: tuple[str, ...]) -> tuple[dict[str, object], list[str]]:
@@ -262,7 +269,11 @@ def _provenance_text(value: object, path: str) -> list[str]:
                 continue
             break
     has_non_public_address = any(not _is_authoritative_public_address(address) for address in addresses)
-    if has_non_public_address or any(pattern.search(value) for pattern in _PROVENANCE_LOCAL_PATTERNS):
+    if (
+        has_non_public_address
+        or _has_single_label_endpoint(value)
+        or any(pattern.search(value) for pattern in _PROVENANCE_LOCAL_PATTERNS)
+    ):
         errors.append(f"{path}: must not contain machine-local or credential-like values")
     return errors
 

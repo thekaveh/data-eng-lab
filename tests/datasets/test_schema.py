@@ -180,6 +180,17 @@ def test_v2_applies_complete_provenance_policy_to_every_artifact_override_free_t
     ) in schema.validate_registry_v2(doc)
 
 
+@pytest.mark.parametrize("field", ["publisher", "license_name", "attribution"])
+def test_v2_applies_case_insensitive_single_label_endpoint_policy_to_artifact_overrides(field: str):
+    doc = _v2()
+    override = doc["datasets"]["archive"]["artifacts"]["release"]["provenance"]
+    override[field] = "BuildBox:9000"
+    assert (
+        f"datasets.archive.artifacts.release.provenance.{field}: must not contain "
+        "machine-local or credential-like values"
+    ) in schema.validate_registry_v2(doc)
+
+
 def test_v2_requires_complete_artifact_provenance_override_when_present():
     doc = _v2()
     del doc["datasets"]["archive"]["artifacts"]["release"]["provenance"]["license_url"]
@@ -495,6 +506,13 @@ def test_v2_url_fields_share_authoritative_public_ip_policy(field: str, host: st
         "SECRET: example",
         "internal-service:9000",
         "buildbox:9000",
+        "HOST:9000",
+        "BuildBox:9000",
+        "REDIS:6379",
+        "INTERNAL-SERVICE:9000",
+        "Internal-Service:9000",
+        "worker1:4040",
+        "internal_service:9000",
     ],
 )
 def test_v2_rejects_machine_local_or_credential_like_provenance_text(field: str, value: str):
@@ -531,6 +549,13 @@ def test_v2_rejects_machine_local_or_credential_like_provenance_text(field: str,
         ("attribution", "Globally reviewed at 8.8.8.8 and 2606:4700:4700::1111"),
         ("attribution", "IANA public services 192.0.0.9 and 192.0.0.10"),
         ("attribution", "Mapped public service ::ffff:8.8.8.8"),
+        ("attribution", "RFC:9110"),
+        ("attribution", "Issue:80"),
+        ("attribution", "Section:12"),
+        ("attribution", "Page:42"),
+        ("attribution", "Chapter:7"),
+        ("attribution", "ISBN:12345"),
+        ("attribution", "BuildBox:65536 is not a valid endpoint port"),
     ],
 )
 def test_v2_accepts_legitimate_provenance_free_text(field: str, value: str):
@@ -603,6 +628,35 @@ def test_provenance_text_detection_has_boundary_safe_negative_and_positive_contr
 def test_authoritative_public_ip_classifier(value: str, authoritative: bool):
     address = ipaddress.ip_address(value)
     assert schema._is_authoritative_public_address(address) is authoritative
+
+
+@pytest.mark.parametrize(
+    ("value", "endpoint"),
+    [
+        ("host:9000", True),
+        ("HOST:9000", True),
+        ("BuildBox:9000", True),
+        ("REDIS:6379", True),
+        ("INTERNAL-SERVICE:9000", True),
+        ("Internal-Service:9000", True),
+        ("worker1:4040", True),
+        ("internal_service:9000", True),
+        ("DOI:10.24432/C5CG6D", False),
+        ("Version:2", False),
+        ("Volume:12", False),
+        ("RFC:9110", False),
+        ("Issue:80", False),
+        ("Section:12", False),
+        ("Page:42", False),
+        ("Chapter:7", False),
+        ("ISBN:12345", False),
+        ("BuildBox:0", False),
+        ("BuildBox:65536", False),
+        ("BuildBox:99999", False),
+    ],
+)
+def test_single_label_endpoint_detection_is_case_insensitive_and_port_aware(value: str, endpoint: bool):
+    assert schema._has_single_label_endpoint(value) is endpoint
 
 
 @pytest.mark.parametrize("root", [None, [], "registry", 2])
