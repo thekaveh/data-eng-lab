@@ -934,6 +934,79 @@ def test_v2_rejects_duplicate_authoritative_url_across_datasets():
     ) in errors
 
 
+def _add_mutually_exclusive_archive_release(doc: dict, url: str) -> None:
+    archive = doc["datasets"]["archive"]
+    archive["artifacts"]["other_release"] = deepcopy(archive["artifacts"]["release"])
+    archive["artifacts"]["other_release"]["url"] = url
+    archive["artifacts"]["other_release"]["version"] = {
+        "kind": "publication-date",
+        "value": "2026-08-11",
+    }
+    archive["artifacts"]["other_release"]["raw"]["name"] = "other-release.zip"
+    archive["scales"]["small"] = {"artifacts": ["other_release"]}
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "https://EXAMPLE.COM/archive.zip",
+        "https://example.com./archive.zip",
+        "https://example.com.../archive.zip",
+        "https://example.com:443/archive.zip",
+    ],
+)
+def test_v2_rejects_canonical_duplicate_url_variants_in_same_dataset(variant):
+    doc = _v2()
+    _add_mutually_exclusive_archive_release(doc, variant)
+    errors = schema.validate_registry_v2(doc)
+    assert (
+        "datasets.archive.artifacts.other_release.url: duplicate authoritative URL first defined at "
+        "datasets.archive.artifacts.release.url"
+    ) in errors
+
+
+@pytest.mark.parametrize(
+    "variant",
+    [
+        "https://EXAMPLE.COM/direct.parquet",
+        "https://example.com./direct.parquet",
+        "https://example.com.../direct.parquet",
+        "https://example.com:443/direct.parquet",
+    ],
+)
+def test_v2_rejects_canonical_duplicate_url_variants_across_datasets(variant):
+    doc = _v2()
+    doc["datasets"]["archive"]["artifacts"]["release"]["url"] = variant
+    errors = schema.validate_registry_v2(doc)
+    assert (
+        "datasets.archive.artifacts.release.url: duplicate authoritative URL first defined at "
+        "datasets.direct.artifacts.sample.url"
+    ) in errors
+
+
+def test_v2_duplicate_identity_preserves_distinct_path_and_query_bytes_and_order():
+    doc = _v2()
+    direct = doc["datasets"]["direct"]["artifacts"]["sample"]
+    archive = doc["datasets"]["archive"]["artifacts"]["release"]
+    direct["url"] = "https://example.com/data?part=1&region=us"
+    archive["url"] = "https://EXAMPLE.COM./other-data?region=us&part=1"
+    errors = schema.validate_registry_v2(doc)
+    assert not any("duplicate authoritative URL" in error for error in errors)
+
+
+def test_v2_duplicate_identity_handles_ipv6_and_default_https_port_without_crashing():
+    doc = _v2()
+    direct = doc["datasets"]["direct"]["artifacts"]["sample"]
+    archive = doc["datasets"]["archive"]["artifacts"]["release"]
+    direct["url"] = "https://[2606:4700:4700::1111]/data"
+    archive["url"] = "https://[2606:4700:4700::1111]:443/data"
+    errors = schema.validate_registry_v2(doc)
+    assert (
+        "datasets.archive.artifacts.release.url: duplicate authoritative URL first defined at "
+        "datasets.direct.artifacts.sample.url"
+    ) in errors
+
+
 def test_v2_allows_one_normalized_artifact_to_be_reused_across_scales():
     doc = _v2()
     direct = doc["datasets"]["direct"]

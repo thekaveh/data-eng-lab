@@ -160,6 +160,22 @@ def _https(value: object, path: str) -> list[str]:
     return []
 
 
+def _authoritative_url_identity(value: object) -> tuple[str, str, int | None, str, str] | None:
+    """Return the source identity while preserving server-significant path/query bytes."""
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return None
+    if parsed.scheme.lower() != "https" or not parsed.hostname:
+        return None
+    host = parsed.hostname.rstrip(".").lower()
+    canonical_port = None if port in (None, 443) else port
+    return ("https", host, canonical_port, parsed.path, parsed.query)
+
+
 def _nonempty_string(value: object, path: str) -> list[str]:
     if not isinstance(value, str) or not value.strip():
         return [f"{path}: must be a non-empty string"]
@@ -713,7 +729,7 @@ def validate_registry_v2(doc: object) -> list[str]:
         "provenance",
         "schemas",
     )
-    authoritative_urls: dict[str, str] = {}
+    authoritative_urls: dict[tuple[str, str, int | None, str, str], str] = {}
     for dataset_id, raw_dataset in datasets.items():
         path = f"datasets.{dataset_id}"
         errors += _identifier(dataset_id, path)
@@ -763,12 +779,13 @@ def validate_registry_v2(doc: object) -> list[str]:
                     if not isinstance(artifact, dict):
                         continue
                     url = artifact.get("url")
-                    if not isinstance(url, str):
+                    url_identity = _authoritative_url_identity(url)
+                    if url_identity is None:
                         continue
                     url_path = f"{path}.artifacts.{artifact_id}.url"
-                    first_path = authoritative_urls.get(url)
+                    first_path = authoritative_urls.get(url_identity)
                     if first_path is None:
-                        authoritative_urls[url] = url_path
+                        authoritative_urls[url_identity] = url_path
                     else:
                         errors.append(f"{url_path}: duplicate authoritative URL first defined at {first_path}")
         elif kind == "tpch":
