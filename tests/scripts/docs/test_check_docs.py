@@ -153,6 +153,56 @@ def test_atlas_acceptance_record_is_consistent(repo_root):
             assert phrase not in text, f"{relative} retains stale wording {phrase!r}"
 
 
+def test_current_atlas_live_acceptance_closeout_is_explicit_and_not_stale(repo_root):
+    current_evidence = (
+        "c6cf73d7168db1a7840fc45c9ed3e385071996d8",
+        "issue78_nyc_taxi_etl_20260810T233212Z",
+        "issue78_nyc_taxi_medallion_20260810T233242Z",
+        "driver-20260810233215-0003",
+        "driver-20260810233245-0004",
+        "FINISHED",
+        "success=true",
+        "No false driver-status polling failure or exception was present",
+    )
+    for relative in ("docs/go-live.md", "docs/atlas-feedback-go-live.md"):
+        text = (repo_root / relative).read_text(encoding="utf-8")
+        normalized = " ".join(text.split())
+        for phrase in current_evidence:
+            assert phrase in normalized, (
+                f"{relative} is missing current live evidence {phrase!r}"
+            )
+        assert "operator-owned" in text
+        assert "SparkSubmitOperator" in text
+        assert "`RestConfirmingSparkHook`" in text
+
+    go_live = (repo_root / "docs/go-live.md").read_text(encoding="utf-8")
+    assert "begin executing the 19 scenarios" not in go_live
+    assert "data-eng-lab/issues/82" in go_live
+    assert "Latest update: 2026-08-10" in go_live
+
+    feedback = (repo_root / "docs/atlas-feedback-go-live.md").read_text(encoding="utf-8")
+    unwind = feedback.split("## 5. Workaround unwind", maxsplit=1)[1].split(
+        "## 6. 2026-07-21 live verification findings", maxsplit=1
+    )[0]
+    for stale_phrase in (
+        "#308's fix is only partial",
+        "the DAG caveat remains",
+        "the false-negative still reproduces",
+    ):
+        assert stale_phrase not in unwind
+
+    changelog = (repo_root / "docs/CHANGELOG.md").read_text(encoding="utf-8")
+    normalized_changelog = " ".join(changelog.split())
+    for phrase in current_evidence:
+        assert phrase in normalized_changelog
+
+    pin_runbook = (repo_root / "docs/atlas-pin-bump-runbook.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Atlas automatically adds --build" in pin_runbook
+    assert ".atlas-build-state" in pin_runbook
+
+
 def test_completeness_ignores_only_explicit_internal_root(repo_fixture: Path):
     (repo_fixture / "docs/unmanifested.md").write_text("# Unmanifested\n", encoding="utf-8")
     (repo_fixture / "docs/superpowers/internal.md").parent.mkdir(parents=True, exist_ok=True)

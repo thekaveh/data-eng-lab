@@ -1,8 +1,9 @@
 # 8.2. Atlas Go-Live Runbook
 
 This playbook validates the Atlas enablement items (A1–A9) against the delivered
-contract documented in `atlas-expectations.md`. The 2026-07-31 accepted baseline
-is recorded below; rerun the same gates for every later Atlas pin.
+contract documented in `atlas-expectations.md`. The current 2026-08-10 accepted
+baseline and the earlier 2026-07-31 historical baseline are recorded below;
+rerun the same gates for every later Atlas pin.
 
 **Scope:** Validates A1–A9 (all delivered). Full run takes ~30–45 minutes (including container startup and test suites).
 
@@ -330,11 +331,23 @@ Run the end-to-end lakehouse pipeline via Airflow.
    ```
    Expected output: Row count > 0.
 
+**Current accepted baseline (2026-08-10, atlas
+`c6cf73d7168db1a7840fc45c9ed3e385071996d8`):** PRs #95, #96, and #97 promoted
+the operator-owned contract. Airflow runs
+`issue78_nyc_taxi_etl_20260810T233212Z` and
+`issue78_nyc_taxi_medallion_20260810T233242Z` both succeeded. Their Spark REST
+records, `driver-20260810233215-0003` and `driver-20260810233245-0004`, reached
+`FINISHED` with `success=true`. Jenkins ETL build #5 and medallion build #1
+succeeded, and preflight passed Layer 1 at 13/13 and Layer 2 at 6/6. No false
+driver-status polling failure or exception was present. Both DAGs retained
+`SparkSubmitOperator.execute()` ownership through `AtlasSparkSubmitOperator`,
+with Atlas's `RestConfirmingSparkHook` enforcing the terminal REST result.
+
 **Historical accepted baseline (2026-07-31, atlas `985918ce8c805081947d53b1c48bb80610237a5b`):** the reviewed pin included Atlas
 [#850](https://github.com/thekaveh/atlas/issues/850)'s corrected shared
 `AIRFLOW__API_AUTH__JWT_SECRET` mapping and [Atlas #880](https://github.com/thekaveh/atlas/issues/880)'s
 provider-compatible REST-confirmation helper. At that historical pin, the DAG constructed the hook without an application
-and calls `submit_and_confirm_via_rest()` so it does not run the provider's incompatible post-submit
+and called `submit_and_confirm_via_rest()` so it did not run the provider's incompatible post-submit
 `:7077` status poll. The helper captures the standalone driver ID from the spark-submit log before
 checking `:6066`; it still allows genuine submission failures to raise and rejects a failed or
 non-terminal driver. The representative feature-artifact task succeeded on its first and only
@@ -573,7 +586,10 @@ If all above pass, the Atlas enablement is **validated for production use** and 
 
 After a successful go-live run:
 
-1. **Scenario execution:** With the full stack validated (A1–A9), begin executing the 19 scenarios to exercise every Iceberg feature and integration path.
+1. **Scenario classification:** Track the existing 19 validated paired scenario
+   artifacts through [issue #82](https://github.com/thekaveh/data-eng-lab/issues/82),
+   which classifies their executable paths and identifies which scenarios need
+   production Airflow DAGs. The scenario catalog count is not a production-DAG count.
 2. **Automation:** Integrate this runbook into CI/CD so every Atlas release is validated end-to-end.
 3. **Documentation:** Update this runbook as new scenarios are added (e.g., additional streaming sources, Trino BI patterns).
 
@@ -583,4 +599,4 @@ After a successful go-live run:
 
 *See also:* [Go-Live Results](go-live-results.md) — the 2026-07-04 platform validation and the scoped 2026-07-31 Atlas acceptance result.
 
-*Maintained by `data-eng-lab`.* Latest update: 2026-07-31 Atlas acceptance baseline recorded.
+*Maintained by `data-eng-lab`.* Latest update: 2026-08-10 current-pin Atlas acceptance baseline recorded.

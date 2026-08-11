@@ -39,7 +39,14 @@ the production DAGs now preserve `SparkSubmitOperator` ownership. Their
 `AtlasSparkSubmitOperator` subclass wraps the provider hook with Atlas's
 `RestConfirmingSparkHook`, retaining the same `spark_default` cluster submission and
 mandatory `FINISHED` plus `success=true` REST confirmation. The dated direct-hook
-descriptions above and below remain explicitly historical incident evidence.
+descriptions above and below remain explicitly historical incident evidence. PRs #95,
+#96, and #97 promoted this current contract after Airflow runs
+`issue78_nyc_taxi_etl_20260810T233212Z` and
+`issue78_nyc_taxi_medallion_20260810T233242Z` succeeded. Spark REST drivers
+`driver-20260810233215-0003` and `driver-20260810233245-0004` both reached
+`FINISHED` with `success=true`. Jenkins ETL build #5 and medallion build #1
+succeeded, while preflight passed Layer 1 at 13/13 and Layer 2 at 6/6. No false
+driver-status polling failure or exception was present.
 
 ## 2. Key Observations
 
@@ -66,14 +73,15 @@ descriptions above and below remain explicitly historical incident evidence.
 
 ## 5. Workaround unwind (2026-07-21, atlas pin 2d006cae)
 
-Three of the four issues below (#309–#311) were fixed upstream (atlas#314–#316) and the
-corresponding lab-side workarounds removed; #308's fix is only partial — the REST endpoint
-is enabled but not consumable by SparkSubmitHook, so the DAG caveat remains (see the row
-below and the 2026-07-21 findings section that follows):
+At the dated 2026-07-21 pin, three of the four issues below (#309–#311) had been
+fixed upstream (atlas#314–#316) and their lab-side workarounds removed. The table
+records that historical state, including the then-incomplete #308 path; it is not
+a list of current limitations. Atlas #880 later supplied the accepted REST-confirmation
+path, and the current 2026-08-10 operator-owned contract is recorded in section 1.
 
-| Atlas issue | Upstream fix | Lab workaround removed |
+| Atlas issue | Dated upstream state | Dated lab action and later resolution |
 |---|---|---|
-| #308 Spark master REST `:6066` | REST endpoint enabled + documented upstream — but not usable end-to-end by SparkSubmitHook (see 2026-07-21 findings below) | 6-line caveat comment replaced by an updated caveat: the false-negative still reproduces; `waitAppCompletion` remains the completion signal |
+| #308 Spark master REST `:6066` | On 2026-07-21, the endpoint was enabled and documented but the provider hook could not use separate `:7077` submission and `:6066` status endpoints (see section 6) | The dated caveat relied on `waitAppCompletion`; Atlas #880 later resolved the path, and the current DAGs use `RestConfirmingSparkHook` under `SparkSubmitOperator` ownership |
 | #309 Spark Connect core monopoly | `SPARK_CONNECT_CORES_MAX=1` default cap | `spark.cores.max: "1"` removed from both spark-apps DAGs |
 | #310 spark-connect healthcheck | TCP healthcheck on `:15002` | consumer-side `wait_healthy` gate (Atlas `--detach` now health-gates the whole track) |
 | #311 Airflow-3 conn resolution | Documented metadata-DB read (`services/airflow/README.md`) | none required — `probe_airflow.py` docstring now cites the upstream doc |
