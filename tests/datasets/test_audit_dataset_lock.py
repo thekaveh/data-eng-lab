@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
+import struct
 import tempfile
 import zipfile
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import responses
@@ -32,6 +34,64 @@ def compressed_zip_bytes(members: dict[str, bytes]) -> bytes:
                 archive.writestr(name, payload)
         stream.seek(0)
         return stream.read()
+
+
+def bounded_zip_metadata_bytes(*, zip64: bool, entries: int, central_directory_size: int) -> bytes:
+    if not zip64:
+        return struct.pack(
+            "<4s4H2LH",
+            b"PK\x05\x06",
+            0,
+            0,
+            entries,
+            entries,
+            central_directory_size,
+            0,
+            0,
+        )
+    zip64_eocd = struct.pack(
+        "<4sQ2H2L4Q",
+        b"PK\x06\x06",
+        44,
+        45,
+        45,
+        0,
+        0,
+        entries,
+        entries,
+        central_directory_size,
+        0,
+    )
+    locator = struct.pack("<4sLQL", b"PK\x06\x07", 0, 0, 1)
+    eocd = struct.pack(
+        "<4s4H2LH",
+        b"PK\x05\x06",
+        0,
+        0,
+        0xFFFF,
+        0xFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0,
+    )
+    return zip64_eocd + locator + eocd
+
+
+def zip_bytes_with_member_policy_violation(kind: str) -> bytes:
+    payload = bytearray(zip_bytes({"data.csv": b"locked"}))
+    local_header = payload.index(b"PK\x03\x04")
+    central_header = payload.index(b"PK\x01\x02")
+    if kind == "encrypted":
+        local_flags = struct.unpack_from("<H", payload, local_header + 6)[0]
+        central_flags = struct.unpack_from("<H", payload, central_header + 8)[0]
+        struct.pack_into("<H", payload, local_header + 6, local_flags | 1)
+        struct.pack_into("<H", payload, central_header + 8, central_flags | 1)
+    elif kind == "unsupported-compression":
+        struct.pack_into("<H", payload, local_header + 8, 99)
+        struct.pack_into("<H", payload, central_header + 10, 99)
+    else:
+        raise AssertionError(f"unknown ZIP mutation {kind}")
+    return bytes(payload)
 
 
 def record_audit_temp_directories(monkeypatch: pytest.MonkeyPatch) -> list[Path]:
@@ -230,6 +290,107 @@ def test_audit_http_enforces_overall_streaming_deadline_and_cleans_temp(
     assert created and all(not path.exists() for path in created)
 
 
+def test_audit_http_rebounds_every_transport_read_to_cumulative_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    clock = {"now": 0.0}
+
+    class FakeSocket:
+        def __init__(self) -> None:
+            self.timeouts: list[float] = []
+
+        def settimeout(self, value: float) -> None:
+            self.timeouts.append(value)
+
+    fake_socket = FakeSocket()
+
+    class FakeRaw:
+        def __init__(self) -> None:
+            self._connection = SimpleNamespace(sock=fake_socket)
+            self.calls = 0
+
+        def read1(self, amount: int, *, decode_content: bool) -> bytes:
+            assert amount == 1 << 20
+            assert decode_content is False
+            self.calls += 1
+            if self.calls == 1:
+                clock["now"] = 100.0
+                return b"a"
+            if self.calls == 2:
+                assert fake_socket.timeouts[-1] <= 20
+                clock["now"] = 105.0
+                return b"b"
+            return b""
+
+    class FakeResponse:
+        status_code = 200
+        headers: dict[str, str] = {}
+
+        def __init__(self) -> None:
+            self.raw = FakeRaw()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+        def iter_content(self, *, chunk_size: int):
+            assert chunk_size == 1 << 20
+            clock["now"] = 100.0
+            yield b"a"
+            clock["now"] = 220.0
+            yield b"b"
+
+    response = FakeResponse()
+    monkeypatch.setattr(audit.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(audit.requests, "get", lambda *args, **kwargs: response)
+
+    result = audit.audit_http("https://source.invalid/data.csv", archive=False)
+
+    assert result["raw"]["size_bytes"] == 2
+    assert fake_socket.timeouts == pytest.approx([120, 20, 15])
+
+
+def test_audit_http_rejects_blocking_transport_without_bounded_socket(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    class UnboundedRaw:
+        _connection = None
+        _fp = object()
+
+        def __init__(self) -> None:
+            self.read = False
+
+        def read1(self, amount: int, *, decode_content: bool) -> bytes:
+            if self.read:
+                return b""
+            self.read = True
+            return b"unbounded"
+
+    class FakeResponse:
+        status_code = 200
+        headers: dict[str, str] = {}
+        raw = UnboundedRaw()
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args: object) -> None:
+            return None
+
+        def raise_for_status(self) -> None:
+            return None
+
+    monkeypatch.setattr(audit.requests, "get", lambda *args, **kwargs: FakeResponse())
+
+    with pytest.raises(ValueError, match="transport does not expose a bounded socket"):
+        audit.audit_http("https://source.invalid/data.csv", archive=False)
+
+
 @responses.activate
 def test_audit_zip_preserves_exact_member_paths_and_hashes_saved_bytes():
     members = {"a/data.csv": b"a", "b/other.csv": b"other"}
@@ -361,6 +522,68 @@ def test_audit_zip_rejects_compression_ratio_limit_and_cleans_temp(monkeypatch: 
         audit.audit_http(source, archive=True)
 
     assert created and all(not path.exists() for path in created)
+
+
+@pytest.mark.parametrize("zip64", [False, True], ids=["eocd", "zip64"])
+@pytest.mark.parametrize(
+    ("bound", "entries", "central_directory_size", "message"),
+    [
+        ("members", 2, 0, "archive contains more than 1 members"),
+        ("central-directory", 1, 2, "central directory exceeds 1 bytes"),
+    ],
+)
+@responses.activate
+def test_audit_zip_preflights_metadata_bounds_before_zipfile_construction(
+    monkeypatch: pytest.MonkeyPatch,
+    zip64: bool,
+    bound: str,
+    entries: int,
+    central_directory_size: int,
+    message: str,
+):
+    source = "https://source.invalid/data.zip"
+    payload = bounded_zip_metadata_bytes(
+        zip64=zip64,
+        entries=entries,
+        central_directory_size=central_directory_size,
+    )
+    responses.add(responses.GET, source, body=payload, status=200)
+    monkeypatch.setattr(audit, "MAX_ARCHIVE_MEMBERS", 1)
+    monkeypatch.setattr(audit, "MAX_CENTRAL_DIRECTORY_BYTES", 1, raising=False)
+    zipfile_constructed = False
+
+    def forbidden_zipfile(*args: object, **kwargs: object):
+        nonlocal zipfile_constructed
+        zipfile_constructed = True
+        raise AssertionError("ZipFile metadata parsing was reached before preflight")
+
+    monkeypatch.setattr(audit.zipfile, "ZipFile", forbidden_zipfile)
+
+    with pytest.raises(ValueError, match=message):
+        audit.audit_http(source, archive=True)
+
+    assert not zipfile_constructed
+
+
+@pytest.mark.parametrize(
+    ("kind", "message"),
+    [
+        ("encrypted", "encrypted archive member data.csv is not supported"),
+        ("unsupported-compression", "archive member data.csv uses unsupported compression method 99"),
+    ],
+)
+@responses.activate
+def test_audit_zip_rejects_encryption_and_unsupported_compression(kind: str, message: str):
+    source = "https://source.invalid/data.zip"
+    responses.add(
+        responses.GET,
+        source,
+        body=zip_bytes_with_member_policy_violation(kind),
+        status=200,
+    )
+
+    with pytest.raises(ValueError, match=message):
+        audit.audit_http(source, archive=True)
 
 
 @responses.activate
@@ -525,6 +748,35 @@ def test_cli_returns_2_for_corrupt_archive_without_output(tmp_path: Path):
 
     assert not output.exists()
     assert list(tmp_path.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("kind", "message"),
+    [
+        ("encrypted", "encrypted archive member data.csv is not supported"),
+        ("unsupported-compression", "archive member data.csv uses unsupported compression method 99"),
+    ],
+)
+@responses.activate
+def test_cli_returns_2_for_unsupported_member_policy(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    kind: str,
+    message: str,
+):
+    source = "https://source.invalid/data.zip"
+    responses.add(
+        responses.GET,
+        source,
+        body=zip_bytes_with_member_policy_violation(kind),
+        status=200,
+    )
+    output = tmp_path / "candidate.yaml"
+
+    assert audit.main(["http", "--url", source, "--archive", "--output", str(output)]) == 2
+
+    assert message in capsys.readouterr().err
+    assert not output.exists()
 
 
 @responses.activate
