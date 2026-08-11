@@ -87,8 +87,12 @@ Human-readable strings must be non-empty. `source_stability` is `mutable` or
 Provenance free text rejects non-global IP addresses,
 user-home or temporary paths, host ports, MinIO endpoints, URI credentials,
 and credential key/value forms.
-Provenance free text rejects unambiguous endpoint-shaped machine-local values;
-it preserves arbitrary semantic `Label:number` references.
+Provenance free text allows standardized semantic `Label:number` references;
+all other endpoint-shaped tokens fail closed regardless of label casing.
+The case-insensitive allowlist is `DOI`, `ISBN`, `ISSN`, `PMID`, `PMCID`,
+`ORCID`, `RFC`, `CVE`, `GHSA`, `ISO`, `IEC`, `IEEE`, `ANSI`, `NIST`, `SOC`,
+`HIPAA`, `GDPR`, `Version`, `Volume`, `Year`, `Edition`, `Standard`, `Issue`,
+`Section`, `Page`, `Chapter`, `Figure`, `Table`, `Article`, and `AS`.
 An HTTP artifact may optionally include one complete `provenance` override with
 the same exact field set and validation. When present, that artifact-level
 mapping governs the selected release; dataset provenance is the conservative

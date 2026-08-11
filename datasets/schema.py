@@ -59,29 +59,38 @@ _SINGLE_LABEL_ENDPOINT_RE = re.compile(
     r"(?<![\w.:-])(?P<label>[A-Za-z0-9][A-Za-z0-9_-]*)(?P<terminal_dot>\.)?:"
     r"(?P<port>[0-9]+)(?![0-9:])"
 )
-_KNOWN_LOCAL_SERVICE_LABELS = frozenset(
+_STANDARD_SEMANTIC_REFERENCE_LABELS = frozenset(
     {
-        "localhost",
-        "minio",
-        "host",
-        "server",
-        "service",
-        "endpoint",
-        "database",
-        "db",
-        "redis",
-        "postgres",
-        "postgresql",
-        "mysql",
-        "airflow",
-        "trino",
-        "jupyter",
-        "jenkins",
-        "buildbox",
-        "devbox",
-        "worker",
-        "node",
-        "master",
+        "doi",
+        "isbn",
+        "issn",
+        "pmid",
+        "pmcid",
+        "orcid",
+        "rfc",
+        "cve",
+        "ghsa",
+        "iso",
+        "iec",
+        "ieee",
+        "ansi",
+        "nist",
+        "soc",
+        "hipaa",
+        "gdpr",
+        "version",
+        "volume",
+        "year",
+        "edition",
+        "standard",
+        "issue",
+        "section",
+        "page",
+        "chapter",
+        "figure",
+        "table",
+        "article",
+        "as",
     }
 )
 _PROVENANCE_LOCAL_PATTERNS = (
@@ -95,9 +104,9 @@ _PROVENANCE_LOCAL_PATTERNS = (
     ),
     re.compile(
         r"(?i)(?<![\w.-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+"
-        r"[a-z](?:[a-z0-9-]*[a-z0-9])?:[0-9]{1,5}(?![0-9])"
+        r"[a-z](?:[a-z0-9-]*[a-z0-9])?\.?:[0-9]{1,5}(?![0-9])"
     ),
-    re.compile(r"(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{1,5}(?![0-9])"),
+    re.compile(r"(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}\.?:[0-9]{1,5}(?![0-9])"),
     re.compile(r"(?i)\[[0-9a-f:]+\]:[0-9]{1,5}(?![0-9])"),
     re.compile(r"(?i)(?<![\w])[^\s:/@]+:[^\s/@]+@(?:[a-z0-9-]+\.)+[a-z0-9-]+"),
     re.compile(rf"(?i)(?<![\w-]){_CREDENTIAL_IDENTIFIER}\s*[:=]\s*\S"),
@@ -186,21 +195,14 @@ def _is_authoritative_public_address(address: ipaddress.IPv4Address | ipaddress.
 
 
 def _has_single_label_endpoint(value: str) -> bool:
-    """Classify unambiguous machine-label ports without enumerating citations."""
+    """Fail closed on label ports except standardized semantic references."""
     for match in _SINGLE_LABEL_ENDPOINT_RE.finditer(value):
         port = int(match.group("port"))
         if not 1 <= port <= 65535:
             continue
-        label = match.group("label")
-        label_lower = label.lower()
         if (
-            label_lower in _KNOWN_LOCAL_SERVICE_LABELS
-            or match.group("terminal_dot") is not None
-            or label[0].isdigit()
-            or any(character.isdigit() for character in label)
-            or "-" in label
-            or "_" in label
-            or label.islower()
+            match.group("terminal_dot") is not None
+            or match.group("label").lower() not in _STANDARD_SEMANTIC_REFERENCE_LABELS
         ):
             return True
     return False

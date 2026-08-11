@@ -74,8 +74,12 @@ Every dataset retains its existing description, format, license,
 Committed provenance free text prohibits non-global IP addresses,
 user-home or temporary paths, host ports, MinIO endpoints, URI credentials,
 and credential key/value forms.
-Provenance free text prohibits unambiguous endpoint-shaped machine-local values;
-it permits arbitrary semantic `Label:number` references.
+Provenance free text allows standardized semantic `Label:number` references;
+all other endpoint-shaped tokens fail closed regardless of label casing.
+The case-insensitive allowlist is `DOI`, `ISBN`, `ISSN`, `PMID`, `PMCID`,
+`ORCID`, `RFC`, `CVE`, `GHSA`, `ISO`, `IEC`, `IEEE`, `ANSI`, `NIST`, `SOC`,
+`HIPAA`, `GDPR`, `Version`, `Volume`, `Year`, `Edition`, `Standard`, `Issue`,
+`Section`, `Page`, `Chapter`, `Figure`, `Table`, `Article`, and `AS`.
 An HTTP artifact may carry a complete `provenance` override with the same
 validated fields. When present, the artifact-level terms govern that release;
 the dataset-level mapping remains the conservative default for artifacts that

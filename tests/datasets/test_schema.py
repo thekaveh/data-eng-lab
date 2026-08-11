@@ -17,9 +17,75 @@ _spec.loader.exec_module(schema)
 FIXTURE = Path(__file__).parent / "fixtures" / "registry-v2-minimal.yaml"
 REAL = ROOT / "datasets" / "registry.yaml"
 
+STANDARD_SEMANTIC_LABELS = (
+    "DOI",
+    "ISBN",
+    "ISSN",
+    "PMID",
+    "PMCID",
+    "ORCID",
+    "RFC",
+    "CVE",
+    "GHSA",
+    "ISO",
+    "IEC",
+    "IEEE",
+    "ANSI",
+    "NIST",
+    "SOC",
+    "HIPAA",
+    "GDPR",
+    "Version",
+    "Volume",
+    "Year",
+    "Edition",
+    "Standard",
+    "Issue",
+    "Section",
+    "Page",
+    "Chapter",
+    "Figure",
+    "Table",
+    "Article",
+    "AS",
+)
+
+SINGLE_LABEL_UNKNOWN_ENDPOINT_TOKENS = (
+    "Cache:6379",
+    "CACHE:6379",
+    "Backend:8080",
+    "Api:8080",
+    "Broker:9092",
+    "WEB:8080",
+    "Internal:9000",
+    "App:3000",
+    "KAFKA:9092",
+    "HDFS:8020",
+    "DEV:8080",
+    "1worker:4040",
+    "worker1:4040",
+    "internal-service:9000",
+    "internal_service:9000",
+    "host.:9000",
+)
+
+DOTTED_ROOT_ENDPOINT_TOKENS = (
+    "internal.service.:9000",
+    "redis.default.svc.:6379",
+    "example.com.:443",
+    "192.168.1.1.:9000",
+    "8.8.8.8.:53",
+)
+
+UNKNOWN_ENDPOINT_TOKENS = SINGLE_LABEL_UNKNOWN_ENDPOINT_TOKENS + DOTTED_ROOT_ENDPOINT_TOKENS
+
 
 def _v2() -> dict:
     return yaml.safe_load(FIXTURE.read_text(encoding="utf-8"))
+
+
+def _alternating_case(value: str) -> str:
+    return "".join(character.upper() if index % 2 == 0 else character.lower() for index, character in enumerate(value))
 
 
 def _get(doc: object, path: tuple[object, ...]) -> object:
@@ -191,12 +257,29 @@ def test_v2_applies_case_insensitive_single_label_endpoint_policy_to_artifact_ov
     ) in schema.validate_registry_v2(doc)
 
 
+@pytest.mark.parametrize("label", STANDARD_SEMANTIC_LABELS)
+@pytest.mark.parametrize("spelling", [str.lower, _alternating_case])
+def test_v2_accepts_standardized_semantic_references_case_insensitively_in_all_free_text_fields(label: str, spelling):
+    doc = _v2()
+    token = f"{spelling(label)}:12"
+    for field in ("publisher", "license_name", "attribution"):
+        doc["datasets"]["direct"]["provenance"][field] = token
+    override = doc["datasets"]["archive"]["artifacts"]["release"]["provenance"]
+    for field in ("publisher", "license_name", "attribution"):
+        override[field] = token
+    assert schema.validate_registry_v2(doc) == []
+
+
+@pytest.mark.parametrize("value", UNKNOWN_ENDPOINT_TOKENS)
 @pytest.mark.parametrize("field", ["publisher", "license_name", "attribution"])
-def test_v2_accepts_semantic_label_references_in_artifact_override_free_text(field: str):
+def test_v2_rejects_unknown_endpoint_labels_in_every_artifact_override_free_text_field(field: str, value: str):
     doc = _v2()
     override = doc["datasets"]["archive"]["artifacts"]["release"]["provenance"]
-    override[field] = "Year:2026"
-    assert schema.validate_registry_v2(doc) == []
+    override[field] = value
+    assert (
+        f"datasets.archive.artifacts.release.provenance.{field}: must not contain "
+        "machine-local or credential-like values"
+    ) in schema.validate_registry_v2(doc)
 
 
 def test_v2_requires_complete_artifact_provenance_override_when_present():
@@ -529,6 +612,7 @@ def test_v2_url_fields_share_authoritative_public_ip_policy(field: str, host: st
         "3scale:9000",
         "9buildbox:9000",
         "host.:9000",
+        *UNKNOWN_ENDPOINT_TOKENS,
     ],
 )
 def test_v2_rejects_machine_local_or_credential_like_provenance_text(field: str, value: str):
@@ -589,13 +673,6 @@ def test_v2_accepts_legitimate_provenance_free_text(field: str, value: str):
     assert schema.validate_registry_v2(doc) == []
 
 
-@pytest.mark.parametrize("field", ["publisher", "license_name", "attribution"])
-def test_v2_accepts_semantic_label_references_in_every_dataset_free_text_field(field: str):
-    doc = _v2()
-    doc["datasets"]["direct"]["provenance"][field] = "Year:2026"
-    assert schema.validate_registry_v2(doc) == []
-
-
 @pytest.mark.parametrize(
     ("value", "unsafe"),
     [
@@ -620,6 +697,9 @@ def test_v2_accepts_semantic_label_references_in_every_dataset_free_text_field(f
         ("GOOGLE_APPLICATION_CREDENTIALS value", True),
         ("internal-service:9000", True),
         ("buildbox:9000", True),
+        *[(value, True) for value in UNKNOWN_ENDPOINT_TOKENS],
+        *[(f"{label.lower()}:12", False) for label in STANDARD_SEMANTIC_LABELS],
+        *[(f"{_alternating_case(label)}:12", False) for label in STANDARD_SEMANTIC_LABELS],
         ("DOI:10.24432/C5CG6D", False),
         ("Version:2", False),
         ("Volume:12", False),
@@ -681,6 +761,9 @@ def test_authoritative_public_ip_classifier(value: str, authoritative: bool):
         ("3scale:9000", True),
         ("9buildbox:9000", True),
         ("host.:9000", True),
+        *[(value, True) for value in SINGLE_LABEL_UNKNOWN_ENDPOINT_TOKENS],
+        *[(f"{label.lower()}:12", False) for label in STANDARD_SEMANTIC_LABELS],
+        *[(f"{_alternating_case(label)}:12", False) for label in STANDARD_SEMANTIC_LABELS],
         ("DOI:10.24432/C5CG6D", False),
         ("Version:2", False),
         ("Volume:12", False),
