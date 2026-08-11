@@ -428,14 +428,61 @@ def test_dataset_docs_describe_versioned_fail_closed_provenance_contract():
     assert "does not verify downloaded, extracted, generated, uploaded, or reused bytes" in text
 
 
-def test_dataset_docs_link_exact_authoritative_sources_licenses_and_attribution():
+def _provenance_table_rows(markdown: str) -> tuple[tuple[str, ...], ...]:
+    section = markdown.split("## 5. Authoritative Sources, Licenses, and Attribution", 1)[1]
+    section = section.split("\n## ", 1)[0]
+    lines = tuple(line for line in section.splitlines() if line.startswith("|"))
+    assert len(lines) >= 3
+
+    parsed = tuple(
+        tuple(cell.replace(r"\|", "|").strip() for cell in re.split(r"(?<!\\)\|", line[1:-1])) for line in lines
+    )
+    assert parsed[0] == ("Dataset", "Publisher and source", "License or terms", "Attribution")
+    assert all(re.fullmatch(r":?-{3,}:?", cell) for cell in parsed[1])
+    assert all(len(row) == len(parsed[0]) for row in parsed[2:])
+    return parsed[2:]
+
+
+def test_provenance_table_parser_preserves_links_and_escaped_pipes():
+    markdown = (
+        "## 5. Authoritative Sources, Licenses, and Attribution\n\n"
+        "| Dataset | Publisher and source | License or terms | Attribution |\n"
+        "|---|---|---|---|\n"
+        r"| Name \| alias | Publisher — [source \| mirror](https://example.org/a%7Cb) "
+        r"| [License](https://example.org/license) | Owner \| creator |"
+        "\n\n## 6. Next\n"
+    )
+
+    assert _provenance_table_rows(markdown) == (
+        (
+            "Name | alias",
+            "Publisher — [source | mirror](https://example.org/a%7Cb)",
+            "[License](https://example.org/license)",
+            "Owner | creator",
+        ),
+    )
+
+
+def test_dataset_docs_link_exact_authoritative_sources_licenses_and_attribution_by_row():
     text = (ROOT / "docs/datasets.md").read_text(encoding="utf-8")
     registry = yaml.safe_load((ROOT / "datasets/registry.yaml").read_text(encoding="utf-8"))
+    display_names = {
+        "nyc_taxi": "NYC Taxi",
+        "gh_archive": "GH Archive",
+        "movielens": "MovieLens",
+        "online_retail": "Online Retail II",
+        "tpch": "TPC-H",
+    }
+    rows = _provenance_table_rows(text)
 
-    for dataset in registry["datasets"].values():
+    assert tuple(row[0] for row in rows) == tuple(display_names[dataset_id] for dataset_id in registry["datasets"])
+
+    for (dataset_id, dataset), row in zip(registry["datasets"].items(), rows, strict=True):
+        assert row[0] == display_names[dataset_id]
+        row_text = " | ".join(row)
         provenance = dataset["provenance"]
         for key in ("publisher", "homepage", "license_name", "license_url", "attribution"):
-            assert provenance[key] in text
+            assert provenance[key] in row_text
 
     assert "https://files.grouplens.org/datasets/movielens/ml-latest-small-README.html" in text
     assert "https://files.grouplens.org/datasets/movielens/ml-25m-README.html" in text
@@ -443,11 +490,37 @@ def test_dataset_docs_link_exact_authoritative_sources_licenses_and_attribution(
 
 def test_dataset_docs_record_reviewed_evidence_counts_and_source_realities():
     text = (ROOT / "docs/datasets.md").read_text(encoding="utf-8")
+    registry = yaml.safe_load((ROOT / "datasets/registry.yaml").read_text(encoding="utf-8"))
+    datasets = registry["datasets"]
+    http_datasets = tuple(dataset for dataset in datasets.values() if dataset["fetch"]["kind"] == "http")
+    http_artifact_count = sum(len(dataset["artifacts"]) for dataset in http_datasets)
+    http_landing_count = sum(
+        len(artifact["outputs"]) for dataset in http_datasets for artifact in dataset["artifacts"].values()
+    )
+    schema_count = sum(len(dataset["schemas"]) for dataset in datasets.values())
+    tpch_output_count = sum(len(scale["outputs"]) for scale in datasets["tpch"]["generator"]["scales"].values())
+    evidence = text.split("## 4. Reviewed Evidence and Source Realities", 1)[1]
+    evidence = evidence.split("\n## ", 1)[0]
+    counts = re.search(
+        r"The issue #80 review acquired (?P<http>\d+) unique HTTP artifacts, "
+        r"recorded (?P<landing>\d+) HTTP landing objects, and derived "
+        r"(?P<schemas>\d+) schema contracts\. The canonical TPC-H runs produced "
+        r"(?P<tpch>\d+) TPC-H outputs across three tiers and "
+        r"(?P<repeats>\d+) corresponding repeat outputs; each matched its "
+        r"first-run counterpart in size and SHA-256\.",
+        evidence,
+    )
+    assert counts is not None
+    assert tuple(int(counts[name]) for name in ("http", "landing", "schemas", "tpch")) == (
+        http_artifact_count,
+        http_landing_count,
+        schema_count,
+        tpch_output_count,
+    )
+    assert int(counts["repeats"]) == 24
+    assert "24 byte-identical repeat outputs" not in evidence
+
     for phrase in (
-        "15 unique HTTP artifacts",
-        "25 HTTP landing objects",
-        "24 TPC-H outputs",
-        "24 byte-identical repeat outputs",
         "January 2023 is the physical-schema outlier",
         "`passenger_count` is `float64`",
         "February through June use `int64`",
@@ -459,7 +532,7 @@ def test_dataset_docs_record_reviewed_evidence_counts_and_source_realities():
         "2018-09-26",
         "release-specific terms control",
     ):
-        assert phrase in text
+        assert phrase in evidence
 
 
 def test_dataset_docs_publish_reviewed_update_commands_and_changelog_boundary():
