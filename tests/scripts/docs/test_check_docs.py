@@ -163,24 +163,44 @@ def test_current_atlas_live_acceptance_closeout_is_explicit_and_not_stale(repo_r
         "FINISHED",
         "success=true",
         "No false driver-status polling failure or exception was present",
+        "Jenkins ETL build #5",
+        "medallion build #1",
+        "Layer 1 at 13/13",
+        "Layer 2 at 6/6",
     )
-    for relative in ("docs/go-live.md", "docs/atlas-feedback-go-live.md"):
-        text = (repo_root / relative).read_text(encoding="utf-8")
-        normalized = " ".join(text.split())
+    go_live = (repo_root / "docs/go-live.md").read_text(encoding="utf-8")
+    go_live_current = go_live.split(
+        "**Current accepted baseline (2026-08-10, atlas", maxsplit=1
+    )[1].split("**Historical accepted baseline", maxsplit=1)[0]
+    feedback = (repo_root / "docs/atlas-feedback-go-live.md").read_text(encoding="utf-8")
+    feedback_current = feedback.split(
+        "Current contract update (2026-08-10, atlas", maxsplit=1
+    )[1].split("## 2. Key Observations", maxsplit=1)[0]
+    changelog = (repo_root / "docs/CHANGELOG.md").read_text(encoding="utf-8")
+    changelog_current = changelog.split("- Atlas is now pinned at", maxsplit=1)[1].split(
+        "- The repository, site, and wiki", maxsplit=1
+    )[0]
+
+    for relative, current_section in (
+        ("docs/go-live.md", go_live_current),
+        ("docs/atlas-feedback-go-live.md", feedback_current),
+        ("docs/CHANGELOG.md", changelog_current),
+    ):
+        normalized = " ".join(current_section.split())
         for phrase in current_evidence:
             assert phrase in normalized, (
                 f"{relative} is missing current live evidence {phrase!r}"
             )
-        assert "operator-owned" in text
-        assert "SparkSubmitOperator" in text
-        assert "`RestConfirmingSparkHook`" in text
+        assert "SparkSubmitOperator" in current_section
+        assert "`RestConfirmingSparkHook`" in current_section
+    assert "operator-owned" in go_live_current
+    assert "`SparkSubmitOperator` ownership" in feedback_current
+    assert "SparkSubmitOperator` ownership" in changelog_current
 
-    go_live = (repo_root / "docs/go-live.md").read_text(encoding="utf-8")
     assert "begin executing the 19 scenarios" not in go_live
     assert "data-eng-lab/issues/82" in go_live
     assert "Latest update: 2026-08-10" in go_live
 
-    feedback = (repo_root / "docs/atlas-feedback-go-live.md").read_text(encoding="utf-8")
     unwind = feedback.split("## 5. Workaround unwind", maxsplit=1)[1].split(
         "## 6. 2026-07-21 live verification findings", maxsplit=1
     )[0]
@@ -191,10 +211,20 @@ def test_current_atlas_live_acceptance_closeout_is_explicit_and_not_stale(repo_r
     ):
         assert stale_phrase not in unwind
 
-    changelog = (repo_root / "docs/CHANGELOG.md").read_text(encoding="utf-8")
-    normalized_changelog = " ".join(changelog.split())
-    for phrase in current_evidence:
-        assert phrase in normalized_changelog
+    historical_findings = feedback.split(
+        "## 6. 2026-07-21 live verification findings", maxsplit=1
+    )[1].split("## 7. Reviewed-pin update", maxsplit=1)[0]
+    assert "historical record" in historical_findings
+    assert "resolved at the current pin" in historical_findings
+    for active_caveat in (
+        "blocks all DAG tasks",
+        "Every task dies",
+        "Fix belongs",
+        "is not consumable",
+        "The lab keeps",
+        "Resolution requires",
+    ):
+        assert active_caveat not in historical_findings
 
     pin_runbook = (repo_root / "docs/atlas-pin-bump-runbook.md").read_text(
         encoding="utf-8"
