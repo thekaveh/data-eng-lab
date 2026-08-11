@@ -35,25 +35,38 @@ else:
 _IDENTIFIER_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 _DNS_LABEL_RE = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 _DECIMAL_RE = re.compile(r"^decimal\(([0-9]+),([0-9]+)\)$")
-_IP_CANDIDATE_RE = re.compile(r"(?<![0-9A-Za-z_])\[?([0-9A-Fa-f:.]*[.:][0-9A-Fa-f:.]+)\]?(?![0-9A-Za-z_])")
-_CREDENTIAL_KEY = (
-    r"(?:aws[_-]?access[_-]?key[_-]?id|aws[_-]?secret[_-]?access[_-]?key|"
-    r"database[_-]?password|api[_-]?key|private[_-]?key|token|password|secret|key)"
+_IPV4_CANDIDATE_RE = re.compile(r"(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}(?![0-9.])")
+_IPV6_CANDIDATE_RE = re.compile(r"(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{0,4}:){2,}[0-9A-Fa-f:]*(?![0-9A-Fa-f:])")
+_EXPLICIT_NON_PUBLIC_NETWORKS = tuple(
+    ipaddress.ip_network(network) for network in ("192.0.0.0/24", "192.88.99.0/24", "64:ff9b:1::/48")
 )
-_UPPERCASE_CREDENTIAL_KEY = (
-    r"(?:AWS_ACCESS_KEY_ID|AWS_SECRET_ACCESS_KEY|DATABASE_PASSWORD|API_KEY|PRIVATE_KEY|TOKEN|PASSWORD|SECRET)"
+_CREDENTIAL_KEY = (
+    r"(?:[a-z0-9]+[_-])*(?:secret[_-]access[_-]key|access[_-]key[_-]id|"
+    r"access[_-]key|session[_-]token|api[_-]key|private[_-]key|"
+    r"database[_-]password|token|password|secret|key)"
 )
 _PROVENANCE_LOCAL_PATTERNS = (
     re.compile(r"(?i)(?<![a-z0-9])(?:localhost|loopback|minio)(?![a-z0-9])"),
     re.compile(r"(?i)\b[a-z][a-z0-9+.-]*://"),
     re.compile(
-        r"(?i)(?:/(?:users|home)/\S+|(?:/private)?/tmp(?:/|\b)|/var/folders(?:/|\b)|"
-        r"(?<![a-z0-9])[a-z]:\\users\\)"
+        r"(?i)(?<![\w])(?:~/\S*|\$(?:home|\{home\})(?:/|\b)|"
+        r"/(?:root|home|users)(?:/|\b)|[a-z]:\\users(?:\\|\b)|"
+        r"(?:/private)?/tmp(?:/|\b)|/var/folders(?:/|\b))"
     ),
-    re.compile(r"(?i)(?<![\w.:-])(?:[a-z][a-z0-9.-]*|\[[0-9a-f:]+\]):[0-9]{1,5}(?![0-9:])"),
+    re.compile(
+        r"(?i)(?<![\w.-])(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+"
+        r"[a-z](?:[a-z0-9-]*[a-z0-9])?:[0-9]{1,5}(?![0-9])"
+    ),
+    re.compile(
+        r"(?i)(?<![\w.-])(?:host|server|service|endpoint|database|db|redis|"
+        r"postgres|postgresql|mysql|spark-master|spark-worker|airflow|trino|"
+        r"jupyter|jenkins):[0-9]{1,5}(?![0-9])"
+    ),
+    re.compile(r"(?<![0-9.])(?:[0-9]{1,3}\.){3}[0-9]{1,3}:[0-9]{1,5}(?![0-9])"),
+    re.compile(r"(?i)\[[0-9a-f:]+\]:[0-9]{1,5}(?![0-9])"),
     re.compile(r"(?i)(?<![\w])[^\s:/@]+:[^\s/@]+@(?:[a-z0-9-]+\.)+[a-z0-9-]+"),
     re.compile(rf"(?i)(?<![\w-]){_CREDENTIAL_KEY}\s*[:=]\s*\S"),
-    re.compile(rf"(?<![A-Z0-9_]){_UPPERCASE_CREDENTIAL_KEY}[ \t]+\S"),
+    re.compile(rf"(?i)(?<![\w-])(?=[a-z0-9_-]*[_-]){_CREDENTIAL_KEY}[ \t]+\S"),
 )
 _LOGICAL_TYPES = frozenset(
     {
@@ -206,17 +219,30 @@ def _provenance_text(value: object, path: str) -> list[str]:
     errors = _nonempty_string(value, path)
     if errors or not isinstance(value, str):
         return errors
-    has_non_global_address = False
-    for match in _IP_CANDIDATE_RE.finditer(value):
-        candidate = match.group(1).strip(".")
+    addresses: list[ipaddress.IPv4Address | ipaddress.IPv6Address] = []
+    for match in _IPV4_CANDIDATE_RE.finditer(value):
         try:
-            address = ipaddress.ip_address(candidate)
+            addresses.append(ipaddress.ip_address(match.group(0)))
         except ValueError:
             continue
-        if not address.is_global:
-            has_non_global_address = True
+    for match in _IPV6_CANDIDATE_RE.finditer(value):
+        candidate = match.group(0).strip("[]")
+        candidates = (
+            (candidate, candidate[:-1]) if candidate.endswith(":") and not candidate.endswith("::") else (candidate,)
+        )
+        for normalized in candidates:
+            try:
+                addresses.append(ipaddress.ip_address(normalized))
+            except ValueError:
+                continue
             break
-    if has_non_global_address or any(pattern.search(value) for pattern in _PROVENANCE_LOCAL_PATTERNS):
+    has_non_public_address = any(
+        not address.is_global
+        or address.is_multicast
+        or any(address.version == network.version and address in network for network in _EXPLICIT_NON_PUBLIC_NETWORKS)
+        for address in addresses
+    )
+    if has_non_public_address or any(pattern.search(value) for pattern in _PROVENANCE_LOCAL_PATTERNS):
         errors.append(f"{path}: must not contain machine-local or credential-like values")
     return errors
 

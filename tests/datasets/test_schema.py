@@ -157,6 +157,17 @@ def test_v2_validates_optional_artifact_provenance_override():
     ) in schema.validate_registry_v2(doc)
 
 
+@pytest.mark.parametrize("field", ["publisher", "license_name", "attribution"])
+def test_v2_applies_provenance_safety_to_every_artifact_override_free_text_field(field: str):
+    doc = _v2()
+    override = doc["datasets"]["archive"]["artifacts"]["release"]["provenance"]
+    override[field] = "source 10.0.0.1: reviewed"
+    assert (
+        f"datasets.archive.artifacts.release.provenance.{field}: must not contain "
+        "machine-local or credential-like values"
+    ) in schema.validate_registry_v2(doc)
+
+
 def test_v2_requires_complete_artifact_provenance_override_when_present():
     doc = _v2()
     del doc["datasets"]["archive"]["artifacts"]["release"]["provenance"]["license_url"]
@@ -393,21 +404,39 @@ def test_v2_rejects_active_machine_local_values():
         "reviewed from 169.254.20.30",
         "reviewed from 0.0.0.0",
         "reviewed from 240.0.0.1",
+        "reviewed from 192.0.0.8",
+        "reviewed from 192.88.99.1",
+        "reviewed from 224.0.0.1",
+        "reviewed from 10.0.0.1:9000",
+        "reviewed from 192.168.1.5:443",
+        "source 10.0.0.1: reviewed",
         "reviewed from [fc00::1]",
         "reviewed from fd12:3456:789a::1",
         "reviewed from fe80::a:b:c:d",
+        "source fe80::1: reviewed",
+        "reviewed from 64:ff9b:1::1",
+        "reviewed from ff02::1",
         "reviewed from ::",
+        "read ~/.aws/credentials",
+        "read $HOME/.aws/credentials",
+        "read ${HOME}/.aws/credentials",
+        "read /root/.aws/credentials",
         "read /Users/alice/review/license.txt",
         "read /home/runner/review/license.txt",
         r"read C:\Users\alice\review\license.txt",
+        "GITHUB_TOKEN release-token",
+        "AWS_SESSION_TOKEN release-token",
         "AWS_ACCESS_KEY_ID AKIAEXAMPLE",
         "AWS_SECRET_ACCESS_KEY = example",
+        "aws_access_key_id example",
+        "aws_secret_access_key example",
         "DATABASE_PASSWORD: example",
-        "TOKEN example",
+        "database_password example",
+        "api_key example",
         "API_KEY\texample",
+        "private_key example",
         "PRIVATE_KEY = example",
         "SECRET: example",
-        "PASSWORD example",
     ],
 )
 def test_v2_rejects_machine_local_or_credential_like_provenance_text(field: str, value: str):
@@ -434,8 +463,13 @@ def test_v2_rejects_machine_local_or_credential_like_provenance_text(field: str,
         ("attribution", "Transaction Processing Performance Council"),
         ("attribution", "Key ordering and secretariat review are documented"),
         ("publisher", "Secret Garden Research Foundation"),
-        ("publisher", "Token Press and API Key Studies Group"),
-        ("license_name", "Password research corpus terms"),
+        ("publisher", "Token Press"),
+        ("license_name", "Password policy research corpus terms"),
+        ("attribution", "DOI:10.24432/C5CG6D"),
+        ("attribution", "Version:2"),
+        ("attribution", "Volume:12"),
+        ("attribution", "TOKEN review terminology"),
+        ("attribution", "PASSWORD policy terminology"),
         ("attribution", "Globally reviewed at 8.8.8.8 and 2606:4700:4700::1111"),
     ],
 )
@@ -443,6 +477,33 @@ def test_v2_accepts_legitimate_provenance_free_text(field: str, value: str):
     doc = _v2()
     doc["datasets"]["direct"]["provenance"][field] = value
     assert schema.validate_registry_v2(doc) == []
+
+
+@pytest.mark.parametrize(
+    ("value", "unsafe"),
+    [
+        ("10.0.0.1:9000", True),
+        ("source 10.0.0.1: reviewed", True),
+        ("source fe80::1: reviewed", True),
+        ("192.0.0.8", True),
+        ("192.88.99.1", True),
+        ("224.0.0.1", True),
+        ("64:ff9b:1::1", True),
+        ("ff02::1", True),
+        ("GITHUB_TOKEN value", True),
+        ("api_key value", True),
+        ("~/.aws/credentials", True),
+        ("DOI:10.24432/C5CG6D", False),
+        ("Version:2", False),
+        ("Volume:12", False),
+        ("8.8.8.8", False),
+        ("2606:4700:4700::1111", False),
+        ("Secret Garden / Token Press / Password policy", False),
+    ],
+)
+def test_provenance_text_detection_has_boundary_safe_negative_and_positive_controls(value: str, unsafe: bool):
+    errors = schema._provenance_text(value, "provenance")
+    assert bool(errors) is unsafe
 
 
 @pytest.mark.parametrize("root", [None, [], "registry", 2])
