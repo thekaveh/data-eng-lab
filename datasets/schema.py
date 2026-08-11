@@ -128,8 +128,11 @@ def _https(value: object, path: str) -> list[str]:
         address = ipaddress.ip_address(host)
     except ValueError:
         labels = host.split(".")
+        legacy_ipv4 = len(labels) <= 4 and all(
+            re.fullmatch(r"(?:[0-9]+|0x[0-9a-f]+)", label) is not None for label in labels
+        )
         if (
-            re.fullmatch(r"[0-9.]+", host) is not None
+            legacy_ipv4
             or "." not in host
             or len(host) > 253
             or any(_DNS_LABEL_RE.fullmatch(label) is None for label in labels)

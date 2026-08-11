@@ -456,6 +456,12 @@ def test_v2_accepts_stricter_artifact_stability():
         ("https://127.1/source",),
         ("https://127.0.0.01/source",),
         ("https://0127.0.0.1/source",),
+        ("https://0x7f.0.0.1/source",),
+        ("https://0x7f.1/source",),
+        ("https://127.0.0x0.1/source",),
+        ("https://0x7f000001/source",),
+        ("https://2130706433/source",),
+        ("https://0177.0.0.1/source",),
         ("https://169.254.1.1/source",),
         ("https://10.0.0.1/source",),
         ("https://172.16.0.1/source",),
@@ -476,6 +482,12 @@ def test_v2_rejects_non_authoritative_urls(url):
     assert "datasets.direct.artifacts.sample.url: must be an authoritative HTTPS URL" in schema.validate_registry_v2(
         doc
     )
+
+
+def test_v2_accepts_canonical_public_ip_url_without_resolution():
+    doc = _v2()
+    doc["datasets"]["direct"]["artifacts"]["sample"]["url"] = "https://8.8.8.8/source"
+    assert schema.validate_registry_v2(doc) == []
 
 
 @pytest.mark.parametrize(
