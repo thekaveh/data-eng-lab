@@ -403,6 +403,89 @@ def test_dataset_inventory_and_scenario_mappings_match_sources():
         assert f"`{scenario_id}`" in primary_table
 
 
+def test_dataset_docs_describe_versioned_fail_closed_provenance_contract():
+    text = (ROOT / "docs/datasets.md").read_text(encoding="utf-8")
+    for phrase in (
+        "registry version 2",
+        "strict fail-on-drift",
+        "normalized `artifacts` catalog",
+        "raw archive",
+        "extracted landing object",
+        "`scales.<tier>.artifacts`",
+        "DuckDB 1.5.4",
+        "linux/amd64",
+        "C.UTF-8",
+        "SHA-256",
+        "schema fingerprint",
+        "reviewed lock update",
+        "runtime enforcement is tracked in issue #81",
+    ):
+        assert phrase in text
+
+    assert "`fetch.scale_params`" not in text
+    assert "existing objects are verified" not in text
+    assert "defined, validated, and parsed" in text
+    assert "does not verify downloaded, extracted, generated, uploaded, or reused bytes" in text
+
+
+def test_dataset_docs_link_exact_authoritative_sources_licenses_and_attribution():
+    text = (ROOT / "docs/datasets.md").read_text(encoding="utf-8")
+    registry = yaml.safe_load((ROOT / "datasets/registry.yaml").read_text(encoding="utf-8"))
+
+    for dataset in registry["datasets"].values():
+        provenance = dataset["provenance"]
+        for key in ("publisher", "homepage", "license_name", "license_url", "attribution"):
+            assert provenance[key] in text
+
+    assert "https://files.grouplens.org/datasets/movielens/ml-latest-small-README.html" in text
+    assert "https://files.grouplens.org/datasets/movielens/ml-25m-README.html" in text
+
+
+def test_dataset_docs_record_reviewed_evidence_counts_and_source_realities():
+    text = (ROOT / "docs/datasets.md").read_text(encoding="utf-8")
+    for phrase in (
+        "15 unique HTTP artifacts",
+        "25 HTTP landing objects",
+        "24 TPC-H outputs",
+        "24 byte-identical repeat outputs",
+        "January 2023 is the physical-schema outlier",
+        "`passenger_count` is `float64`",
+        "February through June use `int64`",
+        "`online_retail_II.xlsx`",
+        "`Year 2009-2010`",
+        "`Year 2010-2011`",
+        "`ml-latest-small.zip` is a mutable alias",
+        "`latest-small` is not a source revision",
+        "2018-09-26",
+        "release-specific terms control",
+    ):
+        assert phrase in text
+
+
+def test_dataset_docs_publish_reviewed_update_commands_and_changelog_boundary():
+    text = (ROOT / "docs/datasets.md").read_text(encoding="utf-8")
+    for command in (
+        "uv run python scripts/audit_dataset_lock.py http",
+        "docker build --platform linux/amd64 -f datasets/tpch-lock.Dockerfile",
+        "docker run --rm --network=none --platform linux/amd64",
+        "uv run pytest tests/datasets -q",
+        "uv run python scripts/verify_repo.py --root .",
+        "make docs-check",
+        "make docs-wiki",
+    ):
+        assert command in text
+
+    changelog = (ROOT / "docs/CHANGELOG.md").read_text(encoding="utf-8")
+    unreleased = " ".join(changelog.split("## 1. [Unreleased]", 1)[1].split("\n## ", 1)[0].split())
+    for phrase in (
+        "registry version 2",
+        "source, raw/archive, landing-object, generator-output, and schema locks",
+        "runtime enforcement remains explicitly deferred to issue #81",
+    ):
+        assert phrase in unreleased
+    assert "March's `INT64` schema" not in unreleased
+
+
 def test_atlas_enablement_metadata_matches_current_repository_and_pin():
     text = (ROOT / "docs/atlas-enablement.md").read_text(encoding="utf-8")
     assert "`data-eng-lab` (public)" in text
