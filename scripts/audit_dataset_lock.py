@@ -140,6 +140,8 @@ def _member_has_directory_attributes(member: zipfile.ZipInfo) -> bool:
 
 
 def _validate_directory_member(member: zipfile.ZipInfo) -> str:
+    if "//" in member.filename:
+        raise ValueError("archive directory: must be a safe relative POSIX path")
     directory_path = member.filename[:-1]
     errors = validate_relative_path(directory_path, "archive directory")
     if errors:
@@ -383,6 +385,18 @@ def _validate_archive_members(members: list[zipfile.ZipInfo]) -> list[zipfile.Zi
     if ambiguous_paths := directory_paths & file_paths:
         ambiguous_path = sorted(ambiguous_paths)[0]
         raise ValueError(f"archive path {ambiguous_path!r} is both a directory and a file")
+    ancestor_conflicts = sorted(
+        (ancestor.as_posix(), directory_path)
+        for directory_path in directory_paths
+        for ancestor in PurePosixPath(directory_path).parents
+        if ancestor != PurePosixPath(".") and ancestor.as_posix() in file_paths
+    )
+    if ancestor_conflicts:
+        file_path, directory_path = ancestor_conflicts[0]
+        raise ValueError(
+            f"archive file path {file_path!r} is an ancestor of structural directory "
+            f"{directory_path!r}"
+        )
     return file_members
 
 

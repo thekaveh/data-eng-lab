@@ -586,7 +586,17 @@ def test_audit_zip_accepts_grouplens_structural_directory_and_excludes_it_from_m
 
 @pytest.mark.parametrize(
     "directory",
-    ["/", "//", "/absolute/", "../escape/", "a/../escape/", "a\\directory/", "double//", "a/./"],
+    [
+        "/",
+        "//",
+        "/absolute/",
+        "../escape/",
+        "a/../escape/",
+        "a\\directory/",
+        "double//",
+        "a//nested/",
+        "a/./",
+    ],
 )
 @responses.activate
 def test_audit_zip_rejects_unsafe_directory_paths(directory: str):
@@ -635,6 +645,10 @@ def directory_policy_zip(kind: str) -> bytes:
                 member = zipfile.ZipInfo("ambiguous")
                 member.create_system = 3
                 member.external_attr = ((stat.S_IFDIR | 0o755) << 16) | 0x10
+            elif kind == "missing-directory-attributes":
+                member = zipfile.ZipInfo("unmarked/")
+                member.create_system = 3
+                member.external_attr = 0o755 << 16
             else:
                 raise AssertionError(f"unknown directory policy kind {kind}")
             archive.writestr(member, b"")
@@ -654,6 +668,10 @@ def directory_policy_zip(kind: str) -> bytes:
         ("special-attributes", "archive directory 'special/' has unsafe attributes"),
         ("symlink", "archive member 'link/' must not be a symlink"),
         ("directory-attributes-on-file", "directory/file attribute ambiguity for archive member 'ambiguous'"),
+        (
+            "missing-directory-attributes",
+            "directory/file attribute ambiguity for archive member 'unmarked/'",
+        ),
     ],
 )
 @responses.activate
@@ -696,7 +714,7 @@ def test_audit_zip_rejects_directory_file_namespace_ambiguity():
 
 
 @responses.activate
-def test_audit_zip_rejects_normalized_directory_file_namespace_ambiguity():
+def test_audit_zip_rejects_raw_directory_separators_before_namespace_normalization():
     source = "https://source.invalid/data.zip"
     responses.add(
         responses.GET,
@@ -705,8 +723,54 @@ def test_audit_zip_rejects_normalized_directory_file_namespace_ambiguity():
         status=200,
     )
 
-    with pytest.raises(ValueError, match="archive path 'a/node' is both a directory and a file"):
+    with pytest.raises(ValueError, match="archive directory: must be a safe relative POSIX path"):
         audit.audit_http(source, archive=True)
+
+
+@pytest.mark.parametrize(
+    ("members", "file_path", "directory_path"),
+    [
+        ({"a": b"locked", "a/b/": b""}, "a", "a/b"),
+        ({"a/b": b"locked", "a/b/c/d/": b""}, "a/b", "a/b/c/d"),
+        (
+            {"z": b"locked", "z/x/y/": b"", "a": b"locked", "a/b/": b""},
+            "a",
+            "a/b",
+        ),
+    ],
+)
+@responses.activate
+def test_audit_zip_rejects_file_that_is_ancestor_of_structural_directory(
+    members: dict[str, bytes],
+    file_path: str,
+    directory_path: str,
+):
+    source = "https://source.invalid/data.zip"
+    responses.add(responses.GET, source, body=zip_bytes(members), status=200)
+
+    with pytest.raises(
+        ValueError,
+        match=(
+            f"archive file path {file_path!r} is an ancestor of structural directory "
+            f"{directory_path!r}"
+        ),
+    ):
+        audit.audit_http(source, archive=True)
+
+
+@responses.activate
+def test_audit_zip_accepts_structural_directory_that_is_ancestor_of_file():
+    source = "https://source.invalid/data.zip"
+    responses.add(
+        responses.GET,
+        source,
+        body=zip_bytes({"a/": b"", "a/b.csv": b"locked"}),
+        status=200,
+    )
+
+    result = audit.audit_http(source, archive=True)
+
+    assert [output["member_path"] for output in result["outputs"]] == ["a/b.csv"]
 
 
 @responses.activate
