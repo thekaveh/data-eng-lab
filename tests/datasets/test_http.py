@@ -11,7 +11,29 @@ from datasets.sources import http
 
 
 def _plan(urls, unzip=False):
-    ds = reg.Dataset("d", "d", "csv", "l", "d", "http", unzip, {"tiny": {"urls": urls}})
+    artifacts = {
+        f"source_{index}": reg.HttpArtifact(
+            id=f"source_{index}",
+            url=url,
+            version=reg.SourceVersion(kind="revision", value=f"source-{index}"),
+            stability="mutable",
+            evidence={},
+            raw=reg.RawArtifact(name=Path(url).name, size_bytes=1, sha256="a" * 64),
+            outputs=(),
+        )
+        for index, url in enumerate(urls)
+    }
+    ds = reg.Dataset(
+        "d",
+        "d",
+        "csv",
+        "l",
+        "d",
+        "http",
+        unzip,
+        {"tiny": tuple(artifacts)},
+        artifacts=artifacts,
+    )
     return reg.resolve_scale(ds, "tiny")
 
 
