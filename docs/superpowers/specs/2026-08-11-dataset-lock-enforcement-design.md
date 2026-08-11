@@ -8,7 +8,7 @@
 
 **Dependency:** [#80](https://github.com/thekaveh/data-eng-lab/issues/80)
 
-**Status:** Approved direction; written specification pending final review
+**Status:** Approved design
 
 ## 1. Objective
 
