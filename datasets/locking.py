@@ -56,6 +56,7 @@ def validate_relative_path(value: object, path: str) -> list[str]:
         or ".." in candidate.parts
         or "\\" in value
         or value.endswith("/")
+        or value.endswith("/.")
     ):
         return [f"{path}: must be a safe relative POSIX path"]
     return []

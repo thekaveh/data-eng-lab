@@ -51,3 +51,9 @@ def test_lock_scalar_validators_reject_malformed_values():
     assert validate_relative_path("/absolute.csv", "x.object_name") == [
         "x.object_name: must be a safe relative POSIX path"
     ]
+
+
+def test_validate_relative_path_rejects_terminal_current_directory_component():
+    assert validate_relative_path("directory/.", "x.object_name") == [
+        "x.object_name: must be a safe relative POSIX path"
+    ]
