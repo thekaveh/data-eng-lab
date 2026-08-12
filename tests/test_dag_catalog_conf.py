@@ -166,6 +166,12 @@ def test_cluster_jar_dags_use_operator_owned_rest_confirmation():
             "java_class": "com.thekaveh.dataeng.medallion.NycTaxiMedallion",
             "application_args": [],
         },
+        "movielens-feature-pipeline": {
+            "task_id": "submit_movielens_feature_pipeline",
+            "application": "s3a://jars/movielens-feature-pipeline/0.1.0/app.jar",
+            "java_class": "com.thekaveh.dataeng.movielens.MovieLensFeaturePipeline",
+            "application_args": [],
+        },
         "tpch-star-schema": {
             "task_id": "submit_tpch_star_schema",
             "application": "s3a://jars/tpch-star-schema/0.1.0/app.jar",

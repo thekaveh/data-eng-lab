@@ -244,7 +244,8 @@ def render_markdown(modes: tuple[ExecutionMode, ...]) -> str:
         "reviewed execution contract for all 19 paired-notebook scenarios; edit the "
         "YAML and run `uv run python -m scripts.scenario_execution --render`.",
         "",
-        "`nyc_taxi_etl`, `nyc_taxi_medallion`, and `tpch_star_schema` are production DAGs today. An "
+        "`nyc_taxi_etl`, `nyc_taxi_medallion`, `tpch_star_schema`, and "
+        "`movielens_feature_pipeline` are four production DAGs today. An "
         "approved child issue is a delivery boundary, not a runnable DAG. Notebook-only "
         "and continuous-stream scenarios run from their paired Zeppelin or Jupyter notebooks.",
         "",

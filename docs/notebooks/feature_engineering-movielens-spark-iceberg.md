@@ -2,6 +2,8 @@
 Documents the scenario's paired Jupyter (`notebook.ipynb`) and Zeppelin (`notebook.zpln`) implementations.
 Both notebooks implement identical logic in PySpark and Scala.
 
+> **Production trust boundary:** these notebooks are educational parity surfaces, not a supported production write path. They infer schema and directly replace the same tables without complete-publication validation, production provenance, Airflow serialization, or readback checks. Running them against production tables can invalidate downstream provenance. Use `movielens_feature_pipeline` from `spark-apps/movielens-feature-pipeline` for production writes.
+
 ## 1. Section map
 
 | Subsection | Scala (Zeppelin) | PySpark (Jupyter) |
@@ -64,6 +66,8 @@ val movieFeatures = ratings.groupBy($"movieId").agg(avg($"rating").as("movie_avg
 userFeatures = ratings.groupBy("userId").agg(F.avg("rating").alias("avg_rating"), F.count("*").alias("num_ratings"))
 movieFeatures = ratings.groupBy("movieId").agg(F.avg("rating").alias("movie_avg"), F.count("*").alias("popularity"))
 ```
+
+Duplicate rating rows intentionally count separately: each input row contributes once to the relevant average and `count(*)`.
 
 ### 2.4 Write
 
