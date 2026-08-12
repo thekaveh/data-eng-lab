@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import io
 import json
+import os
 import threading
 import time
 from dataclasses import replace
@@ -67,6 +68,18 @@ def test_publish_dataset_requires_a_verified_existing_pointer_without_mutation()
     assert result.status == "verified-existing"
     assert result.manifest_sha256 == manifest_sha256(manifest)
     assert store.puts == []
+    assert len(store.gets) == len(manifest.objects) + 2
+
+
+def test_default_exact_reuse_does_not_list_inventory(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store, _manifest_value = _published_store(plan)
+    monkeypatch.setattr(store, "list_objects_v2", lambda **request: pytest.fail(f"inventory: {request}"))
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    result = publish_dataset(plan, mode=PublishMode.DEFAULT, client=store, fetcher=lambda *_: ())
+
+    assert result.status == "verified-existing"
 
 
 def _publication_lease(store: FakeS3, plan, publication_id: str, owner_nonce: str) -> Lease:
@@ -1484,6 +1497,7 @@ def test_verified_result_walks_predecessor_history_in_order(monkeypatch) -> None
         mode=PublishMode.DEFAULT,
         client=store,
         fetcher=lambda *_: pytest.fail("source"),
+        dry_run=True,
     )
 
     assert result.retained_manifest_keys == (
@@ -1494,11 +1508,16 @@ def test_verified_result_walks_predecessor_history_in_order(monkeypatch) -> None
 
 def test_verified_result_fails_closed_on_history_cycle(monkeypatch) -> None:
     plan = resolve_scale(_dataset(), "small")
-    cyclic = _manifest(plan)
-    store, _ = _published_store(plan, cyclic)
+    cyclic = _manifest(plan, publication_id=PREVIOUS_PUBLICATION_ID)
+    current = replace(
+        _manifest(plan),
+        previous_manifest_key=immutable_manifest_key("sample", manifest_sha256(cyclic)),
+        previous_manifest_sha256=manifest_sha256(cyclic),
+    )
+    store, _ = _published_store(plan, current)
     monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
     monkeypatch.setattr(
-        "datasets.publication._read_manifest",
+        "datasets.publication._read_historical_manifest",
         lambda client, selected, digest, bucket: replace(
             cyclic,
             previous_manifest_key=immutable_manifest_key("sample", digest),
@@ -1512,7 +1531,94 @@ def test_verified_result_fails_closed_on_history_cycle(monkeypatch) -> None:
             mode=PublishMode.DEFAULT,
             client=store,
             fetcher=lambda *_: pytest.fail("source"),
+            dry_run=True,
         )
+
+
+def test_history_accepts_prior_scale_contract_and_excludes_all_reachable_generations(monkeypatch) -> None:
+    current_plan = resolve_scale(_dataset(), "small")
+    prior_plan = resolve_scale(_dataset(), "medium")
+    prior = _manifest(prior_plan, publication_id=PREVIOUS_PUBLICATION_ID)
+    current = replace(
+        _manifest(current_plan),
+        previous_manifest_key=immutable_manifest_key("sample", manifest_sha256(prior)),
+        previous_manifest_sha256=manifest_sha256(prior),
+    )
+
+    class InventoryS3(FakeS3):
+        def list_objects_v2(
+            self,
+            *,
+            Bucket,
+            Prefix,
+            Delimiter=None,
+            ContinuationToken=None,
+        ):
+            del Bucket, ContinuationToken
+            matches = sorted(key for key in self.objects if key.startswith(Prefix))
+            if Delimiter is None:
+                return {"Contents": [{"Key": key} for key in matches], "IsTruncated": False}
+            direct = []
+            common = set()
+            for key in matches:
+                remainder = key.removeprefix(Prefix)
+                if "/" in remainder:
+                    common.add(f"{Prefix}{remainder.split('/', 1)[0]}/")
+                else:
+                    direct.append({"Key": key})
+            return {
+                "Contents": direct,
+                "CommonPrefixes": [{"Prefix": value} for value in sorted(common)],
+                "IsTruncated": False,
+            }
+
+    seeded, _ = _published_store(current_plan, current)
+    store = InventoryS3()
+    store.objects.update(seeded.objects)
+    store.seed(immutable_manifest_key("sample", manifest_sha256(prior)), prior.to_bytes(), etag='"prior"')
+    store.seed(prior.objects[0].key, b"hello\n", etag='"prior-object"')
+    orphan_prefix = publication_prefix(current_plan, "123e4567e89b42d3a456426614174003")
+    store.seed(f"{orphan_prefix}/readme.txt", b"hello\n", etag='"orphan"')
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    result = publish_dataset(
+        current_plan,
+        mode=PublishMode.DEFAULT,
+        client=store,
+        fetcher=lambda *_: pytest.fail("source"),
+        dry_run=True,
+    )
+
+    assert result.retained_manifest_keys == (immutable_manifest_key("sample", manifest_sha256(prior)),)
+    assert result.candidate_generation_prefixes == (orphan_prefix,)
+
+
+def test_generation_inventory_uses_one_global_request_budget(monkeypatch) -> None:
+    from datasets import publication as publication_module
+
+    plan = resolve_scale(_dataset(), "small")
+    calls = 0
+
+    class Listing:
+        def list_objects_v2(self, **request):
+            nonlocal calls
+            calls += 1
+            return {
+                "Contents": [],
+                "CommonPrefixes": [{"Prefix": f"{request['Prefix']}child/"}],
+                "IsTruncated": False,
+            }
+
+    monkeypatch.setattr(publication_module, "_MAX_LEGACY_LIST_PAGES", 1)
+    with pytest.raises(AmbiguousWrite, match="global request budget"):
+        publication_module._inactive_generation_prefixes(
+            Listing(),
+            plan,
+            set(),
+            bucket="landing",
+            budget=publication_module._InventoryBudget(),
+        )
+    assert calls == 1
 
 
 def test_common_prefix_listing_is_bounded_and_validated(monkeypatch) -> None:
@@ -1564,6 +1670,55 @@ def test_owned_staging_supports_sticky_world_writable_platform_temp(tmp_path, mo
         (staging / "owned.txt").write_text("owned")
 
     assert list(platform_temp.rglob("owned.txt")) == []
+
+
+def test_owned_staging_cleans_owned_inode_after_path_is_moved(tmp_path) -> None:
+    from datasets import publication as publication_module
+
+    parent = tmp_path / "trusted"
+    parent.mkdir(mode=0o700)
+    moved = parent / "moved-owned"
+    with pytest.raises(ValueError, match="displaced"):
+        with publication_module._owned_staging(parent) as staging:
+            (staging / "owned.txt").write_text("owned")
+            staging.rename(moved)
+
+    assert moved.is_dir()
+    assert list(moved.iterdir()) == []
+
+
+def test_owned_staging_atomic_cleanup_restores_last_moment_foreign_swap(tmp_path, monkeypatch) -> None:
+    from datasets import publication as publication_module
+
+    parent = tmp_path / "trusted"
+    parent.mkdir(mode=0o700)
+    moved = parent / "moved-owned"
+    original_exchange = publication_module._exchange_directory_names
+    swapped = False
+
+    def swap_before_exchange(parent_fd, left, right):
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            os.rename(left, moved.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
+            os.mkdir(left, mode=0o700, dir_fd=parent_fd)
+            foreign_fd = os.open(
+                f"{left}/foreign.txt",
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
+                0o600,
+                dir_fd=parent_fd,
+            )
+            os.write(foreign_fd, b"foreign")
+            os.close(foreign_fd)
+        original_exchange(parent_fd, left, right)
+
+    monkeypatch.setattr(publication_module, "_exchange_directory_names", swap_before_exchange)
+    with pytest.raises(ValueError, match="foreign replacement preserved"):
+        with publication_module._owned_staging(parent) as staging:
+            (staging / "owned.txt").write_text("owned")
+
+    assert (staging / "foreign.txt").read_bytes() == b"foreign"
+    assert list(moved.iterdir()) == []
 
 
 def test_stop_failure_does_not_mask_primary_and_release_is_attempted(tmp_path, monkeypatch) -> None:
@@ -1728,6 +1883,76 @@ def test_pointer_conflict_reports_proven_unreferenced_candidate(tmp_path, monkey
     assert result.manifest_outcome == "written-unreferenced"
     assert result.proven_orphan_keys == result.attempted_object_keys
     assert "concurrent publisher" in str(caught.value.__cause__)
+
+
+def test_object_control_flow_attempt_is_reported_possible_without_wrapping(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+    interrupt = KeyboardInterrupt()
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        return _publication_lease(store, plan, publication_id, owner_nonce)
+
+    original = store.put_object
+
+    def interrupt_object(**request):
+        if "/_generations/" in str(request["Key"]):
+            raise interrupt
+        return original(**request)
+
+    monkeypatch.setattr(store, "put_object", interrupt_object)
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    with pytest.raises(KeyboardInterrupt) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (VerifiedFile(source, expected),),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert caught.value is interrupt
+    notes = " ".join(getattr(interrupt, "__notes__", ()))
+    assert '"possible_object_keys":["sample/_generations/' in notes
+
+
+def test_manifest_conflict_reports_explicit_outcome_and_proven_object_orphans(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        return _publication_lease(store, plan, publication_id, owner_nonce)
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+    monkeypatch.setattr(
+        "datasets.publication._put_manifest_exact",
+        lambda *_: (_ for _ in ()).throw(ConditionalConflict("manifest conflict")),
+    )
+
+    with pytest.raises(PublicationFailure) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (VerifiedFile(source, expected),),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert caught.value.result.manifest_outcome == "conflict"
+    assert caught.value.result.proven_orphan_keys == caught.value.result.attempted_object_keys
 
 
 def test_renewal_loss_after_last_work_checkpoint_prevents_pointer_cas(tmp_path, monkeypatch) -> None:

@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
+import os
 import re
 import secrets
-import shutil
 import stat
+import sys
 import tempfile
 import threading
 import uuid
@@ -631,16 +633,30 @@ def _resolve_manifest(
     *,
     bucket: str,
 ) -> ResolvedDataset:
+    resolved, _manifest = _resolve_manifest_with_document(client, plan, digest, bucket=bucket)
+    return resolved
+
+
+def _resolve_manifest_with_document(
+    client,
+    plan: ScalePlan,
+    digest: str,
+    *,
+    bucket: str,
+) -> tuple[ResolvedDataset, ImmutableManifest]:
     manifest = _read_manifest(client, plan, digest, bucket)
     _validate_manifest_for_plan(manifest, plan)
     objects = tuple(_verify_resolved_object(client, plan, item, bucket) for item in manifest.objects)
-    return ResolvedDataset(
-        dataset=plan.dataset.name,
-        scale=plan.scale,
-        plan_id=manifest.plan_id,
-        manifest_sha256=digest,
-        publication_id=manifest.publication_id,
-        objects=objects,
+    return (
+        ResolvedDataset(
+            dataset=plan.dataset.name,
+            scale=plan.scale,
+            plan_id=manifest.plan_id,
+            manifest_sha256=digest,
+            publication_id=manifest.publication_id,
+            objects=objects,
+        ),
+        manifest,
     )
 
 
@@ -688,6 +704,8 @@ def rollback_manifest(
 @dataclass(frozen=True)
 class _RollbackOutcome:
     resolved: ResolvedDataset
+    manifest: ImmutableManifest
+    previous_manifest: ImmutableManifest
     pointer_state: _PointerState
     reconciled: bool
 
@@ -701,11 +719,28 @@ def _rollback_transaction(
     dry_run: bool = False,
 ) -> _RollbackOutcome:
     current = _read_pointer_state(client, plan, bucket)
-    if current.pointer is None or current.corruption is not None:
+    if current.corruption is not None or current.pointer is None:
         _verify_pointer_state(client, plan, current, bucket)
-    resolved = _resolve_manifest(client, plan, digest, bucket=bucket)
+        raise AssertionError("pointer verification unexpectedly returned without a pointer")
+    previous_manifest = _read_historical_manifest(
+        client,
+        plan.dataset.name,
+        current.pointer.manifest_sha256,
+        bucket,
+    )
+    try:
+        _validate_historical_manifest(previous_manifest, plan)
+    except (TypeError, ValueError) as error:
+        raise _mismatch(
+            plan,
+            "pointer",
+            "canonical self-consistent current manifest",
+            type(error).__name__,
+            stage="pointer",
+        ) from error
+    resolved, manifest = _resolve_manifest_with_document(client, plan, digest, bucket=bucket)
     if dry_run:
-        return _RollbackOutcome(resolved, current, False)
+        return _RollbackOutcome(resolved, manifest, previous_manifest, current, False)
     pointer = ActivePointer(
         format_version=_CONTROL_FORMAT_VERSION,
         dataset=plan.dataset.name,
@@ -719,7 +754,7 @@ def _rollback_transaction(
         pointer.to_bytes(),
         current,
     )
-    return _RollbackOutcome(resolved, current, reconciled)
+    return _RollbackOutcome(resolved, manifest, previous_manifest, current, reconciled)
 
 
 class PublishMode(Enum):
@@ -753,6 +788,7 @@ class PublishResult:
     pointer_outcome: str = "not-attempted"
     retained_manifest_keys: tuple[str, ...] = ()
     unreferenced_manifest_keys: tuple[str, ...] = ()
+    ambiguous_manifest_keys: tuple[str, ...] = ()
     candidate_generation_prefixes: tuple[str, ...] = ()
 
     def to_document(self) -> dict[str, object]:
@@ -762,6 +798,7 @@ class PublishResult:
             "manifest_sha256": self.manifest_sha256,
             "object_count": self.object_count,
             "attempted_object_keys": list(self.attempted_object_keys),
+            "ambiguous_manifest_keys": list(self.ambiguous_manifest_keys),
             "candidate_generation_prefixes": list(self.candidate_generation_prefixes),
             "manifest_key": self.manifest_key,
             "manifest_outcome": self.manifest_outcome,
@@ -928,6 +965,16 @@ def _read_pointer_state(client, plan: ScalePlan, bucket: str) -> _PointerState:
 
 
 def _verify_pointer_state(client, plan: ScalePlan, state: _PointerState, bucket: str) -> ResolvedDataset:
+    resolved, _manifest = _verify_pointer_state_with_document(client, plan, state, bucket)
+    return resolved
+
+
+def _verify_pointer_state_with_document(
+    client,
+    plan: ScalePlan,
+    state: _PointerState,
+    bucket: str,
+) -> tuple[ResolvedDataset, ImmutableManifest]:
     if state.corruption is not None:
         raise _mismatch(
             plan,
@@ -938,7 +985,7 @@ def _verify_pointer_state(client, plan: ScalePlan, state: _PointerState, bucket:
         ) from state.corruption
     if state.pointer is None:
         raise _mismatch(plan, "pointer", "existing active pointer", "missing", stage="pointer")
-    return _resolve_manifest(client, plan, state.pointer.manifest_sha256, bucket=bucket)
+    return _resolve_manifest_with_document(client, plan, state.pointer.manifest_sha256, bucket=bucket)
 
 
 def _result_from_resolved(resolved: ResolvedDataset, status: str) -> PublishResult:
@@ -952,15 +999,23 @@ def _result_from_resolved(resolved: ResolvedDataset, status: str) -> PublishResu
     )
 
 
-def _with_pointer_history(result: PublishResult, state: _PointerState) -> PublishResult:
-    if state.pointer is None:
-        return result
-    return replace(
-        result,
-        previous_manifest_key=state.pointer.manifest_key,
-        previous_manifest_sha256=state.pointer.manifest_sha256,
-        retained_manifest_keys=(state.pointer.manifest_key,),
-    )
+@dataclass(frozen=True)
+class _HistoricalManifest:
+    key: str
+    digest: str
+    manifest: ImmutableManifest
+
+
+@dataclass
+class _InventoryBudget:
+    requests: int = 0
+    prefixes: int = 0
+    keys: int = 0
+
+    def request(self) -> None:
+        self.requests += 1
+        if self.requests > _MAX_LEGACY_LIST_PAGES:
+            raise AmbiguousWrite("publication inventory exceeds the global request budget")
 
 
 def _manifest_history(
@@ -969,8 +1024,8 @@ def _manifest_history(
     current: ImmutableManifest,
     *,
     bucket: str,
-) -> tuple[str, ...]:
-    history: list[str] = []
+) -> tuple[_HistoricalManifest, ...]:
+    history: list[_HistoricalManifest] = []
     seen: set[str] = set()
     key = current.previous_manifest_key
     digest = current.previous_manifest_sha256
@@ -982,12 +1037,42 @@ def _manifest_history(
         if digest in seen:
             raise _mismatch(plan, "history", "acyclic manifest chain", digest, stage="history")
         seen.add(digest)
-        manifest = _read_manifest(client, plan, digest, bucket)
-        _validate_manifest_for_plan(manifest, plan)
-        history.append(key)
+        try:
+            manifest = _read_historical_manifest(client, plan.dataset.name, digest, bucket)
+            _validate_historical_manifest(manifest, plan)
+        except (TypeError, ValueError) as error:
+            raise _mismatch(
+                plan,
+                "history",
+                "canonical self-consistent historical manifest",
+                type(error).__name__,
+                stage="history",
+            ) from error
+        history.append(_HistoricalManifest(key, digest, manifest))
         key = manifest.previous_manifest_key
         digest = manifest.previous_manifest_sha256
     raise _mismatch(plan, "history", f"at most {_MAX_HISTORY_DEPTH} manifests", "exceeded", stage="history")
+
+
+def _read_historical_manifest(client, dataset: str, digest: str, bucket: str) -> ImmutableManifest:
+    snapshot = read_control_object(client, bucket, immutable_manifest_key(dataset, digest))
+    if manifest_sha256(snapshot.body) != digest:
+        raise ValueError("historical manifest digest does not match its key")
+    return ImmutableManifest.from_bytes(snapshot.body)
+
+
+def _validate_historical_manifest(manifest: ImmutableManifest, plan: ScalePlan) -> None:
+    if manifest.dataset != plan.dataset.name:
+        raise ValueError("historical manifest dataset does not match its key")
+    expected_physical_prefix = (
+        f"{plan.dataset.landing_prefix}/_generations/{manifest.selected_plan_sha256}/{manifest.publication_id}"
+    )
+    if manifest.physical_prefix != expected_physical_prefix:
+        raise ValueError("historical manifest physical prefix is not self-consistent")
+    expected_prefix = f"{manifest.physical_prefix}/"
+    for item in manifest.objects:
+        if not item.key.startswith(expected_prefix) or item.key != f"{manifest.physical_prefix}/{item.object_name}":
+            raise ValueError("historical manifest object key is not self-consistent")
 
 
 def _result_with_verified_history(
@@ -998,51 +1083,115 @@ def _result_with_verified_history(
     status: str,
     *,
     bucket: str,
+    current: ImmutableManifest | None = None,
 ) -> PublishResult:
-    current = _read_manifest(client, plan, resolved.manifest_sha256, bucket)
+    if current is None:
+        current = _read_manifest(client, plan, resolved.manifest_sha256, bucket)
+    return _attach_verified_history(
+        client,
+        plan,
+        current,
+        _result_from_resolved(resolved, status),
+        bucket=bucket,
+    )
+
+
+def _attach_verified_history(
+    client,
+    plan: ScalePlan,
+    current: ImmutableManifest,
+    result: PublishResult,
+    *,
+    bucket: str,
+    additional_reachable: tuple[tuple[str, ImmutableManifest], ...] = (),
+) -> PublishResult:
     history = _manifest_history(client, plan, current, bucket=bucket)
-    inactive = _inactive_generation_prefixes(client, plan, current.physical_prefix, bucket=bucket)
-    current_key = immutable_manifest_key(plan.dataset.name, resolved.manifest_sha256)
+    reachable_prefixes = {
+        current.physical_prefix,
+        *(item.manifest.physical_prefix for item in history),
+        *(manifest.physical_prefix for _key, manifest in additional_reachable),
+    }
+    budget = _InventoryBudget()
+    inactive = _inactive_generation_prefixes(
+        client,
+        plan,
+        reachable_prefixes,
+        bucket=bucket,
+        budget=budget,
+    )
+    if result.manifest_sha256 is None:
+        raise ValueError("history inventory requires a current manifest digest")
+    current_key = immutable_manifest_key(plan.dataset.name, result.manifest_sha256)
     all_manifests = _bounded_object_keys(
         client,
         bucket,
         f"_data-eng-locks/manifests/{plan.dataset.name}/",
+        budget=budget,
     )
-    referenced = {current_key, *history}
+    referenced = {
+        current_key,
+        *(item.key for item in history),
+        *(key for key, _manifest in additional_reachable),
+    }
+    unreferenced: list[str] = []
+    ambiguous: list[str] = []
+    for key in all_manifests:
+        if key in referenced:
+            continue
+        digest = key.removeprefix(f"_data-eng-locks/manifests/{plan.dataset.name}/").removesuffix(".json")
+        try:
+            _require_sha256(digest, "inventory manifest digest")
+            candidate = _read_historical_manifest(client, plan.dataset.name, digest, bucket)
+            _validate_historical_manifest(candidate, plan)
+        except (AmbiguousWrite, TypeError, ValueError):
+            ambiguous.append(key)
+        else:
+            unreferenced.append(key)
     return replace(
-        _result_from_resolved(resolved, status),
-        retained_manifest_keys=history,
-        previous_manifest_key=current.previous_manifest_key,
-        previous_manifest_sha256=current.previous_manifest_sha256,
+        result,
+        retained_manifest_keys=tuple(dict.fromkeys((*result.retained_manifest_keys, *(item.key for item in history)))),
+        previous_manifest_key=result.previous_manifest_key or current.previous_manifest_key,
+        previous_manifest_sha256=result.previous_manifest_sha256 or current.previous_manifest_sha256,
         candidate_generation_prefixes=inactive,
-        unreferenced_manifest_keys=tuple(key for key in all_manifests if key not in referenced),
+        unreferenced_manifest_keys=tuple(unreferenced),
+        ambiguous_manifest_keys=tuple(ambiguous),
     )
 
 
 def _inactive_generation_prefixes(
     client,
     plan: ScalePlan,
-    active_prefix: str,
+    reachable_prefixes: set[str],
     *,
     bucket: str,
+    budget: _InventoryBudget,
 ) -> tuple[str, ...]:
     base = f"{plan.dataset.landing_prefix}/_generations/"
-    plan_prefixes = _bounded_common_prefixes(client, bucket, base)
+    plan_prefixes = _bounded_common_prefixes(client, bucket, base, budget=budget)
     publication_prefixes: list[str] = []
     for selected_plan_prefix in plan_prefixes:
-        publication_prefixes.extend(_bounded_common_prefixes(client, bucket, selected_plan_prefix))
+        publication_prefixes.extend(_bounded_common_prefixes(client, bucket, selected_plan_prefix, budget=budget))
         if len(publication_prefixes) > _MAX_GENERATION_PREFIXES:
             raise AmbiguousWrite("generation inventory exceeds the bounded prefix count")
     return tuple(
-        sorted(prefix.rstrip("/") for prefix in set(publication_prefixes) if prefix.rstrip("/") != active_prefix)
+        sorted(
+            prefix.rstrip("/") for prefix in set(publication_prefixes) if prefix.rstrip("/") not in reachable_prefixes
+        )
     )
 
 
-def _bounded_common_prefixes(client, bucket: str, base: str) -> tuple[str, ...]:
+def _bounded_common_prefixes(
+    client,
+    bucket: str,
+    base: str,
+    *,
+    budget: _InventoryBudget,
+) -> tuple[str, ...]:
     token: str | None = None
     seen_tokens: set[str] = set()
     prefixes: list[str] = []
     for _page in range(_MAX_LEGACY_LIST_PAGES):
+        budget.request()
         request: dict[str, object] = {"Bucket": bucket, "Prefix": base, "Delimiter": "/"}
         if token is not None:
             request["ContinuationToken"] = token
@@ -1059,8 +1208,13 @@ def _bounded_common_prefixes(client, bucket: str, base: str) -> tuple[str, ...]:
             prefix = cast(str, entry["Prefix"])
             if not prefix.startswith(base):
                 raise AmbiguousWrite("generation inventory returned an out-of-scope prefix")
-            prefixes.append(prefix)
-            if len(prefixes) > _MAX_GENERATION_PREFIXES:
+            suffix = prefix.removeprefix(base)
+            if not suffix.endswith("/") or not suffix[:-1] or "/" in suffix[:-1]:
+                raise AmbiguousWrite("generation inventory returned a non-direct prefix")
+            if prefix not in prefixes:
+                prefixes.append(prefix)
+                budget.prefixes += 1
+            if budget.prefixes > _MAX_GENERATION_PREFIXES:
                 raise AmbiguousWrite("generation inventory exceeds the bounded prefix count")
         truncated = response.get("IsTruncated", False)
         if not isinstance(truncated, bool):
@@ -1077,11 +1231,18 @@ def _bounded_common_prefixes(client, bucket: str, base: str) -> tuple[str, ...]:
     return tuple(prefixes)
 
 
-def _bounded_object_keys(client, bucket: str, base: str) -> tuple[str, ...]:
+def _bounded_object_keys(
+    client,
+    bucket: str,
+    base: str,
+    *,
+    budget: _InventoryBudget,
+) -> tuple[str, ...]:
     token: str | None = None
     seen_tokens: set[str] = set()
     keys: list[str] = []
     for _page in range(_MAX_LEGACY_LIST_PAGES):
+        budget.request()
         request: dict[str, object] = {"Bucket": bucket, "Prefix": base}
         if token is not None:
             request["ContinuationToken"] = token
@@ -1098,7 +1259,8 @@ def _bounded_object_keys(client, bucket: str, base: str) -> tuple[str, ...]:
             if not key.startswith(base):
                 raise AmbiguousWrite("manifest inventory returned an out-of-scope key")
             keys.append(key)
-            if len(keys) > _MAX_LEGACY_LIST_KEYS:
+            budget.keys += 1
+            if budget.keys > _MAX_LEGACY_LIST_KEYS:
                 raise AmbiguousWrite("manifest inventory exceeds the bounded key count")
         truncated = response.get("IsTruncated", False)
         if not isinstance(truncated, bool):
@@ -1151,6 +1313,7 @@ def _verify_candidate_files(plan: ScalePlan, files: tuple[VerifiedFile, ...]) ->
 
 @contextmanager
 def _owned_staging(parent: Path | None = None) -> Iterator[Path]:
+    owns_parent = parent is None
     if parent is None:
         platform_parent = Path(tempfile.gettempdir())
         status = platform_parent.lstat()
@@ -1161,18 +1324,32 @@ def _owned_staging(parent: Path | None = None) -> Iterator[Path]:
     else:
         private_parent = Path(parent)
         acquisition._require_trusted_parent(private_parent)
-    root = Path(tempfile.mkdtemp(prefix="candidate-", dir=private_parent))
+    open_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    nofollow = getattr(os, "O_NOFOLLOW", 0)
+    parent_fd = os.open(private_parent, open_flags | nofollow)
+    root: Path | None = None
+    root_fd: int | None = None
     try:
-        status = root.lstat()
+        root = Path(tempfile.mkdtemp(prefix="candidate-", dir=private_parent))
+        root_fd = os.open(root.name, open_flags | nofollow, dir_fd=parent_fd)
+        status = os.fstat(root_fd)
+        identity = (status.st_dev, status.st_ino)
     except BaseException:
-        try:
-            shutil.rmtree(root)
-        except BaseException:
-            pass
+        if root is not None:
+            try:
+                os.rmdir(root.name, dir_fd=parent_fd)
+            except OSError:
+                pass
+        os.close(parent_fd)
+        if owns_parent:
+            try:
+                private_parent.rmdir()
+            except OSError:
+                pass
         raise
-    identity = (status.st_dev, status.st_ino)
     primary: BaseException | None = None
     try:
+        assert root is not None
         yield root
     except BaseException as error:
         primary = error
@@ -1180,19 +1357,20 @@ def _owned_staging(parent: Path | None = None) -> Iterator[Path]:
     finally:
         cleanup_error: BaseException | None = None
         try:
-            current = root.lstat()
-            if (current.st_dev, current.st_ino) != identity:
-                raise ValueError("publication staging identity changed")
-            acquisition._quarantine_owned_path(root, identity, directory=True)
-        except FileNotFoundError:
-            pass
+            assert root_fd is not None and root is not None
+            _remove_owned_directory_contents(root_fd)
+            _remove_owned_root_atomically(private_parent, parent_fd, root.name, identity)
         except BaseException as error:
             cleanup_error = error
+        finally:
+            if root_fd is not None:
+                os.close(root_fd)
+            os.close(parent_fd)
         if cleanup_error is not None:
             if primary is None:
                 raise cleanup_error
             primary.add_note(f"owned publication staging cleanup failed: {type(cleanup_error).__name__}")
-        if parent is None:
+        if owns_parent:
             try:
                 private_parent.rmdir()
             except OSError as error:
@@ -1200,6 +1378,84 @@ def _owned_staging(parent: Path | None = None) -> Iterator[Path]:
                     raise ValueError("private publication staging parent cleanup failed") from error
                 if primary is not None:
                     primary.add_note("private publication staging parent cleanup failed")
+
+
+def _remove_owned_directory_contents(directory_fd: int) -> None:
+    """Delete entries only through a retained descriptor for the owned directory."""
+    for name in os.listdir(directory_fd):
+        status = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if stat.S_ISDIR(status.st_mode):
+            child_fd = os.open(
+                name,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory_fd,
+            )
+            try:
+                opened = os.fstat(child_fd)
+                if (opened.st_dev, opened.st_ino) != (status.st_dev, status.st_ino):
+                    raise ValueError("publication staging child identity changed")
+                _remove_owned_directory_contents(child_fd)
+            finally:
+                os.close(child_fd)
+            os.rmdir(name, dir_fd=directory_fd)
+        else:
+            os.unlink(name, dir_fd=directory_fd)
+
+
+def _exchange_directory_names(parent_fd: int, left: str, right: str) -> None:
+    """Atomically exchange two sibling names on Linux or Darwin."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    if sys.platform == "linux":
+        exchange = libc.renameat2
+    elif sys.platform == "darwin":
+        exchange = libc.renameatx_np
+    else:
+        raise OSError("atomic staging directory exchange is unsupported on this platform")
+    exchange.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    exchange.restype = ctypes.c_int
+    if exchange(parent_fd, os.fsencode(left), parent_fd, os.fsencode(right), 2) != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number))
+
+
+def _remove_owned_root_atomically(
+    parent: Path,
+    parent_fd: int,
+    root_name: str,
+    root_identity: tuple[int, int],
+) -> None:
+    """Remove the owned root without ever unlinking an unverified replacement."""
+    placeholder = Path(tempfile.mkdtemp(prefix="cleanup-", dir=parent))
+    placeholder_status = os.stat(placeholder.name, dir_fd=parent_fd, follow_symlinks=False)
+    placeholder_identity = (placeholder_status.st_dev, placeholder_status.st_ino)
+    exchanged = False
+    try:
+        _exchange_directory_names(parent_fd, root_name, placeholder.name)
+        exchanged = True
+        displaced = os.stat(placeholder.name, dir_fd=parent_fd, follow_symlinks=False)
+        displaced_identity = (displaced.st_dev, displaced.st_ino)
+        if displaced_identity != root_identity:
+            _exchange_directory_names(parent_fd, root_name, placeholder.name)
+            exchanged = False
+            raise ValueError("publication staging identity changed; foreign replacement preserved")
+        replacement = os.stat(root_name, dir_fd=parent_fd, follow_symlinks=False)
+        if (replacement.st_dev, replacement.st_ino) != placeholder_identity:
+            raise ValueError("publication staging cleanup placeholder identity changed")
+        os.rmdir(placeholder.name, dir_fd=parent_fd)
+        os.rmdir(root_name, dir_fd=parent_fd)
+    except FileNotFoundError as error:
+        raise ValueError("publication staging identity changed; owned directory was displaced") from error
+    finally:
+        if not exchanged:
+            try:
+                status = os.stat(placeholder.name, dir_fd=parent_fd, follow_symlinks=False)
+                if (status.st_dev, status.st_ino) == placeholder_identity:
+                    os.rmdir(placeholder.name, dir_fd=parent_fd)
+            except OSError:
+                pass
 
 
 def _list_legacy_keys(client, plan: ScalePlan, bucket: str) -> tuple[str, ...]:
@@ -1442,14 +1698,11 @@ def _publish_candidate(
         if active.corruption is not None and allow_legacy:
             _verify_pointer_state(client, plan, active, bucket)
         if active.pointer is not None and allow_legacy:
-            resolved = _verify_pointer_state(client, plan, active, bucket)
-            result = _result_with_verified_history(
-                client,
-                plan,
-                active,
-                resolved,
-                "verified-existing",
-                bucket=bucket,
+            resolved, manifest = _verify_pointer_state_with_document(client, plan, active, bucket)
+            result = replace(
+                _result_from_resolved(resolved, "verified-existing"),
+                previous_manifest_key=manifest.previous_manifest_key,
+                previous_manifest_sha256=manifest.previous_manifest_sha256,
             )
             completed = True
         else:
@@ -1549,11 +1802,16 @@ def _stage_and_commit_candidate(
                 except AmbiguousWrite:
                     try:
                         _verify_exact_immutable(client, plan, bucket, key, file.expected, metadata)
-                    except (AmbiguousWrite, ConditionalConflict):
+                    except BaseException:
                         inventory.possible_object_keys.append(key)
                         raise
                     inventory.proven_object_keys.append(key)
                     reconciled = True
+                except ConditionalConflict:
+                    raise
+                except BaseException:
+                    inventory.possible_object_keys.append(key)
+                    raise
                 staged.append((file, key, metadata))
             for file, key, metadata in staged:
                 keepalive.checkpoint()
@@ -1569,6 +1827,12 @@ def _stage_and_commit_candidate(
             try:
                 reconciled = _put_manifest_exact(client, bucket, key, body) or reconciled
             except AmbiguousWrite:
+                inventory.manifest_outcome = "possible"
+                raise
+            except ConditionalConflict:
+                inventory.manifest_outcome = "conflict"
+                raise
+            except BaseException:
                 inventory.manifest_outcome = "possible"
                 raise
             inventory.manifest_outcome = "written-unreferenced"
@@ -1599,7 +1863,7 @@ def _stage_and_commit_candidate(
             raise
         inventory.pointer_outcome = "committed"
         reconciled = pointer_reconciled or reconciled
-        return PublishResult(
+        committed = PublishResult(
             dataset=plan.dataset.name,
             scale=plan.scale,
             status="published-reconciled" if reconciled else "published",
@@ -1617,6 +1881,7 @@ def _stage_and_commit_candidate(
             manifest_key=key,
             manifest_outcome="referenced",
             pointer_outcome="committed",
+            retained_manifest_keys=(active.pointer.manifest_key,) if active.pointer is not None else (),
         )
     except BaseException as error:
         pointer_ambiguous = inventory.pointer_outcome in {"ambiguous", "attempted-ambiguous"}
@@ -1661,6 +1926,18 @@ def _stage_and_commit_candidate(
         if not isinstance(error, PublicationFailure) and inventory.attempted_object_keys:
             raise PublicationFailure(failure, error) from error
         raise
+    else:
+        try:
+            return _attach_verified_history(client, plan, manifest, committed, bucket=bucket)
+        except Exception as error:
+            return replace(
+                committed,
+                cleanup_warning=f"post-commit inventory unavailable: {type(error).__name__}",
+            )
+        except BaseException as error:
+            diagnostic = canonical_json(committed.to_document()).decode("utf-8")
+            error.add_note(f"dataset publication committed before inventory interruption: {diagnostic}")
+            raise
 
 
 def publish_dataset(
@@ -1697,12 +1974,21 @@ def publish_dataset(
                 bucket=bucket,
                 dry_run=True,
             )
-            return replace(
+            planned = replace(
                 _result_from_resolved(rollback.resolved, "dry-run-rollback"),
                 pointer_action="replace",
                 pointer_precondition=f"If-Match: {rollback.pointer_state.snapshot.etag}",
                 previous_manifest_key=rollback.pointer_state.pointer.manifest_key,
                 previous_manifest_sha256=rollback.pointer_state.pointer.manifest_sha256,
+                retained_manifest_keys=(rollback.pointer_state.pointer.manifest_key,),
+            )
+            return _attach_verified_history(
+                client,
+                plan,
+                rollback.manifest,
+                planned,
+                bucket=bucket,
+                additional_reachable=((rollback.pointer_state.pointer.manifest_key, rollback.previous_manifest),),
             )
         if mode is PublishMode.REFRESH:
             current_digest = active.pointer.manifest_sha256 if active.pointer is not None else None
@@ -1723,7 +2009,7 @@ def publish_dataset(
                 ),
             )
         if active.pointer is not None or active.corruption is not None:
-            resolved = _verify_pointer_state(client, plan, active, bucket)
+            resolved, current = _verify_pointer_state_with_document(client, plan, active, bucket)
             return _result_with_verified_history(
                 client,
                 plan,
@@ -1731,6 +2017,7 @@ def publish_dataset(
                 resolved,
                 "dry-run-noop",
                 bucket=bucket,
+                current=current,
             )
         with tempfile.TemporaryDirectory(prefix="dataset-publication-dry-run-") as temporary:
             legacy = _legacy_candidates(client, plan, Path(temporary), bucket)
@@ -1754,26 +2041,42 @@ def publish_dataset(
             cast(str, digest),
             bucket=bucket,
         )
-        return replace(
+        committed = replace(
             _result_from_resolved(
                 rollback.resolved,
                 "rolled-back-reconciled" if rollback.reconciled else "rolled-back",
             ),
             previous_manifest_key=rollback.pointer_state.pointer.manifest_key,
             previous_manifest_sha256=rollback.pointer_state.pointer.manifest_sha256,
+            retained_manifest_keys=(rollback.pointer_state.pointer.manifest_key,),
             pointer_action="replace",
             pointer_precondition=f"If-Match: {rollback.pointer_state.snapshot.etag}",
         )
-    if active.pointer is not None or active.corruption is not None:
-        if mode is not PublishMode.REFRESH:
-            resolved = _verify_pointer_state(client, plan, active, bucket)
-            return _result_with_verified_history(
+        try:
+            return _attach_verified_history(
                 client,
                 plan,
-                active,
-                resolved,
-                "verified-existing",
+                rollback.manifest,
+                committed,
                 bucket=bucket,
+                additional_reachable=((rollback.pointer_state.pointer.manifest_key, rollback.previous_manifest),),
+            )
+        except Exception as error:
+            return replace(
+                committed,
+                cleanup_warning=f"post-commit inventory unavailable: {type(error).__name__}",
+            )
+        except BaseException as error:
+            diagnostic = canonical_json(committed.to_document()).decode("utf-8")
+            error.add_note(f"dataset rollback committed before inventory interruption: {diagnostic}")
+            raise
+    if active.pointer is not None or active.corruption is not None:
+        if mode is not PublishMode.REFRESH:
+            resolved, manifest = _verify_pointer_state_with_document(client, plan, active, bucket)
+            return replace(
+                _result_from_resolved(resolved, "verified-existing"),
+                previous_manifest_key=manifest.previous_manifest_key,
+                previous_manifest_sha256=manifest.previous_manifest_sha256,
             )
     elif mode is PublishMode.VERIFY_ONLY:
         _verify_pointer_state(client, plan, active, bucket)
