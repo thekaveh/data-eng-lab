@@ -185,11 +185,52 @@ def test_assembled_resolver_network_overlap_and_scale_precedence(environment_sca
         assert services[name]["environment"]["DATASET_SCALE"] == expected
 
 
-def test_consumer_manifest_declares_resolver_configuration_only_in_overlay():
+def test_consumer_manifest_declares_runtime_scale_only_in_overlay():
     manifest = yaml.safe_load((ROOT / "atlas.consumer.yml").read_text(encoding="utf-8"))
-    assert manifest["env"]["values"]["DATASET_SCALE"] == "small"
+    values = manifest["env"]["values"]
+    nonnumeric_scale_values = {
+        key: value for key, value in values.items() if key.endswith("_SCALE") and not str(value).strip().isdigit()
+    }
+    assert not nonnumeric_scale_values
+    assert "DATASET_SCALE" not in values
     assert manifest["compose_overlays"] == ["./compose/data-eng-lab.yml"]
     assert "dataset-resolver" not in manifest
+
+
+def test_consumer_manifest_env_passes_pinned_atlas_scale_validation(tmp_path: Path):
+    script = r"""
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+sys.path.insert(0, str(root / "infra" / "bootstrapper"))
+from core.config_parser import ConfigParser
+from core.consumer_manifest import load_consumer_config
+from services.source_validator import SourceValidator
+
+config = load_consumer_config(
+    root / "infra",
+    explicit_paths=[str(root / "atlas.consumer.yml")],
+)
+env_file = Path(sys.argv[2])
+env_file.write_text(
+    "".join(f"{key}={value}\n" for key, value in config.env_overrides.items()),
+    encoding="utf-8",
+)
+parser = ConfigParser(str(root / "infra"))
+parser.env_file_path = env_file
+validator = SourceValidator(config_parser=parser)
+if not validator.validate_scale_values():
+    raise SystemExit("\n".join(validator.get_validation_errors()))
+"""
+    completed = subprocess.run(
+        [sys.executable, "-c", script, str(ROOT), str(tmp_path / ".env")],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
 
 
 def test_airflow_dag_import_performs_no_resolver_or_s3_access():
