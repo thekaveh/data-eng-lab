@@ -60,20 +60,20 @@ scenarios:
       - "Prove pass, warn, fail, missing, stale, recovery, and operator-response behavior in a terminally successful live Atlas Airflow and Spark run owned by #91."
     child_issue: 91
   - scenario_id: feature_engineering-movielens-spark-iceberg
-    classification: approved new production DAG
-    justification: The notebook creates reusable user and movie feature tables from locked source data, which is a production-shaped data product once its feature contract and lineage are frozen.
+    classification: existing production DAG
+    justification: The reviewed application preserves the notebook aggregations, binds both Gold tables to one verified MovieLens generation, and passed repeatable Airflow and Spark acceptance.
     owner: ML Data Engineering
-    runtime: "Atlas Airflow and Spark standalone application delivered by child issue #108"
-    schedule_policy: "No schedule until #108 passes live acceptance; proposed daily with explicit dataset_scale"
-    execution_entrypoint: null
+    runtime: Atlas Airflow and Spark standalone via the movielens-feature-pipeline JAR
+    schedule_policy: "@daily with manual trigger and explicit dataset_scale supported; max_active_runs=1 serializes the two-table replacement"
+    execution_entrypoint: spark-apps/movielens-feature-pipeline/dag.py
     dependencies:
       - "#82 execution-mode matrix"
       - "#81 verified MovieLens generations"
-      - "#108 feature pipeline implementation"
+      - "#108 feature pipeline implementation and live acceptance"
     acceptance_contract:
-      - Deterministically replace documented user and movie feature tables from one verified MovieLens generation.
-      - Freeze feature names, types, aggregation semantics, null behavior, and source-version lineage with live Airflow and Spark success.
-    child_issue: 108
+      - Deterministically replace lakehouse.gold.ml_user_features and lakehouse.gold.ml_movie_features from one verified MovieLens generation.
+      - Freeze schemas, duplicate-row aggregation semantics, key behavior, count invariants, five-key provenance, and idempotence with live Airflow and Spark success.
+    child_issue: null
   - scenario_id: federated_query-nyc_taxi-trino-iceberg
     classification: approved new production DAG
     justification: The notebook SQL produces a useful daily aggregate, but the actual Airflow Trino client and meaningful-result assertions must be proven inside the pinned runtime.

@@ -152,6 +152,28 @@ The production TPC-H acceptance sequence publishes `tpch-star-schema/0.1.0/app.j
 `max_active_runs=1`. The educational notebooks directly replace the same tables without production
 provenance and validation, so running them against shared gold tables can invalidate downstream #83.
 
+The MovieLens production acceptance requires an already published and verified scale; the test never
+refreshes or changes the active pointer. For tiny acceptance, provision intentionally if needed and
+then run the read-only verification before the test:
+
+```bash
+uv run python scripts/download_datasets.py --scale tiny --only movielens
+uv run python scripts/download_datasets.py --scale tiny --only movielens --verify-only
+RUN_INFRA=1 uv run pytest tests/scenarios/test_movielens_feature_pipeline_live.py -v
+```
+
+The harness requires exclusive ownership of a stopped project stack, builds and publishes the
+reviewed JAR, resolves the existing verified publication, and runs exactly two serialized manual
+`movielens_feature_pipeline` executions while the `@daily` DAG remains paused. It requires Airflow
+success, Spark `FINISHED` with `success=true`, exact table schemas, nonempty meaningful averages,
+equal count sums, equal five-key provenance, and stable logical checksums on rerun. It stops only the
+stack it started, preserves volumes, and leaves the MovieLens pointer unchanged. A partial write is
+recovered only by rerunning the same immutable generation.
+
+`movielens_feature_pipeline` is the only supported production write path and uses
+`max_active_runs=1`. The educational notebooks directly replace the same tables without explicit
+schema, provenance, serialization, or readback validation and can invalidate downstream consumers.
+
 ### 3.1 Run all integration tests
 
 Execute the full infra test suite (includes L1 + L2 + scenario parity):
@@ -620,7 +642,7 @@ After a successful go-live run:
 1. **Scenario execution:** Use the [execution-mode matrix](scenarios/execution-modes.md)
    delivered by [issue #82](https://github.com/thekaveh/data-eng-lab/issues/82)
    as the authority for all 19 validated paired scenarios. `nyc_taxi_etl`,
-   `nyc_taxi_medallion`, and `tpch_star_schema` are production DAGs today; approved children must
+   `nyc_taxi_medallion`, `tpch_star_schema`, and `movielens_feature_pipeline` are production DAGs today; approved children must
    pass their own implementation and live-acceptance gates before this runbook
    advertises another Airflow entrypoint.
 2. **Automation:** Integrate this runbook into CI/CD so every Atlas release is validated end-to-end.
@@ -632,4 +654,4 @@ After a successful go-live run:
 
 *See also:* [Go-Live Results](go-live-results.md) — the 2026-07-04 platform validation and the scoped 2026-07-31 Atlas acceptance result.
 
-*Maintained by `data-eng-lab`.* Latest update: 2026-08-10 current-pin Atlas acceptance baseline recorded.
+*Maintained by `data-eng-lab`.* Latest update: 2026-08-12 MovieLens production acceptance recorded.
