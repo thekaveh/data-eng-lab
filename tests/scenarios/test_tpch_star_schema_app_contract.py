@@ -62,6 +62,8 @@ def test_live_gate_executes_real_lifecycle_instead_of_asserting_report_prose():
         "mvn",
         "scripts/resolve_dataset.py",
         "/api/v2",
+        "/auth/token",
+        '"Authorization": "Bearer "',
         'f"/dags/{DAG_ID}',
         "dataset_scale",
         "FINISHED",

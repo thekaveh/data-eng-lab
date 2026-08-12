@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import base64
 import hashlib
 import importlib.util
 import json
@@ -26,6 +25,7 @@ PROVENANCE_KEYS = (
     "data_eng_lab.dataset.publication_id",
     "data_eng_lab.dataset.manifest_sha256",
 )
+_AIRFLOW_TOKEN = ""
 
 pytestmark = pytest.mark.infra
 
@@ -46,14 +46,25 @@ def _run(*command: str, timeout: int = 1800) -> subprocess.CompletedProcess[str]
 
 
 def _airflow(method: str, path: str, body: dict | None = None) -> dict:
-    endpoint = f"http://127.0.0.1:{_env('AIRFLOW_PORT', '20070')}/api/v2{path}"
-    credentials = f"{_env('AIRFLOW_ADMIN_USER', 'admin')}:{_env('AIRFLOW_ADMIN_PASSWORD')}"
+    global _AIRFLOW_TOKEN
+    base = f"http://127.0.0.1:{_env('AIRFLOW_PORT', '20070')}"
+    if not _AIRFLOW_TOKEN:
+        token_request = urllib.request.Request(
+            base + "/auth/token",
+            data=json.dumps(
+                {"username": _env("AIRFLOW_ADMIN_USER", "admin"), "password": _env("AIRFLOW_ADMIN_PASSWORD")}
+            ).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(token_request, timeout=30) as response:
+            _AIRFLOW_TOKEN = json.load(response)["access_token"]
     headers = {
-        "Authorization": "Basic " + base64.b64encode(credentials.encode()).decode(),
+        "Authorization": "Bearer " + _AIRFLOW_TOKEN,
         "Content-Type": "application/json",
     }
     request = urllib.request.Request(
-        endpoint,
+        base + "/api/v2" + path,
         data=None if body is None else json.dumps(body).encode(),
         headers=headers,
         method=method,
