@@ -405,6 +405,30 @@ def test_publication_rejects_source_symlink_swap_without_residue(tmp_path, fake_
     assert foreign.read_bytes() == b"foreign"
 
 
+@pytest.mark.parametrize("drift_after_links", [0, 1])
+def test_publication_rechecks_staging_descriptor_trust_before_each_link(
+    tmp_path, fake_runner, tpch_plan, monkeypatch, drift_after_links
+):
+    destination = tmp_path / "staging-mode-drift"
+    real_link = tpch.os.link
+    links = 0
+
+    def chmod_staging_before_link(source, target, **kwargs):
+        nonlocal links
+        if links == drift_after_links:
+            os.fchmod(kwargs["src_dir_fd"], 0o777)
+        links += 1
+        return real_link(source, target, **kwargs)
+
+    monkeypatch.setattr(tpch.os, "link", chmod_staging_before_link)
+
+    with pytest.raises(ValueError, match="transaction staging.*trusted directory"):
+        tpch.generate_tpch(tpch_plan, destination, runner=fake_runner)
+
+    assert not list(destination.glob("*.parquet"))
+    assert not list(tmp_path.glob(".dataset-tpch-*"))
+
+
 def test_publication_rollback_uses_bound_directory_after_destination_replacement(
     tmp_path, fake_runner, tpch_plan, monkeypatch
 ):

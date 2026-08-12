@@ -177,6 +177,20 @@ class _OwnedDirectory:
     destination_identity: tuple[int, int]
     destination_descriptor: int
 
+    def verify_staging_binding(self) -> None:
+        status = os.stat(self.root_name, dir_fd=self.parent_descriptor, follow_symlinks=False)
+        opened = os.fstat(self.root_descriptor)
+        try:
+            _trusted_directory_status(status, "transaction staging", self.root_identity)
+            _trusted_directory_status(opened, "transaction staging", self.root_identity)
+        except ValueError:
+            raise ValueError("TPC-H transaction staging changed from trusted directory") from None
+        path_status = self.root.lstat()
+        try:
+            _trusted_directory_status(path_status, "transaction staging", self.root_identity)
+        except ValueError:
+            raise ValueError("TPC-H transaction staging path changed")
+
     def verify_bindings(self) -> None:
         _verify_parent_binding(self.parent_path, self.parent_descriptor, self.parent_identity)
         _verify_destination_binding(
@@ -186,18 +200,7 @@ class _OwnedDirectory:
             self.destination_name,
             self.destination_identity,
         )
-        status = os.stat(self.root_name, dir_fd=self.parent_descriptor, follow_symlinks=False)
-        opened = os.fstat(self.root_descriptor)
-        try:
-            _trusted_directory_status(status, "transaction staging", self.root_identity)
-            _trusted_directory_status(opened, "transaction staging", self.root_identity)
-        except ValueError:
-            raise ValueError("TPC-H transaction staging changed")
-        path_status = self.root.lstat()
-        try:
-            _trusted_directory_status(path_status, "transaction staging", self.root_identity)
-        except ValueError:
-            raise ValueError("TPC-H transaction staging path changed")
+        self.verify_staging_binding()
 
 
 class ContainerRunner(Protocol):
@@ -1123,6 +1126,7 @@ def publish_verified_files(
         if (source_status.st_dev, source_status.st_ino) != transaction.root_identity:
             raise ValueError("TPC-H transaction directory identity changed")
         for item in files:
+            transaction.verify_staging_binding()
             staging_name = f".dataset-tpch-publish-{secrets.token_hex(16)}"
             os.link(
                 item.expected.object_name,
@@ -1134,9 +1138,11 @@ def publish_verified_files(
             staged_status = os.stat(staging_name, dir_fd=destination_descriptor, follow_symlinks=False)
             staged_identity = (staged_status.st_dev, staged_status.st_ino)
             publication.staged_links.append((staging_name, staged_identity))
+            transaction.verify_staging_binding()
             if not stat.S_ISREG(staged_status.st_mode):
                 raise ValueError("staged TPC-H output must be a regular file")
             open_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            transaction.verify_staging_binding()
             staged_descriptor = os.open(staging_name, open_flags, dir_fd=destination_descriptor)
             try:
                 opened = os.fstat(staged_descriptor)
