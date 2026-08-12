@@ -16,6 +16,7 @@ import ipaddress
 import json
 import multiprocessing
 import os
+import secrets
 import shutil
 import socket
 import ssl
@@ -764,6 +765,7 @@ def download_bounded(
     staging_path: Path | None = None
     target: BinaryIO | None = None
     downloaded_file: DownloadedFile | None = None
+    binding_descriptor: int | None = None
     owned_identity: tuple[int, int] | None = None
     published = False
     try:
@@ -784,7 +786,27 @@ def download_bounded(
             raise ValueError("could not create private download staging file") from error
 
         opened_stat = os.fstat(target.fileno())
+        if not stat.S_ISREG(opened_stat.st_mode):
+            raise ValueError("download staging path is not a regular file")
         owned_identity = (opened_stat.st_dev, opened_stat.st_ino)
+        try:
+            binding_descriptor = os.dup(target.fileno())
+            retained_stat = os.fstat(binding_descriptor)
+        except OSError as error:
+            if binding_descriptor is not None:
+                try:
+                    os.close(binding_descriptor)
+                except OSError:
+                    pass
+                binding_descriptor = None
+            raise ValueError("download staging binding is unavailable") from error
+        if not stat.S_ISREG(retained_stat.st_mode) or (
+            retained_stat.st_dev,
+            retained_stat.st_ino,
+        ) != owned_identity:
+            os.close(binding_descriptor)
+            binding_descriptor = None
+            raise ValueError("download staging binding is unavailable")
         current_url = url
         redirects = 0
         evidence = ResponseEvidence()
@@ -859,10 +881,6 @@ def download_bounded(
         except OSError as error:
             raise ValueError("target close failed") from error
 
-        binding_descriptor = os.open(
-            staging_path,
-            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
-        )
         downloaded_file = DownloadedFile(destination, evidence)
         _bind_download(
             downloaded_file,
@@ -873,6 +891,7 @@ def download_bounded(
                 binding_descriptor,
             ),
         )
+        binding_descriptor = None
         try:
             staging_is_owned = _path_matches_identity(staging_path, owned_identity, directory=False)
         except OSError as error:
@@ -885,6 +904,11 @@ def download_bounded(
             raise ValueError("destination changed during download") from None
         except OSError as error:
             raise ValueError("destination disappeared during publication") from error
+        try:
+            published_descriptor = _open_owned_path(destination, owned_identity, directory=False)
+            os.close(published_descriptor)
+        except (OSError, ValueError) as error:
+            raise ValueError("download publication identity changed") from error
         published = True
         return downloaded_file
     finally:
@@ -895,12 +919,14 @@ def download_bounded(
                 pass
         if downloaded_file is not None and not published:
             _unbind_download(downloaded_file)
+        if binding_descriptor is not None:
+            try:
+                os.close(binding_descriptor)
+            except OSError:
+                pass
         if staging_path is not None and owned_identity is not None and not published:
             try:
-                if _path_matches_identity(staging_path, owned_identity, directory=False):
-                    os.unlink(staging_path)
-            except FileNotFoundError:
-                pass
+                _quarantine_owned_path(staging_path, owned_identity, directory=False)
             except OSError as error:
                 raise ValueError("private download cleanup failed") from error
 
@@ -1387,6 +1413,69 @@ def _publish_path_exclusive(source: Path, destination: Path) -> None:
         raise OSError(error_number, os.strerror(error_number), destination)
 
 
+def _quarantine_path_exclusive(source: Path, destination: Path) -> None:
+    result, error_number = _rename_noreplace(os.fsencode(source), os.fsencode(destination))
+    if result != 0:
+        if error_number in {errno.EEXIST, errno.ENOTDIR}:
+            raise ValueError("cleanup quarantine changed during publication")
+        raise OSError(error_number, os.strerror(error_number), destination)
+
+
+def _open_owned_path(path: Path, identity: tuple[int, int], *, directory: bool) -> int:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if directory:
+        flags |= getattr(os, "O_DIRECTORY", 0)
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as error:
+        raise ValueError("owned path identity changed") from error
+    try:
+        opened = os.fstat(descriptor)
+        expected_type = stat.S_ISDIR if directory else stat.S_ISREG
+        if not expected_type(opened.st_mode) or (opened.st_dev, opened.st_ino) != identity:
+            raise ValueError("owned path identity changed")
+    except BaseException:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+        raise
+    return descriptor
+
+
+def _quarantine_owned_path(path: Path, identity: tuple[int, int], *, directory: bool) -> None:
+    kind = "extract" if directory else "download"
+    for _attempt in range(8):
+        quarantine = path.parent / f".dataset-cleanup-{kind}-{secrets.token_hex(16)}"
+        try:
+            _quarantine_path_exclusive(path, quarantine)
+        except ValueError:
+            continue
+        except OSError as error:
+            if error.errno == errno.ENOENT:
+                return
+            raise
+        break
+    else:
+        raise OSError(errno.EEXIST, "could not reserve private cleanup quarantine")
+
+    try:
+        descriptor = _open_owned_path(quarantine, identity, directory=directory)
+    except ValueError:
+        return
+    try:
+        current = quarantine.lstat()
+        expected_type = stat.S_ISDIR if directory else stat.S_ISREG
+        if not expected_type(current.st_mode) or (current.st_dev, current.st_ino) != identity:
+            return
+    finally:
+        os.close(descriptor)
+    if directory:
+        shutil.rmtree(quarantine)
+    else:
+        os.unlink(quarantine)
+
+
 def _path_matches_identity(path: Path, identity: tuple[int, int], *, directory: bool) -> bool:
     try:
         current = path.lstat()
@@ -1419,6 +1508,7 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
     canonical_entries = _canonical_archive_entries(entries)
 
     archive_stream, current_snapshot = _stable_archive(path)
+    staging_root: Path | None = None
     staging_identity: tuple[int, int] | None = None
     try:
         staging_root = Path(tempfile.mkdtemp(prefix=".dataset-extract-", dir=destination.parent))
@@ -1427,7 +1517,26 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
             raise OSError("private extraction staging path is not a directory")
         staging_identity = (staging_status.st_dev, staging_status.st_ino)
     except OSError as error:
-        archive_stream.close()
+        cleanup_failed = False
+        try:
+            archive_stream.close()
+        except OSError:
+            cleanup_failed = True
+        if staging_root is not None:
+            if staging_identity is None:
+                try:
+                    recovered = staging_root.lstat()
+                    if stat.S_ISDIR(recovered.st_mode):
+                        staging_identity = (recovered.st_dev, recovered.st_ino)
+                except OSError:
+                    pass
+            if staging_identity is not None:
+                try:
+                    _quarantine_owned_path(staging_root, staging_identity, directory=True)
+                except OSError:
+                    cleanup_failed = True
+        if cleanup_failed:
+            raise ValueError("extraction cleanup failed") from error
         raise ValueError("extraction parent is unavailable") from error
     directory_flags = (
         os.O_RDONLY
@@ -1456,12 +1565,8 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
         except OSError:
             cleanup_failed = True
         try:
-            if staging_identity is not None and _path_matches_identity(
-                staging_root,
-                staging_identity,
-                directory=True,
-            ):
-                shutil.rmtree(staging_root)
+            if staging_identity is not None:
+                _quarantine_owned_path(staging_root, staging_identity, directory=True)
         except OSError:
             cleanup_failed = True
         if cleanup_failed:
@@ -1492,12 +1597,8 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
         except OSError as error:
             cleanup_error = cleanup_error or error
         try:
-            if staging_identity is not None and _path_matches_identity(
-                staging_root,
-                staging_identity,
-                directory=True,
-            ):
-                shutil.rmtree(staging_root)
+            if staging_identity is not None:
+                _quarantine_owned_path(staging_root, staging_identity, directory=True)
         except OSError as error:
             cleanup_error = cleanup_error or error
         if cleanup_error is not None:
@@ -1576,8 +1677,6 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
                 raise ValueError("extracted output changed before success")
         capability = _ExtractedPaths(outputs, output_bindings)
         archive_stream.close()
-        os.close(destination_descriptor)
-        destination_descriptor = None
     except zipfile.BadZipFile as error:
         cleanup(error)
         raise ValueError("artifact is not a valid ZIP archive") from error
@@ -1607,6 +1706,15 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
     except BaseException as error:
         cleanup(error)
         raise
+    try:
+        published_descriptor = _open_owned_path(destination, staging_identity, directory=True)
+        os.close(published_descriptor)
+        os.close(destination_descriptor)
+        destination_descriptor = None
+    except (OSError, ValueError) as error:
+        changed = ValueError("extraction publication identity changed")
+        cleanup(changed)
+        raise changed from error
     return capability
 
 

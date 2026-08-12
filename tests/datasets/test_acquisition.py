@@ -99,6 +99,13 @@ def _reuse_descriptor(descriptor: int, path: Path) -> int:
     return reused
 
 
+def _fstat_or_none(raw_descriptor: str) -> os.stat_result | None:
+    try:
+        return os.fstat(int(raw_descriptor))
+    except (OSError, ValueError):
+        return None
+
+
 class FakeTransport:
     def __init__(self, responses: list[FakeResponse] | None = None) -> None:
         self.responses = iter(responses or [FakeResponse()])
@@ -802,7 +809,7 @@ def test_download_private_cleanup_failure_prevents_publication(tmp_path: Path, m
     real_unlink = acquisition.os.unlink
 
     def fail_cleanup(path: object, *args: object, **kwargs: object) -> None:
-        if Path(path).name.startswith(".dataset-download-"):
+        if Path(path).name.startswith(".dataset-cleanup-download-"):
             raise OSError("cleanup failed")
         real_unlink(path, *args, **kwargs)
 
@@ -843,7 +850,8 @@ def test_download_rejects_staging_path_swap_before_publication(
         download_bounded("https://example.test/file", destination, 10, transport=FakeTransport())
 
     assert not destination.exists()
-    assert replacement[0].read_bytes() == b"foreign replacement"
+    assert not replacement[0].exists()
+    assert next(tmp_path.glob(".dataset-cleanup-download-*")).read_bytes() == b"foreign replacement"
 
 
 def test_download_cleanup_preserves_swapped_staging_path(
@@ -872,7 +880,115 @@ def test_download_cleanup_preserves_swapped_staging_path(
         )
 
     assert not destination.exists()
-    assert replacement[0].read_bytes() == b"foreign replacement"
+    assert not replacement[0].exists()
+    assert next(tmp_path.glob(".dataset-cleanup-download-*")).read_bytes() == b"foreign replacement"
+
+
+def test_open_owned_path_closes_descriptor_when_path_identity_mismatches(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    owned = tmp_path / "owned"
+    owned.write_bytes(b"owned")
+    owned_status = owned.stat()
+    owned.replace(tmp_path / "moved-owned")
+    owned.write_bytes(b"foreign")
+    opened: list[int] = []
+    real_open = acquisition.os.open
+
+    def tracking_open(*args: object, **kwargs: object) -> int:
+        descriptor = real_open(*args, **kwargs)
+        opened.append(descriptor)
+        return descriptor
+
+    monkeypatch.setattr(acquisition.os, "open", tracking_open)
+
+    with pytest.raises(ValueError, match="owned path identity changed"):
+        acquisition._open_owned_path(
+            owned,
+            (owned_status.st_dev, owned_status.st_ino),
+            directory=False,
+        )
+
+    assert opened
+    with pytest.raises(OSError):
+        os.fstat(opened[-1])
+
+
+def test_download_rejects_swap_between_staging_check_and_publication_without_fd_leak(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _public_dns(monkeypatch, "192.0.0.9")
+    destination = tmp_path / "target"
+    moved_staging = tmp_path / "moved-download"
+    retained: list[int] = []
+    staging_identity: list[tuple[int, int]] = []
+    real_bind = acquisition._bind_download
+    real_quarantine = acquisition._quarantine_path_exclusive
+
+    def track_binding(downloaded: object, binding: object) -> None:
+        retained.append(binding.descriptor)  # type: ignore[attr-defined]
+        real_bind(downloaded, binding)  # type: ignore[arg-type]
+
+    def swap_during_publication(source: Path, target: Path) -> None:
+        source_status = source.stat()
+        staging_identity.append((source_status.st_dev, source_status.st_ino))
+        source.replace(moved_staging)
+        source.write_bytes(b"foreign replacement")
+        real_quarantine(source, target)
+
+    monkeypatch.setattr(acquisition, "_bind_download", track_binding)
+    monkeypatch.setattr(acquisition, "_publish_path_exclusive", swap_during_publication)
+
+    with pytest.raises(ValueError, match="download publication identity changed"):
+        download_bounded("https://example.test/file", destination, 10, transport=FakeTransport())
+
+    assert destination.read_bytes() == b"foreign replacement"
+    assert retained
+    for descriptor in retained:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+    open_identities = {
+        (status.st_dev, status.st_ino)
+        for raw_descriptor in os.listdir("/dev/fd")
+        if (status := _fstat_or_none(raw_descriptor)) is not None
+    }
+    assert staging_identity[0] not in open_identities
+
+
+def test_download_cleanup_quarantines_before_identity_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _public_dns(monkeypatch, "192.0.0.9")
+    real_publish = acquisition._publish_path_exclusive
+    quarantined: list[Path] = []
+    moved_staging = tmp_path / "moved-download"
+
+    def swap_during_quarantine(source: Path, target: Path) -> None:
+        if target.name.startswith(".dataset-cleanup-download-"):
+            source.replace(moved_staging)
+            source.write_bytes(b"foreign replacement")
+            quarantined.append(target)
+        real_publish(source, target)
+
+    class CloseFailureResponse(FakeResponse):
+        def close(self) -> None:
+            raise OSError("response close failed")
+
+    monkeypatch.setattr(acquisition, "_quarantine_path_exclusive", swap_during_quarantine)
+
+    with pytest.raises(ValueError, match="response close failed"):
+        download_bounded(
+            "https://example.test/file",
+            tmp_path / "target",
+            10,
+            transport=FakeTransport([CloseFailureResponse()]),
+        )
+
+    assert quarantined
+    assert quarantined[0].read_bytes() == b"foreign replacement"
 
 
 def test_download_publication_disappearance_is_normalized_without_binding_leak(
@@ -1175,7 +1291,9 @@ def test_extract_rejects_staging_directory_swap_before_publication(
         extract_members(archive, entries, destination)
 
     assert not destination.exists()
-    assert (replacement[0] / "foreign").read_bytes() == b"foreign replacement"
+    assert not replacement[0].exists()
+    quarantine = next(tmp_path.glob(".dataset-cleanup-extract-*"))
+    assert (quarantine / "foreign").read_bytes() == b"foreign replacement"
 
 
 def test_extract_cleanup_preserves_swapped_staging_directory(
@@ -1202,7 +1320,81 @@ def test_extract_cleanup_preserves_swapped_staging_directory(
     with pytest.raises(ValueError, match="members changed after validation"):
         extract_members(archive, entries, tmp_path / "members")
 
-    assert (replacement[0] / "foreign").read_bytes() == b"foreign replacement"
+    assert not replacement[0].exists()
+    quarantine = next(tmp_path.glob(".dataset-cleanup-extract-*"))
+    assert (quarantine / "foreign").read_bytes() == b"foreign replacement"
+
+
+def test_extract_rejects_swap_between_staging_check_and_publication_without_fd_leak(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    entries = validated_zip_members(archive, ZipLimits())
+    destination = tmp_path / "members"
+    moved_staging = tmp_path / "moved-extraction"
+    observed: list[acquisition._ExtractedPaths] = []
+    staging_identity: list[tuple[int, int]] = []
+    real_paths = acquisition._ExtractedPaths
+    real_quarantine = acquisition._quarantine_path_exclusive
+
+    def track_capability(paths: list[Path], bindings: list[object]):
+        capability = real_paths(paths, bindings)
+        observed.append(capability)
+        return capability
+
+    def swap_during_publication(source: Path, target: Path) -> None:
+        source_status = source.stat()
+        staging_identity.append((source_status.st_dev, source_status.st_ino))
+        source.replace(moved_staging)
+        source.mkdir()
+        (source / "foreign").write_bytes(b"foreign replacement")
+        real_quarantine(source, target)
+
+    monkeypatch.setattr(acquisition, "_ExtractedPaths", track_capability)
+    monkeypatch.setattr(acquisition, "_publish_path_exclusive", swap_during_publication)
+
+    with pytest.raises(ValueError, match="extraction publication identity changed"):
+        extract_members(archive, entries, destination)
+
+    assert (destination / "foreign").read_bytes() == b"foreign replacement"
+    assert observed
+    for binding in observed[0]._bindings:
+        with pytest.raises(OSError):
+            os.fstat(binding.descriptor)
+    open_identities = {
+        (status.st_dev, status.st_ino)
+        for raw_descriptor in os.listdir("/dev/fd")
+        if (status := _fstat_or_none(raw_descriptor)) is not None
+    }
+    assert staging_identity[0] not in open_identities
+
+
+def test_extract_cleanup_quarantines_before_identity_check(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    archive = _zip(tmp_path / "data.zip", {"a.csv": b"a", "b.csv": b"b"})
+    entries = validated_zip_members(archive, ZipLimits())[:1]
+    real_publish = acquisition._publish_path_exclusive
+    quarantined: list[Path] = []
+    moved_staging = tmp_path / "moved-extraction"
+
+    def swap_during_quarantine(source: Path, target: Path) -> None:
+        if target.name.startswith(".dataset-cleanup-extract-"):
+            source.replace(moved_staging)
+            source.mkdir()
+            (source / "foreign").write_bytes(b"foreign replacement")
+            quarantined.append(target)
+        real_publish(source, target)
+
+    monkeypatch.setattr(acquisition, "_quarantine_path_exclusive", swap_during_quarantine)
+
+    with pytest.raises(ValueError, match="members changed after validation"):
+        extract_members(archive, entries, tmp_path / "members")
+
+    assert quarantined
+    assert (quarantined[0] / "foreign").read_bytes() == b"foreign replacement"
 
 
 def test_archive_entry_public_constructor_remains_three_fields():
@@ -1498,6 +1690,31 @@ def test_extract_staging_open_cleanup_failure_is_controlled(
 
     assert isinstance(error.value.__cause__, OSError)
     assert "staging open failed" in str(error.value.__cause__)
+
+
+def test_extract_transient_initial_staging_lstat_failure_cleans_owned_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    entries = validated_zip_members(archive, ZipLimits())
+    real_lstat = acquisition.Path.lstat
+    failed = False
+
+    def fail_first_staging_lstat(path: Path):
+        nonlocal failed
+        if path.name.startswith(".dataset-extract-") and not failed:
+            failed = True
+            raise OSError("transient staging lstat failure")
+        return real_lstat(path)
+
+    monkeypatch.setattr(acquisition.Path, "lstat", fail_first_staging_lstat)
+
+    with pytest.raises(ValueError, match="extraction parent is unavailable"):
+        extract_members(archive, entries, tmp_path / "members")
+
+    assert failed
+    assert list(tmp_path.glob(".dataset-extract-*")) == []
 
 
 def test_download_requires_owned_non_writable_trusted_parent(tmp_path: Path):
