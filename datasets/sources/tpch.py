@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import ctypes
+import errno
 import hashlib
 import json
 import os
@@ -9,6 +11,7 @@ import re
 import secrets
 import stat
 import subprocess
+import sys
 import tempfile
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -28,6 +31,7 @@ from datasets.verification import (
     VerifiedFile,
     require_exact_names,
     verify_file,
+    verify_stream,
 )
 
 TPCH_TABLES = [
@@ -84,37 +88,58 @@ class ContainerRunArgs:
 @dataclass
 class _Publication:
     files: tuple[VerifiedFile, ...]
-    owned_links: list[tuple[Path, tuple[int, int]]]
+    owned_links: list[tuple[str, tuple[int, int]]]
+    staged_links: list[tuple[str, tuple[int, int]]]
     destination_descriptor: int
-    destination_identity: tuple[int, int]
+    rollback_descriptor: int
     active: bool = True
 
     def rollback(self, primary: BaseException) -> None:
         if not self.active:
             return
         self.active = False
-        for path, identity in reversed(self.owned_links):
+        for name, identity in reversed(self.owned_links + self.staged_links):
             try:
-                _remove_owned_output(path, identity)
+                _remove_owned_entry(self.rollback_descriptor, name, identity)
             except BaseException as cleanup_error:
-                primary.add_note(f"TPC-H publication rollback failed for {path.name}: {cleanup_error}")
+                primary.add_note(f"TPC-H publication rollback failed for {name}: {cleanup_error}")
         self.close(primary)
 
     def close(self, primary: BaseException | None = None) -> None:
-        descriptor = self.destination_descriptor
+        descriptors = (self.destination_descriptor, self.rollback_descriptor)
         self.destination_descriptor = -1
-        if descriptor < 0:
+        self.rollback_descriptor = -1
+        first_error: OSError | None = None
+        for descriptor in descriptors:
+            if descriptor < 0:
+                continue
+            try:
+                os.close(descriptor)
+            except OSError as error:
+                first_error = first_error or error
+        if first_error is None:
             return
-        try:
-            os.close(descriptor)
-        except OSError as error:
-            if primary is None:
-                raise
-            primary.add_note(f"TPC-H destination capability release failed: {error}")
+        if primary is None:
+            raise first_error
+        primary.add_note(f"TPC-H destination capability release failed: {first_error}")
 
     def commit(self) -> None:
         self.close()
         self.active = False
+
+    def verify_final_identities(self) -> None:
+        for name, identity in self.owned_links:
+            status = _entry_status(self.destination_descriptor, name)
+            if status is None or not stat.S_ISREG(status.st_mode) or (status.st_dev, status.st_ino) != identity:
+                raise ValueError(f"published TPC-H output identity changed: {name}")
+
+
+@dataclass(frozen=True)
+class _OwnedDirectory:
+    root: Path
+    root_name: str
+    root_identity: tuple[int, int]
+    destination_descriptor: int
 
 
 class ContainerRunner(Protocol):
@@ -137,67 +162,112 @@ def _sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _path_identity(path: Path, *, directory: bool) -> tuple[int, int] | None:
+def _renameat_noreplace(directory_descriptor: int, source: str, destination: str) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    ctypes.set_errno(0)
+    source_bytes = os.fsencode(source)
+    destination_bytes = os.fsencode(destination)
+    if sys.platform == "darwin" and hasattr(libc, "renameatx_np"):
+        rename = libc.renameatx_np
+        rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        rename.restype = ctypes.c_int
+        result = rename(directory_descriptor, source_bytes, directory_descriptor, destination_bytes, 0x00000004)
+    elif sys.platform == "linux":
+        if hasattr(libc, "renameat2"):
+            rename = libc.renameat2
+            rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+            rename.restype = ctypes.c_int
+            result = rename(directory_descriptor, source_bytes, directory_descriptor, destination_bytes, 1)
+        elif (number := acquisition._linux_renameat2_number()) is not None and hasattr(libc, "syscall"):
+            syscall = libc.syscall
+            syscall.restype = ctypes.c_long
+            result = syscall(number, directory_descriptor, source_bytes, directory_descriptor, destination_bytes, 1)
+        else:
+            raise RuntimeError("secure TPC-H publication is not supported on this platform")
+    else:
+        raise RuntimeError("secure TPC-H publication is not supported on this platform")
+    if result == 0:
+        return
+    error_number = ctypes.get_errno()
+    if error_number in {errno.EEXIST, errno.ENOTEMPTY}:
+        raise FileExistsError(destination)
+    if error_number == errno.ENOENT:
+        raise FileNotFoundError(source)
+    raise OSError(error_number, os.strerror(error_number), destination)
+
+
+def _entry_status(directory_descriptor: int, name: str) -> os.stat_result | None:
     try:
-        status = path.lstat()
+        return os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
     except FileNotFoundError:
         return None
-    expected = stat.S_ISDIR if directory else stat.S_ISREG
-    if stat.S_ISLNK(status.st_mode) or not expected(status.st_mode):
-        return None
-    return status.st_dev, status.st_ino
 
 
-def _restore_foreign_quarantine(quarantine: Path, original: Path) -> None:
-    try:
-        acquisition._quarantine_path_exclusive(quarantine, original)
-    except BaseException as error:
-        raise RuntimeError(f"foreign replacement remains quarantined at {quarantine}") from error
-
-
-def _quarantine_owned_path(
-    path: Path,
+def _remove_owned_entry(
+    directory_descriptor: int,
+    name: str,
     identity: tuple[int, int],
-    *,
-    directory: bool,
 ) -> None:
-    current_identity = _path_identity(path, directory=directory)
-    if current_identity is None:
-        if os.path.lexists(path):
-            raise ValueError("owned TPC-H path changed type during cleanup")
+    current = _entry_status(directory_descriptor, name)
+    if current is None:
         return
-    if current_identity != identity:
-        raise ValueError("owned TPC-H path identity changed during cleanup")
-    quarantine = path.parent / f".dataset-cleanup-tpch-{secrets.token_hex(16)}"
-    acquisition._quarantine_path_exclusive(path, quarantine)
-    if _path_identity(quarantine, directory=directory) != identity:
-        _restore_foreign_quarantine(quarantine, path)
-        raise ValueError("owned TPC-H path changed during cleanup")
-    if directory:
-        import shutil
-
-        shutil.rmtree(quarantine)
-    else:
-        quarantine.unlink()
-
-
-def _remove_owned_output(path: Path, identity: tuple[int, int]) -> None:
-    _quarantine_owned_path(path, identity, directory=False)
+    if (current.st_dev, current.st_ino) != identity:
+        raise ValueError("owned TPC-H entry identity changed during cleanup")
+    quarantine = f".dataset-cleanup-tpch-{secrets.token_hex(16)}"
+    _renameat_noreplace(directory_descriptor, name, quarantine)
+    quarantined = _entry_status(directory_descriptor, quarantine)
+    if quarantined is None or (quarantined.st_dev, quarantined.st_ino) != identity:
+        try:
+            _renameat_noreplace(directory_descriptor, quarantine, name)
+        except BaseException as restore_error:
+            raise RuntimeError(f"foreign replacement remains quarantined as {quarantine}") from restore_error
+        raise ValueError("owned TPC-H entry changed during cleanup")
+    os.unlink(quarantine, dir_fd=directory_descriptor)
 
 
-def _verify_directory_binding(path: Path, descriptor: int, identity: tuple[int, int]) -> None:
-    try:
-        opened = os.fstat(descriptor)
-        current = path.lstat()
-    except OSError as error:
-        raise ValueError("TPC-H destination directory is unavailable") from error
+def _remove_tree_at(
+    directory_descriptor: int,
+    name: str,
+    identity: tuple[int, int],
+) -> None:
+    status = _entry_status(directory_descriptor, name)
+    if status is None:
+        return
+    if not stat.S_ISDIR(status.st_mode) or (status.st_dev, status.st_ino) != identity:
+        raise ValueError("owned TPC-H transaction directory changed")
+    quarantine = f".dataset-cleanup-tpch-{secrets.token_hex(16)}"
+    _renameat_noreplace(directory_descriptor, name, quarantine)
+    quarantined = _entry_status(directory_descriptor, quarantine)
     if (
-        not stat.S_ISDIR(opened.st_mode)
-        or not stat.S_ISDIR(current.st_mode)
-        or (opened.st_dev, opened.st_ino) != identity
-        or (current.st_dev, current.st_ino) != identity
+        quarantined is None
+        or not stat.S_ISDIR(quarantined.st_mode)
+        or (quarantined.st_dev, quarantined.st_ino) != identity
     ):
-        raise ValueError("TPC-H destination directory changed")
+        try:
+            _renameat_noreplace(directory_descriptor, quarantine, name)
+        except BaseException as restore_error:
+            raise RuntimeError(f"foreign replacement remains quarantined as {quarantine}") from restore_error
+        raise ValueError("owned TPC-H transaction directory changed during cleanup")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    child_descriptor = os.open(quarantine, flags, dir_fd=directory_descriptor)
+    try:
+        opened = os.fstat(child_descriptor)
+        if (opened.st_dev, opened.st_ino) != identity:
+            raise ValueError("owned TPC-H transaction directory changed during cleanup")
+        for entry in os.scandir(child_descriptor):
+            entry_status = os.stat(entry.name, dir_fd=child_descriptor, follow_symlinks=False)
+            entry_identity = (entry_status.st_dev, entry_status.st_ino)
+            if stat.S_ISDIR(entry_status.st_mode):
+                _remove_tree_at(child_descriptor, entry.name, entry_identity)
+            else:
+                _remove_owned_entry(child_descriptor, entry.name, entry_identity)
+    finally:
+        os.close(child_descriptor)
+    current = _entry_status(directory_descriptor, quarantine)
+    if current is None or (current.st_dev, current.st_ino) != identity or not stat.S_ISDIR(current.st_mode):
+        raise ValueError("owned TPC-H transaction directory changed during cleanup")
+    os.rmdir(quarantine, dir_fd=directory_descriptor)
 
 
 def canonical_environment(contract: GeneratorContract) -> dict[str, str]:
@@ -349,7 +419,20 @@ class DockerContainerRunner:
             "-c",
             script,
         ]
-        result = self._execute(command)
+        try:
+            result = subprocess.run(
+                command,
+                cwd=self.repository_root,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+        except (FileNotFoundError, OSError) as error:
+            raise RuntimeError("canonical TPC-H runtime probe could not launch Docker") from error
+        if result.returncode == 125:
+            raise RuntimeError("canonical TPC-H runtime probe could not start the container")
+        if result.returncode != 0:
+            raise _ImageProofMismatch("canonical TPC-H runtime probe program failed")
         try:
             document = json.loads(result.stdout)
         except json.JSONDecodeError as error:
@@ -619,25 +702,34 @@ def verify_image_evidence(
 
 
 @contextmanager
-def owned_directory(destination: Path) -> Iterator[Path]:
+def owned_directory(destination: Path) -> Iterator[_OwnedDirectory]:
     destination.mkdir(parents=True, exist_ok=True)
     acquisition._require_trusted_parent(destination)
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    flags |= getattr(os, "O_NOFOLLOW", 0)
+    destination_descriptor = os.open(destination, flags)
     root = Path(tempfile.mkdtemp(prefix=".dataset-tpch-", dir=destination))
     status = root.lstat()
     identity = (status.st_dev, status.st_ino)
     primary: BaseException | None = None
     try:
-        yield root
+        yield _OwnedDirectory(root, root.name, identity, destination_descriptor)
     except BaseException as error:
         primary = error
         raise
     finally:
         try:
-            _quarantine_owned_path(root, identity, directory=True)
+            _remove_tree_at(destination_descriptor, root.name, identity)
         except BaseException as cleanup_error:
             if primary is None:
                 raise
             primary.add_note(f"TPC-H transaction cleanup failed: {cleanup_error}")
+        try:
+            os.close(destination_descriptor)
+        except BaseException as cleanup_error:
+            if primary is None:
+                raise
+            primary.add_note(f"TPC-H transaction capability release failed: {cleanup_error}")
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
@@ -772,46 +864,87 @@ def verify_tpch_outputs(
     return tuple(verified)
 
 
+def _verify_staged_output(
+    descriptor: int,
+    item: VerifiedFile,
+    schema: object,
+    context: VerificationContext,
+) -> None:
+    opened = os.fstat(descriptor)
+    if not stat.S_ISREG(opened.st_mode):
+        raise ValueError("staged TPC-H output must be a regular file")
+    with os.fdopen(os.dup(descriptor), "rb") as stream:
+        verify_stream(stream, item.expected.size_bytes, item.expected.sha256, context)
+    os.lseek(descriptor, 0, os.SEEK_SET)
+    staged = VerifiedFile(Path(f"/dev/fd/{descriptor}"), item.expected)
+    verify_physical_schema(staged, schema, context)  # type: ignore[arg-type]
+
+
 def publish_verified_files(
     files: Sequence[VerifiedFile],
-    output_root: Path,
+    transaction: _OwnedDirectory,
     destination: Path,
+    schemas: Mapping[str, object],
 ) -> _Publication:
-    del output_root
-    targets = tuple(destination / item.expected.object_name for item in files)
-    for target in targets:
-        if target.exists() or target.is_symlink():
-            raise FileExistsError(target)
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0)
-    destination_descriptor = os.open(destination, flags)
-    opened = os.fstat(destination_descriptor)
-    destination_identity = (opened.st_dev, opened.st_ino)
-    publication = _Publication((), [], destination_descriptor, destination_identity)
+    source_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    source_flags |= getattr(os, "O_NOFOLLOW", 0)
+    source_descriptor = os.open(
+        transaction.root_name,
+        source_flags,
+        dir_fd=transaction.destination_descriptor,
+    )
+    destination_descriptor = os.dup(transaction.destination_descriptor)
+    rollback_descriptor = os.dup(transaction.destination_descriptor)
+    publication = _Publication((), [], [], destination_descriptor, rollback_descriptor)
     try:
-        for item, target in zip(files, targets, strict=True):
-            _verify_directory_binding(destination, destination_descriptor, destination_identity)
-            source_identity = _path_identity(item.path, directory=False)
-            if source_identity is None:
-                raise ValueError("verified TPC-H output identity is unavailable")
+        source_status = os.fstat(source_descriptor)
+        if (source_status.st_dev, source_status.st_ino) != transaction.root_identity:
+            raise ValueError("TPC-H transaction directory identity changed")
+        published: list[VerifiedFile] = []
+        for item in files:
+            staging_name = f".dataset-tpch-publish-{secrets.token_hex(16)}"
             os.link(
-                item.path,
-                target.name,
+                item.expected.object_name,
+                staging_name,
+                src_dir_fd=source_descriptor,
                 dst_dir_fd=destination_descriptor,
                 follow_symlinks=False,
             )
-            target_identity = _path_identity(target, directory=False)
-            if target_identity is not None:
-                publication.owned_links.append((target, target_identity))
-            if target_identity != source_identity:
-                raise ValueError("published TPC-H output identity changed")
-        publication.files = tuple(
-            VerifiedFile(path.resolve(strict=True), item.expected) for item, path in zip(files, targets, strict=True)
-        )
+            staged_status = os.stat(staging_name, dir_fd=destination_descriptor, follow_symlinks=False)
+            staged_identity = (staged_status.st_dev, staged_status.st_ino)
+            publication.staged_links.append((staging_name, staged_identity))
+            if not stat.S_ISREG(staged_status.st_mode):
+                raise ValueError("staged TPC-H output must be a regular file")
+            open_flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            staged_descriptor = os.open(staging_name, open_flags, dir_fd=destination_descriptor)
+            try:
+                opened = os.fstat(staged_descriptor)
+                if (opened.st_dev, opened.st_ino) != staged_identity or not stat.S_ISREG(opened.st_mode):
+                    raise ValueError("staged TPC-H output identity changed")
+                context = VerificationContext(
+                    "tpch",
+                    "publication",
+                    "staged output",
+                    object_name=item.expected.object_name,
+                )
+                try:
+                    schema = schemas[item.expected.schema_id]
+                except KeyError:
+                    raise ValueError(f"unknown staged TPC-H schema: {item.expected.schema_id}") from None
+                _verify_staged_output(staged_descriptor, item, schema, context)
+            finally:
+                os.close(staged_descriptor)
+            _renameat_noreplace(destination_descriptor, staging_name, item.expected.object_name)
+            publication.staged_links.remove((staging_name, staged_identity))
+            publication.owned_links.append((item.expected.object_name, staged_identity))
+            published.append(VerifiedFile(destination / item.expected.object_name, item.expected))
+        publication.files = tuple(published)
         return publication
     except BaseException as error:
         publication.rollback(error)
         raise
+    finally:
+        os.close(source_descriptor)
 
 
 def generate_tpch(
@@ -829,20 +962,17 @@ def generate_tpch(
     destination = Path(dest)
     publication: _Publication | None = None
     try:
-        with owned_directory(destination) as output_root:
-            metadata_path = output_root / "metadata.json"
-            active_runner.run(contract, scale, output_root, metadata_path)
-            verified = verify_tpch_outputs(plan, output_root, metadata_path)
-            publication = publish_verified_files(verified, output_root, destination)
-        for item in publication.files:
-            output = next(output for output in scale.outputs if output.object_name == item.expected.object_name)
-            context = VerificationContext(
-                plan.dataset.name,
-                plan.scale,
-                "published output",
-                object_name=output.object_name,
+        with owned_directory(destination) as transaction:
+            metadata_path = transaction.root / "metadata.json"
+            active_runner.run(contract, scale, transaction.root, metadata_path)
+            verified = verify_tpch_outputs(plan, transaction.root, metadata_path)
+            publication = publish_verified_files(
+                verified,
+                transaction,
+                destination,
+                plan.dataset.schemas,
             )
-            verify_file(item.path, item.expected, context)
+        publication.verify_final_identities()
         publication.commit()
     except BaseException as error:
         if publication is not None:

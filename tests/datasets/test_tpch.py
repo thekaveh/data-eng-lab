@@ -145,7 +145,7 @@ def test_generate_tpch_returns_eight_verified_files_in_registry_order(
         output.object_name for output in tpch_plan.generator_scale.outputs
     )
     assert tuple(item.expected.schema_id for item in files) == TABLES
-    assert len(accept_test_parquet_schemas) == 8
+    assert len(accept_test_parquet_schemas) == 16
     assert not list(tmp_path.glob(".dataset-tpch-*"))
 
 
@@ -367,30 +367,91 @@ def test_publication_rollback_tracks_actual_link_after_source_swap(tmp_path, fak
         nonlocal links
         links += 1
         if links == 1:
-            source_path = Path(source)
-            source_path.unlink()
-            source_path.write_bytes(b"swapped after verification")
+            source_descriptor = kwargs["src_dir_fd"]
+            os.unlink(source, dir_fd=source_descriptor)
+            descriptor = os.open(source, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600, dir_fd=source_descriptor)
+            with os.fdopen(descriptor, "wb") as stream:
+                stream.write(b"swapped after verification")
         return real_link(source, target, **kwargs)
 
     monkeypatch.setattr(tpch.os, "link", swap_source_before_first_link)
-    with pytest.raises(ValueError, match="identity changed"):
+    with pytest.raises(ValueError, match="size_bytes|sha256"):
         tpch.generate_tpch(tpch_plan, destination, runner=fake_runner)
 
     assert list(destination.iterdir()) == []
 
 
+def test_publication_rejects_source_symlink_swap_without_residue(tmp_path, fake_runner, tpch_plan, monkeypatch):
+    destination = tmp_path / "source-symlink-swap"
+    foreign = tmp_path / "foreign.parquet"
+    foreign.write_bytes(b"foreign")
+    real_link = tpch.os.link
+    swapped = False
+
+    def swap_source_to_symlink(source, target, **kwargs):
+        nonlocal swapped
+        if not swapped:
+            swapped = True
+            source_descriptor = kwargs["src_dir_fd"]
+            os.unlink(source, dir_fd=source_descriptor)
+            os.symlink(foreign, source, dir_fd=source_descriptor)
+        return real_link(source, target, **kwargs)
+
+    monkeypatch.setattr(tpch.os, "link", swap_source_to_symlink)
+    with pytest.raises(ValueError, match="regular|identity"):
+        tpch.generate_tpch(tpch_plan, destination, runner=fake_runner)
+
+    assert list(destination.iterdir()) == []
+    assert foreign.read_bytes() == b"foreign"
+
+
+def test_publication_rollback_uses_bound_directory_after_destination_replacement(
+    tmp_path, fake_runner, tpch_plan, monkeypatch
+):
+    destination = tmp_path / "destination"
+    displaced = tmp_path / "displaced"
+    real_link = tpch.os.link
+    links = 0
+
+    def replace_directory_then_fail(source, target, **kwargs):
+        nonlocal links
+        links += 1
+        if links == 2:
+            raise OSError("simulated failure after destination replacement")
+        result = real_link(source, target, **kwargs)
+        if links == 1:
+            destination.rename(displaced)
+            destination.mkdir()
+        return result
+
+    monkeypatch.setattr(tpch.os, "link", replace_directory_then_fail)
+    with pytest.raises((OSError, ValueError)):
+        tpch.generate_tpch(tpch_plan, destination, runner=fake_runner)
+
+    assert list(displaced.iterdir()) == []
+    assert list(destination.iterdir()) == []
+
+
+def test_publication_reverifies_staged_bytes_and_schema(tmp_path, fake_runner, tpch_plan, accept_test_parquet_schemas):
+    tpch.generate_tpch(tpch_plan, tmp_path, runner=fake_runner)
+
+    assert len(accept_test_parquet_schemas) == 16
+    staged = accept_test_parquet_schemas[8:]
+    assert all(str(call[0].path).startswith("/dev/fd/") for call in staged)
+
+
 def test_publication_commit_close_failure_rolls_back_outputs(tmp_path, fake_runner, tpch_plan, monkeypatch):
     destination = tmp_path / "commit-close"
-    real_close = tpch._Publication.close
     failed = False
 
     def close_then_fail(publication, primary=None):
         nonlocal failed
-        real_close(publication, primary)
         if primary is None and not failed:
             failed = True
             raise OSError("simulated close failure")
+        return real_close(publication, primary)
 
+    real_close = tpch._Publication.close
     monkeypatch.setattr(tpch._Publication, "close", close_then_fail)
     with pytest.raises(OSError, match="close failure"):
         tpch.generate_tpch(tpch_plan, destination, runner=fake_runner)
@@ -411,12 +472,15 @@ def test_publication_rollback_attempts_all_cleanup_and_notes_failures(tmp_path, 
             raise OSError("publication failed")
         return real_link(source, target, **kwargs)
 
-    def fail_cleanup(path, identity):
-        cleanup_calls.append((path, identity))
-        raise OSError(f"cleanup failed for {path.name}")
+    def fail_cleanup(directory_descriptor, name, identity):
+        if len(cleanup_calls) < 2:
+            cleanup_calls.append((name, identity))
+            raise OSError(f"cleanup failed for {name}")
+        return real_cleanup(directory_descriptor, name, identity)
 
     monkeypatch.setattr(tpch.os, "link", fail_third_link)
-    monkeypatch.setattr(tpch, "_remove_owned_output", fail_cleanup, raising=False)
+    real_cleanup = tpch._remove_owned_entry
+    monkeypatch.setattr(tpch, "_remove_owned_entry", fail_cleanup)
     with pytest.raises(OSError, match="publication failed") as caught:
         tpch.generate_tpch(tpch_plan, destination, runner=fake_runner)
 
@@ -630,7 +694,7 @@ def test_runtime_probe_is_network_disabled_and_bound_to_inspected_image(tpch_pla
         commands.append(command)
         return subprocess.CompletedProcess(command, 0, json.dumps(probe), "")
 
-    monkeypatch.setattr(runner, "_execute", execute)
+    monkeypatch.setattr(tpch.subprocess, "run", lambda command, **kwargs: execute(command))
 
     assert runner._runtime_probe(image_id, contract) == probe
     command = commands[0]
@@ -645,6 +709,101 @@ def test_runtime_probe_is_network_disabled_and_bound_to_inspected_image(tpch_pla
         "python",
     ]
     assert command[8] == image_id
+
+
+@pytest.mark.parametrize(
+    ("returncode", "expected_exception"),
+    [(125, RuntimeError), (1, tpch._ImageProofMismatch)],
+)
+def test_runtime_probe_classifies_docker_cli_vs_image_proof_failure(
+    tpch_plan, monkeypatch, returncode, expected_exception
+):
+    contract = tpch_plan.dataset.generator
+    assert contract is not None
+    runner = tpch.DockerContainerRunner(repository_root=ROOT)
+
+    monkeypatch.setattr(
+        tpch.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(
+            command,
+            returncode,
+            "",
+            "sensitive localized docker diagnostic",
+        ),
+    )
+
+    with pytest.raises(expected_exception, match="runtime probe") as caught:
+        runner._runtime_probe("sha256:" + "1" * 64, contract)
+    assert "sensitive" not in str(caught.value)
+    if returncode == 125:
+        assert type(caught.value) is RuntimeError
+
+
+def test_runtime_probe_program_failure_rebuilds_and_reprobes(tpch_plan, monkeypatch):
+    contract = tpch_plan.dataset.generator
+    assert contract is not None
+    runner = tpch.DockerContainerRunner(repository_root=ROOT)
+    evidence = FakeRunner(tpch_plan).evidence
+    inspection = {
+        "Id": evidence.image_id,
+        "Os": "linux",
+        "Architecture": "amd64",
+        "Config": {
+            "Labels": tpch.canonical_labels(contract),
+            "Entrypoint": list(tpch.CANONICAL_ENTRYPOINT),
+            "Env": [f"{key}={value}" for key, value in tpch.canonical_environment(contract).items()],
+        },
+    }
+    inspections = [inspection, inspection]
+    probes = [tpch._ImageProofMismatch("runtime probe program failed"), evidence]
+    builds = []
+    monkeypatch.setattr(runner, "_inspect_image", lambda: inspections.pop(0))
+    monkeypatch.setattr(runner, "_build_image", lambda contract: builds.append(contract))
+
+    def image_evidence(contract, inspection):
+        result = probes.pop(0)
+        if isinstance(result, BaseException):
+            raise result
+        return result
+
+    monkeypatch.setattr(runner, "_image_evidence", image_evidence)
+
+    assert runner.ensure_image(contract) == evidence
+    assert builds == [contract]
+    assert probes == []
+
+
+def test_runtime_probe_malformed_success_rebuilds_but_postbuild_failure_is_closed(tpch_plan, monkeypatch):
+    contract = tpch_plan.dataset.generator
+    assert contract is not None
+    runner = tpch.DockerContainerRunner(repository_root=ROOT)
+    evidence = FakeRunner(tpch_plan).evidence
+    inspection = {
+        "Id": evidence.image_id,
+        "Os": "linux",
+        "Architecture": "amd64",
+        "Config": {
+            "Labels": tpch.canonical_labels(contract),
+            "Entrypoint": list(tpch.CANONICAL_ENTRYPOINT),
+            "Env": [f"{key}={value}" for key, value in tpch.canonical_environment(contract).items()],
+        },
+    }
+    inspections = [inspection, inspection]
+    builds = []
+    monkeypatch.setattr(runner, "_inspect_image", lambda: inspections.pop(0))
+    monkeypatch.setattr(runner, "_build_image", lambda contract: builds.append(contract))
+    monkeypatch.setattr(
+        runner,
+        "_image_evidence",
+        lambda contract, inspection: (_ for _ in ()).throw(
+            tpch._ImageProofMismatch("runtime probe returned invalid evidence")
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="post-build proof"):
+        runner.ensure_image(contract)
+    assert builds == [contract]
 
 
 def test_image_evidence_requires_pinned_base_rootfs_prefix(tpch_plan, monkeypatch):
