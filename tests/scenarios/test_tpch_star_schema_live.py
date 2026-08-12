@@ -159,14 +159,22 @@ def _acceptance_timestamp(run: dict) -> datetime | None:
 
 
 def _validate_owned_runs(
-    runs: list[dict], window_start: str, expected: set[str], *, require_terminal: bool = False,
+    runs: list[dict],
+    window_start: str,
+    expected: set[str],
+    *,
+    require_terminal: bool = False,
+    baseline: set[str] | None = None,
 ) -> dict:
-    start = _run_timestamp(window_start)
-    in_window = {
-        run["dag_run_id"]: run
-        for run in runs
-        if (timestamp := _acceptance_timestamp(run)) is not None and timestamp >= start
-    }
+    if baseline is None:
+        start = _run_timestamp(window_start)
+        in_window = {
+            run["dag_run_id"]: run
+            for run in runs
+            if (timestamp := _acceptance_timestamp(run)) is not None and timestamp >= start
+        }
+    else:
+        in_window = {run["dag_run_id"]: run for run in runs if run["dag_run_id"] not in baseline}
     unexpected = set(in_window) - expected
     missing = expected - set(in_window)
     if unexpected or missing:
@@ -191,9 +199,20 @@ def _validate_owned_runs(
     return in_window
 
 
-def _assert_owned_runs(api, window_start: str, expected: set[str], *, require_terminal: bool = False) -> dict:
+def _assert_owned_runs(
+    api,
+    window_start: str,
+    expected: set[str],
+    *,
+    require_terminal: bool = False,
+    baseline: set[str] | None = None,
+) -> dict:
     return _validate_owned_runs(
-        _list_runs(api), window_start, expected, require_terminal=require_terminal,
+        _list_runs(api),
+        window_start,
+        expected,
+        require_terminal=require_terminal,
+        baseline=baseline,
     )
 
 
@@ -321,10 +340,20 @@ def _execute_dag_test(
 
 
 def _execute_paused_test_run(
-    *, api, runner, drivers, terminal, window_start: str, owned: set[str], logical_date: datetime,
+    *,
+    api,
+    runner,
+    drivers,
+    terminal,
+    window_start: str,
+    owned: set[str],
+    logical_date: datetime,
+    baseline: set[str] | None = None,
 ) -> tuple[dict, str]:
     before_runs = _list_runs(api)
-    _validate_owned_runs(before_runs, window_start, owned, require_terminal=True)
+    _validate_owned_runs(
+        before_runs, window_start, owned, require_terminal=True, baseline=baseline,
+    )
     before_run_ids = {run["dag_run_id"] for run in before_runs}
     before_drivers = drivers()
 
@@ -344,7 +373,9 @@ def _execute_paused_test_run(
         raise AssertionError(f"expected exactly one new API-visible run, got {sorted(new_run_ids)}")
     run_id = new_run_ids.pop()
     expected = owned | {run_id}
-    in_window = _validate_owned_runs(after_runs, window_start, expected, require_terminal=True)
+    in_window = _validate_owned_runs(
+        after_runs, window_start, expected, require_terminal=True, baseline=baseline,
+    )
 
     new_drivers = drivers() - before_drivers
     assert len(new_drivers) == 1, f"expected exactly one new Spark driver, got {sorted(new_drivers)}"
@@ -362,7 +393,8 @@ def test_tpch_star_schema_live_acceptance():
         with _paused_dag():
             window_start = datetime.now(timezone.utc).isoformat()
             first_logical_date = datetime.now(timezone.utc).replace(microsecond=0)
-            _assert_owned_runs(_airflow, window_start, set())
+            baseline = {run["dag_run_id"] for run in _list_runs(_airflow)}
+            _assert_owned_runs(_airflow, window_start, set(), baseline=baseline)
 
             _run("mvn", "-q", "-B", "-f", str(APP / "pom.xml"), "package")
             jar = APP / "target/tpch-star-schema-0.1.0.jar"
@@ -386,7 +418,7 @@ def test_tpch_star_schema_live_acceptance():
             assert resolved["dataset"] == "tpch" and resolved["scale"] == "tiny"
             assert len(resolved["objects"]) == 8 and all(item["size_bytes"] > 0 for item in resolved["objects"])
 
-            _assert_owned_runs(_airflow, window_start, set())
+            _assert_owned_runs(_airflow, window_start, set(), baseline=baseline)
             first_run, first_driver = _execute_paused_test_run(
                 api=_airflow,
                 runner=_run,
@@ -395,16 +427,17 @@ def test_tpch_star_schema_live_acceptance():
                 window_start=window_start,
                 owned=set(),
                 logical_date=first_logical_date,
+                baseline=baseline,
             )
             first_run_id = first_run["dag_run_id"]
-            _assert_owned_runs(_airflow, window_start, {first_run_id})
+            _assert_owned_runs(_airflow, window_start, {first_run_id}, baseline=baseline)
             first = {
                 "dim": _snapshot_table("lakehouse.gold.dim_customer"),
                 "fact": _snapshot_table("lakehouse.gold.fct_orders"),
                 "dim_properties": _properties("dim_customer"),
                 "fact_properties": _properties("fct_orders"),
             }
-            _assert_owned_runs(_airflow, window_start, {first_run_id})
+            _assert_owned_runs(_airflow, window_start, {first_run_id}, baseline=baseline)
             second_logical_date = max(
                 datetime.now(timezone.utc).replace(microsecond=0),
                 first_logical_date + timedelta(seconds=1),
@@ -417,9 +450,12 @@ def test_tpch_star_schema_live_acceptance():
                 window_start=window_start,
                 owned={first_run_id},
                 logical_date=second_logical_date,
+                baseline=baseline,
             )
             second_run_id = second_run["dag_run_id"]
-            _assert_owned_runs(_airflow, window_start, {first_run_id, second_run_id})
+            _assert_owned_runs(
+                _airflow, window_start, {first_run_id, second_run_id}, baseline=baseline,
+            )
             second = {
                 "dim": _snapshot_table("lakehouse.gold.dim_customer"),
                 "fact": _snapshot_table("lakehouse.gold.fct_orders"),
@@ -456,5 +492,9 @@ def test_tpch_star_schema_live_acceptance():
             assert first_driver != second_driver
             assert datetime.fromisoformat(second_run["start_date"]) >= datetime.fromisoformat(first_run["end_date"])
             _assert_owned_runs(
-                _airflow, window_start, {first_run_id, second_run_id}, require_terminal=True,
+                _airflow,
+                window_start,
+                {first_run_id, second_run_id},
+                require_terminal=True,
+                baseline=baseline,
             )

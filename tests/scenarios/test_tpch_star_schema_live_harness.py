@@ -91,6 +91,22 @@ def test_owned_run_guard_accepts_exact_expected_runs_and_requires_terminal_final
     assert set(found) == {"owned-first", "owned-second"}
 
 
+def test_owned_run_guard_uses_pre_acceptance_id_baseline_not_skewed_logical_date():
+    historical_probe = {
+        "dag_run_id": "historical-future-logical-date",
+        "state": "success",
+        "start_date": None,
+        "logical_date": "2026-08-12T20:30:00Z",
+    }
+    found = live._assert_owned_runs(
+        lambda *_args, **_kwargs: {"dag_runs": [historical_probe]},
+        "2026-08-12T20:28:00Z",
+        set(),
+        baseline={"historical-future-logical-date"},
+    )
+    assert found == {}
+
+
 def test_resolver_refreshes_only_missing_tiny_publication_and_verifies_afterward():
     calls = []
     resolved = '{"dataset":"tpch","scale":"tiny","objects":[]}'
