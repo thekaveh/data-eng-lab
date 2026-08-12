@@ -8,6 +8,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import BinaryIO
 
+from datasets.locking import file_metadata
+
 
 @dataclass(frozen=True)
 class VerificationContext:
@@ -63,8 +65,11 @@ def verify_stream(
 
 
 def verify_file(path: Path, expected: ExpectedObject, context: VerificationContext) -> VerifiedFile:
-    with path.open("rb") as stream:
-        verify_stream(stream, expected.size_bytes, expected.sha256, context)
+    actual_size, actual_sha256 = file_metadata(path)
+    if actual_size != expected.size_bytes:
+        raise LockMismatch(context, "size_bytes", expected.size_bytes, actual_size)
+    if actual_sha256 != expected.sha256:
+        raise LockMismatch(context, "sha256", expected.sha256, actual_sha256)
     return VerifiedFile(path.resolve(strict=True), expected)
 
 
@@ -73,5 +78,9 @@ def require_exact_names(
 ) -> None:
     expected_names = tuple(expected)
     actual_names = tuple(actual)
-    if actual_names != expected_names:
+    if (
+        len(set(expected_names)) != len(expected_names)
+        or len(set(actual_names)) != len(actual_names)
+        or actual_names != expected_names
+    ):
         raise LockMismatch(context, "object_names", expected_names, actual_names)

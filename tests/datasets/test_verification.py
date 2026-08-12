@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import datasets.verification as verification
 from datasets.verification import (
     ExpectedObject,
     LockMismatch,
@@ -96,6 +97,26 @@ def test_verify_file_returns_resolved_path_and_expected_object(tmp_path: Path):
     assert verified.expected is expected
 
 
+def test_verify_file_uses_locking_file_metadata(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    payload = b"locked bytes"
+    path = tmp_path / "artifact.bin"
+    path.write_bytes(payload)
+    expected = ExpectedObject("artifact.bin", len(payload), hashlib.sha256(payload).hexdigest(), "schema-v1")
+    calls: list[Path] = []
+
+    def metadata(candidate: Path) -> tuple[int, str]:
+        calls.append(candidate)
+        return len(payload), hashlib.sha256(payload).hexdigest()
+
+    monkeypatch.setattr(verification, "file_metadata", metadata)
+
+    verified = verify_file(path, expected, CONTEXT)
+
+    assert calls == [path]
+    assert verified.path == path.resolve(strict=True)
+    assert verified.expected == expected
+
+
 def test_require_exact_names_reports_missing_and_extra_together():
     with pytest.raises(LockMismatch) as caught:
         require_exact_names(("a.csv", "b.csv"), ("b.csv", "c.csv"), CONTEXT)
@@ -120,6 +141,17 @@ def test_require_exact_names_rejects_duplicate_actual_names():
     assert caught.value.field == "object_names"
     assert caught.value.expected == ("a.csv",)
     assert caught.value.actual == ("a.csv", "a.csv")
+
+
+def test_require_exact_names_rejects_identical_duplicate_names():
+    names = ("a.csv", "a.csv")
+
+    with pytest.raises(LockMismatch) as caught:
+        require_exact_names(names, names, CONTEXT)
+
+    assert caught.value.field == "object_names"
+    assert caught.value.expected == names
+    assert caught.value.actual == names
 
 
 def test_require_exact_names_accepts_identical_ordered_names():
