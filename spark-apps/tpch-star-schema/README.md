@@ -37,6 +37,44 @@ The application reads these properties back after both writes and fails if eithe
 Downstream #83 must compare `lakehouse.gold."dim_customer$properties"` with
 `lakehouse.gold."fct_orders$properties"` and reject mismatched provenance before BI queries.
 
+The executable #83 preflight contract is: run this query first and fail closed before BI SQL unless
+it returns zero rows. It checks presence and equality of exactly the five production provenance keys.
+
+```sql
+WITH expected(property_key) AS (
+  VALUES
+    'data_eng_lab.dataset',
+    'data_eng_lab.dataset.scale',
+    'data_eng_lab.dataset.plan_id',
+    'data_eng_lab.dataset.publication_id',
+    'data_eng_lab.dataset.manifest_sha256'
+),
+dim AS (
+  SELECT key AS property_key, value AS property_value
+  FROM lakehouse.gold."dim_customer$properties"
+  WHERE key IN (SELECT property_key FROM expected)
+),
+fact AS (
+  SELECT key AS property_key, value AS property_value
+  FROM lakehouse.gold."fct_orders$properties"
+  WHERE key IN (SELECT property_key FROM expected)
+),
+bound AS (
+  SELECT e.property_key,
+         d.property_value AS dim_value,
+         f.property_value AS fact_value
+  FROM expected e
+  FULL OUTER JOIN dim d ON e.property_key = d.property_key
+  FULL OUTER JOIN fact f ON e.property_key = f.property_key
+)
+SELECT property_key, dim_value, fact_value
+FROM bound
+WHERE property_key IS NULL
+   OR dim_value IS NULL
+   OR fact_value IS NULL
+   OR dim_value <> fact_value;
+```
+
 ## Failure and recovery
 
 Both frames are validated and materialized before writing. Iceberg cannot atomically commit two
@@ -44,6 +82,10 @@ independent tables, so the dimension is replaced first and the fact second. This
 new fact before its matching dimension, but a failure between writes can leave mixed provenance.
 Airflow reports failure. Rerun the same immutable generation; deterministic replacements converge
 both logical results and provenance. New snapshot IDs on a rerun are expected.
+
+The DAG sets `max_active_runs=1`, so the supported production path cannot interleave two
+non-atomic replacements. Concurrent direct application invocations are unsupported; operators must
+use `tpch_star_schema` or otherwise provide equivalent external serialization.
 
 ## Build and publish
 

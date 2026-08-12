@@ -148,6 +148,10 @@ End-to-end validation of the four key user-facing paths: Zeppelin notebooks, Jup
 
 The production TPC-H acceptance sequence publishes `tpch-star-schema/0.1.0/app.jar`, triggers `tpch_star_schema` with an explicit `dataset_scale`, requires Airflow success and Spark `FINISHED` with `success=true`, then compares both tables' schemas, row counts, deterministic checksums, and `data_eng_lab.dataset*` properties across a same-generation rerun. Query a nonempty segment-revenue join through Trino before teardown. A between-table failure is recovered by rerunning the same immutable generation; never treat mixed provenance as successful output.
 
+`tpch_star_schema` is the only supported production write path and serializes runs with
+`max_active_runs=1`. The educational notebooks directly replace the same tables without production
+provenance and validation, so running them against shared gold tables can invalidate downstream #83.
+
 ### 3.1 Run all integration tests
 
 Execute the full infra test suite (includes L1 + L2 + scenario parity):

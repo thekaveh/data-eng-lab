@@ -14,9 +14,19 @@ The transform reads customer, orders, and lineitem. Carrying all eight objects t
 
 Both tables carry equal Iceberg `data_eng_lab.dataset*` properties for dataset, scale, plan, publication, and manifest. The application reads those properties back before reporting success. Downstream #83 must compare the two Iceberg `$properties` metadata tables and reject mixed-generation inputs.
 
+Issue #83 must run the concrete fail-closed SQL preflight in the application
+[README](../../spark-apps/tpch-star-schema/README.md#output-contract) before any BI SQL. The query
+reads both `"dim_customer$properties"` and `"fct_orders$properties"` and returns a violation for an
+absent or unequal value among exactly `data_eng_lab.dataset`, `data_eng_lab.dataset.scale`,
+`data_eng_lab.dataset.plan_id`, `data_eng_lab.dataset.publication_id`, and
+`data_eng_lab.dataset.manifest_sha256`.
+
 ## 3. Failure and Recovery
 
 Both frames are validated and materialized before the first write. Iceberg does not provide a cross-table atomic commit, so the dimension is replaced first and the fact second. A failure between writes fails Airflow; rerunning the same immutable generation deterministically converges both results and provenance.
+
+The production DAG sets `max_active_runs=1`; supported runs cannot interleave. Direct concurrent JAR
+invocations are unsupported because they bypass Airflow serialization.
 
 ## 4. Build and Run
 

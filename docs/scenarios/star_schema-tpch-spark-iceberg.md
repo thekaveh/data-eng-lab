@@ -57,16 +57,22 @@ Airflow resolves one complete immutable eight-object TPC-H publication. The Spar
 
 Both languages implement identical star schema logic: source ingestion, multi-table joins, dimension/fact table creation, and verification of schema and row counts.
 
+> **Production trust boundary:** The notebooks are not a production write path. They directly
+> replace the same two tables without the application's complete-publication, key, serialization,
+> or provenance checks and can invalidate downstream #83. Use the `tpch_star_schema` DAG/application
+> for production writes; use notebooks only in an isolated educational environment whose outputs may
+> be overwritten by a subsequent production run.
+
 ## 5. Orchestration
 
-Classification: **existing production DAG**. `spark-apps/tpch-star-schema/dag.py` runs `tpch_star_schema` daily through the Atlas REST-confirming Spark submission contract. Manual runs accept an explicit `dataset_scale`. The notebooks remain the educational parity surface; downstream Trino child #83 must compare both tables' Iceberg provenance properties before querying them.
+Classification: **existing production DAG**. `spark-apps/tpch-star-schema/dag.py` runs `tpch_star_schema` daily through the Atlas REST-confirming Spark submission contract. Manual runs accept an explicit `dataset_scale`; `max_active_runs=1` serializes the non-atomic two-table replacement. The notebooks remain the educational parity surface; downstream Trino child #83 must compare both tables' exact five Iceberg provenance properties before querying them.
 
 ## 6. Usage
 
 1. Ensure the `gold` Iceberg namespace exists: `scripts/register_iceberg.py`
 2. Populate the TPC-H dataset: `make datasets` to download Parquet files to S3
 3. Publish `s3a://jars/tpch-star-schema/0.1.0/app.jar` through Jenkins.
-4. Trigger `tpch_star_schema` with `{"dataset_scale":"tiny"}`, or open either notebook.
+4. Trigger `tpch_star_schema` with `{"dataset_scale":"tiny"}`. Open either notebook only for isolated education, never as an equivalent production write.
 5. Verify output:
      ```bash
    spark-sql -e "SELECT COUNT(*) FROM lakehouse.gold.dim_customer"

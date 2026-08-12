@@ -31,7 +31,7 @@ Both manual runs used `{"dataset_scale":"tiny"}`:
 | `manual__2026-08-12T19:06:03.898675+00:00` | success | `driver-20260812190708-0000` | `FINISHED`, `success=true` |
 | `manual__2026-08-12T19:08:17.304959+00:00` | success | `driver-20260812190835-0001` | `FINISHED`, `success=true` |
 
-An automatic run was created when the new daily DAG was temporarily unpaused during acceptance. Its first attempt preceded the verified publication and its retry overlapped the controlled manual execution, so it ended failed. This expected acceptance-harness artifact does not change the two controlled manual verdicts. The DAG was paused again before teardown.
+An automatic run was created when the initial daily DAG was temporarily unpaused during acceptance. Its first attempt preceded the verified publication and its retry overlapped a controlled manual execution, so it ended failed. Review correctly identified that the original DAG did not serialize the non-atomic two-table replacement. The production DAG now sets `max_active_runs=1`; concurrent direct JAR invocations remain unsupported. The follow-up executable live gate pauses before setup and triggers one controlled rerun only after the preceding run and table snapshot complete.
 
 ## Table and idempotence evidence
 
@@ -45,3 +45,34 @@ Both post-run snapshots were identical:
 Both tables had identical `data_eng_lab.dataset*` properties matching the selected scale, plan, publication, and manifest. The downstream Trino query returned all five market segments and nonzero revenue/line measures; for example, `BUILDING` returned revenue `537013021.20` and `14908` lines.
 
 The repository stop script completed without `--cold`; all volumes and the verified active TPC-H pointer were preserved.
+
+## Review-fix replay contract
+
+The tracked opt-in gate is now the source of truth instead of assertions over this report. From a
+clean checkout with Docker running, execute exactly:
+
+```bash
+RUN_INFRA=1 uv run pytest tests/scenarios/test_tpch_star_schema_live.py -vv -s
+```
+
+The gate performs these replayable operations internally; credentials are loaded from `infra/.env`
+and are never printed or written into this report:
+
+```bash
+./scripts/start-all.sh
+mvn -q -B -f spark-apps/tpch-star-schema/pom.xml package
+uv run python scripts/resolve_dataset.py tpch --scale tiny
+# authenticated Airflow /api/v2 requests use admin:<redacted>
+# exact reviewed JAR publication uses MinIO access key/secret: <redacted>
+# Spark terminal status is read in-network from spark-master:6066
+# Trino reads both Iceberg $properties tables and measures
+./scripts/stop-all.sh
+```
+
+The executable assertions cover exact local/published JAR SHA-256 equality; a resolver-verified
+positive-size eight-object tiny publication; two explicit Airflow runs; distinct Spark drivers with
+`FINISHED` and `success=true`; exact output schemas; nonempty rows, revenue, line count, and customer
+join; equality of exactly the five `data_eng_lab.dataset*` provenance properties; deterministic
+row/schema/checksum/provenance equality after rerun; serialized run timestamps; final DAG pause; and
+volume-preserving teardown. A later subsection records the identifiers from the latest successful
+replay without replacing those runtime assertions.

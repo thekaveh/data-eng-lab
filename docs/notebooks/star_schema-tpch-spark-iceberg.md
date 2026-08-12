@@ -4,6 +4,11 @@ This paired notebook remains the educational parity surface for the production `
 Documents the scenario's paired Jupyter (`notebook.ipynb`) and Zeppelin (`notebook.zpln`) implementations.
 Both notebooks implement identical logic in PySpark and Scala.
 
+> **Production trust boundary:** This notebook pair is not a production write path. Its direct
+> replacements omit the production application's complete-publication, key, serialization, and
+> provenance checks and can invalidate downstream #83. Run production writes only through
+> `tpch_star_schema`; use these notebooks in an isolated educational environment.
+
 ## 1. Section map
 
 | Subsection | Scala (Zeppelin) | PySpark (Jupyter) |
