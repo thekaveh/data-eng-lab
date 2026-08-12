@@ -1,12 +1,125 @@
 """Thin boto3 helper for landing objects into MinIO, configured from infra/.env."""
+
 from __future__ import annotations
 
+import json
+import time
+from collections.abc import Mapping
+from dataclasses import dataclass, replace
+from datetime import UTC, datetime, timedelta
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 
 import boto3
 from botocore.client import Config
+from botocore.exceptions import BotoCoreError, ClientError
 
+from datasets.verification import ExpectedObject, LockMismatch, VerificationContext, verify_stream
 from lakehouse.atlas_endpoints import resolve_http_endpoint
+
+_MAX_CLOCK_SKEW = timedelta(seconds=300)
+_PROPOSAL_WINDOW_SECONDS = 5.0
+_LEASE_SECONDS = 60
+_LEASE_BUCKET = "landing"
+_LEASE_PREFIX = "_leases"
+
+
+@dataclass(frozen=True)
+class ObjectSnapshot:
+    etag: str
+    metadata: Mapping[str, str]
+    server_date: datetime
+    size_bytes: int
+    sha256: str
+
+
+@dataclass(frozen=True)
+class ControlSnapshot:
+    body: bytes
+    etag: str
+    server_date: datetime
+
+
+@dataclass(frozen=True)
+class Lease:
+    dataset: str
+    publication_id: str
+    owner_nonce: str
+    state: str
+    created_at: datetime
+    expires_at: datetime
+    etag: str
+    bucket: str
+    key: str
+
+
+class ConditionalConflict(RuntimeError):
+    """A conditional write lost to a different object value."""
+
+
+class AmbiguousWrite(RuntimeError):
+    """A write cannot be proven successful from an exact subsequent GET."""
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _monotonic() -> float:
+    return time.monotonic()
+
+
+def _response_server_date(response: Mapping[str, object]) -> datetime:
+    response_metadata = response.get("ResponseMetadata")
+    headers = response_metadata.get("HTTPHeaders", {}) if isinstance(response_metadata, Mapping) else {}
+    raw_date = headers.get("date") if isinstance(headers, Mapping) else None
+    if not isinstance(raw_date, str):
+        raise AmbiguousWrite("S3 response is missing its Date header")
+    try:
+        server_date = parsedate_to_datetime(raw_date)
+    except (TypeError, ValueError) as error:
+        raise AmbiguousWrite("S3 response has an invalid Date header") from error
+    if server_date.tzinfo is None:
+        server_date = server_date.replace(tzinfo=UTC)
+    server_date = server_date.astimezone(UTC)
+    if abs(server_date - _utc_now()) > _MAX_CLOCK_SKEW:
+        raise AmbiguousWrite("S3 response Date has implausible clock skew")
+    return server_date
+
+
+def _error_status(error: ClientError) -> int | None:
+    metadata = error.response.get("ResponseMetadata", {})
+    status = metadata.get("HTTPStatusCode") if isinstance(metadata, Mapping) else None
+    return status if isinstance(status, int) else None
+
+
+def _error_code(error: ClientError) -> str:
+    details = error.response.get("Error", {})
+    code = details.get("Code") if isinstance(details, Mapping) else None
+    return code if isinstance(code, str) else ""
+
+
+def _is_not_found(error: ClientError) -> bool:
+    return _error_status(error) == 404 or _error_code(error) in {
+        "404",
+        "NoSuchKey",
+        "NotFound",
+    }
+
+
+def _is_conditional_error(error: ClientError) -> bool:
+    return _error_status(error) in {409, 412} or _error_code(error) in {
+        "409",
+        "412",
+        "ConditionalRequestConflict",
+        "PreconditionFailed",
+    }
+
+
+def _close_body(body: object) -> None:
+    close = getattr(body, "close", None)
+    if callable(close):
+        close()
 
 
 def _envval(key: str, env_file: Path) -> str:
@@ -27,8 +140,7 @@ def s3_client_from_env(infra_dir: Path):
     port = _envval("MINIO_PORT", env_file)
     if not (user and password and port):
         raise RuntimeError(
-            f"MinIO creds/port missing in {env_file} — start the stack (make up) first "
-            "so Atlas generates them."
+            f"MinIO creds/port missing in {env_file} — start the stack (make up) first so Atlas generates them."
         )
     minio_endpoint = resolve_http_endpoint(
         "MINIO_HOST_ENDPOINT",
@@ -61,3 +173,411 @@ def object_exists(client, bucket: str, key: str) -> bool:
 
 def upload_file(client, path: Path, bucket: str, key: str) -> None:
     client.upload_file(str(path), bucket, key)
+
+
+def stream_verify_object(
+    client,
+    bucket: str,
+    key: str,
+    expected: ExpectedObject,
+    context: VerificationContext,
+) -> ObjectSnapshot:
+    """GET an object and verify its bytes; HEAD data is never trusted."""
+    response = client.get_object(Bucket=bucket, Key=key)
+    server_date = _response_server_date(response)
+    body = response["Body"]
+    try:
+        size_bytes, sha256 = verify_stream(body, expected.size_bytes, expected.sha256, context)
+    finally:
+        _close_body(body)
+    return ObjectSnapshot(
+        etag=response["ETag"],
+        metadata=dict(response.get("Metadata", {})),
+        server_date=server_date,
+        size_bytes=size_bytes,
+        sha256=sha256,
+    )
+
+
+def _verified_immutable_snapshot(
+    client,
+    bucket: str,
+    key: str,
+    expected: ExpectedObject,
+    metadata: Mapping[str, str],
+) -> ObjectSnapshot:
+    context = VerificationContext(
+        dataset=bucket,
+        scale="object-store",
+        stage="remote object",
+        object_name=expected.object_name,
+    )
+    snapshot = stream_verify_object(client, bucket, key, expected, context)
+    expected_metadata = dict(metadata)
+    if dict(snapshot.metadata) != expected_metadata:
+        raise LockMismatch(context, "metadata", expected_metadata, dict(snapshot.metadata))
+    return snapshot
+
+
+def _reconcile_immutable_write(
+    client,
+    bucket: str,
+    key: str,
+    expected: ExpectedObject,
+    metadata: Mapping[str, str],
+) -> ObjectSnapshot:
+    try:
+        return _verified_immutable_snapshot(client, bucket, key, expected, metadata)
+    except ClientError as error:
+        if _is_not_found(error):
+            raise AmbiguousWrite("immutable object write was not observed") from error
+        raise
+    except LockMismatch as error:
+        raise ConditionalConflict("immutable object contains competing bytes or metadata") from error
+
+
+def put_immutable_object(
+    client,
+    bucket: str,
+    key: str,
+    path: Path,
+    expected: ExpectedObject,
+    metadata: Mapping[str, str],
+) -> ObjectSnapshot:
+    """Create an immutable object conditionally, then verify a full remote GET."""
+    with path.open("rb") as body:
+        try:
+            client.put_object(
+                Bucket=bucket,
+                Key=key,
+                Body=body,
+                Metadata=dict(metadata),
+                IfNoneMatch="*",
+            )
+        except ClientError as error:
+            if not _is_conditional_error(error):
+                raise
+            return _reconcile_immutable_write(client, bucket, key, expected, metadata)
+        except BotoCoreError:
+            return _reconcile_immutable_write(client, bucket, key, expected, metadata)
+    return _verified_immutable_snapshot(client, bucket, key, expected, metadata)
+
+
+def read_control_object(client, bucket: str, key: str) -> ControlSnapshot:
+    response = client.get_object(Bucket=bucket, Key=key)
+    server_date = _response_server_date(response)
+    stream = response["Body"]
+    try:
+        body = stream.read()
+    finally:
+        _close_body(stream)
+    return ControlSnapshot(body=body, etag=response["ETag"], server_date=server_date)
+
+
+def _reconcile_control_write(client, bucket: str, key: str, intended_body: bytes) -> ControlSnapshot:
+    try:
+        snapshot = read_control_object(client, bucket, key)
+    except ClientError as error:
+        if _is_not_found(error):
+            raise AmbiguousWrite("control object write was not observed") from error
+        raise
+    if snapshot.body != intended_body:
+        raise ConditionalConflict("control object contains competing bytes")
+    return snapshot
+
+
+def _put_control_request(
+    client,
+    bucket: str,
+    key: str,
+    body: bytes,
+    *,
+    if_match: str | None = None,
+    if_none_match: bool = False,
+) -> tuple[ControlSnapshot, Mapping[str, object] | None]:
+    if if_match is not None and if_none_match:
+        raise ValueError("IfMatch and IfNoneMatch are mutually exclusive")
+    request: dict[str, object] = {"Bucket": bucket, "Key": key, "Body": body}
+    if if_match is not None:
+        request["IfMatch"] = if_match
+    if if_none_match:
+        request["IfNoneMatch"] = "*"
+    try:
+        response = client.put_object(**request)
+    except ClientError as error:
+        if not _is_conditional_error(error):
+            raise
+        return _reconcile_control_write(client, bucket, key, body), None
+    except BotoCoreError:
+        return _reconcile_control_write(client, bucket, key, body), None
+    return _reconcile_control_write(client, bucket, key, body), response
+
+
+def put_control_object(
+    client,
+    bucket: str,
+    key: str,
+    body: bytes,
+    *,
+    if_match: str | None = None,
+    if_none_match: bool = False,
+) -> ControlSnapshot:
+    """Conditionally write and exactly re-read a small control object."""
+    snapshot, _response = _put_control_request(
+        client,
+        bucket,
+        key,
+        body,
+        if_match=if_match,
+        if_none_match=if_none_match,
+    )
+    return snapshot
+
+
+def _lease_key(dataset: str) -> str:
+    return f"{_LEASE_PREFIX}/{dataset}.json"
+
+
+def _format_instant(value: datetime) -> str:
+    return value.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def _parse_instant(value: object) -> datetime:
+    if not isinstance(value, str):
+        raise ValueError("lease instant must be a string")
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None:
+        raise ValueError("lease instant must include a timezone")
+    return parsed.astimezone(UTC)
+
+
+def _lease_body(lease: Lease) -> bytes:
+    document = {
+        "created_at": _format_instant(lease.created_at),
+        "dataset": lease.dataset,
+        "expires_at": _format_instant(lease.expires_at),
+        "owner_nonce": lease.owner_nonce,
+        "publication_id": lease.publication_id,
+        "state": lease.state,
+    }
+    return json.dumps(document, sort_keys=True, separators=(",", ":")).encode("utf-8")
+
+
+def _lease_from_snapshot(snapshot: ControlSnapshot, *, dataset: str, bucket: str, key: str) -> Lease:
+    try:
+        document = json.loads(snapshot.body)
+        expected_fields = {
+            "created_at",
+            "dataset",
+            "expires_at",
+            "owner_nonce",
+            "publication_id",
+            "state",
+        }
+        if not isinstance(document, dict) or set(document) != expected_fields:
+            raise ValueError("lease fields are not exact")
+        if document["dataset"] != dataset:
+            raise ValueError("lease dataset does not match its key")
+        if document["state"] not in {"active", "released"}:
+            raise ValueError("lease state is invalid")
+        if not isinstance(document["publication_id"], str) or not isinstance(document["owner_nonce"], str):
+            raise ValueError("lease identity is invalid")
+        created_at = _parse_instant(document["created_at"])
+        expires_at = _parse_instant(document["expires_at"])
+    except (KeyError, TypeError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
+        raise AmbiguousWrite("stored lease is malformed") from error
+    return Lease(
+        dataset=dataset,
+        publication_id=document["publication_id"],
+        owner_nonce=document["owner_nonce"],
+        state=document["state"],
+        created_at=created_at,
+        expires_at=expires_at,
+        etag=snapshot.etag,
+        bucket=bucket,
+        key=key,
+    )
+
+
+def _read_lease_observation(client, bucket: str, key: str) -> tuple[ControlSnapshot | None, datetime, float]:
+    try:
+        response = client.get_object(Bucket=bucket, Key=key)
+        observed_at = _monotonic()
+        server_date = _response_server_date(response)
+        stream = response["Body"]
+        try:
+            body = stream.read()
+        finally:
+            _close_body(stream)
+        snapshot = ControlSnapshot(
+            body=body,
+            etag=response["ETag"],
+            server_date=server_date,
+        )
+    except ClientError as error:
+        observed_at = _monotonic()
+        if not _is_not_found(error):
+            raise
+        server_date = _response_server_date(error.response)
+        snapshot = None
+    return snapshot, server_date, observed_at
+
+
+def _write_lease(
+    client,
+    proposed: Lease,
+    *,
+    if_match: str | None = None,
+    if_none_match: bool = False,
+) -> Lease:
+    body = _lease_body(proposed)
+    snapshot, write_response = _put_control_request(
+        client,
+        proposed.bucket,
+        proposed.key,
+        body,
+        if_match=if_match,
+        if_none_match=if_none_match,
+    )
+    if write_response is not None:
+        try:
+            write_date = _response_server_date(write_response)
+        except AmbiguousWrite as error:
+            raise AmbiguousWrite("lease write response Date cannot prove the proposal window") from error
+        if not proposed.created_at <= write_date <= proposed.expires_at:
+            raise AmbiguousWrite("lease write Date falls outside its proposal")
+    return _lease_from_snapshot(
+        snapshot,
+        dataset=proposed.dataset,
+        bucket=proposed.bucket,
+        key=proposed.key,
+    )
+
+
+def _new_lease(
+    dataset: str,
+    publication_id: str,
+    owner_nonce: str,
+    server_date: datetime,
+    *,
+    bucket: str,
+    key: str,
+    lease_seconds: int,
+) -> Lease:
+    return Lease(
+        dataset=dataset,
+        publication_id=publication_id,
+        owner_nonce=owner_nonce,
+        state="active",
+        created_at=server_date,
+        expires_at=server_date + timedelta(seconds=lease_seconds),
+        etag="",
+        bucket=bucket,
+        key=key,
+    )
+
+
+def acquire_lease(
+    client,
+    dataset: str,
+    publication_id: str,
+    owner_nonce: str,
+    *,
+    bucket: str = _LEASE_BUCKET,
+    lease_seconds: int = _LEASE_SECONDS,
+) -> Lease:
+    """Acquire a missing, released, or expired dataset lease with one CAS."""
+    key = _lease_key(dataset)
+    while True:
+        snapshot, server_date, observed_at = _read_lease_observation(client, bucket, key)
+        if snapshot is None:
+            if_match = None
+            if_none_match = True
+        else:
+            current = _lease_from_snapshot(snapshot, dataset=dataset, bucket=bucket, key=key)
+            if current.state == "active" and server_date < current.expires_at:
+                raise ConditionalConflict("dataset lease is already active")
+            if_match = snapshot.etag
+            if_none_match = False
+
+        proposed = _new_lease(
+            dataset,
+            publication_id,
+            owner_nonce,
+            server_date,
+            bucket=bucket,
+            key=key,
+            lease_seconds=lease_seconds,
+        )
+        if _monotonic() - observed_at > _PROPOSAL_WINDOW_SECONDS:
+            continue
+        return _write_lease(
+            client,
+            proposed,
+            if_match=if_match,
+            if_none_match=if_none_match,
+        )
+
+
+def _same_lease_owner(left: Lease, right: Lease) -> bool:
+    return (
+        left.dataset == right.dataset
+        and left.publication_id == right.publication_id
+        and left.owner_nonce == right.owner_nonce
+    )
+
+
+def renew_lease(client, lease: Lease, *, lease_seconds: int = _LEASE_SECONDS) -> Lease:
+    """Renew only the exact active lease version held by this owner."""
+    while True:
+        snapshot, server_date, observed_at = _read_lease_observation(client, lease.bucket, lease.key)
+        if snapshot is None:
+            raise ConditionalConflict("dataset lease no longer exists")
+        current = _lease_from_snapshot(
+            snapshot,
+            dataset=lease.dataset,
+            bucket=lease.bucket,
+            key=lease.key,
+        )
+        if (
+            snapshot.etag != lease.etag
+            or not _same_lease_owner(current, lease)
+            or current.state != "active"
+            or server_date >= current.expires_at
+        ):
+            raise ConditionalConflict("dataset lease has been lost")
+        proposed = _new_lease(
+            lease.dataset,
+            lease.publication_id,
+            lease.owner_nonce,
+            server_date,
+            bucket=lease.bucket,
+            key=lease.key,
+            lease_seconds=lease_seconds,
+        )
+        if _monotonic() - observed_at > _PROPOSAL_WINDOW_SECONDS:
+            continue
+        return _write_lease(client, proposed, if_match=lease.etag)
+
+
+def release_lease(client, lease: Lease) -> Lease:
+    """Release by conditional PUT so an old owner cannot delete a successor."""
+    snapshot, server_date, _observed_at = _read_lease_observation(client, lease.bucket, lease.key)
+    if snapshot is None:
+        raise ConditionalConflict("dataset lease no longer exists")
+    current = _lease_from_snapshot(
+        snapshot,
+        dataset=lease.dataset,
+        bucket=lease.bucket,
+        key=lease.key,
+    )
+    if snapshot.etag != lease.etag or not _same_lease_owner(current, lease) or current.state != "active":
+        raise ConditionalConflict("dataset lease has been lost")
+    proposed = replace(
+        current,
+        state="released",
+        created_at=server_date,
+        expires_at=server_date,
+        etag="",
+    )
+    return _write_lease(client, proposed, if_match=lease.etag)
