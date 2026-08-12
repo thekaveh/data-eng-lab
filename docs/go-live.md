@@ -146,6 +146,8 @@ generation before returning one immutable URI set to the run.
 
 End-to-end validation of the four key user-facing paths: Zeppelin notebooks, Jupyter notebooks, Jenkins CI, and Airflow orchestration.
 
+The production TPC-H acceptance sequence publishes `tpch-star-schema/0.1.0/app.jar`, triggers `tpch_star_schema` with an explicit `dataset_scale`, requires Airflow success and Spark `FINISHED` with `success=true`, then compares both tables' schemas, row counts, deterministic checksums, and `data_eng_lab.dataset*` properties across a same-generation rerun. Query a nonempty segment-revenue join through Trino before teardown. A between-table failure is recovered by rerunning the same immutable generation; never treat mixed provenance as successful output.
+
 ### 3.1 Run all integration tests
 
 Execute the full infra test suite (includes L1 + L2 + scenario parity):
@@ -613,8 +615,8 @@ After a successful go-live run:
 
 1. **Scenario execution:** Use the [execution-mode matrix](scenarios/execution-modes.md)
    delivered by [issue #82](https://github.com/thekaveh/data-eng-lab/issues/82)
-   as the authority for all 19 validated paired scenarios. Only `nyc_taxi_etl`
-   and `nyc_taxi_medallion` are production DAGs today; approved children must
+   as the authority for all 19 validated paired scenarios. `nyc_taxi_etl`,
+   `nyc_taxi_medallion`, and `tpch_star_schema` are production DAGs today; approved children must
    pass their own implementation and live-acceptance gates before this runbook
    advertises another Airflow entrypoint.
 2. **Automation:** Integrate this runbook into CI/CD so every Atlas release is validated end-to-end.

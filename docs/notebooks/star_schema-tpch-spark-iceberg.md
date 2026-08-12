@@ -1,4 +1,6 @@
 # 6.10. star_schema-tpch-spark-iceberg
+
+This paired notebook remains the educational parity surface for the production `tpch_star_schema` DAG. The production application preserves the dimension projection and fact aggregation below while adding complete-publication validation, source-key checks, matching Iceberg provenance properties, and terminal Airflow/Spark confirmation.
 Documents the scenario's paired Jupyter (`notebook.ipynb`) and Zeppelin (`notebook.zpln`) implementations.
 Both notebooks implement identical logic in PySpark and Scala.
 
