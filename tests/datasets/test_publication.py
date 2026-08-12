@@ -729,11 +729,11 @@ class FakeS3:
         *,
         Bucket: str,
         Prefix: str,
-        Delimiter: str,
+        Delimiter: str | None = None,
         ContinuationToken: str | None = None,
     ):
         del Bucket, ContinuationToken
-        assert Delimiter == "/"
+        assert Delimiter in {None, "/"}
         return {
             "Contents": [{"Key": key} for key in sorted(self.objects) if key.startswith(Prefix)],
             "IsTruncated": False,
@@ -1456,6 +1456,65 @@ def test_rollback_result_uses_pointer_state_observed_by_transaction(monkeypatch)
     assert result.previous_manifest_sha256 == manifest_sha256(current_manifest)
 
 
+def test_verified_result_walks_predecessor_history_in_order(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    oldest = _manifest(plan, publication_id=PREVIOUS_PUBLICATION_ID)
+    middle = replace(
+        _manifest(plan, publication_id="123e4567e89b42d3a456426614174002"),
+        previous_manifest_key=immutable_manifest_key("sample", manifest_sha256(oldest)),
+        previous_manifest_sha256=manifest_sha256(oldest),
+    )
+    current = replace(
+        _manifest(plan),
+        previous_manifest_key=immutable_manifest_key("sample", manifest_sha256(middle)),
+        previous_manifest_sha256=manifest_sha256(middle),
+    )
+    store, _ = _published_store(plan, current)
+    for manifest in (middle, oldest):
+        store.seed(
+            immutable_manifest_key("sample", manifest_sha256(manifest)),
+            manifest.to_bytes(),
+            etag='"history"',
+        )
+        store.seed(manifest.objects[0].key, b"hello\n", etag='"history-object"')
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.DEFAULT,
+        client=store,
+        fetcher=lambda *_: pytest.fail("source"),
+    )
+
+    assert result.retained_manifest_keys == (
+        immutable_manifest_key("sample", manifest_sha256(middle)),
+        immutable_manifest_key("sample", manifest_sha256(oldest)),
+    )
+
+
+def test_verified_result_fails_closed_on_history_cycle(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    cyclic = _manifest(plan)
+    store, _ = _published_store(plan, cyclic)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+    monkeypatch.setattr(
+        "datasets.publication._read_manifest",
+        lambda client, selected, digest, bucket: replace(
+            cyclic,
+            previous_manifest_key=immutable_manifest_key("sample", digest),
+            previous_manifest_sha256=digest,
+        ),
+    )
+
+    with pytest.raises(LockMismatch, match="history"):
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: pytest.fail("source"),
+        )
+
+
 def test_common_prefix_listing_is_bounded_and_validated(monkeypatch) -> None:
     plan = resolve_scale(_dataset(), "small")
     from datasets import publication as publication_module
@@ -1487,7 +1546,55 @@ def test_owned_staging_foreign_replacement_is_not_deleted(tmp_path) -> None:
             (staging / "foreign.txt").write_text("foreign")
     survivors = list(parent.rglob("foreign.txt"))
     assert len(survivors) == 1
+    assert survivors[0].parent == staging
     assert survivors[0].read_text() == "foreign"
+
+
+def test_owned_staging_supports_sticky_world_writable_platform_temp(tmp_path, monkeypatch) -> None:
+    from datasets import publication as publication_module
+
+    platform_temp = tmp_path / "platform-temp"
+    platform_temp.mkdir(mode=0o1777)
+    platform_temp.chmod(0o1777)
+    monkeypatch.setattr(publication_module.tempfile, "gettempdir", lambda: str(platform_temp))
+
+    with publication_module._owned_staging() as staging:
+        assert staging.parent.parent == platform_temp
+        assert staging.parent.stat().st_mode & 0o777 == 0o700
+        (staging / "owned.txt").write_text("owned")
+
+    assert list(platform_temp.rglob("owned.txt")) == []
+
+
+def test_stop_failure_does_not_mask_primary_and_release_is_attempted(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    released: list[Lease] = []
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        return _publication_lease(store, plan, publication_id, owner_nonce)
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda client, lease: released.append(lease))
+    monkeypatch.setattr(
+        "datasets.publication._LeaseKeepalive.stop",
+        lambda self: (_ for _ in ()).throw(AmbiguousWrite("blocked renew")),
+    )
+
+    primary = RuntimeError("source failed")
+    with pytest.raises(RuntimeError) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (_ for _ in ()).throw(primary),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert caught.value is primary
+    assert "blocked renew" in " ".join(getattr(primary, "__notes__", ()))
+    assert released
 
 
 def test_pointer_commit_with_unavailable_reconciliation_is_explicitly_ambiguous(
@@ -1535,7 +1642,92 @@ def test_pointer_commit_with_unavailable_reconciliation_is_explicitly_ambiguous(
     assert caught.value.result.status == "pointer-outcome-ambiguous"
     assert caught.value.result.pointer_outcome == "ambiguous"
     assert caught.value.result.proven_orphan_keys == ()
-    assert caught.value.result.manifest_outcome == "written-unreferenced"
+    assert caught.value.result.manifest_outcome == "reference-ambiguous"
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(9)])
+def test_pointer_control_flow_after_possible_commit_keeps_category_and_ambiguity(
+    tmp_path,
+    monkeypatch,
+    interrupt,
+) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        return _publication_lease(store, plan, publication_id, owner_nonce)
+
+    original = store.put_object
+
+    def commit_then_interrupt(**request):
+        response = original(**request)
+        if request["Key"] == active_pointer_key("sample"):
+            raise interrupt
+        return response
+
+    monkeypatch.setattr(store, "put_object", commit_then_interrupt)
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    with pytest.raises(type(interrupt)) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (VerifiedFile(source, expected),),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert caught.value is interrupt
+    notes = " ".join(getattr(interrupt, "__notes__", ()))
+    assert '"status":"pointer-outcome-ambiguous"' in notes
+    assert '"pointer_outcome":"ambiguous"' in notes
+    assert '"manifest_outcome":"reference-ambiguous"' in notes
+
+
+def test_pointer_conflict_reports_proven_unreferenced_candidate(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    store.conflict = True
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        store.conflict = False
+        lease = _publication_lease(store, plan, publication_id, owner_nonce)
+        return lease
+
+    def conflict_pointer(client, bucket, key, body, state):
+        del client, bucket, key, body, state
+        raise ConditionalConflict("concurrent publisher owns pointer")
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication._put_pointer_exact", conflict_pointer)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    with pytest.raises(PublicationFailure) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (VerifiedFile(source, expected),),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    result = caught.value.result
+    assert result.pointer_outcome == "conflict"
+    assert result.status == "concurrent-publisher"
+    assert result.manifest_outcome == "written-unreferenced"
+    assert result.proven_orphan_keys == result.attempted_object_keys
+    assert "concurrent publisher" in str(caught.value.__cause__)
 
 
 def test_renewal_loss_after_last_work_checkpoint_prevents_pointer_cas(tmp_path, monkeypatch) -> None:

@@ -7,6 +7,7 @@ import json
 import re
 import secrets
 import shutil
+import stat
 import tempfile
 import threading
 import uuid
@@ -61,7 +62,11 @@ _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _UUID4_HEX_RE = re.compile(r"^[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}$")
 _MAX_LEGACY_LIST_PAGES = 10_000
 _MAX_LEGACY_LIST_KEYS = 100_000
-_KEEPALIVE_STOP_SECONDS = 65.0
+_MAX_HISTORY_DEPTH = 1_000
+_MAX_GENERATION_PREFIXES = 100_000
+_RENEW_TRANSPORT_DEADLINE_SECONDS = 60.0
+_KEEPALIVE_STOP_GRACE_SECONDS = 5.0
+_KEEPALIVE_STOP_SECONDS = _RENEW_TRANSPORT_DEADLINE_SECONDS + _KEEPALIVE_STOP_GRACE_SECONDS
 _DEFAULT_LOCK_POLICY: Mapping[str, object] = MappingProxyType(
     {
         "algorithm": "sha256",
@@ -747,6 +752,7 @@ class PublishResult:
     manifest_outcome: str = "not-attempted"
     pointer_outcome: str = "not-attempted"
     retained_manifest_keys: tuple[str, ...] = ()
+    unreferenced_manifest_keys: tuple[str, ...] = ()
     candidate_generation_prefixes: tuple[str, ...] = ()
 
     def to_document(self) -> dict[str, object]:
@@ -771,6 +777,7 @@ class PublishResult:
             "retained_manifest_keys": list(self.retained_manifest_keys),
             "scale": self.scale,
             "status": self.status,
+            "unreferenced_manifest_keys": list(self.unreferenced_manifest_keys),
         }
 
 
@@ -956,6 +963,160 @@ def _with_pointer_history(result: PublishResult, state: _PointerState) -> Publis
     )
 
 
+def _manifest_history(
+    client,
+    plan: ScalePlan,
+    current: ImmutableManifest,
+    *,
+    bucket: str,
+) -> tuple[str, ...]:
+    history: list[str] = []
+    seen: set[str] = set()
+    key = current.previous_manifest_key
+    digest = current.previous_manifest_sha256
+    for _depth in range(_MAX_HISTORY_DEPTH):
+        if key is None and digest is None:
+            return tuple(history)
+        if key is None or digest is None or key != immutable_manifest_key(plan.dataset.name, digest):
+            raise _mismatch(plan, "history", "coupled manifest key/digest", "invalid", stage="history")
+        if digest in seen:
+            raise _mismatch(plan, "history", "acyclic manifest chain", digest, stage="history")
+        seen.add(digest)
+        manifest = _read_manifest(client, plan, digest, bucket)
+        _validate_manifest_for_plan(manifest, plan)
+        history.append(key)
+        key = manifest.previous_manifest_key
+        digest = manifest.previous_manifest_sha256
+    raise _mismatch(plan, "history", f"at most {_MAX_HISTORY_DEPTH} manifests", "exceeded", stage="history")
+
+
+def _result_with_verified_history(
+    client,
+    plan: ScalePlan,
+    state: _PointerState,
+    resolved: ResolvedDataset,
+    status: str,
+    *,
+    bucket: str,
+) -> PublishResult:
+    current = _read_manifest(client, plan, resolved.manifest_sha256, bucket)
+    history = _manifest_history(client, plan, current, bucket=bucket)
+    inactive = _inactive_generation_prefixes(client, plan, current.physical_prefix, bucket=bucket)
+    current_key = immutable_manifest_key(plan.dataset.name, resolved.manifest_sha256)
+    all_manifests = _bounded_object_keys(
+        client,
+        bucket,
+        f"_data-eng-locks/manifests/{plan.dataset.name}/",
+    )
+    referenced = {current_key, *history}
+    return replace(
+        _result_from_resolved(resolved, status),
+        retained_manifest_keys=history,
+        previous_manifest_key=current.previous_manifest_key,
+        previous_manifest_sha256=current.previous_manifest_sha256,
+        candidate_generation_prefixes=inactive,
+        unreferenced_manifest_keys=tuple(key for key in all_manifests if key not in referenced),
+    )
+
+
+def _inactive_generation_prefixes(
+    client,
+    plan: ScalePlan,
+    active_prefix: str,
+    *,
+    bucket: str,
+) -> tuple[str, ...]:
+    base = f"{plan.dataset.landing_prefix}/_generations/"
+    plan_prefixes = _bounded_common_prefixes(client, bucket, base)
+    publication_prefixes: list[str] = []
+    for selected_plan_prefix in plan_prefixes:
+        publication_prefixes.extend(_bounded_common_prefixes(client, bucket, selected_plan_prefix))
+        if len(publication_prefixes) > _MAX_GENERATION_PREFIXES:
+            raise AmbiguousWrite("generation inventory exceeds the bounded prefix count")
+    return tuple(
+        sorted(prefix.rstrip("/") for prefix in set(publication_prefixes) if prefix.rstrip("/") != active_prefix)
+    )
+
+
+def _bounded_common_prefixes(client, bucket: str, base: str) -> tuple[str, ...]:
+    token: str | None = None
+    seen_tokens: set[str] = set()
+    prefixes: list[str] = []
+    for _page in range(_MAX_LEGACY_LIST_PAGES):
+        request: dict[str, object] = {"Bucket": bucket, "Prefix": base, "Delimiter": "/"}
+        if token is not None:
+            request["ContinuationToken"] = token
+        response = client.list_objects_v2(**request)
+        if not isinstance(response, Mapping):
+            raise AmbiguousWrite("generation inventory returned a malformed response")
+        contents = response.get("Contents", ())
+        common = response.get("CommonPrefixes", ())
+        if not isinstance(contents, (list, tuple)) or not isinstance(common, (list, tuple)):
+            raise AmbiguousWrite("generation inventory returned malformed collections")
+        for entry in common:
+            if not isinstance(entry, Mapping) or not isinstance(entry.get("Prefix"), str):
+                raise AmbiguousWrite("generation inventory returned a malformed prefix")
+            prefix = cast(str, entry["Prefix"])
+            if not prefix.startswith(base):
+                raise AmbiguousWrite("generation inventory returned an out-of-scope prefix")
+            prefixes.append(prefix)
+            if len(prefixes) > _MAX_GENERATION_PREFIXES:
+                raise AmbiguousWrite("generation inventory exceeds the bounded prefix count")
+        truncated = response.get("IsTruncated", False)
+        if not isinstance(truncated, bool):
+            raise AmbiguousWrite("generation inventory truncation flag is invalid")
+        if not truncated:
+            break
+        next_token = response.get("NextContinuationToken")
+        if not isinstance(next_token, str) or not next_token or next_token in seen_tokens:
+            raise AmbiguousWrite("generation inventory pagination token is invalid")
+        seen_tokens.add(next_token)
+        token = next_token
+    else:
+        raise AmbiguousWrite("generation inventory exceeds the bounded page count")
+    return tuple(prefixes)
+
+
+def _bounded_object_keys(client, bucket: str, base: str) -> tuple[str, ...]:
+    token: str | None = None
+    seen_tokens: set[str] = set()
+    keys: list[str] = []
+    for _page in range(_MAX_LEGACY_LIST_PAGES):
+        request: dict[str, object] = {"Bucket": bucket, "Prefix": base}
+        if token is not None:
+            request["ContinuationToken"] = token
+        response = client.list_objects_v2(**request)
+        if not isinstance(response, Mapping):
+            raise AmbiguousWrite("manifest inventory returned a malformed response")
+        contents = response.get("Contents", ())
+        if not isinstance(contents, (list, tuple)):
+            raise AmbiguousWrite("manifest inventory returned malformed contents")
+        for entry in contents:
+            if not isinstance(entry, Mapping) or not isinstance(entry.get("Key"), str):
+                raise AmbiguousWrite("manifest inventory returned a malformed key")
+            key = cast(str, entry["Key"])
+            if not key.startswith(base):
+                raise AmbiguousWrite("manifest inventory returned an out-of-scope key")
+            keys.append(key)
+            if len(keys) > _MAX_LEGACY_LIST_KEYS:
+                raise AmbiguousWrite("manifest inventory exceeds the bounded key count")
+        truncated = response.get("IsTruncated", False)
+        if not isinstance(truncated, bool):
+            raise AmbiguousWrite("manifest inventory truncation flag is invalid")
+        if not truncated:
+            break
+        next_token = response.get("NextContinuationToken")
+        if not isinstance(next_token, str) or not next_token or next_token in seen_tokens:
+            raise AmbiguousWrite("manifest inventory pagination token is invalid")
+        seen_tokens.add(next_token)
+        token = next_token
+    else:
+        raise AmbiguousWrite("manifest inventory exceeds the bounded page count")
+    if len(set(keys)) != len(keys):
+        raise AmbiguousWrite("manifest inventory returned duplicate keys")
+    return tuple(sorted(keys))
+
+
 def _expected_output_files(plan: ScalePlan) -> tuple[ExpectedObject, ...]:
     return tuple(
         ExpectedObject(item.object_name, item.size_bytes, item.sha256, item.schema_id)
@@ -990,9 +1151,17 @@ def _verify_candidate_files(plan: ScalePlan, files: tuple[VerifiedFile, ...]) ->
 
 @contextmanager
 def _owned_staging(parent: Path | None = None) -> Iterator[Path]:
-    trusted_parent = Path(parent) if parent is not None else Path(tempfile.gettempdir())
-    acquisition._require_trusted_parent(trusted_parent)
-    root = Path(tempfile.mkdtemp(prefix="dataset-publication-", dir=trusted_parent))
+    if parent is None:
+        platform_parent = Path(tempfile.gettempdir())
+        status = platform_parent.lstat()
+        if not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode):
+            raise ValueError("platform temporary root must be a directory")
+        private_parent = Path(tempfile.mkdtemp(prefix="data-eng-lab-publication-", dir=platform_parent))
+        private_parent.chmod(0o700)
+    else:
+        private_parent = Path(parent)
+        acquisition._require_trusted_parent(private_parent)
+    root = Path(tempfile.mkdtemp(prefix="candidate-", dir=private_parent))
     try:
         status = root.lstat()
     except BaseException:
@@ -1013,7 +1182,6 @@ def _owned_staging(parent: Path | None = None) -> Iterator[Path]:
         try:
             current = root.lstat()
             if (current.st_dev, current.st_ino) != identity:
-                acquisition._quarantine_owned_path(root, identity, directory=True)
                 raise ValueError("publication staging identity changed")
             acquisition._quarantine_owned_path(root, identity, directory=True)
         except FileNotFoundError:
@@ -1024,6 +1192,14 @@ def _owned_staging(parent: Path | None = None) -> Iterator[Path]:
             if primary is None:
                 raise cleanup_error
             primary.add_note(f"owned publication staging cleanup failed: {type(cleanup_error).__name__}")
+        if parent is None:
+            try:
+                private_parent.rmdir()
+            except OSError as error:
+                if primary is None and cleanup_error is None:
+                    raise ValueError("private publication staging parent cleanup failed") from error
+                if primary is not None:
+                    primary.add_note("private publication staging parent cleanup failed")
 
 
 def _list_legacy_keys(client, plan: ScalePlan, bucket: str) -> tuple[str, ...]:
@@ -1267,7 +1443,14 @@ def _publish_candidate(
             _verify_pointer_state(client, plan, active, bucket)
         if active.pointer is not None and allow_legacy:
             resolved = _verify_pointer_state(client, plan, active, bucket)
-            result = _with_pointer_history(_result_from_resolved(resolved, "verified-existing"), active)
+            result = _result_with_verified_history(
+                client,
+                plan,
+                active,
+                resolved,
+                "verified-existing",
+                bucket=bucket,
+            )
             completed = True
         else:
             result = _stage_and_commit_candidate(
@@ -1286,9 +1469,19 @@ def _publish_candidate(
         primary = error
         raise
     finally:
-        latest_lease = keepalive.stop()
+        latest_lease: Lease | None = None
+        stop_error: BaseException | None = None
         try:
-            release_lease(client, latest_lease)
+            latest_lease = keepalive.stop()
+        except BaseException as error:
+            stop_error = error
+            if primary is not None:
+                primary.add_note(f"dataset keepalive stop failed: {error}")
+        try:
+            if latest_lease is not None:
+                release_lease(client, latest_lease)
+            elif stop_error is not None:
+                release_lease(client, lease)
         except BaseException as cleanup_error:
             if primary is not None:
                 primary.add_note(f"dataset lease release failed: {cleanup_error}")
@@ -1301,6 +1494,14 @@ def _publish_candidate(
                 )
             else:
                 raise
+        if primary is None and stop_error is not None:
+            if completed and result is not None:
+                result = replace(
+                    result,
+                    cleanup_warning=f"dataset keepalive stop/release outcome unknown: {type(stop_error).__name__}",
+                )
+            else:
+                raise stop_error
     if result is None:
         raise RuntimeError("publication transaction ended without a result")
     return result
@@ -1390,7 +1591,10 @@ def _stage_and_commit_candidate(
                 pointer.to_bytes(),
                 active,
             )
-        except AmbiguousWrite:
+        except ConditionalConflict:
+            inventory.pointer_outcome = "conflict"
+            raise
+        except BaseException:
             inventory.pointer_outcome = "ambiguous"
             raise
         inventory.pointer_outcome = "committed"
@@ -1415,17 +1619,31 @@ def _stage_and_commit_candidate(
             pointer_outcome="committed",
         )
     except BaseException as error:
-        pointer_ambiguous = inventory.pointer_outcome == "ambiguous"
+        pointer_ambiguous = inventory.pointer_outcome in {"ambiguous", "attempted-ambiguous"}
+        pointer_conflict = inventory.pointer_outcome == "conflict"
         noncommit_proven = inventory.pointer_outcome in {"not-attempted"}
+        if pointer_conflict:
+            noncommit_proven = True
+        manifest_outcome = inventory.manifest_outcome
+        if pointer_ambiguous and manifest_outcome == "written-unreferenced":
+            manifest_outcome = "reference-ambiguous"
         failure = PublishResult(
             dataset=plan.dataset.name,
             scale=plan.scale,
-            status="pointer-outcome-ambiguous" if pointer_ambiguous else "failed-candidate",
+            status=(
+                "pointer-outcome-ambiguous"
+                if pointer_ambiguous
+                else "concurrent-publisher"
+                if pointer_conflict
+                else "failed-candidate"
+            ),
             manifest_sha256=inventory.manifest_digest,
             publication_id=publication_id,
             object_count=len(inventory.attempted_object_keys),
             publication_prefix=prefix,
-            pointer_action="outcome-ambiguous" if pointer_ambiguous else "not-committed",
+            pointer_action=(
+                "outcome-ambiguous" if pointer_ambiguous else "conflict" if pointer_conflict else "not-committed"
+            ),
             pointer_precondition=(
                 "If-None-Match: *" if active.snapshot is None else f"If-Match: {active.snapshot.etag}"
             ),
@@ -1433,8 +1651,8 @@ def _stage_and_commit_candidate(
             proven_orphan_keys=(tuple(inventory.proven_object_keys) if noncommit_proven else ()),
             possible_object_keys=tuple(inventory.possible_object_keys),
             manifest_key=inventory.manifest_key,
-            manifest_outcome=inventory.manifest_outcome,
-            pointer_outcome=inventory.pointer_outcome,
+            manifest_outcome=manifest_outcome,
+            pointer_outcome="ambiguous" if pointer_ambiguous else inventory.pointer_outcome,
         )
         diagnostic = canonical_json(failure.to_document()).decode("utf-8")
         if not isinstance(error, Exception):
@@ -1506,7 +1724,14 @@ def publish_dataset(
             )
         if active.pointer is not None or active.corruption is not None:
             resolved = _verify_pointer_state(client, plan, active, bucket)
-            return _with_pointer_history(_result_from_resolved(resolved, "dry-run-noop"), active)
+            return _result_with_verified_history(
+                client,
+                plan,
+                active,
+                resolved,
+                "dry-run-noop",
+                bucket=bucket,
+            )
         with tempfile.TemporaryDirectory(prefix="dataset-publication-dry-run-") as temporary:
             legacy = _legacy_candidates(client, plan, Path(temporary), bucket)
         status = "dry-run-legacy-migration" if legacy is not None else "dry-run-initial"
@@ -1542,7 +1767,14 @@ def publish_dataset(
     if active.pointer is not None or active.corruption is not None:
         if mode is not PublishMode.REFRESH:
             resolved = _verify_pointer_state(client, plan, active, bucket)
-            return _with_pointer_history(_result_from_resolved(resolved, "verified-existing"), active)
+            return _result_with_verified_history(
+                client,
+                plan,
+                active,
+                resolved,
+                "verified-existing",
+                bucket=bucket,
+            )
     elif mode is PublishMode.VERIFY_ONLY:
         _verify_pointer_state(client, plan, active, bucket)
     audit_digest = _require_sha256(raw_registry_sha256, "raw registry sha256")
