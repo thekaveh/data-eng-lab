@@ -167,7 +167,11 @@ def _properties(table: str) -> dict[str, str]:
 def _trigger_and_verify(label: str) -> tuple[dict, str]:
     before = _driver_ids()
     run_id = f"issue107_{label}_{uuid.uuid4().hex}"
-    _airflow("POST", f"/dags/{DAG_ID}/dagRuns", {"dag_run_id": run_id, "conf": {"dataset_scale": "tiny"}})
+    _airflow(
+        "POST",
+        f"/dags/{DAG_ID}/dagRuns",
+        {"dag_run_id": run_id, "logical_date": None, "conf": {"dataset_scale": "tiny"}},
+    )
     run = _wait_for_run(run_id)
     new_drivers = _driver_ids() - before
     assert len(new_drivers) == 1, f"expected one new Spark driver, got {sorted(new_drivers)}"

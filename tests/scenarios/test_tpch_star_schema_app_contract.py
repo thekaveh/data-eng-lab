@@ -66,6 +66,7 @@ def test_live_gate_executes_real_lifecycle_instead_of_asserting_report_prose():
         '"Authorization": "Bearer "',
         'f"/dags/{DAG_ID}',
         "dataset_scale",
+        '"logical_date": None',
         "FINISHED",
         "success",
         "SELECT key, value FROM lakehouse.gold.",
