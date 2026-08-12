@@ -16,7 +16,10 @@ def test_tpch_star_schema_live_acceptance_is_recorded():
     """
     from pathlib import Path
 
-    report = Path(__file__).resolve().parents[2] / "docs/superpowers/reports/2026-08-12-tpch-star-schema-live-acceptance.md"
+    report = (
+        Path(__file__).resolve().parents[2]
+        / "docs/superpowers/reports/2026-08-12-tpch-star-schema-live-acceptance.md"
+    )
     text = report.read_text(encoding="utf-8")
     assert "driver-20260812190708-0000" in text
     assert "driver-20260812190835-0001" in text
