@@ -1,73 +1,65 @@
 # feature_engineering-movielens-spark-iceberg
 
-Processes MovieLens dataset to create a feature store for machine learning, aggregating user and item features from rating history into Iceberg.
+Builds deterministic per-user and per-movie rating aggregates in Iceberg. The production path is the Maven Scala application at `spark-apps/movielens-feature-pipeline` and the serialized Airflow DAG `movielens_feature_pipeline`.
 
 ## 1. Purpose
 
-This scenario demonstrates feature engineering for ML pipelines. It processes the MovieLens dataset to compute user-level features (average rating, total ratings, rating deviation), item-level features (average rating, total ratings, genre distributions), and user-item interaction counts. The output is a set of feature tables ready for ML model training, stored as Iceberg tables for efficient feature serving.
+The scenario preserves the paired notebooks as educational Scala/PySpark examples while productionizing their two `groupBy` aggregations. Production accepts exactly one resolver-verified immutable MovieLens publication, validates the ratings schema, replaces both Gold tables, and reads back schemas, rows, measures, and generation provenance.
 
 ## 2. Data Model
 
-### 2.1 Input Source
+### 2.1 Input
 
-Source: `ratings.csv` and `movies.csv` from one resolver-verified immutable MovieLens generation published by `make datasets`.
+The complete publication crosses the application boundary in the scale-specific registry order. The application reads only `ratings.csv` with the exact schema `userId long`, `movieId long`, `rating double`, `timestamp long`; all fields are required and ratings must be finite. Duplicate rating rows intentionally count separately in both averages and counts.
 
-| Column | Type | Source |
+### 2.2 Outputs
+
+| Table | Ordered schema | Key |
 |---|---|---|
-| `UserId` | int | MovieLens ratings |
-| `MovieId` | int | MovieLens ratings + movies |
-| `Rating` | double | MovieLens ratings |
-| `Timestamp` | int | MovieLens ratings |
-| `title` | string | MovieLens movies |
-| `genres` | string | MovieLens movies |
+| `lakehouse.gold.ml_user_features` | `userId long`, `avg_rating double`, `num_ratings long` | unique, non-null `userId` |
+| `lakehouse.gold.ml_movie_features` | `movieId long`, `movie_avg double`, `popularity long` | unique, non-null `movieId` |
 
-### 2.2 Output Tables
-
-| Table | Layer | Key Columns |
-|---|---|---|
-| `lakehouse.silver.user_features` | Silver | `UserId`, `avg_rating`, `total_ratings`, `rating_deviation` |
-| `lakehouse.silver.item_features` | Silver | `MovieId`, `avg_rating`, `total_ratings`, `genres` |
-| `lakehouse.silver.user_item_interactions` | Silver | `UserId`, `MovieId`, `rating`, `timestamp` |
+Both tables carry the same five `data_eng_lab.dataset*` Iceberg properties for dataset, scale, plan ID, publication ID, and manifest SHA-256. Both count sums equal the number of input rating rows.
 
 ## 3. Architecture
 
 ![Architecture](../../docs/diagrams/img/feature_engineering-movielens-spark-iceberg.png)
 
-MovieLens ratings and movies data flows from S3 landing zone into Spark for feature engineering. User-level features (aggregated ratings, deviation from mean) and item-level features (average ratings, genre distributions) are computed and stored in separate Iceberg silver tables, along with raw user-item interactions for feature serving.
+Airflow resolves and verifies a complete generation, then submits the reviewed JAR in Spark standalone cluster mode through Atlas's REST-confirming adapter. Spark validates and materializes both aggregates, replaces the user table first and movie table second, and verifies both outputs before success.
 
 ## 4. Notebooks
 
-- **Zeppelin (Scala):** `zeppelin/notebook.zpln` — Sections: Overview, Read MovieLens Data, User Feature Engineering, Item Feature Engineering, User-Item Interactions, Verify
-- **Jupyter (PySpark):** `jupyter/notebook.ipynb` — Same sections; same feature engineering logic using PySpark with `groupBy` aggregations and `Window` operations
-
-Both languages implement identical feature engineering with user aggregation, item aggregation, and user-item interaction tables.
+The paired Zeppelin (`zeppelin/notebook.zpln`) and Jupyter (`jupyter/notebook.ipynb`) notebooks implement the same two aggregations for education and language parity.
 
 ## 5. Orchestration
 
-Classification: **approved new production DAG**. No production DAG exists yet. Child #108 owns the versioned feature contract, Spark application, operator-owned Airflow task, and live acceptance; until it passes, run the paired notebooks only.
+Classification: **existing production DAG**. `spark-apps/movielens-feature-pipeline/dag.py` schedules `movielens_feature_pipeline` `@daily`, accepts an explicit manual `dataset_scale`, and sets `max_active_runs=1`. Success requires both Airflow success and Spark `FINISHED` with `success=true`.
+
+Iceberg has no cross-table atomic commit. A failure between writes leaves a partial generation; the supported recovery is a deterministic same-generation rerun. Airflow serialization prevents supported runs from interleaving. Concurrent direct JAR invocations are unsupported.
 
 ## 6. Usage
 
-1. Ensure the `silver` and `gold` Iceberg namespaces exist: `scripts/register_iceberg.py`
-2. Populate the landing zone: `make datasets`
-3. Open either notebook on the Atlas stack.
-4. Verify:
-     ```bash
-     spark-sql -e "SELECT * FROM lakehouse.silver.user_features LIMIT 10"
-     spark-sql -e "SELECT * FROM lakehouse.silver.item_features LIMIT 10"
-     ```
+1. Publish and verify the requested MovieLens scale with the supported dataset tooling.
+2. Build and publish the reviewed `spark-apps/movielens-feature-pipeline` JAR through Jenkins.
+3. Trigger `movielens_feature_pipeline`, optionally with `{"dataset_scale":"tiny|small|medium"}`.
+4. Verify both table schemas, row counts, count sums, and all five properties.
 
 ## 7. Dependencies
 
-- **Dataset:** resolver-verified immutable MovieLens ratings and movies CSVs
-- **Atlas services:** A1-A4 (Spark, Iceberg, S3 catalog, lakehouse catalog)
-- **Other:** None
+- #81 resolver-verified immutable MovieLens publication
+- Atlas Airflow, Spark standalone, Iceberg REST catalog, and S3A runtime
+- Jenkins-published `s3a://jars/movielens-feature-pipeline/0.1.0/app.jar`
 
 ## 8. Known Issues & Caveats
 
-Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. Both `silver` and `gold` namespaces must exist; run `scripts/register_iceberg.py` first. `make datasets` is required to populate the MovieLens landing zone before running the notebook.
+There is no cross-table atomic commit. The Airflow task fails on either write or readback error; recover a partial generation by rerunning the same verified immutable publication. Do not run the notebooks against shared production Gold tables.
 
-## See Also
+## 9. Notebook Trust Boundary
 
+The paired Zeppelin and Jupyter notebooks demonstrate equivalent aggregations, but they are not a supported production write path. They infer schema and directly replace the same two tables without complete-publication validation, production provenance, serialization, or readback checks. Running a notebook against production tables can invalidate provenance for downstream consumers; use `movielens_feature_pipeline` for production writes.
+
+## See also
+
+- [Production application](../../spark-apps/movielens-feature-pipeline/README.md)
 - [Datasets](../../docs/datasets.md)
-- [Lakehouse Architecture](../../docs/lakehouse.md)
+- [Execution-mode matrix](../../docs/scenarios/execution-modes.md)

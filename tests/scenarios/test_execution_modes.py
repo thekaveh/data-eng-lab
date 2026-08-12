@@ -34,7 +34,11 @@ EXPECTED = {
     "bi_query-tpch-trino-iceberg": (APPROVED, 83, None),
     "cdc_streaming-online_retail-spark-iceberg": (UNSCHEDULED, None, None),
     "data_quality-nyc_taxi-spark-iceberg": (APPROVED, 91, None),
-    "feature_engineering-movielens-spark-iceberg": (APPROVED, 108, None),
+    "feature_engineering-movielens-spark-iceberg": (
+        EXISTING,
+        None,
+        "spark-apps/movielens-feature-pipeline/dag.py",
+    ),
     "federated_query-nyc_taxi-trino-iceberg": (APPROVED, 83, None),
     "incremental_upsert-online_retail-spark-iceberg": (NOTEBOOK_ONLY, None, None),
     "join_optimization-tpch-spark-iceberg": (NOTEBOOK_ONLY, None, None),
@@ -91,8 +95,8 @@ def test_reviewed_classifications_children_and_entrypoints_are_frozen():
     for mode in modes:
         counts[mode.classification] += 1
     assert counts == {
-        EXISTING: 3,
-        APPROVED: 6,
+        EXISTING: 4,
+        APPROVED: 5,
         NOTEBOOK_ONLY: 7,
         UNSCHEDULED: 3,
         DEPRECATED: 0,
@@ -100,7 +104,6 @@ def test_reviewed_classifications_children_and_entrypoints_are_frozen():
     assert {mode.child_issue for mode in modes if mode.child_issue is not None} == {
         83,
         91,
-        108,
         109,
     }
 
@@ -231,6 +234,7 @@ def test_no_scenario_local_dag_or_runtime_empty_operator_remains():
     assert list((ROOT / "scenarios").rglob("dag.py")) == []
     production_dags = sorted((ROOT / "spark-apps").rglob("dag.py"))
     assert [path.relative_to(ROOT).as_posix() for path in production_dags] == [
+        "spark-apps/movielens-feature-pipeline/dag.py",
         "spark-apps/nyc-taxi-etl/dag.py",
         "spark-apps/nyc-taxi-medallion/dag.py",
         "spark-apps/tpch-star-schema/dag.py",

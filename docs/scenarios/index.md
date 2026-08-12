@@ -1,6 +1,6 @@
 # 5.1. Catalog
 
-This page catalogs all 19 scenarios in the `data-eng-lab` lakehouse, organized by functional category. Each scenario is a self-contained folder with paired Zeppelin and Jupyter implementations. The [execution-mode matrix](execution-modes.md) distinguishes the two production DAGs, approved production work, notebook-only demonstrations, and intentionally unscheduled streams. Seventeen Spark scenarios form Scala/PySpark parity pairs; the two Trino scenarios instead pair `%trino` Zeppelin SQL with a Jupyter client. Architecture diagrams are linked from each scenario's README.
+This page catalogs all 19 scenarios in the `data-eng-lab` lakehouse, organized by functional category. Each scenario is a self-contained folder with paired Zeppelin and Jupyter implementations. The [execution-mode matrix](execution-modes.md) distinguishes the four production DAGs, approved production work, notebook-only demonstrations, and intentionally unscheduled streams. Seventeen Spark scenarios form Scala/PySpark parity pairs; the two Trino scenarios instead pair `%trino` Zeppelin SQL with a Jupyter client. Architecture diagrams are linked from each scenario's README.
 
 ## 1. Categories
 

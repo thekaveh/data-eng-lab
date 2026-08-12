@@ -8,12 +8,18 @@ All notable changes to this project are documented here (Keep a Changelog format
   verifier skeleton, and infra-preflight Layer 1.
 
 ### Changed
+- The MovieLens feature-engineering scenario now has a daily serialized production DAG and
+  Jenkins-published Scala application. Two live tiny-scale Airflow runs ended in success with Spark
+  `FINISHED` and `success=true`; `ml_user_features` and `ml_movie_features` reproduced 610 and 9,724
+  keyed rows, equal rating-count sums of 100,836, deterministic logical checksums, and matching
+  dataset, scale, plan, publication, and manifest properties. The paired notebooks remain
+  educational only because they can overwrite those tables without production provenance.
 - TPC-H star-schema follow-up now serializes non-atomic replacements, checks positive resolver object
   sizes, gives downstream #83 an exact five-property fail-closed preflight, warns that notebooks are
   not production writers, and replaces report-string acceptance with an executable live lifecycle.
 - The TPC-H star-schema scenario now has a daily operator-owned production DAG and Jenkins-published Scala application. Two live tiny-scale Airflow runs ended in success with Spark `FINISHED` and `success=true`; `dim_customer` and `fct_orders` reproduced identical logical checksums and carry matching scale, plan, publication, and manifest properties for downstream Trino generation checks.
 - All 19 scenarios now have one tested execution-mode contract. Only
-  `nyc_taxi_etl`, `nyc_taxi_medallion`, and `tpch_star_schema` are current production DAGs; six
+  `nyc_taxi_etl`, `nyc_taxi_medallion`, `tpch_star_schema`, and `movielens_feature_pipeline` are current production DAGs; five
   rows are approved behind child issues, seven remain intentionally
   notebook-only, and three remain unscheduled continuous streams. The 19
   scenario-local no-op DAGs were removed so Airflow and public
@@ -36,7 +42,7 @@ All notable changes to this project are documented here (Keep a Changelog format
   active-pointer switch; runtime consumers require an expected scale and retain
   one resolver result per run.
 - Atlas is now pinned at `c6cf73d7168db1a7840fc45c9ed3e385071996d8`.
-  Both production Spark DAGs again use `SparkSubmitOperator` ownership: their
+  The NYC Taxi production Spark DAGs again use `SparkSubmitOperator` ownership: their
   `AtlasSparkSubmitOperator` subclass preserves provider execution and
   OpenLineage injection while wrapping `super()._get_hook()` with Atlas's
   `RestConfirmingSparkHook`. Submission remains cluster-mode through
