@@ -4,6 +4,7 @@ import copy
 import dataclasses
 import errno
 import gc
+import hashlib
 import json
 import os
 import pickle
@@ -529,6 +530,43 @@ def test_dns_resolver_factory_is_bounded_by_deadline(monkeypatch: pytest.MonkeyP
     assert completed.wait(0.2)
 
 
+def test_dns_resolver_late_factory_result_is_closed_without_start(monkeypatch: pytest.MonkeyPatch):
+    release_factory = acquisition.threading.Event()
+    closed = acquisition.threading.Event()
+    starts: list[str] = []
+
+    class LateProcess:
+        def start(self) -> None:
+            starts.append("start")
+
+        def close(self) -> None:
+            closed.set()
+
+    def delayed_factory(*args: object):
+        release_factory.wait()
+        return LateProcess()
+
+    monkeypatch.setattr(acquisition, "_make_resolver_process", delayed_factory)
+
+    with pytest.raises(ValueError, match="download deadline exceeded"):
+        acquisition._bounded_dns_answers("example.test", time.monotonic() + 0.01, "https://example.test")
+
+    release_factory.set()
+    assert closed.wait(0.2)
+    assert starts == []
+
+
+def test_repeated_resolver_timeouts_do_not_retain_completed_launcher_threads(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(acquisition, "_make_resolver_process", lambda *args: time.sleep(0.02))
+
+    for _ in range(3):
+        with pytest.raises(ValueError, match="download deadline exceeded"):
+            acquisition._bounded_dns_answers("example.test", time.monotonic() + 0.005, "https://example.test")
+    time.sleep(0.05)
+
+    assert not [thread for thread in acquisition.threading.enumerate() if thread.name == "dataset-dns-resolver-start"]
+
+
 def test_dns_resolver_start_is_bounded_and_late_process_is_reaped(monkeypatch: pytest.MonkeyPatch):
     cleaned = acquisition.threading.Event()
 
@@ -590,6 +628,42 @@ def test_dns_resolver_timeout_boundary_has_exactly_one_process_owner(monkeypatch
     assert cleaned.wait(0.2)
     assert calls.count("close") == 1
     assert calls.count("join") == 1
+
+
+def test_dns_resolver_start_commit_precedes_timeout_ownership_transfer(monkeypatch: pytest.MonkeyPatch):
+    start_entered = acquisition.threading.Event()
+    release_start = acquisition.threading.Event()
+    closed = acquisition.threading.Event()
+    calls: list[str] = []
+
+    class CommittedStartProcess:
+        exitcode = 0
+
+        def start(self) -> None:
+            calls.append("start")
+            start_entered.set()
+            release_start.wait()
+
+        def is_alive(self) -> bool:
+            return False
+
+        def join(self, timeout: float = 0) -> None:
+            calls.append("join")
+
+        def close(self) -> None:
+            calls.append("close")
+            closed.set()
+
+    monkeypatch.setattr(acquisition, "_make_resolver_process", lambda *args: CommittedStartProcess())
+
+    with pytest.raises(ValueError, match="download deadline exceeded"):
+        acquisition._bounded_dns_answers("example.test", time.monotonic() + 0.01, "https://example.test")
+
+    assert start_entered.is_set()
+    assert calls == ["start"]
+    release_start.set()
+    assert closed.wait(0.2)
+    assert calls == ["start", "join", "close"]
 
 
 def test_dns_resolver_launcher_thread_start_failure_is_normalized(monkeypatch: pytest.MonkeyPatch):
@@ -1372,6 +1446,49 @@ def test_capability_results_preserve_runtime_list_contract(tmp_path: Path):
     assert paths == [paths[0]]
     assert not hasattr(entries, "__dict__")
     assert not hasattr(paths, "__dict__")
+
+
+def test_extract_rejects_pre_call_unbound_validated_list_mutation(tmp_path: Path):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    entries = validated_zip_members(archive, ZipLimits())
+    list.__setitem__(entries, 0, acquisition.ArchiveEntry("data.csv", "renamed.csv", 6))
+
+    with pytest.raises(ValueError, match="validated archive entries changed"):
+        extract_members(archive, entries, tmp_path / "members")
+
+    assert not (tmp_path / "members").exists()
+
+
+def test_extract_uses_canonical_entries_during_mid_call_unbound_mutation(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    entries = validated_zip_members(archive, ZipLimits())
+    real_validate = acquisition._validated_members
+
+    def mutating_validation(*args: object, **kwargs: object):
+        fresh = real_validate(*args, **kwargs)
+        list.__setitem__(entries, 0, acquisition.ArchiveEntry("data.csv", "renamed.csv", 6))
+        return fresh
+
+    monkeypatch.setattr(acquisition, "_validated_members", mutating_validation)
+
+    paths = extract_members(archive, entries, tmp_path / "members")
+
+    assert paths == [tmp_path / "members" / "data.csv"]
+    assert paths[0].read_bytes() == b"locked"
+    assert not (tmp_path / "members" / "renamed.csv").exists()
+
+
+def test_extracted_metadata_uses_canonical_paths_after_unbound_mutation(tmp_path: Path):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    paths = extract_members(archive, validated_zip_members(archive, ZipLimits()), tmp_path / "members")
+    foreign = tmp_path / "foreign"
+    foreign.write_bytes(b"foreign")
+    list.__setitem__(paths, 0, foreign)
+
+    assert acquisition._bound_extracted_metadata(paths) == [(6, hashlib.sha256(b"locked").hexdigest())]
 
 
 @pytest.mark.parametrize(

@@ -121,10 +121,11 @@ class _ImmutableCapabilityList:
 
 
 class _ValidatedEntries(_ImmutableCapabilityList, list[ArchiveEntry]):
-    __slots__ = ("__limits", "__snapshot")
+    __slots__ = ("__canonical", "__limits", "__snapshot")
 
     def __init__(self, entries: list[ArchiveEntry], snapshot: _ArchiveSnapshot, limits: ZipLimits) -> None:
         list.__init__(self, entries)
+        object.__setattr__(self, "_ValidatedEntries__canonical", tuple(entries))
         object.__setattr__(self, "_ValidatedEntries__snapshot", snapshot)
         object.__setattr__(self, "_ValidatedEntries__limits", limits)
 
@@ -134,10 +135,13 @@ class _ValidatedEntries(_ImmutableCapabilityList, list[ArchiveEntry]):
     def _capability(self) -> tuple[_ArchiveSnapshot, ZipLimits]:
         return self.__snapshot, self.__limits
 
+    def _canonical_entries(self) -> tuple[ArchiveEntry, ...]:
+        return self.__canonical
+
     def __getitem__(self, index: object) -> ArchiveEntry | _ValidatedEntries:
         selected = list.__getitem__(self, index)  # type: ignore[arg-type]
         if isinstance(index, slice):
-            return _ValidatedEntries(list(selected), self.__snapshot, self.__limits)
+            return _ValidatedEntries(list(self.__canonical[index]), self.__snapshot, self.__limits)
         return selected
 
     def copy(self) -> None:
@@ -191,10 +195,11 @@ class _BindingOwner:
 
 
 class _ExtractedPaths(_ImmutableCapabilityList, list[Path]):
-    __slots__ = ("__weakref__", "__owner", "__finalizer")
+    __slots__ = ("__weakref__", "__canonical", "__owner", "__finalizer")
 
     def __init__(self, paths: list[Path], bindings: list[_FileBinding]) -> None:
         list.__init__(self, paths)
+        object.__setattr__(self, "_ExtractedPaths__canonical", tuple(paths))
         owner = _BindingOwner(bindings)
         object.__setattr__(self, "_ExtractedPaths__owner", owner)
         object.__setattr__(self, "_ExtractedPaths__finalizer", weakref.finalize(self, owner.close))
@@ -208,6 +213,9 @@ class _ExtractedPaths(_ImmutableCapabilityList, list[Path]):
 
     def _binding_owner(self) -> _BindingOwner:
         return self.__owner
+
+    def _canonical_paths(self) -> tuple[Path, ...]:
+        return self.__canonical
 
     def close(self) -> None:
         self.__owner.close()
@@ -306,11 +314,12 @@ def _bound_extracted_metadata(paths: list[Path]) -> list[tuple[int, str]]:
     """Verify and return metadata for extraction-owned outputs."""
     if not isinstance(paths, _ExtractedPaths):
         raise ValueError("extracted outputs are not bound to owned files")
-    if len(paths) != len(paths._bindings):
+    canonical_paths = paths._canonical_paths()
+    if len(canonical_paths) != len(paths._bindings):
         raise ValueError("extracted output capability is structurally invalid")
     metadata: list[tuple[int, str]] = []
     owner = paths._binding_owner()
-    for path, binding in zip(paths, paths._bindings, strict=True):
+    for path, binding in zip(canonical_paths, paths._bindings, strict=True):
         try:
             opened = os.fstat(binding.descriptor)
             if (opened.st_dev, opened.st_ino) != (binding.device, binding.inode):
@@ -579,21 +588,32 @@ def _start_resolver_bounded(context: object, send: object, host: str, deadline: 
         started = False
         try:
             process = _make_resolver_process(context, send, host)
+            with condition:
+                cancelled_before_start = bool(state.get("cancelled"))
+                if not cancelled_before_start:
+                    state["launcher_owned"] = True
+                    state["start_committed"] = True
+            if cancelled_before_start:
+                try:
+                    process.close()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+                return
             process.start()  # type: ignore[attr-defined]
             started = True
             with condition:
-                if state.get("cancelled"):
-                    state["launcher_owned"] = True
-                else:
+                if not state.get("cancelled"):
                     state["process"] = process
+                    state["launcher_owned"] = False
                 state["complete"] = True
                 condition.notify_all()
         except BaseException as error:
             with condition:
-                state["error"] = error
-                state["phase"] = "start" if process is not None else "create"
-                state["complete"] = True
-                condition.notify_all()
+                if not state.get("cancelled"):
+                    state["error"] = error
+                    state["phase"] = "start" if process is not None else "create"
+                    state["complete"] = True
+                    condition.notify_all()
             if process is not None and not started:
                 try:
                     process.close()  # type: ignore[attr-defined]
@@ -1367,6 +1387,9 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
     if not isinstance(entries, _ValidatedEntries):
         raise ValueError("archive entries are not bound to one validated snapshot")
     expected_snapshot, limits = entries._capability()
+    canonical_entries = entries._canonical_entries()
+    if tuple(list.__iter__(entries)) != canonical_entries:
+        raise ValueError("validated archive entries changed")
 
     archive_stream, current_snapshot = _stable_archive(path)
     try:
@@ -1434,10 +1457,11 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
             archive_stream.seek(0)
             with zipfile.ZipFile(archive_stream) as archive:
                 current_entries = _validated_members(archive.infolist(), limits, current_snapshot)
-                if list(current_entries) != list(entries):
+                fresh_entries = current_entries._canonical_entries()
+                if fresh_entries != canonical_entries:
                     raise ValueError("archive members changed after validation")
                 infos = {info.filename: info for info in archive.infolist()}
-                for entry in entries:
+                for entry in canonical_entries:
                     if validate_relative_path(entry.member_path, "archive member"):
                         raise ValueError("archive member: must be a safe relative POSIX path")
                     unsafe_object_name = validate_relative_path(entry.object_name, "object name")
