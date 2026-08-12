@@ -2,6 +2,7 @@ import hashlib
 import io
 import json
 from dataclasses import dataclass
+from dataclasses import replace as dataclass_replace
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from pathlib import Path
@@ -9,20 +10,23 @@ from typing import Any
 
 import boto3
 import pytest
-from botocore.exceptions import ClientError, ReadTimeoutError
+from botocore.exceptions import ClientError, ConnectTimeoutError, ReadTimeoutError
 from botocore.response import StreamingBody
 from botocore.stub import ANY, Stubber
 from moto import mock_aws
 
 import datasets.s3 as s3mod
+from datasets.locking import canonical_json
 from datasets.verification import ExpectedObject, LockMismatch, VerificationContext
 
 NOW = datetime.now(UTC).replace(microsecond=0)
 CONTEXT = VerificationContext("nyc_taxi", "yellow", "remote", object_name="trips.parquet")
-PUBLICATION_A = "publication-a"
-PUBLICATION_B = "publication-b"
-NONCE_A = "nonce-a"
-NONCE_B = "nonce-b"
+PUBLICATION_A = "123e4567e89b42d3a456426614174000"
+PUBLICATION_B = "123e4567e89b42d3a456426614174001"
+NONCE_A = "abcdefabcdefabcdefabcdefabcdefab"
+NONCE_B = "abcdefabcdefabcdefabcdefabcdefac"
+OLD_PUBLICATION = "550e8400e29b41d4a716446655440000"
+OLD_NONCE = "fedcbafedcbafedcbafedcbafedcbafe"
 _DEFAULT_DATE = object()
 
 
@@ -61,6 +65,33 @@ def _streaming_response(
         "Metadata": metadata or {},
         "ResponseMetadata": _response_metadata(when),
     }
+
+
+class TrackingBody:
+    def __init__(self, body: bytes, *, fail_read: bool = False):
+        self._body = io.BytesIO(body)
+        self.fail_read = fail_read
+        self.close_calls = 0
+
+    def read(self, size: int = -1) -> bytes:
+        if self.fail_read:
+            raise ReadTimeoutError(endpoint_url="https://s3.invalid", error="read failed")
+        return self._body.read(size)
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
+class ResponseClient:
+    def __init__(self, response: dict[str, object] | Exception):
+        self.response = response
+        self.calls = 0
+
+    def get_object(self, **_request):
+        self.calls += 1
+        if isinstance(self.response, Exception):
+            raise self.response
+        return self.response
 
 
 @dataclass
@@ -164,6 +195,27 @@ def _freeze_local_time(monkeypatch: pytest.MonkeyPatch, now: datetime = NOW) -> 
     monkeypatch.setattr(s3mod, "_utc_now", lambda: now)
 
 
+def _lease_document(
+    *,
+    state: str = "active",
+    publication_id: object = PUBLICATION_A,
+    owner_nonce: object = NONCE_A,
+    created_at: object = _DEFAULT_DATE,
+    expires_at: object = _DEFAULT_DATE,
+    dataset: object = "nyc_taxi",
+) -> dict[str, object]:
+    created = NOW if created_at is _DEFAULT_DATE else created_at
+    expires = NOW + timedelta(seconds=60) if expires_at is _DEFAULT_DATE else expires_at
+    return {
+        "created_at": created.isoformat().replace("+00:00", "Z") if isinstance(created, datetime) else created,
+        "dataset": dataset,
+        "expires_at": expires.isoformat().replace("+00:00", "Z") if isinstance(expires, datetime) else expires,
+        "owner_nonce": owner_nonce,
+        "publication_id": publication_id,
+        "state": state,
+    }
+
+
 @mock_aws
 def test_upload_and_exists_roundtrip(tmp_path: Path):
     client = boto3.client("s3", region_name="us-east-1")
@@ -182,6 +234,7 @@ def test_client_from_env_reads_infra_env(tmp_path: Path):
     (infra / ".env").write_text("MINIO_ROOT_USER=minioadmin\nMINIO_ROOT_PASSWORD=secret\nMINIO_PORT=64093\n")
     client = s3mod.s3_client_from_env(infra)
     assert client.meta.endpoint_url == "http://localhost:64093"
+    assert client.meta.config.retries == {"total_max_attempts": 1, "mode": "legacy"}
 
 
 def test_client_prefers_exported_minio_endpoint(tmp_path):
@@ -243,6 +296,21 @@ def test_stream_verify_preserves_opaque_quoted_etag():
     assert snapshot.size_bytes == len(body)
 
 
+@pytest.mark.parametrize("when", [None, NOW + timedelta(seconds=301)])
+def test_stream_verify_closes_body_once_when_date_is_untrusted(monkeypatch: pytest.MonkeyPatch, when: datetime | None):
+    _freeze_local_time(monkeypatch)
+    body = TrackingBody(b"verified bytes")
+    response = _streaming_response(b"", when=when)
+    response["Body"] = body
+
+    with pytest.raises(s3mod.AmbiguousWrite):
+        s3mod.stream_verify_object(
+            ResponseClient(response), "landing", "secret-object-key", _expected(b"verified bytes"), CONTEXT
+        )
+
+    assert body.close_calls == 1
+
+
 def test_put_immutable_uses_if_none_match_and_get_verifies_bytes(tmp_path: Path):
     body = b"immutable bytes"
     path = tmp_path / "object.bin"
@@ -289,7 +357,7 @@ def test_put_immutable_rejects_post_upload_metadata_mismatch(tmp_path: Path):
 
     client.put_object = corrupt_metadata
 
-    with pytest.raises(LockMismatch) as caught:
+    with pytest.raises(s3mod.AmbiguousWrite) as caught:
         s3mod.put_immutable_object(
             client,
             "landing",
@@ -299,7 +367,70 @@ def test_put_immutable_rejects_post_upload_metadata_mismatch(tmp_path: Path):
             {"sha256": "expected"},
         )
 
-    assert caught.value.field == "metadata"
+    assert isinstance(caught.value.__cause__, LockMismatch)
+    assert caught.value.__cause__.field == "metadata"
+
+
+def test_put_immutable_maps_post_success_hash_mismatch_to_ambiguous(tmp_path: Path):
+    intended = b"immutable bytes"
+    path = tmp_path / "object.bin"
+    path.write_bytes(intended)
+    client = FakeS3()
+    original_put = client.put_object
+
+    def corrupt_bytes(**request):
+        response = original_put(**request)
+        stored = client.objects[("landing", "immutable/object")]
+        client.objects[("landing", "immutable/object")] = _StoredObject(
+            b"competing bytes", stored.metadata, stored.etag
+        )
+        return response
+
+    client.put_object = corrupt_bytes
+
+    with pytest.raises(s3mod.AmbiguousWrite) as caught:
+        s3mod.put_immutable_object(client, "landing", "immutable/object", path, _expected(intended), {"lock": "exact"})
+
+    assert isinstance(caught.value.__cause__, LockMismatch)
+
+
+def test_immutable_5xx_write_reconciles_exact_value_without_retry(tmp_path: Path):
+    body = b"immutable bytes"
+    path = tmp_path / "object.bin"
+    path.write_bytes(body)
+    client = FakeS3()
+    client.seed("landing", "immutable/object", body, metadata={"lock": "exact"})
+
+    def server_error(**request):
+        client.put_calls.append({**request, "Body": client._bytes(request["Body"])})
+        raise _client_error("InternalError", 500)
+
+    client.put_object = server_error
+
+    snapshot = s3mod.put_immutable_object(
+        client, "landing", "immutable/object", path, _expected(body), {"lock": "exact"}
+    )
+
+    assert snapshot.sha256 == hashlib.sha256(body).hexdigest()
+    assert len(client.put_calls) == 1
+
+
+def test_immutable_post_success_transport_failure_is_ambiguous_and_redacted(tmp_path: Path):
+    body = b"immutable bytes"
+    path = tmp_path / "object.bin"
+    path.write_bytes(body)
+    client = FakeS3()
+
+    def unavailable(**_request):
+        raise ConnectTimeoutError(endpoint_url="https://s3.invalid", error="unavailable")
+
+    client.get_object = unavailable
+
+    with pytest.raises(s3mod.AmbiguousWrite) as caught:
+        s3mod.put_immutable_object(client, "landing", "secret-object-key", path, _expected(body), {"lock": "exact"})
+
+    assert isinstance(caught.value.__cause__, ConnectTimeoutError)
+    assert "secret-object-key" not in str(caught.value)
 
 
 @pytest.mark.parametrize("status", [409, 412])
@@ -397,7 +528,7 @@ def test_put_control_passes_opaque_if_match_and_rereads_exact_bytes():
 
 
 def test_put_control_passes_if_none_match_star():
-    body = b"first pointer"
+    body = canonical_json({"pointer": "first"})
     client = FakeS3()
 
     snapshot = s3mod.put_control_object(client, "landing", "active.json", body, if_none_match=True)
@@ -407,9 +538,21 @@ def test_put_control_passes_if_none_match_star():
     assert snapshot.body == body
 
 
+def test_put_control_canonicalizes_unicode_json_with_shared_encoder():
+    client = FakeS3()
+    noncanonical = '{ "z": 1, "label": "café" }'.encode()
+    expected = canonical_json({"z": 1, "label": "café"})
+
+    snapshot = s3mod.put_control_object(client, "landing", "active.json", noncanonical)
+
+    assert client.put_calls[0]["Body"] == expected
+    assert snapshot.body == expected
+    assert b"caf\xc3\xa9" in snapshot.body
+
+
 @pytest.mark.parametrize("status", [409, 412])
 def test_control_conditional_errors_reconcile_exact_self_write(status: int):
-    body = b"intended pointer"
+    body = canonical_json({"pointer": "intended"})
     client = FakeS3()
     client.seed("landing", "active.json", body, etag='"successor"')
 
@@ -425,16 +568,33 @@ def test_control_conditional_errors_reconcile_exact_self_write(status: int):
     assert len(client.put_calls) == 1
 
 
+def test_control_5xx_write_reconciles_exact_value_without_retry():
+    body = canonical_json({"pointer": "intended"})
+    client = FakeS3()
+    client.seed("landing", "active.json", body, etag='"successor"')
+
+    def server_error(**request):
+        client.put_calls.append({**request, "Body": client._bytes(request["Body"])})
+        raise _client_error("InternalError", 500)
+
+    client.put_object = server_error
+
+    snapshot = s3mod.put_control_object(client, "landing", "active.json", body, if_match='"stale"')
+
+    assert snapshot.body == body
+    assert len(client.put_calls) == 1
+
+
 def test_control_conflict_never_retries_stale_cas():
     client = FakeS3()
-    client.seed("landing", "active.json", b"competing pointer", etag='"successor"')
+    client.seed("landing", "active.json", canonical_json({"pointer": "competing"}), etag='"successor"')
 
     with pytest.raises(s3mod.ConditionalConflict):
         s3mod.put_control_object(
             client,
             "landing",
             "active.json",
-            b"intended pointer",
+            canonical_json({"pointer": "intended"}),
             if_match='"stale"',
         )
 
@@ -442,19 +602,68 @@ def test_control_conflict_never_retries_stale_cas():
 
 
 def test_control_lost_response_reconciles_only_exact_bytes():
+    intended = canonical_json({"pointer": "intended"})
     exact = FakeS3()
     exact.next_ambiguous = "exact"
-    assert s3mod.put_control_object(exact, "landing", "active.json", b"intended").body == b"intended"
+    assert s3mod.put_control_object(exact, "landing", "active.json", intended).body == intended
 
     competing = FakeS3()
     competing.next_ambiguous = "competing"
     with pytest.raises(s3mod.ConditionalConflict):
-        s3mod.put_control_object(competing, "landing", "active.json", b"intended")
+        s3mod.put_control_object(competing, "landing", "active.json", intended)
 
     absent = FakeS3()
     absent.next_ambiguous = "absent"
     with pytest.raises(s3mod.AmbiguousWrite):
-        s3mod.put_control_object(absent, "landing", "active.json", b"intended")
+        s3mod.put_control_object(absent, "landing", "active.json", intended)
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        ConnectTimeoutError(endpoint_url="https://s3.invalid", error="unavailable"),
+        _client_error("InternalError", 500),
+    ],
+)
+def test_control_post_success_read_failure_is_ambiguous_and_redacted(failure: Exception):
+    client = FakeS3()
+    original_put = client.put_object
+
+    def put_then_break_get(**request):
+        response = original_put(**request)
+
+        def unavailable(**_read_request):
+            raise failure
+
+        client.get_object = unavailable
+        return response
+
+    client.put_object = put_then_break_get
+
+    with pytest.raises(s3mod.AmbiguousWrite) as caught:
+        s3mod.put_control_object(client, "landing", "secret-pointer-key", canonical_json({"pointer": "intended"}))
+
+    assert caught.value.__cause__ is failure
+    assert "secret-pointer-key" not in str(caught.value)
+
+
+def test_control_reconciliation_invalid_response_is_ambiguous_and_closes_body():
+    client = FakeS3()
+    body = TrackingBody(canonical_json({"pointer": "intended"}))
+
+    def lost(**_request):
+        raise ReadTimeoutError(endpoint_url="https://s3.invalid", error="lost response")
+
+    client.put_object = lost
+    client.get_object = lambda **_request: {
+        "Body": body,
+        "ResponseMetadata": _response_metadata(),
+    }
+
+    with pytest.raises(s3mod.AmbiguousWrite):
+        s3mod.put_control_object(client, "landing", "active.json", canonical_json({"pointer": "intended"}))
+
+    assert body.close_calls == 1
 
 
 def test_read_control_rejects_missing_or_implausibly_skewed_server_date(
@@ -474,6 +683,30 @@ def test_read_control_rejects_missing_or_implausibly_skewed_server_date(
         s3mod.read_control_object(skewed, "landing", "active.json")
 
 
+@pytest.mark.parametrize("when", [None, NOW + timedelta(seconds=301)])
+def test_read_control_closes_body_once_when_date_is_untrusted(monkeypatch: pytest.MonkeyPatch, when: datetime | None):
+    _freeze_local_time(monkeypatch)
+    body = TrackingBody(b"pointer")
+    response = _streaming_response(b"", when=when)
+    response["Body"] = body
+
+    with pytest.raises(s3mod.AmbiguousWrite):
+        s3mod.read_control_object(ResponseClient(response), "landing", "active.json")
+
+    assert body.close_calls == 1
+
+
+def test_read_control_bounds_body_and_closes_once():
+    body = TrackingBody(b"x" * ((1 << 20) + 1))
+    response = _streaming_response(b"")
+    response["Body"] = body
+
+    with pytest.raises(s3mod.AmbiguousWrite, match="too large"):
+        s3mod.read_control_object(ResponseClient(response), "landing", "active.json")
+
+    assert body.close_calls == 1
+
+
 def test_acquire_missing_lease_uses_if_none_match(monkeypatch: pytest.MonkeyPatch):
     client = FakeS3()
     _freeze_local_time(monkeypatch)
@@ -488,24 +721,78 @@ def test_acquire_missing_lease_uses_if_none_match(monkeypatch: pytest.MonkeyPatc
     assert lease.state == "active"
     assert lease.created_at == NOW
     assert lease.expires_at == NOW + timedelta(seconds=60)
+    assert lease.key == "_data-eng-locks/leases/nyc_taxi.json"
+
+
+def test_acquire_lease_uses_shared_canonical_unicode_json(monkeypatch: pytest.MonkeyPatch):
+    client = FakeS3()
+    _freeze_local_time(monkeypatch)
+
+    lease = s3mod.acquire_lease(client, "café", PUBLICATION_A, NONCE_A)
+
+    expected = canonical_json(_lease_document(dataset="café"))
+    assert client.put_calls[-1]["Body"] == expected
+    assert client.objects[(lease.bucket, lease.key)].body == expected
+    assert b"caf\xc3\xa9" in expected
+
+
+@pytest.mark.parametrize(
+    ("publication_id", "owner_nonce"),
+    [
+        ("publication-a", NONCE_A),
+        (PUBLICATION_A.upper(), NONCE_A),
+        ("0" * 32, NONCE_A),
+        (PUBLICATION_A, "nonce-a"),
+        (PUBLICATION_A, "g" * 32),
+    ],
+)
+def test_acquire_rejects_non_uuid4_publication_or_nonce(
+    monkeypatch: pytest.MonkeyPatch, publication_id: str, owner_nonce: str
+):
+    client = FakeS3()
+    _freeze_local_time(monkeypatch)
+
+    with pytest.raises(ValueError, match="128-bit"):
+        s3mod.acquire_lease(client, "nyc_taxi", publication_id, owner_nonce)
+
+    assert client.get_calls == []
+    assert client.put_calls == []
+
+
+@pytest.mark.parametrize("lease_seconds", [0, -1, True, 1.5, 301, float("inf")])
+def test_acquire_rejects_invalid_lease_duration(monkeypatch: pytest.MonkeyPatch, lease_seconds: object):
+    client = FakeS3()
+    _freeze_local_time(monkeypatch)
+
+    with pytest.raises(ValueError, match="lease duration"):
+        s3mod.acquire_lease(
+            client,
+            "nyc_taxi",
+            PUBLICATION_A,
+            NONCE_A,
+            lease_seconds=lease_seconds,
+        )
+
+    assert client.get_calls == []
+    assert client.put_calls == []
 
 
 def test_acquire_released_lease_uses_opaque_if_match(monkeypatch: pytest.MonkeyPatch):
     client = FakeS3()
     _freeze_local_time(monkeypatch)
-    key = "_leases/nyc_taxi.json"
+    key = "_data-eng-locks/leases/nyc_taxi.json"
     released = {
         "created_at": (NOW - timedelta(hours=1)).isoformat().replace("+00:00", "Z"),
         "dataset": "nyc_taxi",
         "expires_at": (NOW - timedelta(minutes=59)).isoformat().replace("+00:00", "Z"),
-        "owner_nonce": "old-nonce",
-        "publication_id": "old-publication",
+        "owner_nonce": OLD_NONCE,
+        "publication_id": OLD_PUBLICATION,
         "state": "released",
     }
     client.seed(
         "landing",
         key,
-        json.dumps(released, sort_keys=True, separators=(",", ":")).encode(),
+        canonical_json(released),
         etag='"opaque/released:7"',
     )
 
@@ -513,6 +800,66 @@ def test_acquire_released_lease_uses_opaque_if_match(monkeypatch: pytest.MonkeyP
 
     assert client.put_calls[-1]["IfMatch"] == '"opaque/released:7"'
     assert lease.owner_nonce == NONCE_A
+
+
+@pytest.mark.parametrize(
+    "document",
+    [
+        _lease_document(publication_id="invalid"),
+        _lease_document(owner_nonce="invalid"),
+        _lease_document(created_at="2026-08-12T12:00:00"),
+        _lease_document(created_at=NOW, expires_at=NOW),
+        _lease_document(created_at=NOW + timedelta(seconds=1), expires_at=NOW),
+        _lease_document(state="unknown"),
+        _lease_document(state="released", expires_at=NOW + timedelta(seconds=60)),
+    ],
+)
+def test_acquire_rejects_malformed_stored_lease(monkeypatch: pytest.MonkeyPatch, document: dict[str, object]):
+    client = FakeS3()
+    _freeze_local_time(monkeypatch)
+    key = "_data-eng-locks/leases/nyc_taxi.json"
+    client.seed("landing", key, canonical_json(document))
+
+    with pytest.raises(s3mod.AmbiguousWrite, match="malformed"):
+        s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_B, NONCE_B)
+
+    assert client.put_calls == []
+
+
+def test_acquire_rejects_noncanonical_stored_lease(monkeypatch: pytest.MonkeyPatch):
+    client = FakeS3()
+    _freeze_local_time(monkeypatch)
+    key = "_data-eng-locks/leases/nyc_taxi.json"
+    body = json.dumps(_lease_document(), sort_keys=False, indent=2).encode()
+    assert body != canonical_json(_lease_document())
+    client.seed("landing", key, body)
+
+    with pytest.raises(s3mod.AmbiguousWrite, match="canonical"):
+        s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_B, NONCE_B)
+
+    assert client.put_calls == []
+
+
+def test_acquire_closes_lease_body_once_on_decode_failure(monkeypatch: pytest.MonkeyPatch):
+    _freeze_local_time(monkeypatch)
+    body = TrackingBody(b"not-json")
+    response = _streaming_response(b"")
+    response["Body"] = body
+
+    with pytest.raises(s3mod.AmbiguousWrite, match="malformed"):
+        s3mod.acquire_lease(ResponseClient(response), "nyc_taxi", PUBLICATION_A, NONCE_A)
+
+    assert body.close_calls == 1
+
+
+def test_acquire_maps_observation_transport_failure_to_ambiguous(monkeypatch: pytest.MonkeyPatch):
+    _freeze_local_time(monkeypatch)
+    failure = ConnectTimeoutError(endpoint_url="https://s3.invalid", error="unavailable")
+
+    with pytest.raises(s3mod.AmbiguousWrite) as caught:
+        s3mod.acquire_lease(ResponseClient(failure), "nyc_taxi", PUBLICATION_A, NONCE_A)
+
+    assert caught.value.__cause__ is failure
 
 
 def test_acquire_rejects_unexpired_active_lease(monkeypatch: pytest.MonkeyPatch):
@@ -569,6 +916,32 @@ def test_acquire_reconciles_lost_response_for_exact_lease(
     assert len(client.put_calls) == 1
 
 
+@pytest.mark.parametrize("ambiguous", [True, False])
+def test_acquire_never_returns_lease_when_reconciliation_get_is_expired(
+    monkeypatch: pytest.MonkeyPatch, ambiguous: bool
+):
+    client = FakeS3()
+    _freeze_local_time(monkeypatch)
+    original_put = client.put_object
+    if ambiguous:
+        client.next_ambiguous = "exact"
+    else:
+        client.next_put_date = NOW + timedelta(seconds=60)
+
+    def expire_before_reconciliation(**request):
+        try:
+            return original_put(**request)
+        finally:
+            client.get_date = NOW + timedelta(seconds=60)
+
+    client.put_object = expire_before_reconciliation
+
+    with pytest.raises(s3mod.AmbiguousWrite, match="expired"):
+        s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_A, NONCE_A)
+
+    assert len(client.put_calls) == 1
+
+
 def test_acquire_fails_closed_when_write_date_is_outside_proposal(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -618,12 +991,46 @@ def test_release_is_conditional_put(monkeypatch: pytest.MonkeyPatch):
     client = FakeS3()
     _freeze_local_time(monkeypatch)
     lease = s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_A, NONCE_A)
+    client.now = NOW + timedelta(seconds=1)
+    client.get_date = client.now
+    monkeypatch.setattr(s3mod, "_utc_now", lambda: client.now)
 
     released = s3mod.release_lease(client, lease)
 
     assert client.put_calls[-1]["IfMatch"] == lease.etag
     assert released.state == "released"
-    assert released.expires_at == NOW
+    assert released.created_at == NOW
+    assert released.expires_at == client.now
+
+
+def test_release_rejects_expired_lease(monkeypatch: pytest.MonkeyPatch):
+    client = FakeS3()
+    _freeze_local_time(monkeypatch)
+    lease = s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_A, NONCE_A)
+    client.now = lease.expires_at
+    client.get_date = lease.expires_at
+    monkeypatch.setattr(s3mod, "_utc_now", lambda: lease.expires_at)
+    put_count = len(client.put_calls)
+
+    with pytest.raises(s3mod.ConditionalConflict, match="lost"):
+        s3mod.release_lease(client, lease)
+
+    assert len(client.put_calls) == put_count
+
+
+def test_renew_and_release_reject_malformed_lease_capability(monkeypatch: pytest.MonkeyPatch):
+    client = FakeS3()
+    _freeze_local_time(monkeypatch)
+    lease = s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_A, NONCE_A)
+    malformed = dataclass_replace(lease, owner_nonce="invalid")
+    get_count = len(client.get_calls)
+
+    with pytest.raises(ValueError, match="128-bit"):
+        s3mod.renew_lease(client, malformed)
+    with pytest.raises(ValueError, match="128-bit"):
+        s3mod.release_lease(client, malformed)
+
+    assert len(client.get_calls) == get_count
 
 
 def test_stale_lease_owner_cannot_release_successor(monkeypatch: pytest.MonkeyPatch):
