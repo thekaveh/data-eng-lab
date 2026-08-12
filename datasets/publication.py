@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 
-import ctypes
 import hashlib
 import json
 import os
 import re
 import secrets
 import stat
-import sys
 import tempfile
 import threading
 import uuid
@@ -66,6 +64,9 @@ _MAX_LEGACY_LIST_PAGES = 10_000
 _MAX_LEGACY_LIST_KEYS = 100_000
 _MAX_HISTORY_DEPTH = 1_000
 _MAX_GENERATION_PREFIXES = 100_000
+_STAGING_POOL_SIZE = 8
+_STAGING_POOL_CONDITION = threading.Condition()
+_STAGING_POOLS: dict[Path, dict[str, object]] = {}
 _DEFAULT_LOCK_POLICY: Mapping[str, object] = MappingProxyType(
     {
         "algorithm": "sha256",
@@ -744,13 +745,34 @@ def _rollback_transaction(
         manifest_key=immutable_manifest_key(plan.dataset.name, digest),
         manifest_sha256=digest,
     )
-    reconciled = _put_pointer_exact(
-        client,
-        bucket,
-        active_pointer_key(plan.dataset.name),
-        pointer.to_bytes(),
-        current,
-    )
+    precondition = f"If-Match: {current.snapshot.etag}"
+    try:
+        reconciled = _put_pointer_exact(
+            client,
+            bucket,
+            active_pointer_key(plan.dataset.name),
+            pointer.to_bytes(),
+            current,
+        )
+    except ConditionalConflict:
+        raise
+    except BaseException as error:
+        diagnostic = PublishResult(
+            dataset=plan.dataset.name,
+            scale=plan.scale,
+            status="pointer-outcome-ambiguous",
+            manifest_sha256=digest,
+            publication_id=manifest.publication_id,
+            object_count=len(manifest.objects),
+            publication_prefix=manifest.physical_prefix,
+            pointer_action="outcome-ambiguous",
+            pointer_precondition=precondition,
+            manifest_key=pointer.manifest_key,
+            manifest_outcome="existing-retained",
+            pointer_outcome="ambiguous",
+        )
+        error.add_note(f"dataset rollback diagnostic: {canonical_json(diagnostic.to_document()).decode('utf-8')}")
+        raise
     return _RollbackOutcome(resolved, manifest, previous_manifest, current, reconciled)
 
 
@@ -886,7 +908,7 @@ class _LeaseKeepalive:
                 return False
             try:
                 self._lease = renew_lease(self._client, self._lease)
-            except BaseException as error:
+            except Exception as error:
                 self._error = error
                 return False
             return True
@@ -907,17 +929,25 @@ class _LeaseKeepalive:
 
         worker = threading.Thread(target=invoke, name=f"dataset-source-{self._lease.dataset}", daemon=False)
         worker.start()
-        while True:
-            with self._lock:
-                lease = self._lease
-            remaining = max((lease.expires_at - datetime.now(UTC)).total_seconds(), 0.0)
-            interval = max(0.05, min(5.0, remaining / 3.0))
-            if completed.wait(interval):
-                break
-            if not self._renew_once():
-                completed.wait()
-                break
-        worker.join()
+        interrupted: BaseException | None = None
+        try:
+            while True:
+                with self._lock:
+                    lease = self._lease
+                remaining = max((lease.expires_at - datetime.now(UTC)).total_seconds(), 0.0)
+                interval = max(0.05, min(5.0, remaining / 3.0))
+                if completed.wait(interval):
+                    break
+                if not self._renew_once():
+                    completed.wait()
+                    break
+        except BaseException as error:
+            interrupted = error
+        finally:
+            completed.wait()
+            worker.join()
+        if interrupted is not None:
+            raise interrupted
         if errors:
             raise errors[0]
         with self._lock:
@@ -943,6 +973,12 @@ class _LeaseKeepalive:
             return self._lease
 
     def stop_and_checkpoint(self) -> Lease:
+        with self._lock:
+            remaining = (self._lease.expires_at - datetime.now(UTC)).total_seconds()
+        if remaining <= 5.0 and not self._renew_once():
+            with self._lock:
+                error = self._error
+            raise ConditionalConflict("dataset lease renewal was lost") from error
         self.stop()
         with self._lock:
             if self._error is not None:
@@ -1181,6 +1217,49 @@ def _attach_verified_history(
     )
 
 
+def _attach_inventory_without_active(
+    client,
+    plan: ScalePlan,
+    result: PublishResult,
+    *,
+    bucket: str,
+) -> PublishResult:
+    budget = _InventoryBudget()
+    base = f"_data-eng-locks/manifests/{plan.dataset.name}/"
+    manifest_keys = _bounded_object_keys(client, bucket, base, budget=budget)
+    referenced_prefixes: set[str] = set()
+    valid: list[str] = []
+    ambiguous: list[str] = []
+    for key in manifest_keys:
+        digest = key.removeprefix(base).removesuffix(".json")
+        try:
+            _require_sha256(digest, "inventory manifest digest")
+            budget.request()
+            manifest = _read_historical_manifest(client, plan.dataset.name, digest, bucket)
+            _validate_historical_manifest(manifest, plan)
+        except (AmbiguousWrite, TypeError, ValueError):
+            ambiguous.append(key)
+        else:
+            valid.append(key)
+            referenced_prefixes.add(manifest.physical_prefix)
+    candidates: tuple[str, ...] = ()
+    if not ambiguous:
+        candidates = _inactive_generation_prefixes(
+            client,
+            plan,
+            referenced_prefixes,
+            bucket=bucket,
+            budget=budget,
+        )
+    return replace(
+        result,
+        unreferenced_manifest_keys=tuple(valid),
+        ambiguous_manifest_keys=tuple(ambiguous),
+        candidate_generation_prefixes=candidates,
+        inventory_state="partial-ambiguous" if ambiguous else "complete",
+    )
+
+
 def _inactive_generation_prefixes(
     client,
     plan: ScalePlan,
@@ -1341,13 +1420,29 @@ def _owned_staging(
     cleanup_notes: list[str] | None = None,
 ) -> Iterator[Path]:
     owns_parent = parent is None
+    pool_state: dict[str, object] | None = None
+    pool_index: int | None = None
     if parent is None:
         platform_parent = Path(tempfile.gettempdir())
         status = platform_parent.lstat()
         if not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode):
             raise ValueError("platform temporary root must be a directory")
-        private_parent = Path(tempfile.mkdtemp(prefix="data-eng-lab-publication-", dir=platform_parent))
-        private_parent.chmod(0o700)
+        with _STAGING_POOL_CONDITION:
+            pool_state = _STAGING_POOLS.get(platform_parent)
+            if pool_state is None:
+                pool_root = Path(tempfile.mkdtemp(prefix="data-eng-lab-publication-pool-", dir=platform_parent))
+                pool_root.chmod(0o700)
+                pool_state = {"root": pool_root, "available": [], "created": 0}
+                _STAGING_POOLS[platform_parent] = pool_state
+            available = cast(list[int], pool_state["available"])
+            while not available and cast(int, pool_state["created"]) >= _STAGING_POOL_SIZE:
+                _STAGING_POOL_CONDITION.wait()
+            if available:
+                pool_index = available.pop()
+            else:
+                pool_index = cast(int, pool_state["created"])
+                pool_state["created"] = pool_index + 1
+            private_parent = cast(Path, pool_state["root"])
     else:
         private_parent = Path(parent)
         acquisition._require_trusted_parent(private_parent)
@@ -1357,22 +1452,26 @@ def _owned_staging(
     root: Path | None = None
     root_fd: int | None = None
     try:
-        root = Path(tempfile.mkdtemp(prefix="candidate-", dir=private_parent))
+        if pool_index is None:
+            root = Path(tempfile.mkdtemp(prefix="candidate-", dir=private_parent))
+        else:
+            root = private_parent / f"slot-{pool_index}"
+            if not root.exists():
+                root.mkdir(mode=0o700)
         root_fd = os.open(root.name, open_flags | nofollow, dir_fd=parent_fd)
         status = os.fstat(root_fd)
         identity = (status.st_dev, status.st_ino)
     except BaseException:
-        if root is not None:
+        if root is not None and pool_state is None:
             try:
                 os.rmdir(root.name, dir_fd=parent_fd)
             except OSError:
                 pass
         os.close(parent_fd)
-        if owns_parent:
-            try:
-                private_parent.rmdir()
-            except OSError:
-                pass
+        if pool_state is not None and pool_index is not None:
+            with _STAGING_POOL_CONDITION:
+                cast(list[int], pool_state["available"]).append(pool_index)
+                _STAGING_POOL_CONDITION.notify()
         raise
     primary: BaseException | None = None
     try:
@@ -1401,10 +1500,14 @@ def _owned_staging(
             primary.add_note(f"owned publication staging cleanup failed: {type(cleanup_error).__name__}")
         if owns_parent and primary is not None:
             primary.add_note("private publication staging parent retained for descriptor-safe cleanup")
+        if pool_state is not None and pool_index is not None:
+            with _STAGING_POOL_CONDITION:
+                cast(list[int], pool_state["available"]).append(pool_index)
+                _STAGING_POOL_CONDITION.notify()
 
 
 def _remove_owned_directory_contents(directory_fd: int) -> None:
-    """Delete entries only through a retained descriptor for the owned directory."""
+    """Empty owned content through descriptors without unlinking mutable names."""
     for name in os.listdir(directory_fd):
         status = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
         if stat.S_ISDIR(status.st_mode):
@@ -1423,25 +1526,19 @@ def _remove_owned_directory_contents(directory_fd: int) -> None:
                 _remove_owned_directory_contents(child_fd)
             finally:
                 os.close(child_fd)
-            os.rmdir(name, dir_fd=directory_fd)
-        else:
-            os.unlink(name, dir_fd=directory_fd)
-
-
-def _exchange_directory_names(parent_fd: int, left: str, right: str) -> None:
-    """Atomically exchange two sibling names on Linux or Darwin."""
-    libc = ctypes.CDLL(None, use_errno=True)
-    if sys.platform == "linux":
-        exchange = libc.renameat2
-    elif sys.platform == "darwin":
-        exchange = libc.renameatx_np
-    else:
-        raise OSError("atomic staging directory exchange is unsupported on this platform")
-    exchange.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
-    exchange.restype = ctypes.c_int
-    if exchange(parent_fd, os.fsencode(left), parent_fd, os.fsencode(right), 2) != 0:
-        error_number = ctypes.get_errno()
-        raise OSError(error_number, os.strerror(error_number))
+        elif stat.S_ISREG(status.st_mode):
+            file_fd = os.open(
+                name,
+                os.O_WRONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory_fd,
+            )
+            try:
+                opened = os.fstat(file_fd)
+                if (opened.st_dev, opened.st_ino) != (status.st_dev, status.st_ino):
+                    raise ValueError("publication staging file identity changed")
+                os.ftruncate(file_fd, 0)
+            finally:
+                os.close(file_fd)
 
 
 def _remove_owned_root_atomically(
@@ -1450,20 +1547,12 @@ def _remove_owned_root_atomically(
     root_name: str,
     root_identity: tuple[int, int],
 ) -> None:
-    """Quarantine the owned root without path-unlinking either exchanged name."""
-    placeholder = Path(tempfile.mkdtemp(prefix="cleanup-", dir=parent))
-    placeholder_status = os.stat(placeholder.name, dir_fd=parent_fd, follow_symlinks=False)
-    placeholder_identity = (placeholder_status.st_dev, placeholder_status.st_ino)
+    """Verify the retained root capability without any pathname mutation."""
+    del parent
     try:
-        _exchange_directory_names(parent_fd, root_name, placeholder.name)
-        displaced = os.stat(placeholder.name, dir_fd=parent_fd, follow_symlinks=False)
-        displaced_identity = (displaced.st_dev, displaced.st_ino)
-        if displaced_identity != root_identity:
-            _exchange_directory_names(parent_fd, root_name, placeholder.name)
+        current = os.stat(root_name, dir_fd=parent_fd, follow_symlinks=False)
+        if (current.st_dev, current.st_ino) != root_identity:
             raise ValueError("publication staging identity changed; foreign replacement preserved")
-        replacement = os.stat(root_name, dir_fd=parent_fd, follow_symlinks=False)
-        if (replacement.st_dev, replacement.st_ino) != placeholder_identity:
-            raise ValueError("publication staging cleanup placeholder identity changed")
     except FileNotFoundError as error:
         raise ValueError("publication staging identity changed; owned directory was displaced") from error
 
@@ -1749,6 +1838,12 @@ def _publish_candidate(
             if primary is not None:
                 primary.add_note(f"dataset lease release failed: {cleanup_error}")
             elif completed and result is not None:
+                if not isinstance(cleanup_error, Exception):
+                    diagnostic = canonical_json(result.to_document()).decode("utf-8")
+                    cleanup_error.add_note(
+                        f"dataset publication committed before lease release interruption: {diagnostic}"
+                    )
+                    raise
                 result = PublishResult(
                     **{
                         **asdict(result),
@@ -1794,42 +1889,53 @@ def _stage_and_commit_candidate(
                 return tuple(fetcher(plan, root)) if files is None else files
 
             files = cast(tuple[VerifiedFile, ...], keepalive.run_while_renewing(acquire_files))
-            files = _verify_candidate_files(plan, files)
+            files = cast(
+                tuple[VerifiedFile, ...],
+                keepalive.run_while_renewing(lambda: _verify_candidate_files(plan, files)),
+            )
             staged: list[tuple[VerifiedFile, str, dict[str, str]]] = []
             for file in files:
                 keepalive.checkpoint()
                 key = f"{prefix}/{file.expected.object_name}"
                 metadata = _object_metadata(plan, publication_id, file.expected)
-                inventory.attempted_object_keys.append(key)
-                tracking_client = _WriteTrackingClient(client)
-                try:
-                    put_immutable_object(
-                        tracking_client,
-                        bucket,
-                        key,
-                        file.path,
-                        file.expected,
-                        metadata,
-                    )
-                    inventory.proven_object_keys.append(key)
-                    reconciled = tracking_client.write_failed or reconciled
-                except AmbiguousWrite:
+
+                def upload_object() -> bool:
+                    inventory.attempted_object_keys.append(key)
+                    tracking_client = _WriteTrackingClient(client)
                     try:
-                        _verify_exact_immutable(client, plan, bucket, key, file.expected, metadata)
+                        put_immutable_object(
+                            tracking_client,
+                            bucket,
+                            key,
+                            file.path,
+                            file.expected,
+                            metadata,
+                        )
+                        inventory.proven_object_keys.append(key)
+                        return tracking_client.write_failed
+                    except AmbiguousWrite:
+                        try:
+                            _verify_exact_immutable(client, plan, bucket, key, file.expected, metadata)
+                        except BaseException:
+                            inventory.possible_object_keys.append(key)
+                            raise
+                        inventory.proven_object_keys.append(key)
+                        return True
+                    except ConditionalConflict:
+                        raise
                     except BaseException:
                         inventory.possible_object_keys.append(key)
                         raise
-                    inventory.proven_object_keys.append(key)
-                    reconciled = True
-                except ConditionalConflict:
-                    raise
-                except BaseException:
-                    inventory.possible_object_keys.append(key)
-                    raise
+
+                reconciled = cast(bool, keepalive.run_while_renewing(upload_object)) or reconciled
                 staged.append((file, key, metadata))
             for file, key, metadata in staged:
                 keepalive.checkpoint()
-                _verify_exact_immutable(client, plan, bucket, key, file.expected, metadata)
+                keepalive.run_while_renewing(
+                    lambda file=file, key=key, metadata=metadata: _verify_exact_immutable(
+                        client, plan, bucket, key, file.expected, metadata
+                    )
+                )
             keepalive.checkpoint()
             manifest = _build_manifest(plan, publication_id, files, active, raw_registry_sha256)
             body = manifest.to_bytes()
@@ -1837,21 +1943,26 @@ def _stage_and_commit_candidate(
             key = immutable_manifest_key(plan.dataset.name, digest)
             inventory.manifest_key = key
             inventory.manifest_digest = digest
-            inventory.manifest_outcome = "attempted-ambiguous"
-            try:
-                reconciled = _put_manifest_exact(client, bucket, key, body) or reconciled
-            except AmbiguousWrite:
-                inventory.manifest_outcome = "possible"
-                raise
-            except ConditionalConflict:
-                inventory.manifest_outcome = "conflict"
-                raise
-            except BaseException:
-                inventory.manifest_outcome = "possible"
-                raise
-            inventory.manifest_outcome = "written-unreferenced"
-            reread = _read_manifest(client, plan, digest, bucket)
-            _validate_manifest_for_plan(reread, plan)
+
+            def publish_manifest() -> bool:
+                inventory.manifest_outcome = "attempted-ambiguous"
+                try:
+                    manifest_reconciled = _put_manifest_exact(client, bucket, key, body)
+                except AmbiguousWrite:
+                    inventory.manifest_outcome = "possible"
+                    raise
+                except ConditionalConflict:
+                    inventory.manifest_outcome = "conflict"
+                    raise
+                except BaseException:
+                    inventory.manifest_outcome = "possible"
+                    raise
+                inventory.manifest_outcome = "written-unreferenced"
+                reread = _read_manifest(client, plan, digest, bucket)
+                _validate_manifest_for_plan(reread, plan)
+                return manifest_reconciled
+
+            reconciled = cast(bool, keepalive.run_while_renewing(publish_manifest)) or reconciled
             keepalive.checkpoint()
         keepalive.stop_and_checkpoint()
         pointer = ActivePointer(
@@ -2044,7 +2155,7 @@ def publish_dataset(
                     inventory_state="unavailable-warning",
                     cleanup_warning="inventory unavailable because the active pointer is corrupt",
                 )
-            return planned
+            return _attach_inventory_without_active(client, plan, planned, bucket=bucket)
         if active.pointer is not None or active.corruption is not None:
             resolved, current = _verify_pointer_state_with_document(client, plan, active, bucket)
             return _result_with_verified_history(
@@ -2060,7 +2171,7 @@ def publish_dataset(
             legacy = _legacy_candidates(client, plan, Path(temporary), bucket)
         status = "dry-run-legacy-migration" if legacy is not None else "dry-run-initial"
         intended_publication = uuid.uuid4().hex
-        return PublishResult(
+        planned = PublishResult(
             plan.dataset.name,
             plan.scale,
             status,
@@ -2071,6 +2182,7 @@ def publish_dataset(
             pointer_action="create",
             pointer_precondition="If-None-Match: *",
         )
+        return _attach_inventory_without_active(client, plan, planned, bucket=bucket)
     if mode is PublishMode.ROLLBACK:
         rollback = _rollback_transaction(
             client,

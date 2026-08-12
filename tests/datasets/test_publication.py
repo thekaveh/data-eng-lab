@@ -4,7 +4,6 @@ import hashlib
 import inspect
 import io
 import json
-import os
 import threading
 import time
 from dataclasses import replace
@@ -208,6 +207,75 @@ def test_long_fetch_renews_lease_and_releases_latest_version(tmp_path, monkeypat
     assert released[-1].etag == '"lease-renewed"'
 
 
+@pytest.mark.parametrize("slow_phase", ["object", "manifest"])
+def test_slow_remote_mutation_renews_lease_until_pointer_commit(
+    tmp_path,
+    monkeypatch,
+    slow_phase,
+) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+    renewals: list[Lease] = []
+    released: list[Lease] = []
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        lease = _publication_lease(store, plan, publication_id, owner_nonce)
+        short = replace(lease, created_at=datetime.now(UTC), expires_at=datetime.now(UTC) + timedelta(seconds=1))
+        _seed_lease(store, short)
+        return short
+
+    def renew(client, predecessor):
+        del client
+        now = datetime.now(UTC)
+        successor = replace(
+            predecessor,
+            created_at=now,
+            expires_at=now + timedelta(seconds=1),
+            etag=f'"renewed-{len(renewals) + 1}"',
+        )
+        renewals.append(successor)
+        _seed_lease(store, successor)
+        return successor
+
+    from datasets import publication as publication_module
+
+    object_put = publication_module.put_immutable_object
+    manifest_put = publication_module._put_manifest_exact
+
+    def slow_object(*args, **kwargs):
+        time.sleep(1.3)
+        return object_put(*args, **kwargs)
+
+    def slow_manifest(*args, **kwargs):
+        time.sleep(1.3)
+        return manifest_put(*args, **kwargs)
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.renew_lease", renew)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda client, lease: released.append(lease))
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+    if slow_phase == "object":
+        monkeypatch.setattr("datasets.publication.put_immutable_object", slow_object)
+    else:
+        monkeypatch.setattr("datasets.publication._put_manifest_exact", slow_manifest)
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.DEFAULT,
+        client=store,
+        fetcher=lambda *_: (VerifiedFile(source, expected),),
+        raw_registry_sha256=RAW_REGISTRY_SHA256,
+    )
+
+    assert result.pointer_outcome == "committed"
+    assert renewals
+    assert released[-1].etag == renewals[-1].etag
+
+
 def test_lease_renewal_failure_aborts_before_pointer_mutation(tmp_path, monkeypatch) -> None:
     plan = resolve_scale(_dataset(), "small")
     store = FakeS3()
@@ -298,6 +366,22 @@ def test_keepalive_start_has_no_background_s3_mutator() -> None:
     assert keepalive.stop() == lease
 
 
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(14)])
+def test_keepalive_renew_control_flow_propagates_unchanged(monkeypatch, interrupt) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    lease = _publication_lease(store, plan, PUBLICATION_ID, "a" * 32)
+    from datasets import publication as publication_module
+
+    monkeypatch.setattr("datasets.publication.renew_lease", lambda *_: (_ for _ in ()).throw(interrupt))
+    keepalive = publication_module._LeaseKeepalive(store, lease)
+
+    with pytest.raises(type(interrupt)) as caught:
+        keepalive._renew_once()
+
+    assert caught.value is interrupt
+
+
 def test_keepalive_start_failure_releases_acquired_lease(monkeypatch) -> None:
     plan = resolve_scale(_dataset(), "small")
     store = FakeS3()
@@ -360,6 +444,7 @@ def test_control_flow_interrupt_at_manifest_boundary_is_preserved(tmp_path, monk
 
     assert caught.value is interrupt
     assert any("publication" in note for note in getattr(interrupt, "__notes__", ()))
+    assert not any(thread.name.startswith("dataset-source-") for thread in threading.enumerate())
 
 
 def test_verified_existing_race_keeps_result_when_release_fails(monkeypatch) -> None:
@@ -456,7 +541,10 @@ def test_refresh_of_corrupt_pointer_preserves_observed_etag(tmp_path, monkeypatc
 
 def test_dry_run_missing_pointer_performs_no_lease_source_or_write(monkeypatch) -> None:
     plan = resolve_scale(_dataset(), "small")
-    store = FakeS3()
+    store = InventoryS3()
+    orphan_plan = resolve_scale(_dataset(), "small")
+    orphan_prefix = publication_prefix(orphan_plan, "123e4567e89b42d3a456426614174003")
+    store.seed(f"{orphan_prefix}/readme.txt", b"hello\n", etag='"orphan"')
     monkeypatch.setattr("datasets.publication.acquire_lease", lambda *args, **kwargs: pytest.fail("lease"))
 
     result = publish_dataset(
@@ -472,6 +560,8 @@ def test_dry_run_missing_pointer_performs_no_lease_source_or_write(monkeypatch) 
     assert result.publication_prefix == publication_prefix(plan, result.publication_id)
     assert result.pointer_action == "create"
     assert result.pointer_precondition == "If-None-Match: *"
+    assert result.inventory_state == "complete"
+    assert result.candidate_generation_prefixes == (orphan_prefix,)
     assert store.puts == []
 
 
@@ -491,6 +581,28 @@ def test_dry_run_refresh_runs_complete_inventory_without_mutation(monkeypatch) -
     assert result.status == "dry-run-refresh"
     assert result.inventory_state == "complete"
     assert store.puts == []
+
+
+def test_missing_pointer_dry_run_ambiguous_manifest_reports_partial_inventory(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = InventoryS3()
+    digest = "b" * 64
+    store.seed(immutable_manifest_key("sample", digest), b'{"corrupt":true}', etag='"corrupt"')
+    orphan_prefix = publication_prefix(plan, "123e4567e89b42d3a456426614174003")
+    store.seed(f"{orphan_prefix}/readme.txt", b"hello\n", etag='"candidate"')
+    monkeypatch.setattr("datasets.publication.acquire_lease", lambda *_args, **_kwargs: pytest.fail("lease"))
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.DEFAULT,
+        client=store,
+        fetcher=lambda *_: pytest.fail("source"),
+        dry_run=True,
+    )
+
+    assert result.inventory_state == "partial-ambiguous"
+    assert result.candidate_generation_prefixes == ()
+    assert result.ambiguous_manifest_keys == (immutable_manifest_key("sample", digest),)
 
 
 def test_failure_after_immutable_upload_reports_orphan_candidate(tmp_path, monkeypatch) -> None:
@@ -1575,6 +1687,34 @@ def test_rollback_inventory_closes_target_and_previous_active_history_transitive
     assert result.candidate_generation_prefixes == ()
 
 
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(13)])
+def test_rollback_pointer_control_flow_preserves_ambiguous_target_diagnostic(monkeypatch, interrupt) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    target = _manifest(plan, publication_id=PREVIOUS_PUBLICATION_ID)
+    store, _current = _published_store(plan)
+    store.seed(immutable_manifest_key("sample", manifest_sha256(target)), target.to_bytes(), etag='"target"')
+    store.seed(target.objects[0].key, b"hello\n", etag='"target-object"')
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+    monkeypatch.setattr(
+        "datasets.publication._put_pointer_exact",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(interrupt),
+    )
+
+    with pytest.raises(type(interrupt)) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.ROLLBACK,
+            client=store,
+            fetcher=lambda *_: pytest.fail("source"),
+            rollback_sha256=manifest_sha256(target),
+        )
+
+    assert caught.value is interrupt
+    notes = " ".join(getattr(interrupt, "__notes__", ()))
+    assert '"pointer_outcome":"ambiguous"' in notes
+    assert target.physical_prefix in notes
+
+
 def test_verified_result_walks_predecessor_history_in_order(monkeypatch) -> None:
     plan = resolve_scale(_dataset(), "small")
     oldest = _manifest(plan, publication_id=PREVIOUS_PUBLICATION_ID)
@@ -1772,7 +1912,9 @@ def test_owned_staging_supports_sticky_world_writable_platform_temp(tmp_path, mo
         assert staging.parent.stat().st_mode & 0o777 == 0o700
         (staging / "owned.txt").write_text("owned")
 
-    assert list(platform_temp.rglob("owned.txt")) == []
+    retained = list(platform_temp.rglob("owned.txt"))
+    assert len(retained) == 1
+    assert retained[0].read_bytes() == b""
 
 
 def test_owned_staging_cleans_owned_inode_after_path_is_moved(tmp_path) -> None:
@@ -1787,7 +1929,7 @@ def test_owned_staging_cleans_owned_inode_after_path_is_moved(tmp_path) -> None:
             staging.rename(moved)
 
     assert moved.is_dir()
-    assert list(moved.iterdir()) == []
+    assert (moved / "owned.txt").read_bytes() == b""
 
 
 def test_owned_staging_atomic_cleanup_restores_last_moment_foreign_swap(tmp_path, monkeypatch) -> None:
@@ -1796,32 +1938,25 @@ def test_owned_staging_atomic_cleanup_restores_last_moment_foreign_swap(tmp_path
     parent = tmp_path / "trusted"
     parent.mkdir(mode=0o700)
     moved = parent / "moved-owned"
-    original_exchange = publication_module._exchange_directory_names
+    original_cleanup = publication_module._remove_owned_directory_contents
     swapped = False
 
-    def swap_before_exchange(parent_fd, left, right):
+    def swap_before_cleanup(directory_fd):
         nonlocal swapped
         if not swapped:
             swapped = True
-            os.rename(left, moved.name, src_dir_fd=parent_fd, dst_dir_fd=parent_fd)
-            os.mkdir(left, mode=0o700, dir_fd=parent_fd)
-            foreign_fd = os.open(
-                f"{left}/foreign.txt",
-                os.O_WRONLY | os.O_CREAT | os.O_EXCL,
-                0o600,
-                dir_fd=parent_fd,
-            )
-            os.write(foreign_fd, b"foreign")
-            os.close(foreign_fd)
-        original_exchange(parent_fd, left, right)
+            staging.rename(moved)
+            staging.mkdir(mode=0o700)
+            (staging / "foreign.txt").write_bytes(b"foreign")
+        original_cleanup(directory_fd)
 
-    monkeypatch.setattr(publication_module, "_exchange_directory_names", swap_before_exchange)
+    monkeypatch.setattr(publication_module, "_remove_owned_directory_contents", swap_before_cleanup)
     with pytest.raises(ValueError, match="foreign replacement preserved"):
         with publication_module._owned_staging(parent) as staging:
             (staging / "owned.txt").write_text("owned")
 
     assert (staging / "foreign.txt").read_bytes() == b"foreign"
-    assert list(moved.iterdir()) == []
+    assert (moved / "owned.txt").read_bytes() == b""
 
 
 def test_owned_staging_never_path_unlinks_after_atomic_identity_proof(tmp_path, monkeypatch) -> None:
@@ -1829,28 +1964,32 @@ def test_owned_staging_never_path_unlinks_after_atomic_identity_proof(tmp_path, 
 
     parent = tmp_path / "trusted"
     parent.mkdir(mode=0o700)
-    exchanged = False
-    original_exchange = publication_module._exchange_directory_names
-    original_rmdir = publication_module.os.rmdir
-
-    def exchange(*args):
-        nonlocal exchanged
-        original_exchange(*args)
-        exchanged = True
-
-    def reject_post_exchange_rmdir(*args, **kwargs):
-        if exchanged:
-            pytest.fail("path rmdir remained after atomic identity proof")
-        return original_rmdir(*args, **kwargs)
-
-    monkeypatch.setattr(publication_module, "_exchange_directory_names", exchange)
-    monkeypatch.setattr(publication_module.os, "rmdir", reject_post_exchange_rmdir)
+    monkeypatch.setattr(publication_module.os, "rmdir", lambda *_args, **_kwargs: pytest.fail("path rmdir"))
+    monkeypatch.setattr(publication_module.os, "unlink", lambda *_args, **_kwargs: pytest.fail("path unlink"))
 
     cleanup_notes: list[str] = []
     with publication_module._owned_staging(parent, cleanup_notes=cleanup_notes) as staging:
         (staging / "owned.txt").write_text("owned")
 
     assert cleanup_notes == ["owned staging residue retained after descriptor-safe cleanup"]
+
+
+def test_owned_staging_pool_bounds_residue_across_one_hundred_runs(tmp_path, monkeypatch) -> None:
+    from datasets import publication as publication_module
+
+    platform_temp = tmp_path / "platform-temp"
+    platform_temp.mkdir(mode=0o1777)
+    platform_temp.chmod(0o1777)
+    monkeypatch.setattr(publication_module.tempfile, "gettempdir", lambda: str(platform_temp))
+
+    for _iteration in range(100):
+        with publication_module._owned_staging() as staging:
+            (staging / "owned.txt").write_text("owned")
+
+    pools = list(platform_temp.glob("data-eng-lab-publication-pool-*"))
+    assert len(pools) == 1
+    assert len(list(pools[0].glob("slot-*"))) <= publication_module._STAGING_POOL_SIZE
+    assert len(list(pools[0].rglob("owned.txt"))) <= publication_module._STAGING_POOL_SIZE
 
 
 def test_stop_failure_does_not_mask_primary_and_release_is_attempted(tmp_path, monkeypatch) -> None:
@@ -1963,6 +2102,40 @@ def test_committed_publication_inventory_failure_is_warning_not_failure(tmp_path
     assert result.inventory_state == "unavailable-warning"
     assert result.cleanup_warning is not None
     assert "inventory unavailable" in result.cleanup_warning
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(12)])
+def test_postcommit_release_control_flow_preserves_category_and_committed_note(
+    tmp_path,
+    monkeypatch,
+    interrupt,
+) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        return _publication_lease(store, plan, publication_id, owner_nonce)
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: (_ for _ in ()).throw(interrupt))
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    with pytest.raises(type(interrupt)) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (VerifiedFile(source, expected),),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert caught.value is interrupt
+    notes = " ".join(getattr(interrupt, "__notes__", ()))
+    assert '"pointer_outcome":"committed"' in notes
 
 
 @pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(9)])
@@ -2086,6 +2259,7 @@ def test_object_control_flow_attempt_is_reported_possible_without_wrapping(tmp_p
     assert caught.value is interrupt
     notes = " ".join(getattr(interrupt, "__notes__", ()))
     assert '"possible_object_keys":["sample/_generations/' in notes
+    assert not any(thread.name.startswith("dataset-source-") for thread in threading.enumerate())
 
 
 def test_manifest_conflict_reports_explicit_outcome_and_proven_object_orphans(tmp_path, monkeypatch) -> None:
