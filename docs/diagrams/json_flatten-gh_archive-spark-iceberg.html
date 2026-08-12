@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>data-eng-lab — json_flatten-gh_archive-spark-iceberg</title></head>
+<head><meta charset="utf-8"><title>data-eng-lab - json_flatten-gh_archive-spark-iceberg</title></head>
 <body>
-  <!-- Verified against scenarios/json_flatten-gh_archive-spark-iceberg/jupyter/notebook.ipynb and dag.py on 2026-07-31. -->
+  <!-- Verified against the paired notebooks and scenarios/execution-modes.yaml on 2026-08-12. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560" font-family="'JetBrains Mono', 'Courier New', monospace" role="img" aria-labelledby="diagram-title diagram-description">
   <title id="diagram-title">JSON flattening: GitHub Archive with Spark and Iceberg</title>
   <desc id="diagram-description">Architecture and transformation-flow diagram for the GitHub Archive JSON-flattening scenario.</desc>
@@ -20,12 +20,12 @@
         <rect width="1280" height="560" fill="url(#grid)"/>
 
         <!-- Title -->
-        <text x="640" y="40" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">json_flatten — GH Archive (Spark → Iceberg Silver)</text>
+        <text x="640" y="40" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">json_flatten - GH Archive (Spark to Iceberg Silver)</text>
         <text x="640" y="62" fill="#94a3b8" font-size="12" text-anchor="middle">Nested GitHub event JSON is flattened with dot-notation/get_json_object and a created_at cast into a tabular silver table</text>
 
         <!-- ================= STAGE 1: SOURCE (nested JSON) ================= -->
         <rect x="40" y="120" width="250" height="330" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
-        <text x="165" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Source — Landing</text>
+        <text x="165" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Source - Landing</text>
 
         <rect x="60" y="160" width="210" height="270" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
         <text x="165" y="188" fill="#ffffff" font-size="14" font-weight="700" text-anchor="middle">S3 (MinIO)</text>
@@ -38,15 +38,15 @@
         <text x="165" y="322" fill="#ffffff" font-size="10" text-anchor="middle">actor.login : string</text>
         <text x="165" y="340" fill="#ffffff" font-size="10" text-anchor="middle">repo.name   : string</text>
         <text x="165" y="358" fill="#ffffff" font-size="10" text-anchor="middle">created_at  : string</text>
-        <text x="165" y="390" fill="#22d3ee" font-size="9" text-anchor="middle">spark.read.json(…)</text>
+        <text x="165" y="390" fill="#22d3ee" font-size="9" text-anchor="middle">spark.read.json(...)</text>
         <text x="165" y="406" fill="#94a3b8" font-size="9" text-anchor="middle">schema inferred</text>
 
         <!-- ================= STAGE 2: FLATTEN ================= -->
         <rect x="350" y="120" width="430" height="330" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
-        <text x="565" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Flatten — Spark select()</text>
+        <text x="565" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Flatten - Spark select()</text>
 
         <rect x="370" y="160" width="390" height="200" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
-        <text x="565" y="184" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">raw.select( … )</text>
+        <text x="565" y="184" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">raw.select( ... )</text>
         <line x1="390" y1="198" x2="740" y2="198" stroke="#1e293b" stroke-width="1"/>
         <text x="565" y="220" fill="#ffffff" font-size="10" text-anchor="middle">col("id")</text>
         <text x="565" y="238" fill="#ffffff" font-size="10" text-anchor="middle">col("type")</text>
@@ -54,13 +54,13 @@
         <text x="565" y="278" fill="#fb923c" font-size="10" text-anchor="middle">col("repo.name").alias("repo_name")</text>
         <text x="565" y="298" fill="#fb923c" font-size="10" text-anchor="middle">col("created_at").cast("timestamp")</text>
         <text x="565" y="330" fill="#94a3b8" font-size="9" text-anchor="middle">dot-notation / get_json_object</text>
-        <text x="565" y="346" fill="#94a3b8" font-size="9" text-anchor="middle">nested → flat columns</text>
+        <text x="565" y="346" fill="#94a3b8" font-size="9" text-anchor="middle">nested to flat columns</text>
 
         <!-- flatten mapping banner -->
         <rect x="370" y="372" width="390" height="58" rx="6" fill="#0a0f1f" stroke="#fb923c" stroke-width="1"/>
         <text x="565" y="392" fill="#fb923c" font-size="10" font-weight="700" text-anchor="middle">FIELD MAPPING</text>
-        <text x="565" y="410" fill="#ffffff" font-size="9" text-anchor="middle">actor.login → actor_login  ·  repo.name → repo_name</text>
-        <text x="565" y="424" fill="#ffffff" font-size="9" text-anchor="middle">created_at(string) → created_at(timestamp)</text>
+        <text x="565" y="410" fill="#ffffff" font-size="9" text-anchor="middle">actor.login to actor_login  |  repo.name to repo_name</text>
+        <text x="565" y="424" fill="#ffffff" font-size="9" text-anchor="middle">created_at(string) to created_at(timestamp)</text>
 
         <!-- ================= STAGE 3: CATALOG ================= -->
         <rect x="830" y="120" width="160" height="330" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
@@ -75,7 +75,7 @@
 
         <!-- ================= STAGE 4: RESULT (flat silver) ================= -->
         <rect x="1040" y="120" width="200" height="330" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
-        <text x="1140" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Result — Silver</text>
+        <text x="1140" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Result - Silver</text>
 
         <rect x="1055" y="160" width="170" height="270" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
         <text x="1140" y="184" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">SILVER</text>
@@ -107,9 +107,9 @@
         <!-- ================= ORCHESTRATOR STRIP ================= -->
         <rect x="40" y="468" width="1200" height="62" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
         <text x="70" y="494" fill="#22d3ee" font-size="11" font-weight="600">Orchestration</text>
-        <text x="70" y="514" fill="#94a3b8" font-size="9">Airflow DAG: json_flatten_gh_archive (@daily) · placeholder until productionized</text>
+        <text x="70" y="514" fill="#94a3b8" font-size="9">Execution: approved new production DAG | child #109</text>
         <text x="560" y="494" fill="#22d3ee" font-size="11" font-weight="600">Runtime</text>
-        <text x="560" y="514" fill="#94a3b8" font-size="9">PySpark (Jupyter) · Spark Connect sc://spark-connect:15002</text>
+        <text x="560" y="514" fill="#94a3b8" font-size="9">PySpark (Jupyter) | Spark Connect sc://spark-connect:15002</text>
         <text x="930" y="494" fill="#22d3ee" font-size="11" font-weight="600">Verify</text>
         <text x="930" y="514" fill="#94a3b8" font-size="9">GROUP BY type ORDER BY n DESC</text>
       </svg>

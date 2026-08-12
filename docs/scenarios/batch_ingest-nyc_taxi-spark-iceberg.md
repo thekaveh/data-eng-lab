@@ -54,16 +54,13 @@ Both languages implement identical ingestion logic with source read, Iceberg wri
 
 ## 5. Orchestration
 
-Airflow DAG: `batch_ingest_nyc_taxi` — a scheduled batch DAG.
+Classification: **existing production DAG**. The production entrypoint is `spark-apps/nyc-taxi-etl/dag.py` (`nyc_taxi_etl`), scheduled `@daily` with manual runs and an explicit `dataset_scale` supported. The paired notebooks remain the interactive teaching surface; the deleted scenario-local no-op is superseded.
 
 ## 6. Usage
 
 1. Ensure the `bronze` Iceberg namespace exists: `scripts/register_iceberg.py`
 2. Publish the expected tier with `make datasets SCALE=<tier>`. Set the Zeppelin `dataset_scale` input or Jupyter `dataset_scale_override` for an explicit override; otherwise `DATASET_SCALE`, then `small`, applies.
-3. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
-     ```bash
-     airflow dags trigger batch_ingest_nyc_taxi
-     ```
+3. Open either notebook on the Atlas stack.
 4. Verify:
      ```bash
      spark-sql -e "SELECT COUNT(*) FROM lakehouse.bronze.nyc_taxi_trips"

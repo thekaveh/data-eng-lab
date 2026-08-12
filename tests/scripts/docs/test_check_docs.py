@@ -9,6 +9,7 @@ from scripts.docs.check_docs import (
     check_completeness,
     check_diagrams,
     check_empty_artifacts,
+    check_execution_modes,
     check_numbering,
     check_placeholders,
     check_portability,
@@ -21,6 +22,7 @@ from scripts.docs.render_diagrams import (
     projection_fingerprint_path,
     svg_to_png,
 )
+from scripts.scenario_execution import render_markdown
 
 OVERVIEW_H1_ERROR = (
     "docs/index.md first heading must be exactly "
@@ -58,12 +60,20 @@ def _png(*, width: int = 800, height: int = 400) -> bytes:
 def repo_fixture(tmp_path: Path) -> Path:
     repo = tmp_path / "repo"
     (repo / "docs/diagrams/img").mkdir(parents=True)
+    (repo / "scenarios").mkdir()
     (repo / "docs/superpowers").mkdir()
     (repo / "docs/stylesheets").mkdir(parents=True)
     (repo / "docs/overrides").mkdir(parents=True)
     (repo / "docs/index.md").write_text(
         '<h1 align="center">data-eng-lab</h1>\n',
         encoding="utf-8",
+    )
+    (repo / "scenarios/execution-modes.yaml").write_text(
+        "version: 1\nscenarios: []\n", encoding="utf-8"
+    )
+    (repo / "docs/scenarios").mkdir(parents=True)
+    (repo / "docs/scenarios/execution-modes.md").write_text(
+        render_markdown(()), encoding="utf-8"
     )
     (repo / "docs/diagrams/overview.html").write_text(_master(), encoding="utf-8")
     svg = extract_svg((repo / "docs/diagrams/overview.html").read_text(encoding="utf-8"))
@@ -81,6 +91,7 @@ numbering: baked
 internal_roots: [docs/superpowers]
 sections:
   - {id: overview, number: '1', title: Overview, source: docs/index.md}
+  - {id: execution-modes, number: '5.21', title: Execution Modes, source: docs/scenarios/execution-modes.md}
 diagrams:
   - {id: overview, master: docs/diagrams/overview.html}
 """,
@@ -96,6 +107,29 @@ def repo_root() -> Path:
 
 def messages(findings):
     return [finding.message for finding in findings]
+
+
+def test_execution_mode_docs_check_fails_closed_when_both_files_are_absent(repo_fixture):
+    (repo_fixture / "scenarios/execution-modes.yaml").unlink()
+    (repo_fixture / "docs/scenarios/execution-modes.md").unlink()
+    assert messages(check_execution_modes(repo_fixture)) == [
+        "scenario execution-mode canonical matrix is missing",
+        "scenario execution-mode public projection is missing",
+    ]
+
+
+def test_execution_mode_docs_check_reports_each_missing_surface_independently(repo_fixture):
+    matrix = repo_fixture / "scenarios/execution-modes.yaml"
+    (repo_fixture / "docs/scenarios/execution-modes.md").unlink()
+    assert "scenario execution-mode public projection is missing" in messages(
+        check_execution_modes(repo_fixture)
+    )
+    matrix.unlink()
+    projection = repo_fixture / "docs/scenarios/execution-modes.md"
+    projection.write_text("# Projection\n", encoding="utf-8")
+    assert messages(check_execution_modes(repo_fixture)) == [
+        "scenario execution-mode canonical matrix is missing"
+    ]
 
 
 def test_atlas_acceptance_record_is_consistent(repo_root):

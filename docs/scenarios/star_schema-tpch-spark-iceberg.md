@@ -59,16 +59,13 @@ Both languages implement identical star schema logic: source ingestion, multi-ta
 
 ## 5. Orchestration
 
-Airflow DAG: `star_schema_tpch` — a scheduled batch DAG.
+Classification: **approved new production DAG**. No production DAG exists yet. Child #107 owns the production fact/dimension Spark application and operator-owned Airflow task required before Trino BI child #83; until it passes live acceptance, run the paired notebooks only.
 
 ## 6. Usage
 
 1. Ensure the `gold` Iceberg namespace exists: `scripts/register_iceberg.py`
 2. Populate the TPC-H dataset: `make datasets` to download Parquet files to S3
-3. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
-     ```bash
-   airflow dags trigger star_schema_tpch
-     ```
+3. Open either notebook on the Atlas stack.
 4. Verify output:
      ```bash
    spark-sql -e "SELECT COUNT(*) FROM lakehouse.gold.dim_customer"

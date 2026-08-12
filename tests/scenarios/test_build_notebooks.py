@@ -29,14 +29,14 @@ def test_zeppelin_interpreter_override():
 def test_write_scenario_threads_interpreter(tmp_path: Path):
     code = {s: "SELECT 1" for s in bn.NB_SECTIONS}
     bn.write_scenario(tmp_path, "federated_query-nyc_taxi-trino-iceberg", code, code,
-                      "# dag\n", "# r", zeppelin_interpreter="%jdbc(trino)")
+                      "# r", zeppelin_interpreter="%jdbc(trino)")
     zpln_path = (tmp_path / "scenarios" / "federated_query-nyc_taxi-trino-iceberg" / "zeppelin" /
                  "notebook.zpln")
     assert "%jdbc(trino)" in zpln_path.read_text()
 
 
 def test_written_scenario_passes_verifier(tmp_path: Path):
-    bn.write_scenario(tmp_path, "batch_ingest-nyc_taxi-spark-iceberg", SCALA, PY, "# dag\n", "# readme")
+    bn.write_scenario(tmp_path, "batch_ingest-nyc_taxi-spark-iceberg", SCALA, PY, "# readme")
     vspec = importlib.util.spec_from_file_location("verify_repo", ROOT / "scripts" / "verify_repo.py")
     verify = importlib.util.module_from_spec(vspec)
     vspec.loader.exec_module(verify)
@@ -48,4 +48,10 @@ def test_written_scenario_passes_verifier(tmp_path: Path):
         "5. Orchestration", "6. Usage", "7. Dependencies", "8. Known Issues & Caveats"])
     (tmp_path / "scenarios" / "batch_ingest-nyc_taxi-spark-iceberg" / "README.md").write_text(readme)
     errors = [f for f in verify.run_checks(tmp_path, cfg) if f.severity == "error"]
-    assert errors == [], errors
+    assert [error.message for error in errors] == ["scenarios/execution-modes.yaml is required"]
+
+
+def test_scenario_builder_has_no_dag_parameter_or_write_path(tmp_path: Path):
+    bn.write_scenario(tmp_path, "x", SCALA, PY, "# readme")
+    assert not (tmp_path / "scenarios/x/dag.py").exists()
+    assert "dag.py" not in (ROOT / "tests/scenarios/build_notebooks.py").read_text(encoding="utf-8")

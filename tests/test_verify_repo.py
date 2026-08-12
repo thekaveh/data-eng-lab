@@ -46,10 +46,16 @@ CFG = {
 SPARK_CFG = dict(CFG, spark_app_required_files=["pom.xml", "src/main/scala", "Jenkinsfile", "dag.py"])
 
 
+def _assert_only_matrix_missing(errors):
+    assert [(finding.check, finding.message) for finding in errors] == [
+        ("scenario.execution_modes", "scenarios/execution-modes.yaml is required")
+    ]
+
+
 def test_valid_scenario_passes(tmp_path: Path):
     _make_valid_scenario(tmp_path)
     errors = [f for f in verify_repo.run_checks(tmp_path, CFG) if f.severity == "error"]
-    assert errors == [], errors
+    _assert_only_matrix_missing(errors)
 
 
 def test_bad_scenario_name_flags_error(tmp_path: Path):
@@ -86,9 +92,9 @@ def test_missing_notebook_section_flags_error(tmp_path: Path):
     assert any(f.check == "scenario.notebook_sections" and f.severity == "error" for f in findings), findings
 
 
-def test_no_scenarios_dir_is_ok(tmp_path: Path):
+def test_no_scenarios_dir_still_requires_canonical_matrix(tmp_path: Path):
     errors = [f for f in verify_repo.run_checks(tmp_path, CFG) if f.severity == "error"]
-    assert errors == []
+    _assert_only_matrix_missing(errors)
 
 
 def test_registry_check_flags_invalid_registry(tmp_path: Path):
@@ -104,7 +110,7 @@ def test_registry_check_flags_invalid_registry(tmp_path: Path):
 def test_valid_spark_app_passes(tmp_path: Path):
     _make_valid_spark_app(tmp_path)
     errors = [f for f in verify_repo.run_checks(tmp_path, SPARK_CFG) if f.severity == "error"]
-    assert errors == [], errors
+    _assert_only_matrix_missing(errors)
 
 
 def test_spark_app_missing_pom_flags_error(tmp_path: Path):
@@ -114,6 +120,6 @@ def test_spark_app_missing_pom_flags_error(tmp_path: Path):
     assert any(f.check == "spark_app.files" and f.severity == "error" for f in findings), findings
 
 
-def test_no_spark_apps_dir_is_ok(tmp_path: Path):
+def test_no_spark_apps_dir_still_requires_canonical_matrix(tmp_path: Path):
     errors = [f for f in verify_repo.run_checks(tmp_path, SPARK_CFG) if f.severity == "error"]
-    assert errors == []
+    _assert_only_matrix_missing(errors)

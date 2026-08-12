@@ -39,15 +39,12 @@ Both languages implement identical SCD2 logic: seeding, history tracking via eff
 
 ## 5. Orchestration
 
-Airflow DAG: `scd2_online_retail` — a scheduled batch DAG.
+Classification: **intentionally notebook-only**. No Airflow DAG or schedule exists. Inline customer changes teach close-and-insert history mechanics but do not define a governed production source, so run either paired notebook after resetting its table.
 
 ## 6. Usage
 
 1. Ensure the `gold` Iceberg namespace exists: `scripts/register_iceberg.py`
-2. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
-      ```bash
-   airflow dags trigger scd2_online_retail
-      ```
+2. Open either notebook on the Atlas stack.
 3. Verify:
       ```bash
    spark-sql -e "SELECT * FROM lakehouse.gold.dim_customer_scd2"

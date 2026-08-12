@@ -12,12 +12,12 @@ _spec.loader.exec_module(ns)
 NAME = "batch_ingest-nyc_taxi-spark-iceberg"
 
 
-def test_scaffold_creates_valid_structure(tmp_path: Path):
-    d = ns.scaffold(tmp_path, NAME, with_dag=True)
+def test_scaffold_creates_valid_notebook_first_structure(tmp_path: Path):
+    d = ns.scaffold(tmp_path, NAME)
     assert (d / "README.md").exists()
     assert (d / "zeppelin" / "notebook.zpln").exists()
     assert (d / "jupyter" / "notebook.ipynb").exists()
-    assert (d / "dag.py").exists()
+    assert not (d / "dag.py").exists()
     # both notebooks are valid JSON
     json.loads((d / "zeppelin" / "notebook.zpln").read_text())
     json.loads((d / "jupyter" / "notebook.ipynb").read_text())
@@ -51,7 +51,7 @@ def test_scaffold_output_passes_the_verifier(tmp_path: Path):
 
     cfg = yaml.safe_load((ROOT / "scripts" / "verify_repo_config.yaml").read_text())
     errors = [f for f in verify.run_checks(tmp_path, cfg) if f.severity == "error"]
-    assert errors == [], errors
+    assert [error.message for error in errors] == ["scenarios/execution-modes.yaml is required"]
 
 
 def test_scaffold_rejects_bad_name(tmp_path: Path):
@@ -65,6 +65,10 @@ def test_scaffold_refuses_overwrite(tmp_path: Path):
         ns.scaffold(tmp_path, NAME)
 
 
-def test_no_dag_flag(tmp_path: Path):
-    d = ns.scaffold(tmp_path, NAME, with_dag=False)
-    assert not (d / "dag.py").exists()
+def test_scaffold_api_exposes_no_placeholder_dag_switch():
+    assert "with_dag" not in ns.scaffold.__annotations__
+
+
+def test_cli_rejects_obsolete_no_dag_flag():
+    with pytest.raises(SystemExit):
+        ns.main([NAME, "--no-dag"])

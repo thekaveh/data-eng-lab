@@ -42,16 +42,13 @@ Both notebooks implement identical streaming ingest logic with file source, sche
 
 ## 5. Orchestration
 
-Airflow DAG: `streaming_ingest_gh_archive` — a scheduled batch DAG (not streaming, since the file source is incremental).
+Classification: **intentionally notebook-only**. No Airflow DAG or schedule exists. This finite resolver-locked file set demonstrates checkpointed file discovery but waits as a stream, so an operator bounds either paired notebook run explicitly.
 
 ## 6. Usage
 
 1. Ensure the `bronze` Iceberg namespace exists: `scripts/register_iceberg.py`
 2. Populate the landing zone: `make datasets`
-3. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
-    ```bash
-    airflow dags trigger streaming_ingest_gh_archive
-    ```
+3. Open either notebook on the Atlas stack.
 4. Verify output:
     ```bash
     spark-sql -e "SELECT COUNT(*) FROM lakehouse.bronze.gh_events_stream"

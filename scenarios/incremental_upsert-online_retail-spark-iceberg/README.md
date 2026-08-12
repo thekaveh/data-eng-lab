@@ -44,15 +44,12 @@ Both languages implement identical upsert logic with seeding, merge operations, 
 
 ## 5. Orchestration
 
-Airflow DAG: `incremental_upsert_online_retail` — a scheduled batch DAG.
+Classification: **intentionally notebook-only**. No Airflow DAG or schedule exists. The inline seed and change set are a controlled MERGE demonstration, so an operator resets scenario-owned state and runs either paired notebook.
 
 ## 6. Usage
 
 1. Ensure the `silver` Iceberg namespace exists: `scripts/register_iceberg.py`
-2. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
-      ```bash
-   airflow dags trigger incremental_upsert_online_retail
-      ```
+2. Open either notebook on the Atlas stack.
 3. Verify:
       ```bash
    spark-sql -e "SELECT InvoiceNo, Description, Quantity FROM lakehouse.silver.online_retail"
