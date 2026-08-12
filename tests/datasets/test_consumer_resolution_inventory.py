@@ -144,8 +144,13 @@ def test_every_runtime_consumer_requires_canonical_lowercase_uuid4_publication_i
         ROOT / "scripts/new_scenario.py",
         ROOT / "spark-apps/nyc-taxi-etl/dag.py",
         ROOT / "spark-apps/nyc-taxi-medallion/dag.py",
+        ROOT / "spark-apps/movielens-feature-pipeline/dag.py",
+        ROOT / "spark-apps/tpch-star-schema/dag.py",
         ROOT / "spark-apps/nyc-taxi-etl/src/main/scala/com/thekaveh/dataeng/nyctaxi/NycTaxiEtl.scala",
         ROOT / "spark-apps/nyc-taxi-medallion/src/main/scala/com/thekaveh/dataeng/medallion/NycTaxiMedallion.scala",
+        ROOT
+        / "spark-apps/movielens-feature-pipeline/src/main/scala/com/thekaveh/dataeng/movielens/MovieLensSources.scala",
+        ROOT / "spark-apps/tpch-star-schema/src/main/scala/com/thekaveh/dataeng/tpch/TpchSources.scala",
         *(
             ROOT / "scenarios" / scenario / runtime / filename
             for scenario in sorted(RESOLVED_NOTEBOOKS)
