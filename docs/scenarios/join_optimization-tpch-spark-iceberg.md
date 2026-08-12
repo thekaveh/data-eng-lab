@@ -10,7 +10,7 @@ Performance optimization of join operations is a critical concern in data engine
 
 ### 2.1 Input Source
 
-Source: `s3a://landing/tpch/*.parquet` (TPCH dataset downloaded via `make datasets`).
+Source: TPC-H Parquet objects from one resolver-verified immutable generation published by `make datasets`.
 
 | Column | Type | Source |
 |---|---|---|
@@ -54,7 +54,7 @@ Airflow DAG: `join_optimization_tpch` — a scheduled batch DAG.
 
 ## 7. Dependencies
 
-- **Dataset:** TPCH dataset from `s3a://landing/tpch/`
+- **Dataset:** resolver-verified immutable TPC-H Parquet generation
 - **Atlas services:** A1-A4 (Spark, Iceberg, S3 catalog, lakehouse catalog)
 - **Other:** None
 

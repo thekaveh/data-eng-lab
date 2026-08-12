@@ -33,30 +33,14 @@ from pyspark.sql import functions as F
 spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
 ```
 
+Both setup implementations choose the scale from an explicit notebook override, then `DATASET_SCALE`, then `small`. They call the internal resolver once, validate its exact response and expected NYC Taxi object order, and retain one verified immutable generation as `datasetSparkUris` / `dataset_spark_uris`.
+
 ### 2.2 Read
 
 **Scala (Zeppelin):**
 
 ```scala
-val taxiDatasetScale = "small" // match `make datasets SCALE=<tier>`
-val taxiPathsByScale = Map(
-  "tiny" -> Seq("s3a://landing/nyc_taxi/yellow_tripdata_2023-01.parquet"),
-  "small" -> Seq(
-    "s3a://landing/nyc_taxi/yellow_tripdata_2023-01.parquet",
-    "s3a://landing/nyc_taxi/yellow_tripdata_2023-02.parquet",
-    "s3a://landing/nyc_taxi/yellow_tripdata_2023-03.parquet"
-  ),
-  "medium" -> Seq(
-    "s3a://landing/nyc_taxi/yellow_tripdata_2023-01.parquet",
-    "s3a://landing/nyc_taxi/yellow_tripdata_2023-02.parquet",
-    "s3a://landing/nyc_taxi/yellow_tripdata_2023-03.parquet",
-    "s3a://landing/nyc_taxi/yellow_tripdata_2023-04.parquet",
-    "s3a://landing/nyc_taxi/yellow_tripdata_2023-05.parquet",
-    "s3a://landing/nyc_taxi/yellow_tripdata_2023-06.parquet"
-  )
-)
-val taxiPaths = taxiPathsByScale.getOrElse(taxiDatasetScale,
-  throw new IllegalArgumentException(s"unsupported NYC Taxi dataset scale: $taxiDatasetScale"))
+val taxiPaths = datasetSparkUris
 val raw = taxiPaths
   .map(path => spark.read.parquet(path).withColumn("passenger_count", col("passenger_count").cast("double")))
   .reduce(_.unionByName(_))
@@ -66,27 +50,7 @@ raw.printSchema()
 **PySpark (Jupyter):**
 
 ```python
-taxi_dataset_scale = 'small'  # match `make datasets SCALE=<tier>`
-taxi_paths_by_scale = {
-    'tiny': ['s3a://landing/nyc_taxi/yellow_tripdata_2023-01.parquet'],
-    'small': [
-        's3a://landing/nyc_taxi/yellow_tripdata_2023-01.parquet',
-        's3a://landing/nyc_taxi/yellow_tripdata_2023-02.parquet',
-        's3a://landing/nyc_taxi/yellow_tripdata_2023-03.parquet',
-    ],
-    'medium': [
-        's3a://landing/nyc_taxi/yellow_tripdata_2023-01.parquet',
-        's3a://landing/nyc_taxi/yellow_tripdata_2023-02.parquet',
-        's3a://landing/nyc_taxi/yellow_tripdata_2023-03.parquet',
-        's3a://landing/nyc_taxi/yellow_tripdata_2023-04.parquet',
-        's3a://landing/nyc_taxi/yellow_tripdata_2023-05.parquet',
-        's3a://landing/nyc_taxi/yellow_tripdata_2023-06.parquet',
-    ],
-}
-try:
-    taxi_paths = taxi_paths_by_scale[taxi_dataset_scale]
-except KeyError as exc:
-    raise ValueError(f'unsupported NYC Taxi dataset scale: {taxi_dataset_scale}') from exc
+taxi_paths = dataset_spark_uris
 raw = None
 for path in taxi_paths:
     normalized = spark.read.parquet(path).withColumn('passenger_count', F.col('passenger_count').cast('double'))

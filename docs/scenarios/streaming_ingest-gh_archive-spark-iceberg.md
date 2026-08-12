@@ -10,7 +10,7 @@ This scenario demonstrates Structured Streaming to Iceberg using a simple file s
 
 ### 2.1 Input Source
 
-Source: `s3a://landing/gh_archive/` (compressed JSON files downloaded via `make datasets`).
+Source: compressed GitHub Archive JSON objects from one resolver-verified immutable generation published by `make datasets`.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -19,7 +19,7 @@ Source: `s3a://landing/gh_archive/` (compressed JSON files downloaded via `make 
 | `created_at` | timestamp | Event creation time (casted from string) |
 | Other nested fields | varied | Extracted via dot notation (`actor.login` → `actor_login`, `repo.name` → `repo_name`) |
 
-Checkpoint: `s3a://checkpoints/gh_events_file`
+Checkpoint: `s3a://checkpoints/gh_events_file/<scale>/<publication-id>/<manifest-sha256>`
 
 ### 2.2 Output Tables
 
@@ -31,7 +31,7 @@ Checkpoint: `s3a://checkpoints/gh_events_file`
 
 ![Architecture](../diagrams/img/streaming_ingest-gh_archive-spark-iceberg.png)
 
-Data flows from `s3a://landing/gh_archive/*.json.gz` through Spark Structured Streaming with a file source. The stream reads JSON files incrementally, defines a schema to extract nested fields (`actor.login` → `actor_login`, `repo.name` → `repo_name`), casts `created_at` to timestamp, and writes to Iceberg with checkpointing for exactly-once semantics.
+Data flows from the resolver-ordered immutable object URIs through Spark Structured Streaming with one file stream per URI, unioned within the run. The stream defines a schema, casts `created_at` to timestamp, and writes to Iceberg with a checkpoint path scoped by scale, publication, and manifest identity.
 
 ## 4. Notebooks
 

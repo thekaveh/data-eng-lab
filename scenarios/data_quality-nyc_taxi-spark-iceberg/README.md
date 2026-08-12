@@ -61,7 +61,7 @@ Airflow DAG: `data_quality_nyc_taxi` — a scheduled batch DAG.
 
 ## 7. Dependencies
 
-- **Dataset:** NYC taxi trips CSV from `s3a://landing/nyc_taxi/taxi_data.csv`
+- **Dataset:** `lakehouse.bronze.nyc_taxi_trips` produced from a resolver-verified immutable NYC Taxi generation
 - **Atlas services:** A1-A4 (Spark, Iceberg, S3 catalog, lakehouse catalog)
 - **Other:** None
 

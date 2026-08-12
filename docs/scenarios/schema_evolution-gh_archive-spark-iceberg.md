@@ -1,33 +1,31 @@
 # 5.9. schema_evolution-gh_archive-spark-iceberg
 
-Handles schema evolution in GitHub Archive events using Iceberg's schema evolution to accommodate evolving JSON schema with new fields over time.
+Demonstrates explicit Iceberg schema evolution on a small scenario-owned table shaped like GitHub Archive events.
 
 ## 1. Purpose
 
-This scenario demonstrates Iceberg's schema evolution capabilities — a critical feature for lakehouse pipelines where source data schema changes over time. It simulates schema changes by injecting new fields into a subset of JSON data, allowing the pipeline to gracefully accept evolving schema while preserving historical records written with the original schema.
+This scenario creates a three-column Iceberg table, inserts one representative event, adds `repo_name`, renames `type` to `event_type`, inserts an evolved row, and queries both records. The explicit `ALTER TABLE` sequence keeps the schema change visible and deterministic.
 
 ## 2. Data Model
 
 ### 2.1 Input Source
 
-Source: Compressed JSON files from GitHub Archive landing zone (`s3a://landing/gh_archive/*.json.gz`), with simulated schema evolution via injected fields.
+Source: two scenario-owned literal rows shaped like GitHub Archive events; no downloaded dataset is read.
 
 | Column | Type | Notes |
 |---|---|---|
-| All base JSON fields | varied | Standard GitHub Archive fields |
-| Evolved fields | varied | New fields injected into subset of data to simulate schema changes |
+| `id`, `type`, `actor_login` | string | Initial table fields |
+| `repo_name` | string | Added field; `type` is renamed to `event_type` |
 
 ### 2.2 Output Tables
 
 | Table | Layer | Key Columns |
 |---|---|---|
-| `lakehouse.silver.github_archive_events` | Silver | All source fields; schema evolves to include new injected fields |
+| `lakehouse.silver.gh_events_se` | Silver | `id`, `event_type`, `actor_login`, `repo_name` |
 
 ## 3. Architecture
 
-![Architecture](../diagrams/img/schema_evolution-gh_archive-spark-iceberg.png)
-
-GitHub Archive JSON events flow from the landing zone through Spark batch processing with Iceberg's schema evolution enabled. As new fields appear in the JSON data, Iceberg automatically extends the table schema to include them, preserving historical records that were written with the original schema. No manual ALTER TABLE is required.
+The notebook uses explicit Iceberg `ALTER TABLE ADD COLUMN` and `RENAME COLUMN` statements between its two inserts, then selects the final four-column projection.
 
 ## 4. Notebooks
 
@@ -43,26 +41,25 @@ Airflow DAG: `schema_evolution_gh_archive` — a scheduled batch DAG.
 ## 6. Usage
 
 1. Ensure the `silver` Iceberg namespace exists: `scripts/register_iceberg.py`
-2. Populate the landing zone: `make datasets`
-3. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
+2. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
      ```bash
      airflow dags trigger schema_evolution_gh_archive
      ```
-4. Verify:
+3. Verify:
      ```bash
-     spark-sql -e "DESCRIBE lakehouse.silver.github_archive_events"
-     spark-sql -e "SELECT * FROM lakehouse.silver.github_archive_events LIMIT 10"
+     spark-sql -e "DESCRIBE lakehouse.silver.gh_events_se"
+     spark-sql -e "SELECT * FROM lakehouse.silver.gh_events_se ORDER BY id"
      ```
 
 ## 7. Dependencies
 
-- **Dataset:** GitHub Archive compressed JSON from `s3a://landing/gh_archive/`
+- **Dataset:** none; the notebook inserts two scenario-owned rows
 - **Atlas services:** A1-A4 (Spark, Iceberg, S3 catalog, lakehouse catalog)
 - **Other:** Iceberg schema evolution must be enabled
 
 ## 8. Known Issues & Caveats
 
-Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `silver` namespace must exist; run `scripts/register_iceberg.py` first. Schema evolution relies on Iceberg's native capabilities — ensure Iceberg configuration supports auto-schema evolution.
+Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `silver` namespace must exist; run `scripts/register_iceberg.py` first.
 
 ## 9. See Also
 

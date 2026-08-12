@@ -1,6 +1,6 @@
 # 7.3. nyc-taxi-medallion
 
-This Spark application replaces the Silver and Gold NYC Taxi Iceberg tables from an existing Bronze table. Jenkins builds and publishes the application artifact; Airflow submits it to the Atlas Spark standalone cluster and confirms the terminal driver status.
+This Spark application replaces the Silver and Gold NYC Taxi Iceberg tables from an existing Bronze table. Jenkins builds and publishes the application artifact; Airflow first resolves one verified immutable NYC Taxi generation for the requested scale, passes that provenance gate with the Bronze-table argument, submits to the Atlas Spark standalone cluster, and confirms the terminal driver status.
 
 ## 1. Architecture
 
@@ -18,7 +18,7 @@ Jenkins publishes the Maven output as `s3a://jars/nyc-taxi-medallion/0.1.0/app.j
 - **Entrypoint class:** `com.thekaveh.dataeng.medallion.NycTaxiMedallion`
 - **Automation:** `Jenkinsfile` and `dag.py` at the application root
 
-The entrypoint accepts one optional positional bronze-table argument, defaulting to `lakehouse.bronze.nyc_taxi_trips`. The Silver and Gold destinations are fixed in the application.
+The entrypoint requires one or more ordered `s3://landing/nyc_taxi/_generations/<plan-id>/<publication-id>/<object>.parquet` arguments followed by `--bronze-table <table>`. It validates that the URI set is unique and belongs to one immutable generation, then reads the named Bronze Iceberg table. The Silver and Gold destinations are fixed in the application; there is no flat-path or Bronze-table default.
 
 ## 3. Transform Logic
 
@@ -49,7 +49,7 @@ OpenLineage injection, while `_get_hook()` wraps the provider hook with Atlas's
 
 - **application:** `s3a://jars/nyc-taxi-medallion/0.1.0/app.jar`
 - **class:** `com.thekaveh.dataeng.medallion.NycTaxiMedallion`
-- **argument:** `lakehouse.bronze.nyc_taxi_trips`
+- **arguments:** the resolver-ordered immutable NYC Taxi URI set, then `--bronze-table`, then `lakehouse.bronze.nyc_taxi_trips`
 - **submission:** Spark standalone cluster mode through `spark://spark-master:7077`
 - **Iceberg extension:** `org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions`
 - **completion:** the wrapped hook captures the standalone driver ID from the submission log and requires `driverState=FINISHED` plus `success=true` from `spark-master:6066`
@@ -60,6 +60,7 @@ The DAG does not declare cross-DAG orchestration; the Bronze table must exist be
 
 - The Atlas Spark, Airflow, MinIO, and Iceberg REST services are running.
 - Jenkins has the MinIO endpoint and Iceberg access credentials used by the publish stage.
+- `make datasets SCALE=<tier>` has published and verified the expected NYC Taxi generation, and Airflow can reach the internal `dataset-resolver`.
 - `lakehouse.bronze.nyc_taxi_trips` exists and includes `trip_date`.
 - `s3a://jars/nyc-taxi-medallion/0.1.0/app.jar` has been published.
 - The consumer overlay mounts `spark-apps/` below `/opt/airflow/dags`, where the DAG can import Atlas's shared `RestConfirmingSparkHook` adapter from the DAG root.
@@ -67,7 +68,8 @@ The DAG does not declare cross-DAG orchestration; the Bronze table must exist be
 ## 7. Data Flow
 
 ```text
-lakehouse.bronze.nyc_taxi_trips
+verified immutable NYC Taxi generation provenance gate
+  -> lakehouse.bronze.nyc_taxi_trips
   -> deduplicate pickup/dropoff pairs
   -> lakehouse.silver.nyc_taxi_trips (create or replace)
   -> group by trip_date
