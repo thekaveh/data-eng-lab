@@ -2,7 +2,7 @@
 
 This directory documents the production Spark applications in the `data-eng-lab` lakehouse. Each application is a Maven-built Scala Spark project with a Jenkins pipeline for build, test, package, and publication, plus an Airflow DAG that uses an operator-owned `SparkSubmitOperator` subclass and Atlas's `RestConfirmingSparkHook` adapter.
 
-The data products form a sequence: `nyc-taxi-etl` creates the Bronze table, and `nyc-taxi-medallion` reads that table to create Silver and Gold tables. The DAGs remain independently scheduled, so operators must ensure the Bronze prerequisite exists before running the medallion DAG.
+The NYC Taxi applications form a sequence from Bronze to Silver and Gold. The independent TPC-H application builds two Gold analytics tables from one complete verified publication and records its provenance on both outputs.
 
 ## 1. Overview
 
@@ -10,10 +10,11 @@ The data products form a sequence: `nyc-taxi-etl` creates the Bronze table, and 
 |---|---|---|---|---|
 | [nyc-taxi-etl](nyc-taxi-etl.md) | Raw Parquet → Bronze Iceberg with quality filtering | resolver-verified immutable NYC Taxi generation | `lakehouse.bronze.nyc_taxi_trips` | `nyc_taxi_etl` |
 | [nyc-taxi-medallion](nyc-taxi-medallion.md) | Bronze → Silver dedup → Gold daily aggregation | `lakehouse.bronze.nyc_taxi_trips` | `lakehouse.silver.*`, `lakehouse.gold.*` | `nyc_taxi_medallion` |
+| [tpch-star-schema](tpch-star-schema.md) | Verified TPC-H → customer dimension and order fact | immutable TPC-H generation | `lakehouse.gold.dim_customer`, `lakehouse.gold.fct_orders` | `tpch_star_schema` |
 
 ## 2. CI/CD Pipeline
 
-Both apps follow the same CI/CD pattern:
+All three apps follow the same CI/CD pattern:
 
 1. **CI:** Jenkins runs `mvn test`, then `mvn package`, and publishes the local Maven artifact to the stable MinIO object `s3a://jars/<app>/0.1.0/app.jar`.
 2. **CD:** Airflow's `SparkSubmitOperator` submits the object in Spark standalone cluster mode with the Iceberg catalog configuration; its hook is wrapped by Atlas's adapter to confirm the completed driver through the Spark REST endpoint.

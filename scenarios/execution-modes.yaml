@@ -191,20 +191,20 @@ scenarios:
       - Refuse to run before a successful matching flatten stage and propagate either stage failure.
     child_issue: 109
   - scenario_id: star_schema-tpch-spark-iceberg
-    classification: approved new production DAG
-    justification: The notebook builds reusable fact and dimension data products required by the approved Trino BI workload, so it needs a production application and orchestration contract.
+    classification: existing production DAG
+    justification: The reviewed production application preserves notebook transform semantics, binds both tables to one verified TPC-H generation, and passed repeatable Airflow and Spark acceptance.
     owner: Analytics Data Engineering
-    runtime: "Atlas Airflow and Spark standalone application delivered by child issue #107"
-    schedule_policy: "No schedule until #107 passes live acceptance; proposed daily before dependent Trino BI work"
-    execution_entrypoint: null
+    runtime: "Atlas Airflow and Spark standalone via the tpch-star-schema JAR"
+    schedule_policy: "@daily with manual trigger and explicit dataset_scale supported before dependent Trino BI work"
+    execution_entrypoint: spark-apps/tpch-star-schema/dag.py
     dependencies:
       - "#82 execution-mode matrix"
       - "#81 verified TPC-H generations"
-      - "#107 TPC-H star-schema implementation"
+      - "#107 TPC-H star-schema implementation and live acceptance"
     acceptance_contract:
       - Deterministically replace lakehouse.gold.dim_customer and lakehouse.gold.fct_orders from one verified TPC-H generation.
       - "Freeze join, measure, schema, and idempotency contracts and prove live Airflow/Spark success before #83 consumes them."
-    child_issue: 107
+    child_issue: null
   - scenario_id: streaming_ingest-events-spark-iceberg
     classification: intentionally unscheduled long-running streaming
     justification: The notebook owns an unbounded Redpanda readStream and durable checkpoint; a periodic Airflow task cannot truthfully represent its start, supervision, and stop lifecycle.

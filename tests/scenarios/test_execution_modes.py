@@ -43,7 +43,7 @@ EXPECTED = {
     "scd2-online_retail-spark-iceberg": (NOTEBOOK_ONLY, None, None),
     "schema_evolution-gh_archive-spark-iceberg": (NOTEBOOK_ONLY, None, None),
     "sessionization-gh_archive-spark-iceberg": (APPROVED, 109, None),
-    "star_schema-tpch-spark-iceberg": (APPROVED, 107, None),
+    "star_schema-tpch-spark-iceberg": (EXISTING, None, "spark-apps/tpch-star-schema/dag.py"),
     "streaming_ingest-events-spark-iceberg": (UNSCHEDULED, None, None),
     "streaming_ingest-gh_archive-spark-iceberg": (NOTEBOOK_ONLY, None, None),
     "streaming_windows-events-spark-iceberg": (UNSCHEDULED, None, None),
@@ -91,8 +91,8 @@ def test_reviewed_classifications_children_and_entrypoints_are_frozen():
     for mode in modes:
         counts[mode.classification] += 1
     assert counts == {
-        EXISTING: 2,
-        APPROVED: 7,
+        EXISTING: 3,
+        APPROVED: 6,
         NOTEBOOK_ONLY: 7,
         UNSCHEDULED: 3,
         DEPRECATED: 0,
@@ -100,7 +100,6 @@ def test_reviewed_classifications_children_and_entrypoints_are_frozen():
     assert {mode.child_issue for mode in modes if mode.child_issue is not None} == {
         83,
         91,
-        107,
         108,
         109,
     }
@@ -234,6 +233,7 @@ def test_no_scenario_local_dag_or_runtime_empty_operator_remains():
     assert [path.relative_to(ROOT).as_posix() for path in production_dags] == [
         "spark-apps/nyc-taxi-etl/dag.py",
         "spark-apps/nyc-taxi-medallion/dag.py",
+        "spark-apps/tpch-star-schema/dag.py",
     ]
     assert all("EmptyOperator" not in path.read_text(encoding="utf-8") for path in production_dags)
 

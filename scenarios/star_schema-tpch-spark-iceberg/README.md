@@ -18,7 +18,7 @@ Source: TPC-H Parquet objects from one resolver-verified immutable generation pu
 |---|---|---|
 | `o_orderkey` | long | Order key (FK in fact) |
 | `o_custkey` | long | Customer key (FK to dimension) |
-| `o_totalprice` | double | Order total |
+| `o_totalprice` | decimal(15,2) | Order total |
 | `o_orderstatus` | string | Order status |
 
 **customer table** (`customer.parquet` in the resolved generation):
@@ -34,21 +34,21 @@ Source: TPC-H Parquet objects from one resolver-verified immutable generation pu
 | Column | Type | Notes |
 |---|---|---|
 | `l_orderkey` | long | Order key (FK) |
-| `l_quantity` | double | Line item quantity |
-| `l_extendedprice` | double | Line item extended price |
+| `l_quantity` | decimal(15,2) | Line item quantity |
+| `l_extendedprice` | decimal(15,2) | Line item extended price |
 
 ### 2.2 Output Tables
 
 | Table | Layer | Key Columns |
 |---|---|---|
-| `lakehouse.gold.dim_customer` | Gold (dimension) | `c_custkey` (PK), `c_name`, `c_mktsegment` |
-| `lakehouse.gold.fct_orders` | Gold (fact) | `o_orderkey` (PK), `o_custkey` (FK), `o_orderstatus`, `o_totalprice`, `l_quantity`, `l_extendedprice` |
+| `lakehouse.gold.dim_customer` | Gold (dimension) | `c_custkey`, `c_name`, `c_nationkey`, `c_mktsegment` |
+| `lakehouse.gold.fct_orders` | Gold (fact) | `o_orderkey`, `o_custkey`, `o_orderdate`, `revenue`, `line_count` |
 
 ## 3. Architecture
 
 ![Architecture](../../docs/diagrams/img/star_schema-tpch-spark-iceberg.png)
 
-Data flows from three Parquet tables in S3 (`orders`, `customer`, `lineitem`) through Spark batch processing. Orders are joined with lineitems on order key, then joined with customers on customer key. The result produces two gold-layer Iceberg tables: a dimension table (`dim_customer`) and a fact table (`fct_orders`), forming a star schema.
+Airflow resolves one complete immutable eight-object TPC-H publication. The Spark application validates customer, orders, and lineitem keys, projects the customer dimension, aggregates line revenue per order, and atomically replaces each gold table with matching source-generation properties.
 
 ## 4. Notebooks
 
@@ -57,16 +57,23 @@ Data flows from three Parquet tables in S3 (`orders`, `customer`, `lineitem`) th
 
 Both languages implement identical star schema logic: source ingestion, multi-table joins, dimension/fact table creation, and verification of schema and row counts.
 
+> **Production trust boundary:** The notebooks are not a production write path. They directly
+> replace the same two tables without the application's complete-publication, key, serialization,
+> or provenance checks and can invalidate downstream #83. Use the `tpch_star_schema` DAG/application
+> for production writes; use notebooks only in an isolated educational environment whose outputs may
+> be overwritten by a subsequent production run.
+
 ## 5. Orchestration
 
-Classification: **approved new production DAG**. No production DAG exists yet. Child #107 owns the production fact/dimension Spark application and operator-owned Airflow task required before Trino BI child #83; until it passes live acceptance, run the paired notebooks only.
+Classification: **existing production DAG**. `spark-apps/tpch-star-schema/dag.py` runs `tpch_star_schema` daily through the Atlas REST-confirming Spark submission contract. Manual runs accept an explicit `dataset_scale`; `max_active_runs=1` serializes the non-atomic two-table replacement. The notebooks remain the educational parity surface; downstream Trino child #83 must compare both tables' exact five Iceberg provenance properties before querying them.
 
 ## 6. Usage
 
 1. Ensure the `gold` Iceberg namespace exists: `scripts/register_iceberg.py`
 2. Populate the TPC-H dataset: `make datasets` to download Parquet files to S3
-3. Open either notebook on the Atlas stack.
-4. Verify output:
+3. Publish `s3a://jars/tpch-star-schema/0.1.0/app.jar` through Jenkins.
+4. Trigger `tpch_star_schema` with `{"dataset_scale":"tiny"}`. Open either notebook only for isolated education, never as an equivalent production write.
+5. Verify output:
      ```bash
    spark-sql -e "SELECT COUNT(*) FROM lakehouse.gold.dim_customer"
    spark-sql -e "SELECT COUNT(*) FROM lakehouse.gold.fct_orders"
