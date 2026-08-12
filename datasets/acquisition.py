@@ -27,6 +27,7 @@ import threading
 import time
 import weakref
 import zipfile
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Mapping, Protocol
@@ -47,9 +48,10 @@ _ZIP64_EOCD_SIZE = 56
 _ZIP64_LOCATOR_SIZE = 20
 _CENTRAL_DIRECTORY_HEADER_SIZE = 46
 _MAX_ARCHIVE_SNAPSHOT_BYTES = 2 * 1024 * 1024 * 1024
+_MAX_ZIP_MEMBER_BYTES = 2 * 1024 * 1024 * 1024
 _MAX_DNS_RESULT_BYTES = 64 * 1024
 _SECURE_EXTRACTION_SUPPORTED = sys.platform in {"darwin", "linux"} and all(
-    function in os.supports_dir_fd for function in (os.mkdir, os.open, os.link, os.stat, os.unlink, os.rmdir)
+    function in os.supports_dir_fd for function in (os.mkdir, os.open, os.stat, os.unlink, os.rmdir)
 )
 
 
@@ -78,7 +80,6 @@ class ZipLimits:
     max_central_directory_bytes: int = 64 * 1024 * 1024
     max_total_expanded_bytes: int = 8 * 1024 * 1024 * 1024
     max_compression_ratio: int = 200
-    max_member_bytes: int = 2 * 1024 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -100,11 +101,29 @@ class _FileBinding:
     descriptor: int
 
 
-class _ValidatedEntries(list[ArchiveEntry]):
-    __slots__ = ("__limits", "__snapshot")
+class _ImmutableCapabilityList:
+    def _immutable(self, *args: object, **kwargs: object) -> None:
+        raise TypeError("capability-bearing list is immutable")
+
+    append = _immutable
+    extend = _immutable
+    insert = _immutable
+    clear = _immutable
+    pop = _immutable
+    remove = _immutable
+    reverse = _immutable
+    sort = _immutable
+    __setitem__ = _immutable
+    __delitem__ = _immutable
+    __iadd__ = _immutable
+    __imul__ = _immutable
+
+
+class _ValidatedEntries(_ImmutableCapabilityList, Sequence[ArchiveEntry]):
+    __slots__ = ("__items", "__limits", "__snapshot")
 
     def __init__(self, entries: list[ArchiveEntry], snapshot: _ArchiveSnapshot, limits: ZipLimits) -> None:
-        super().__init__(entries)
+        object.__setattr__(self, "_ValidatedEntries__items", tuple(entries))
         object.__setattr__(self, "_ValidatedEntries__snapshot", snapshot)
         object.__setattr__(self, "_ValidatedEntries__limits", limits)
 
@@ -115,10 +134,21 @@ class _ValidatedEntries(list[ArchiveEntry]):
         return self.__snapshot, self.__limits
 
     def __getitem__(self, index: object) -> ArchiveEntry | _ValidatedEntries:
-        selected = super().__getitem__(index)  # type: ignore[index]
+        selected = self.__items[index]  # type: ignore[index]
         if isinstance(index, slice):
-            return _ValidatedEntries(selected, self.__snapshot, self.__limits)
+            return _ValidatedEntries(list(selected), self.__snapshot, self.__limits)
         return selected
+
+    def __len__(self) -> int:
+        return len(self.__items)
+
+    def __iter__(self) -> Iterator[ArchiveEntry]:
+        return iter(self.__items)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Sequence) and tuple(self) == tuple(other)
+
+    __hash__ = None
 
     def copy(self) -> None:
         raise TypeError("capability-bearing validated entries cannot be copied")
@@ -134,11 +164,11 @@ class _ValidatedEntries(list[ArchiveEntry]):
 
 
 class _BindingOwner:
-    __slots__ = ("_active_descriptors", "_bindings", "_closed", "_lock")
+    __slots__ = ("_active_bindings", "_bindings", "_closed", "_lock")
 
     def __init__(self, bindings: list[_FileBinding]) -> None:
         self._bindings = tuple(bindings)
-        self._active_descriptors = {binding.descriptor for binding in bindings}
+        self._active_bindings = {binding.descriptor: binding for binding in bindings}
         self._closed = False
         self._lock = threading.Lock()
 
@@ -151,20 +181,30 @@ class _BindingOwner:
             if self._closed:
                 return
             self._closed = True
-            descriptors = tuple(self._active_descriptors)
-            self._active_descriptors.clear()
-        _close_descriptors(descriptors)
+            bindings = tuple(self._active_bindings.values())
+            self._active_bindings.clear()
+        for binding in bindings:
+            try:
+                current = os.fstat(binding.descriptor)
+            except OSError:
+                continue
+            if (current.st_dev, current.st_ino) != (binding.device, binding.inode):
+                continue
+            try:
+                os.close(binding.descriptor)
+            except OSError:
+                pass
 
     def abandon(self, descriptor: int) -> None:
         with self._lock:
-            self._active_descriptors.discard(descriptor)
+            self._active_bindings.pop(descriptor, None)
 
 
-class _ExtractedPaths(list[Path]):
-    __slots__ = ("__weakref__", "__owner", "__finalizer")
+class _ExtractedPaths(_ImmutableCapabilityList, Sequence[Path]):
+    __slots__ = ("__items", "__owner", "__finalizer")
 
     def __init__(self, paths: list[Path], bindings: list[_FileBinding]) -> None:
-        super().__init__(paths)
+        object.__setattr__(self, "_ExtractedPaths__items", tuple(paths))
         owner = _BindingOwner(bindings)
         object.__setattr__(self, "_ExtractedPaths__owner", owner)
         object.__setattr__(self, "_ExtractedPaths__finalizer", weakref.finalize(self, owner.close))
@@ -179,10 +219,24 @@ class _ExtractedPaths(list[Path]):
     def _binding_owner(self) -> _BindingOwner:
         return self.__owner
 
+    def close(self) -> None:
+        self.__owner.close()
+
     def __getitem__(self, index: object) -> Path:
         if isinstance(index, slice):
             raise TypeError("capability-bearing extracted paths cannot be sliced")
-        return super().__getitem__(index)  # type: ignore[index]
+        return self.__items[index]  # type: ignore[index]
+
+    def __len__(self) -> int:
+        return len(self.__items)
+
+    def __iter__(self) -> Iterator[Path]:
+        return iter(self.__items)
+
+    def __eq__(self, other: object) -> bool:
+        return isinstance(other, Sequence) and tuple(self) == tuple(other)
+
+    __hash__ = None
 
     def copy(self) -> None:
         raise TypeError("capability-bearing extracted paths cannot be copied")
@@ -197,39 +251,31 @@ class _ExtractedPaths(list[Path]):
         raise TypeError("capability-bearing extracted paths cannot be pickled")
 
 
-_DOWNLOAD_BINDINGS: dict[int, tuple[weakref.ReferenceType[DownloadedFile], _FileBinding]] = {}
+_DOWNLOAD_BINDINGS: dict[int, tuple[weakref.ReferenceType[DownloadedFile], _BindingOwner]] = {}
 _DOWNLOAD_BINDINGS_LOCK = threading.Lock()
 
 
 def _close_bindings(bindings: object) -> None:
-    for binding in bindings:  # type: ignore[union-attr]
-        _close_descriptors((binding.descriptor,))
-
-
-def _close_descriptors(descriptors: tuple[int, ...]) -> None:
-    for descriptor in descriptors:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
+    _BindingOwner(list(bindings)).close()  # type: ignore[arg-type]
 
 
 def _bind_download(downloaded: DownloadedFile, binding: _FileBinding) -> None:
     identity = id(downloaded)
+    owner = _BindingOwner([binding])
 
     def discard(reference: weakref.ReferenceType[DownloadedFile]) -> None:
         with _DOWNLOAD_BINDINGS_LOCK:
             current = _DOWNLOAD_BINDINGS.get(identity)
             if current is not None and current[0] is reference:
                 _DOWNLOAD_BINDINGS.pop(identity, None)
-                _close_bindings([current[1]])
+                current[1].close()
 
     reference = weakref.ref(downloaded, discard)
     with _DOWNLOAD_BINDINGS_LOCK:
         previous = _DOWNLOAD_BINDINGS.pop(identity, None)
-        _DOWNLOAD_BINDINGS[identity] = (reference, binding)
+        _DOWNLOAD_BINDINGS[identity] = (reference, owner)
     if previous is not None:
-        _close_bindings([previous[1]])
+        previous[1].close()
 
 
 def _download_binding(downloaded: DownloadedFile) -> _FileBinding:
@@ -237,7 +283,7 @@ def _download_binding(downloaded: DownloadedFile) -> _FileBinding:
         current = _DOWNLOAD_BINDINGS.get(id(downloaded))
     if current is None or current[0]() is not downloaded:
         raise ValueError("download is not bound to an owned file")
-    return current[1]
+    return current[1].bindings[0]
 
 
 def _unbind_download(downloaded: DownloadedFile) -> None:
@@ -246,7 +292,7 @@ def _unbind_download(downloaded: DownloadedFile) -> None:
         if current is None or current[0]() is not downloaded:
             return
         _DOWNLOAD_BINDINGS.pop(id(downloaded), None)
-    _close_bindings((current[1],))
+    current[1].close()
 
 
 def _abandon_download(downloaded: DownloadedFile) -> None:
@@ -254,6 +300,7 @@ def _abandon_download(downloaded: DownloadedFile) -> None:
         current = _DOWNLOAD_BINDINGS.get(id(downloaded))
         if current is not None and current[0]() is downloaded:
             _DOWNLOAD_BINDINGS.pop(id(downloaded), None)
+            current[1].abandon(current[1].bindings[0].descriptor)
 
 
 def _bound_download_metadata(downloaded: DownloadedFile) -> tuple[int, str]:
@@ -280,6 +327,8 @@ def _bound_extracted_metadata(paths: list[Path]) -> list[tuple[int, str]]:
     """Verify and return metadata for extraction-owned outputs."""
     if not isinstance(paths, _ExtractedPaths):
         raise ValueError("extracted outputs are not bound to owned files")
+    if len(paths) != len(paths._bindings):
+        raise ValueError("extracted output capability is structurally invalid")
     metadata: list[tuple[int, str]] = []
     owner = paths._binding_owner()
     for path, binding in zip(paths, paths._bindings, strict=True):
@@ -487,9 +536,29 @@ def _decode_dns_result(payload: bytes, url: str) -> list[tuple[object, ...]]:
             raise ValueError(f"could not resolve {_redacted_url(url)}")
         if decoded["ok"] is not True or not isinstance(decoded["answers"], list):
             raise TypeError
+        if not decoded["answers"]:
+            raise TypeError
         answers: list[tuple[object, ...]] = []
         for answer in decoded["answers"]:
-            if not isinstance(answer, list) or len(answer) != 5 or not isinstance(answer[4], list):
+            if (
+                not isinstance(answer, list)
+                or len(answer) != 5
+                or any(type(answer[index]) is not int for index in range(3))
+                or answer[0] not in {socket.AF_INET, socket.AF_INET6}
+                or answer[1] != socket.SOCK_STREAM
+                or answer[2] != socket.IPPROTO_TCP
+                or not isinstance(answer[3], str)
+                or not isinstance(answer[4], list)
+            ):
+                raise TypeError
+            expected_sockaddr_size = 2 if answer[0] == socket.AF_INET else 4
+            if len(answer[4]) != expected_sockaddr_size:
+                raise TypeError
+            if not isinstance(answer[4][0], str) or type(answer[4][1]) is not int:
+                raise TypeError
+            if not 0 <= answer[4][1] <= 65535:
+                raise TypeError
+            if answer[0] == socket.AF_INET6 and not all(type(value) is int for value in answer[4][2:]):
                 raise TypeError
             answers.append((*answer[:4], tuple(answer[4])))
         return answers
@@ -522,6 +591,52 @@ def _cleanup_resolver_process(process: object, deadline: float) -> None:
         raise ValueError("DNS resolver process cleanup failed") from error
 
 
+def _start_resolver_bounded(context: object, send: object, host: str, deadline: float, url: str) -> object:
+    ready = threading.Event()
+    cancelled = threading.Event()
+    state: dict[str, object] = {}
+
+    def launch() -> None:
+        process: object | None = None
+        started = False
+        try:
+            process = _make_resolver_process(context, send, host)
+            if cancelled.is_set():
+                process.close()  # type: ignore[attr-defined]
+                return
+            process.start()  # type: ignore[attr-defined]
+            started = True
+            state["process"] = process
+        except BaseException as error:
+            state["error"] = error
+            state["phase"] = "start" if process is not None else "create"
+            if process is not None and not started:
+                try:
+                    process.close()  # type: ignore[attr-defined]
+                except Exception:
+                    pass
+        finally:
+            ready.set()
+            if cancelled.is_set() and process is not None and started:
+                try:
+                    _cleanup_resolver_process(process, time.monotonic() + 0.2)
+                except ValueError:
+                    pass
+
+    threading.Thread(target=launch, name="dataset-dns-resolver-start", daemon=True).start()
+    if not ready.wait(_remaining(deadline)):
+        cancelled.set()
+        raise ValueError("download deadline exceeded")
+    if error := state.get("error"):
+        phase = state.get("phase")
+        action = "create" if phase == "create" else "start"
+        raise ValueError(f"could not {action} DNS resolver for {_redacted_url(url)}") from error
+    process = state.get("process")
+    if process is None:
+        raise ValueError(f"could not start DNS resolver for {_redacted_url(url)}")
+    return process
+
+
 def _bounded_dns_answers(host: str, deadline: float, url: str) -> list[tuple[object, ...]]:
     try:
         context = multiprocessing.get_context("spawn")
@@ -531,19 +646,8 @@ def _bounded_dns_answers(host: str, deadline: float, url: str) -> list[tuple[obj
     process: object | None = None
     started = False
     try:
-        try:
-            process = _make_resolver_process(context, send, host)
-        except Exception as error:
-            raise ValueError(f"could not create DNS resolver for {_redacted_url(url)}") from error
-        try:
-            process.start()  # type: ignore[attr-defined]
-            started = True
-        except Exception as error:
-            try:
-                process.close()  # type: ignore[attr-defined]
-            except Exception:
-                pass
-            raise ValueError(f"could not start DNS resolver for {_redacted_url(url)}") from error
+        process = _start_resolver_bounded(context, send, host, deadline, url)
+        started = True
         send.close()
         remaining = _remaining(deadline)
         cleanup_budget = min(0.2, remaining / 5)
@@ -552,6 +656,8 @@ def _bounded_dns_answers(host: str, deadline: float, url: str) -> list[tuple[obj
         process.join(timeout=max(deadline - time.monotonic(), 0))  # type: ignore[attr-defined]
         if process.is_alive():  # type: ignore[attr-defined]
             raise ValueError("download deadline exceeded")
+        if getattr(process, "exitcode", 0) != 0:
+            raise ValueError(f"DNS resolver exited abnormally for {_redacted_url(url)}")
         try:
             payload = receive.recv_bytes(_MAX_DNS_RESULT_BYTES)
         except (EOFError, OSError) as error:
@@ -625,7 +731,7 @@ def download_bounded(
     _require_trusted_parent(destination.parent)
     if destination.exists() or destination.is_symlink():
         raise FileExistsError(destination)
-    if not _atomic_publish_supported():
+    if not _probe_atomic_publish(destination.parent):
         raise RuntimeError("secure publication is not supported on this platform")
     deadline = time.monotonic() + deadline_seconds
     downloaded_size = 0
@@ -1118,8 +1224,8 @@ def _validated_members(
         if object_name in object_names:
             raise ValueError(f"archive members flatten to duplicate object name {object_name}")
         object_names.add(object_name)
-        if member.file_size > limits.max_member_bytes:
-            raise ValueError(f"archive member {member.filename} exceeds {limits.max_member_bytes} bytes")
+        if member.file_size > _MAX_ZIP_MEMBER_BYTES:
+            raise ValueError(f"archive member {member.filename} exceeds {_MAX_ZIP_MEMBER_BYTES} bytes")
         total_size += member.file_size
         if total_size > limits.max_total_expanded_bytes:
             raise ValueError(f"archive exceeds {limits.max_total_expanded_bytes} uncompressed bytes")
@@ -1176,12 +1282,41 @@ def _linux_renameat2_number() -> int | None:
     }.get(machine)
 
 
-def _atomic_publish_supported() -> bool:
+def _probe_atomic_publish(parent: Path) -> bool:
+    source_path: Path | None = None
+    destination_path: Path | None = None
+    source_descriptor: int | None = None
+    destination_descriptor: int | None = None
+    supported = False
     try:
-        result, error_number = _rename_noreplace(b"", b"")
-    except RuntimeError:
-        return False
-    return result == 0 or error_number not in {errno.ENOSYS, errno.EINVAL, getattr(errno, "ENOTSUP", errno.EINVAL)}
+        source_descriptor, source_name = tempfile.mkstemp(prefix=".dataset-rename-source-", dir=parent)
+        source_path = Path(source_name)
+        destination_descriptor, destination_name = tempfile.mkstemp(prefix=".dataset-rename-target-", dir=parent)
+        destination_path = Path(destination_name)
+        os.close(source_descriptor)
+        source_descriptor = None
+        os.close(destination_descriptor)
+        destination_descriptor = None
+        result, error_number = _rename_noreplace(os.fsencode(source_path), os.fsencode(destination_path))
+        supported = result != 0 and error_number == errno.EEXIST
+    except (OSError, RuntimeError):
+        supported = False
+    finally:
+        for descriptor in (source_descriptor, destination_descriptor):
+            if descriptor is not None:
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    supported = False
+        for probe_path in (source_path, destination_path):
+            if probe_path is not None:
+                try:
+                    probe_path.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    supported = False
+    return supported
 
 
 def _rename_noreplace(source_bytes: bytes, destination_bytes: bytes) -> tuple[int, int]:
@@ -1221,11 +1356,11 @@ def _publish_path_exclusive(source: Path, destination: Path) -> None:
 
 def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) -> list[Path]:
     """Extract into an atomic private staging directory under a trusted parent."""
-    if not _SECURE_EXTRACTION_SUPPORTED or not _atomic_publish_supported():
-        raise RuntimeError("secure extraction is not supported on this platform")
     path = Path(path)
     destination = Path(destination)
     _require_trusted_parent(destination.parent)
+    if not _SECURE_EXTRACTION_SUPPORTED or not _probe_atomic_publish(destination.parent):
+        raise RuntimeError("secure extraction is not supported on this platform")
     if destination.exists() or destination.is_symlink():
         raise FileExistsError(destination)
     if not entries:
@@ -1255,19 +1390,48 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
     try:
         destination_descriptor: int | None = os.open(staging_root, directory_flags)
     except OSError as error:
-        archive_stream.close()
-        shutil.rmtree(staging_root, ignore_errors=True)
+        cleanup_failed = False
+        try:
+            archive_stream.close()
+        except OSError:
+            cleanup_failed = True
+        try:
+            shutil.rmtree(staging_root)
+        except OSError:
+            cleanup_failed = True
+        if cleanup_failed:
+            raise ValueError("extraction cleanup failed") from error
         raise ValueError("extraction parent is unavailable") from error
     owned_outputs: list[tuple[str, tuple[int, int]]] = []
     outputs: list[Path] = []
     output_bindings: list[_FileBinding] = []
-    published = False
+    capability: _ExtractedPaths | None = None
 
-    def cleanup() -> None:
-        _close_bindings(output_bindings)
-        output_bindings.clear()
-        if not published:
-            shutil.rmtree(staging_root, ignore_errors=True)
+    def cleanup(original: BaseException) -> None:
+        cleanup_error: BaseException | None = None
+        if capability is not None:
+            try:
+                capability.close()
+            except BaseException as error:
+                cleanup_error = error
+                _close_bindings(output_bindings)
+        else:
+            _close_bindings(output_bindings)
+        if destination_descriptor is not None:
+            try:
+                os.close(destination_descriptor)
+            except OSError as error:
+                cleanup_error = error
+        try:
+            archive_stream.close()
+        except OSError as error:
+            cleanup_error = cleanup_error or error
+        try:
+            shutil.rmtree(staging_root)
+        except OSError as error:
+            cleanup_error = cleanup_error or error
+        if cleanup_error is not None:
+            raise ValueError("extraction cleanup failed") from original
 
     try:
         with archive_stream:
@@ -1339,22 +1503,30 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
             current_output = os.stat(output.name, dir_fd=destination_descriptor, follow_symlinks=False)
             if (current_output.st_dev, current_output.st_ino) != (binding.device, binding.inode):
                 raise ValueError("extracted output changed before success")
-        try:
-            _publish_path_exclusive(staging_root, destination)
-        except ValueError:
-            raise ValueError("destination changed during extraction") from None
-        published = True
-    except zipfile.BadZipFile as error:
-        cleanup()
-        raise ValueError("artifact is not a valid ZIP archive") from error
-    except BaseException:
-        cleanup()
-        raise
-    finally:
+        capability = _ExtractedPaths(outputs, output_bindings)
         archive_stream.close()
-        if destination_descriptor is not None:
-            os.close(destination_descriptor)
-    return _ExtractedPaths(outputs, output_bindings)
+        os.close(destination_descriptor)
+        destination_descriptor = None
+    except zipfile.BadZipFile as error:
+        cleanup(error)
+        raise ValueError("artifact is not a valid ZIP archive") from error
+    except BaseException as error:
+        cleanup(error)
+        raise
+
+    if capability is None:
+        error = ValueError("extracted output capability is unavailable")
+        cleanup(error)
+        raise error
+    try:
+        _publish_path_exclusive(staging_root, destination)
+    except ValueError as error:
+        cleanup(error)
+        raise ValueError("destination changed during extraction") from None
+    except BaseException as error:
+        cleanup(error)
+        raise
+    return capability
 
 
 def _metadata_fd(directory_descriptor: int, name: str) -> str:

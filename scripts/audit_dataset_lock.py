@@ -30,7 +30,6 @@ REGISTRY_PATH = ROOT / "datasets" / "registry.yaml"
 DOWNLOAD_TIMEOUT_SECONDS = 120
 MAX_DOWNLOAD_BYTES = 2 * 1024**3
 MAX_ARCHIVE_MEMBERS = 10_000
-MAX_MEMBER_BYTES = 2 * 1024**3
 MAX_TOTAL_UNCOMPRESSED_BYTES = 4 * 1024**3
 MAX_COMPRESSION_RATIO = 200
 MAX_CENTRAL_DIRECTORY_BYTES = 128 * 1024**2
@@ -50,7 +49,6 @@ def _zip_limits() -> ZipLimits:
         max_central_directory_bytes=MAX_CENTRAL_DIRECTORY_BYTES,
         max_total_expanded_bytes=MAX_TOTAL_UNCOMPRESSED_BYTES,
         max_compression_ratio=MAX_COMPRESSION_RATIO,
-        max_member_bytes=MAX_MEMBER_BYTES,
     )
 
 

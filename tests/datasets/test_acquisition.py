@@ -4,6 +4,7 @@ import copy
 import dataclasses
 import errno
 import gc
+import json
 import os
 import pickle
 import socket
@@ -87,6 +88,14 @@ class FakeResponse:
 
     def close(self) -> None:
         pass
+
+
+def _reuse_descriptor(descriptor: int, path: Path) -> int:
+    source = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    reused = os.dup2(source, descriptor)
+    if source != reused:
+        os.close(source)
+    return reused
 
 
 class FakeTransport:
@@ -441,6 +450,113 @@ def test_dns_resolver_rejects_eof_or_partial_invalid_payload(monkeypatch: pytest
         acquisition._bounded_dns_answers("example.test", time.monotonic() + 1, "https://example.test")
 
 
+@pytest.mark.parametrize(
+    "answers",
+    [
+        [],
+        [[socket.AF_UNIX, socket.SOCK_STREAM, 0, "", ["192.0.0.9", 443]]],
+        [[socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP, "", ["192.0.0.9", 443]]],
+        [[socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", []]],
+        [[socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", [9, "443"]]],
+        [[socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ["192.0.0.9", True]]],
+        [[2.0, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ["192.0.0.9", 443]]],
+        [[socket.AF_INET, True, socket.IPPROTO_TCP, "", ["192.0.0.9", 443]]],
+        [[socket.AF_INET, socket.SOCK_STREAM, 6.0, "", ["192.0.0.9", 443]]],
+        [[socket.AF_INET6, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ["2001:4860:4860::8888", 443]]],
+    ],
+)
+def test_dns_decoder_rejects_empty_or_malformed_answer_shapes(answers: list[object]):
+    payload = json.dumps({"ok": True, "answers": answers}).encode()
+
+    with pytest.raises(ValueError, match="DNS resolver returned an invalid result") as error:
+        acquisition._decode_dns_result(payload, "https://example.test/file?token=secret")
+
+    assert "secret" not in str(error.value)
+
+
+def test_dns_resolver_rejects_valid_frame_from_abnormal_worker(monkeypatch: pytest.MonkeyPatch):
+    class AbnormalProcess:
+        exitcode = 9
+
+        def __init__(self, send: object) -> None:
+            self.send = send
+
+        def start(self) -> None:
+            self.send.send_bytes(  # type: ignore[attr-defined]
+                acquisition._encode_dns_result(
+                    True,
+                    [(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP, "", ("192.0.0.9", 443))],
+                )
+            )
+
+        def is_alive(self) -> bool:
+            return False
+
+        def join(self, timeout: float = 0) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        acquisition,
+        "_make_resolver_process",
+        lambda context, send, host: AbnormalProcess(send),
+    )
+
+    with pytest.raises(ValueError, match="DNS resolver exited abnormally"):
+        acquisition._bounded_dns_answers("example.test", time.monotonic() + 1, "https://example.test")
+
+
+def test_dns_resolver_factory_is_bounded_by_deadline(monkeypatch: pytest.MonkeyPatch):
+    completed = acquisition.threading.Event()
+
+    class NeverStarted:
+        def close(self) -> None:
+            completed.set()
+
+    def slow_factory(*args: object):
+        time.sleep(0.08)
+        return NeverStarted()
+
+    monkeypatch.setattr(acquisition, "_make_resolver_process", slow_factory)
+    started = time.monotonic()
+
+    with pytest.raises(ValueError, match="download deadline exceeded"):
+        acquisition._bounded_dns_answers("example.test", time.monotonic() + 0.01, "https://example.test")
+
+    assert time.monotonic() - started < 0.05
+    assert completed.wait(0.2)
+
+
+def test_dns_resolver_start_is_bounded_and_late_process_is_reaped(monkeypatch: pytest.MonkeyPatch):
+    cleaned = acquisition.threading.Event()
+
+    class SlowStart:
+        exitcode = 0
+
+        def start(self) -> None:
+            time.sleep(0.08)
+
+        def is_alive(self) -> bool:
+            return False
+
+        def join(self, timeout: float = 0) -> None:
+            pass
+
+        def close(self) -> None:
+            cleaned.set()
+
+    monkeypatch.setattr(acquisition, "_make_resolver_process", lambda *args: SlowStart())
+    started = time.monotonic()
+
+    with pytest.raises(ValueError, match="download deadline exceeded"):
+        acquisition._bounded_dns_answers("example.test", time.monotonic() + 0.01, "https://example.test")
+
+    assert time.monotonic() - started < 0.05
+    assert cleaned.wait(0.2)
+
+
 def test_download_rejects_path_replacement_before_success(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -632,13 +748,32 @@ def test_stale_download_binding_finalizer_never_closes_reused_descriptor(
     )
     stale = acquisition._download_binding(downloaded).descriptor
     os.close(stale)
-    source = os.open(tmp_path / "foreign", os.O_RDWR | os.O_CREAT, 0o600)
-    foreign = os.dup2(source, stale)
-    if source != foreign:
-        os.close(source)
+    foreign = _reuse_descriptor(stale, tmp_path / "foreign")
 
     with pytest.raises(ValueError, match="download binding is unavailable"):
         acquisition._bound_download_metadata(downloaded)
+    del downloaded
+    gc.collect()
+
+    os.fstat(foreign)
+    os.close(foreign)
+
+
+def test_download_finalizer_directly_abandons_reused_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _public_dns(monkeypatch, "192.0.0.9")
+    downloaded = download_bounded(
+        "https://example.test/file",
+        tmp_path / "target",
+        10,
+        transport=FakeTransport(),
+    )
+    stale = acquisition._download_binding(downloaded).descriptor
+    os.close(stale)
+    foreign = _reuse_descriptor(stale, tmp_path / "foreign")
+
     del downloaded
     gc.collect()
 
@@ -890,6 +1025,26 @@ def test_public_dataclasses_have_exact_serialization_fields(value: object):
     assert hash(pickle.loads(pickle.dumps(value))) == hash(value)
 
 
+def test_zip_limits_has_exact_four_field_public_surface():
+    limits = ZipLimits(1, 2, 3, 4)
+
+    assert [field.name for field in dataclasses.fields(limits)] == [
+        "max_entries",
+        "max_central_directory_bytes",
+        "max_total_expanded_bytes",
+        "max_compression_ratio",
+    ]
+    assert dataclasses.asdict(limits) == {
+        "max_entries": 1,
+        "max_central_directory_bytes": 2,
+        "max_total_expanded_bytes": 3,
+        "max_compression_ratio": 4,
+    }
+    assert copy.copy(limits) == limits
+    assert copy.deepcopy(limits) == limits
+    assert pickle.loads(pickle.dumps(limits)) == limits
+
+
 def test_archive_snapshot_rejects_raw_file_over_explicit_bound(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     archive = tmp_path / "oversized.zip"
     archive.touch()
@@ -927,7 +1082,13 @@ def test_secure_extraction_preflights_atomic_publish_before_archive_work(
 ):
     archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
     entries = validated_zip_members(archive, ZipLimits())
-    monkeypatch.setattr(acquisition, "_atomic_publish_supported", lambda: False)
+    observed: list[Path] = []
+
+    def unsupported(parent: Path) -> bool:
+        observed.append(parent)
+        return False
+
+    monkeypatch.setattr(acquisition, "_probe_atomic_publish", unsupported)
     monkeypatch.setattr(
         acquisition,
         "_stable_archive",
@@ -937,7 +1098,195 @@ def test_secure_extraction_preflights_atomic_publish_before_archive_work(
     with pytest.raises(RuntimeError, match="secure extraction is not supported"):
         extract_members(archive, entries, tmp_path / "members")
 
+    assert observed == [tmp_path]
     assert not (tmp_path / "members").exists()
+
+
+def test_atomic_publish_probe_uses_private_names_on_destination_filesystem(tmp_path: Path):
+    before = set(tmp_path.iterdir())
+
+    assert acquisition._probe_atomic_publish(tmp_path) is True
+
+    assert set(tmp_path.iterdir()) == before
+
+
+def test_extract_constructs_capability_and_closes_nonretained_fds_before_publish(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    entries = validated_zip_members(archive, ZipLimits())
+    observed: dict[str, object] = {}
+    real_paths = acquisition._ExtractedPaths
+    real_publish = acquisition._publish_path_exclusive
+
+    class TrackingPaths(real_paths):
+        def __init__(self, paths: list[Path], bindings: list[object]) -> None:
+            super().__init__(paths, bindings)
+            observed["capability"] = self
+
+    def checked_publish(source: Path, destination: Path) -> None:
+        capability = observed["capability"]
+        assert isinstance(capability, real_paths)
+        archive_identity = (archive.stat().st_dev, archive.stat().st_ino)
+        open_identities: set[tuple[int, int]] = set()
+        for raw_descriptor in os.listdir("/dev/fd"):
+            try:
+                status = os.fstat(int(raw_descriptor))
+            except (OSError, ValueError):
+                continue
+            open_identities.add((status.st_dev, status.st_ino))
+        assert archive_identity not in open_identities
+        real_publish(source, destination)
+
+    monkeypatch.setattr(acquisition, "_ExtractedPaths", TrackingPaths)
+    monkeypatch.setattr(acquisition, "_publish_path_exclusive", checked_publish)
+
+    paths = extract_members(archive, entries, tmp_path / "members")
+
+    assert paths[0].read_bytes() == b"locked"
+
+
+def test_extract_capability_construction_failure_prevents_publication_and_closes_bindings(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    entries = validated_zip_members(archive, ZipLimits())
+    retained: list[int] = []
+    real_open = acquisition.os.open
+
+    def tracking_open(*args: object, **kwargs: object) -> int:
+        descriptor = real_open(*args, **kwargs)
+        if args and args[0] == "data.csv" and args[1] & os.O_RDONLY == os.O_RDONLY:
+            retained.append(descriptor)
+        return descriptor
+
+    monkeypatch.setattr(acquisition.os, "open", tracking_open)
+    monkeypatch.setattr(
+        acquisition,
+        "_ExtractedPaths",
+        lambda *args: (_ for _ in ()).throw(MemoryError("capability failed")),
+    )
+
+    with pytest.raises(MemoryError, match="capability failed"):
+        extract_members(archive, entries, tmp_path / "members")
+
+    assert not (tmp_path / "members").exists()
+    assert retained
+    for descriptor in retained:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+
+
+def test_extract_publication_failure_closes_preconstructed_capability(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    entries = validated_zip_members(archive, ZipLimits())
+    observed: dict[str, acquisition._ExtractedPaths] = {}
+    real_paths = acquisition._ExtractedPaths
+
+    def construct(paths: list[Path], bindings: list[object]):
+        capability = real_paths(paths, bindings)
+        observed["capability"] = capability
+        return capability
+
+    monkeypatch.setattr(acquisition, "_ExtractedPaths", construct)
+    monkeypatch.setattr(
+        acquisition,
+        "_publish_path_exclusive",
+        lambda *args: (_ for _ in ()).throw(ValueError("publish failed")),
+    )
+
+    with pytest.raises(ValueError, match="destination changed during extraction"):
+        extract_members(archive, entries, tmp_path / "members")
+
+    assert not (tmp_path / "members").exists()
+    for binding in observed["capability"]._bindings:
+        with pytest.raises(OSError):
+            os.fstat(binding.descriptor)
+
+
+def test_extract_capability_close_failure_falls_back_to_binding_cleanup(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    entries = validated_zip_members(archive, ZipLimits())
+    observed: dict[str, acquisition._ExtractedPaths] = {}
+    real_paths = acquisition._ExtractedPaths
+
+    def construct(paths: list[Path], bindings: list[object]):
+        capability = real_paths(paths, bindings)
+        observed["capability"] = capability
+        return capability
+
+    monkeypatch.setattr(acquisition, "_ExtractedPaths", construct)
+    monkeypatch.setattr(real_paths, "close", lambda self: (_ for _ in ()).throw(OSError("close failed")))
+    monkeypatch.setattr(
+        acquisition,
+        "_publish_path_exclusive",
+        lambda *args: (_ for _ in ()).throw(ValueError("publish failed")),
+    )
+
+    with pytest.raises(ValueError, match="extraction cleanup failed") as error:
+        extract_members(archive, entries, tmp_path / "members")
+
+    assert isinstance(error.value.__cause__, ValueError)
+    assert "publish failed" in str(error.value.__cause__)
+    assert not (tmp_path / "members").exists()
+    for binding in observed["capability"]._bindings:
+        with pytest.raises(OSError):
+            os.fstat(binding.descriptor)
+
+
+def test_extract_cleanup_failure_is_controlled_and_preserves_original_cause(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    archive = _zip(tmp_path / "data.zip", {"a.csv": b"a", "b.csv": b"b"})
+    entries = validated_zip_members(archive, ZipLimits())[:1]
+    monkeypatch.setattr(
+        acquisition.shutil,
+        "rmtree",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("cleanup failed")),
+    )
+
+    with pytest.raises(ValueError, match="extraction cleanup failed") as error:
+        extract_members(archive, entries, tmp_path / "members")
+
+    assert isinstance(error.value.__cause__, ValueError)
+    assert "members changed after validation" in str(error.value.__cause__)
+    assert not (tmp_path / "members").exists()
+
+
+def test_extract_staging_open_cleanup_failure_is_controlled(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    entries = validated_zip_members(archive, ZipLimits())
+    real_open = acquisition.os.open
+
+    def failing_open(path: object, *args: object, **kwargs: object) -> int:
+        if isinstance(path, Path) and path.name.startswith(".dataset-extract-"):
+            raise OSError("staging open failed")
+        return real_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(acquisition.os, "open", failing_open)
+    monkeypatch.setattr(
+        acquisition.shutil,
+        "rmtree",
+        lambda *args, **kwargs: (_ for _ in ()).throw(OSError("cleanup failed")),
+    )
+
+    with pytest.raises(ValueError, match="extraction cleanup failed") as error:
+        extract_members(archive, entries, tmp_path / "members")
+
+    assert isinstance(error.value.__cause__, OSError)
+    assert "staging open failed" in str(error.value.__cause__)
 
 
 def test_download_requires_owned_non_writable_trusted_parent(tmp_path: Path):
@@ -952,10 +1301,16 @@ def test_download_requires_owned_non_writable_trusted_parent(tmp_path: Path):
 def test_shared_zip_policy_enforces_member_and_total_expanded_limits(tmp_path: Path):
     archive = _zip(tmp_path / "data.zip", {"a.csv": b"aa", "b.csv": b"bb"})
 
-    with pytest.raises(ValueError, match="member a.csv exceeds 1 bytes"):
-        validated_zip_members(archive, ZipLimits(max_member_bytes=1))
     with pytest.raises(ValueError, match="archive exceeds 3 uncompressed bytes"):
         validated_zip_members(archive, ZipLimits(max_total_expanded_bytes=3))
+
+
+def test_shared_zip_policy_enforces_internal_member_limit(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    archive = _zip(tmp_path / "data.zip", {"a.csv": b"aa"})
+    monkeypatch.setattr(acquisition, "_MAX_ZIP_MEMBER_BYTES", 1)
+
+    with pytest.raises(ValueError, match="member a.csv exceeds 1 bytes"):
+        validated_zip_members(archive, ZipLimits())
 
 
 def test_shared_zip_policy_rejects_duplicate_exact_member_path(tmp_path: Path):
@@ -978,6 +1333,37 @@ def test_validated_entries_reject_copy_deepcopy_and_pickle(tmp_path: Path):
             operation(entries)
 
 
+@pytest.mark.parametrize(
+    "operation",
+    [
+        lambda value: value.append(value[0]),
+        lambda value: value.extend(value),
+        lambda value: value.insert(0, value[0]),
+        lambda value: value.clear(),
+        lambda value: value.pop(),
+        lambda value: value.remove(value[0]),
+        lambda value: value.reverse(),
+        lambda value: value.sort(key=lambda item: item.member_path),
+        lambda value: value.__setitem__(0, value[0]),
+        lambda value: value.__delitem__(0),
+        lambda value: value.__iadd__(value),
+        lambda value: value.__imul__(2),
+    ],
+)
+def test_validated_entries_reject_all_list_mutators(tmp_path: Path, operation: object):
+    entries = validated_zip_members(_zip(tmp_path / "data.zip", {"data.csv": b"locked"}), ZipLimits())
+
+    with pytest.raises(TypeError, match="immutable"):
+        operation(entries)  # type: ignore[operator]
+
+
+def test_validated_entries_are_not_mutable_through_unbound_list_methods(tmp_path: Path):
+    entries = validated_zip_members(_zip(tmp_path / "data.zip", {"data.csv": b"locked"}), ZipLimits())
+
+    with pytest.raises(TypeError):
+        list.append(entries, entries[0])  # type: ignore[arg-type]
+
+
 def test_extracted_paths_reject_copy_deepcopy_pickle_and_binding_mutation(tmp_path: Path):
     archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
     paths = extract_members(archive, validated_zip_members(archive, ZipLimits()), tmp_path / "members")
@@ -989,6 +1375,39 @@ def test_extracted_paths_reject_copy_deepcopy_pickle_and_binding_mutation(tmp_pa
         paths.bindings = ()
     with pytest.raises(TypeError):
         paths._bindings[0] = paths._bindings[0]
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        lambda value: value.append(value[0]),
+        lambda value: value.extend(value),
+        lambda value: value.insert(0, value[0]),
+        lambda value: value.clear(),
+        lambda value: value.pop(),
+        lambda value: value.remove(value[0]),
+        lambda value: value.reverse(),
+        lambda value: value.sort(),
+        lambda value: value.__setitem__(0, value[0]),
+        lambda value: value.__delitem__(0),
+        lambda value: value.__iadd__(value),
+        lambda value: value.__imul__(2),
+    ],
+)
+def test_extracted_paths_reject_all_list_mutators(tmp_path: Path, operation: object):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    paths = extract_members(archive, validated_zip_members(archive, ZipLimits()), tmp_path / "members")
+
+    with pytest.raises(TypeError, match="immutable"):
+        operation(paths)  # type: ignore[operator]
+
+
+def test_extracted_paths_are_not_mutable_through_unbound_list_methods(tmp_path: Path):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    paths = extract_members(archive, validated_zip_members(archive, ZipLimits()), tmp_path / "members")
+
+    with pytest.raises(TypeError):
+        list.clear(paths)  # type: ignore[arg-type]
 
 
 def test_stale_extracted_descriptor_is_normalized(tmp_path: Path):
@@ -1005,13 +1424,24 @@ def test_stale_extracted_binding_finalizer_never_closes_reused_descriptor(tmp_pa
     paths = extract_members(archive, validated_zip_members(archive, ZipLimits()), tmp_path / "members")
     stale = paths._bindings[0].descriptor
     os.close(stale)
-    source = os.open(tmp_path / "foreign", os.O_RDWR | os.O_CREAT, 0o600)
-    foreign = os.dup2(source, stale)
-    if source != foreign:
-        os.close(source)
+    foreign = _reuse_descriptor(stale, tmp_path / "foreign")
 
     with pytest.raises(ValueError, match="extracted output binding is unavailable"):
         acquisition._bound_extracted_metadata(paths)
+    del paths
+    gc.collect()
+
+    os.fstat(foreign)
+    os.close(foreign)
+
+
+def test_extracted_paths_finalizer_directly_abandons_reused_descriptor(tmp_path: Path):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    paths = extract_members(archive, validated_zip_members(archive, ZipLimits()), tmp_path / "members")
+    stale = paths._bindings[0].descriptor
+    os.close(stale)
+    foreign = _reuse_descriptor(stale, tmp_path / "foreign")
+
     del paths
     gc.collect()
 

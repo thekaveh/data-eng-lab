@@ -935,7 +935,7 @@ def test_audit_zip_rejects_member_count_limit_and_cleans_temp(monkeypatch: pytes
 def test_audit_zip_rejects_declared_member_size_limit_and_cleans_temp(monkeypatch: pytest.MonkeyPatch):
     source = "https://source.invalid/data.zip"
     responses.add(responses.GET, source, body=zip_bytes({"large.csv": b"ab"}), status=200)
-    monkeypatch.setattr(audit, "MAX_MEMBER_BYTES", 1)
+    monkeypatch.setattr(acquisition, "_MAX_ZIP_MEMBER_BYTES", 1)
     created = record_audit_temp_directories(monkeypatch)
 
     with pytest.raises(ValueError, match="member large.csv exceeds 1 bytes"):
