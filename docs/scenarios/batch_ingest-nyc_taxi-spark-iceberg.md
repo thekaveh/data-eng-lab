@@ -1,6 +1,6 @@
 # 5.2. batch_ingest-nyc_taxi-spark-iceberg
 
-Batch ingestion: read raw NYC taxi Trips Parquet from `s3a://landing/nyc_taxi/*` and write to an Iceberg bronze table. Scala (Zeppelin) and PySpark (Jupyter) notebooks implement the same logic.
+Batch ingestion: resolve and read one verified immutable NYC Taxi Parquet generation, then write to an Iceberg bronze table. Scala (Zeppelin) and PySpark (Jupyter) notebooks implement the same logic.
 
 ## 1. Purpose
 
@@ -10,7 +10,7 @@ This is the first step in the medallion architecture — ingesting raw Parquet d
 
 ### 2.1 Input Source
 
-Source: `s3a://landing/nyc_taxi/*.parquet` (downloaded via `make datasets`).
+Source: resolver-ordered NYC Taxi Parquet URIs from one immutable generation published by `make datasets`.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -43,7 +43,7 @@ Source: `s3a://landing/nyc_taxi/*.parquet` (downloaded via `make datasets`).
 
 ![Architecture](../diagrams/img/batch_ingest-nyc_taxi-spark-iceberg.png)
 
-Raw Parquet trip data flows from the S3 landing zone through Spark batch processing into an Iceberg bronze table in the `lakehouse.bronze` namespace. The notebooks select the declared `tiny`, `small`, or `medium` file list deterministically (default `small`, matching `make datasets`), normalize `passenger_count` to `double` per file, and then union by name. This preserves source records while avoiding the known March `INT64` / double incompatibility.
+Raw Parquet trip data flows from one resolver-verified generation through Spark batch processing into an Iceberg bronze table in the `lakehouse.bronze` namespace. The notebooks request `tiny`, `small`, or `medium`, retain the returned ordered URI set, normalize `passenger_count` to `double` per file, and then union by name. This preserves source records while avoiding the known March `INT64` / double incompatibility.
 
 ## 4. Notebooks
 
@@ -59,7 +59,7 @@ Airflow DAG: `batch_ingest_nyc_taxi` — a scheduled batch DAG.
 ## 6. Usage
 
 1. Ensure the `bronze` Iceberg namespace exists: `scripts/register_iceberg.py`
-2. Populate the landing zone: `make datasets`. The notebooks default to the same `small` tier; change their `taxiDatasetScale` / `taxi_dataset_scale` setting only when you load `tiny` or `medium`.
+2. Publish the expected tier with `make datasets SCALE=<tier>`. Set the Zeppelin `dataset_scale` input or Jupyter `dataset_scale_override` for an explicit override; otherwise `DATASET_SCALE`, then `small`, applies.
 3. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
      ```bash
      airflow dags trigger batch_ingest_nyc_taxi
@@ -71,7 +71,7 @@ Airflow DAG: `batch_ingest_nyc_taxi` — a scheduled batch DAG.
 
 ## 7. Dependencies
 
-- **Dataset:** NYC Taxi Trips Parquet from `s3a://landing/nyc_taxi/`
+- **Dataset:** resolver-verified immutable NYC Taxi Trips Parquet
 - **Atlas services:** A1-A4 (Spark, Iceberg, S3 catalog, lakehouse catalog)
 - **Other:** None
 

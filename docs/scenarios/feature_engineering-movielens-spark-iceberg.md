@@ -10,7 +10,7 @@ This scenario demonstrates feature engineering for ML pipelines. It processes th
 
 ### 2.1 Input Source
 
-Source: `s3a://landing/movielens/ratings.csv` and `s3a://landing/movielens/movies.csv` (downloaded via `make datasets`).
+Source: `ratings.csv` and `movies.csv` from one resolver-verified immutable MovieLens generation published by `make datasets`.
 
 | Column | Type | Source |
 |---|---|---|
@@ -62,7 +62,7 @@ Airflow DAG: `feature_engineering_movielens` — a scheduled batch DAG.
 
 ## 7. Dependencies
 
-- **Dataset:** MovieLens ratings and movies CSVs from `s3a://landing/movielens/`
+- **Dataset:** resolver-verified immutable MovieLens ratings and movies CSVs
 - **Atlas services:** A1-A4 (Spark, Iceberg, S3 catalog, lakehouse catalog)
 - **Other:** None
 

@@ -398,14 +398,114 @@ def test_dataset_docs_describe_versioned_fail_closed_provenance_contract():
         "SHA-256",
         "schema fingerprint",
         "reviewed lock update",
-        "runtime enforcement is tracked in issue #81",
+        "immutable generation",
+        "active pointer",
     ):
         assert phrase in text
 
     assert "`fetch.scale_params`" not in text
-    assert "existing objects are verified" not in text
-    assert "defined, validated, and parsed" in text
-    assert "does not verify downloaded, extracted, generated, uploaded, or reused bytes" in text
+    assert "runtime enforcement is tracked in issue #81" not in text
+    assert "enforcement is pending" not in text
+
+
+def test_dataset_docs_describe_verified_publication_and_recovery():
+    text = (ROOT / "docs/datasets.md").read_text(encoding="utf-8")
+    for phrase in (
+        "immutable generation",
+        "active pointer",
+        "--verify-only",
+        "--refresh",
+        "--force",
+        "--rollback-manifest",
+        "legacy flat objects",
+        "no automatic garbage collection",
+        "concurrent publisher",
+        "DATASET_SCALE",
+        "dataset-resolver",
+        "runtime mismatch never updates the registry",
+        "issue #80",
+    ):
+        assert phrase in text
+
+    for command in (
+        "make datasets SCALE=small",
+        "uv run python scripts/download_datasets.py --scale small --verify-only",
+        "uv run python scripts/download_datasets.py --scale small --only movielens --refresh",
+        "uv run python scripts/download_datasets.py --scale small --only movielens --rollback-manifest <64-hex-digest>",
+    ):
+        assert command in text
+
+    assert "explicit parameter, then `DATASET_SCALE`, then `small`" in text
+    assert "`make up` does not acquire datasets" in text
+
+
+def test_entry_and_operations_docs_publish_the_verified_dataset_workflow():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+    getting_started = (ROOT / "docs/getting-started.md").read_text(encoding="utf-8")
+    go_live = (ROOT / "docs/go-live.md").read_text(encoding="utf-8")
+    changelog = (ROOT / "docs/CHANGELOG.md").read_text(encoding="utf-8")
+
+    assert "verified immutable" in readme
+    assert "`make up` starts services; it does not acquire datasets" in getting_started
+    assert "DATASET_SCALE" in getting_started
+    assert "active pointer" in go_live
+    assert "runtime mismatch never updates the registry" in go_live
+    assert "verified immutable generations" in " ".join(changelog.split())
+    assert "runtime enforcement remains explicitly deferred to issue #81" not in changelog
+
+
+def test_public_consumer_docs_do_not_teach_flat_dataset_reads():
+    affected = (
+        ROOT / "docs/notebooks/batch_ingest-nyc_taxi-spark-iceberg.md",
+        ROOT / "docs/notebooks/feature_engineering-movielens-spark-iceberg.md",
+        ROOT / "docs/notebooks/join_optimization-tpch-spark-iceberg.md",
+        ROOT / "docs/notebooks/json_flatten-gh_archive-spark-iceberg.md",
+        ROOT / "docs/notebooks/sessionization-gh_archive-spark-iceberg.md",
+        ROOT / "docs/notebooks/star_schema-tpch-spark-iceberg.md",
+        ROOT / "docs/notebooks/streaming_ingest-gh_archive-spark-iceberg.md",
+        ROOT / "docs/spark-apps/nyc-taxi-etl.md",
+        ROOT / "docs/spark-apps/nyc-taxi-medallion.md",
+        ROOT / "spark-apps/nyc-taxi-etl/README.md",
+        ROOT / "spark-apps/nyc-taxi-medallion/README.md",
+    )
+    flat_path = re.compile(r"s3a://landing/(?:nyc_taxi|gh_archive|movielens|online_retail|tpch)(?!/_generations/)")
+    offenders = tuple(path.relative_to(ROOT).as_posix() for path in affected if flat_path.search(path.read_text()))
+    assert offenders == ()
+
+    for path in affected:
+        text = path.read_text(encoding="utf-8")
+        assert "immutable" in text
+
+
+def test_published_dataset_diagram_masters_show_verified_resolution_boundary():
+    names = (
+        "batch_ingest-nyc_taxi-spark-iceberg",
+        "streaming_ingest-gh_archive-spark-iceberg",
+        "join_optimization-tpch-spark-iceberg",
+        "star_schema-tpch-spark-iceberg",
+        "nyc-taxi-etl",
+    )
+    flat_path = re.compile(r"s3a://landing/(?:nyc_taxi|gh_archive|tpch)(?!/_generations/)")
+
+    for name in names:
+        path = ROOT / f"docs/diagrams/{name}.html"
+        text = path.read_text(encoding="utf-8")
+        assert "expected scale" in text, path
+        assert "active pointer + immutable manifest" in text, path
+        assert "ordered immutable objects" in text, path
+        assert "s3a projection only after verification" in text, path
+        assert flat_path.search(text) is None, path
+        assert "<script" not in text.casefold(), path
+
+    streaming = (ROOT / "docs/diagrams/streaming_ingest-gh_archive-spark-iceberg.html").read_text()
+    assert "file source · one stream per immutable URI" in streaming
+    assert "directory scan" not in streaming
+    assert "checkpoint key: scale / publication / manifest" in streaming
+    assert "checkpoint: s3a://checkpoints/gh_events_file ·" not in streaming
+
+    etl = (ROOT / "docs/diagrams/nyc-taxi-etl.html").read_text()
+    assert "Airflow task execution calls dataset-resolver" in etl
+    assert "--table" in etl
 
 
 def test_dataset_design_and_plan_define_effective_stability_and_safe_provenance_text():
@@ -536,9 +636,9 @@ def test_dataset_docs_record_reviewed_evidence_counts_and_source_realities():
         "2018-09-26",
         "release-specific terms control",
         "artifact-level provenance governs the selected release",
-        "scale-local landing identity",
-        "atomically replace the selected release",
-        "prevent mixed stale-release objects",
+        "scale-local logical names",
+        "separate immutable generation",
+        "active pointer changes only after the complete selected release verifies",
     ):
         assert phrase in evidence
 
@@ -561,9 +661,10 @@ def test_dataset_docs_publish_reviewed_update_commands_and_changelog_boundary():
     for phrase in (
         "registry version 2",
         "source, raw/archive, landing-object, generator-output, and schema locks",
-        "runtime enforcement remains explicitly deferred to issue #81",
+        "verified immutable generations",
     ):
         assert phrase in unreleased
+    assert "runtime enforcement remains explicitly deferred to issue #81" not in unreleased
     assert "March's `INT64` schema" not in unreleased
 
 
@@ -725,9 +826,12 @@ def test_spark_app_docs_match_build_publish_and_dag_contracts(app: str):
 
 def test_etl_docs_match_transform_and_positional_argument_contract():
     transform = "src/main/scala/com/thekaveh/dataeng/nyctaxi/transforms/TaxiTransforms.scala"
-    source = (ROOT / "spark-apps/nyc-taxi-etl" / transform).read_text(encoding="utf-8")
+    app_root = ROOT / "spark-apps/nyc-taxi-etl"
+    source = (app_root / transform).read_text(encoding="utf-8")
+    entrypoint = (app_root / "src/main/scala/com/thekaveh/dataeng/nyctaxi/NycTaxiEtl.scala").read_text()
     assert "def clean(df: DataFrame)" in source
     assert 'F.col("tpep_pickup_datetime")' in source
+    assert 'args.indexOf("--table")' in entrypoint
 
     for relative in (
         "docs/spark-apps/nyc-taxi-etl.md",
@@ -736,7 +840,9 @@ def test_etl_docs_match_transform_and_positional_argument_contract():
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert f"`{transform}`" in text
         assert "`TaxiTransforms.clean`" in text
-        assert "two positional arguments" in text
+        assert "one or more ordered" in text
+        assert "`--table <target>`" in text
+        assert "no flat-path or table default" in text
         assert "`tpep_pickup_datetime`" in text
         assert "`passenger_count`" in text
         assert "`createOrReplace()`" in text
@@ -747,8 +853,11 @@ def test_etl_docs_match_transform_and_positional_argument_contract():
 
 def test_medallion_docs_match_transform_output_and_fixed_table_contract():
     transform = "src/main/scala/com/thekaveh/dataeng/medallion/transforms/MedallionTransforms.scala"
-    source = (ROOT / "spark-apps/nyc-taxi-medallion" / transform).read_text(encoding="utf-8")
+    app_root = ROOT / "spark-apps/nyc-taxi-medallion"
+    source = (app_root / transform).read_text(encoding="utf-8")
+    entrypoint = (app_root / "src/main/scala/com/thekaveh/dataeng/medallion/NycTaxiMedallion.scala").read_text()
     assert 'F.count("*").as("trips")' in source
+    assert 'args.indexOf("--bronze-table")' in entrypoint
 
     for relative in (
         "docs/spark-apps/nyc-taxi-medallion.md",
@@ -756,7 +865,9 @@ def test_medallion_docs_match_transform_output_and_fixed_table_contract():
     ):
         text = (ROOT / relative).read_text(encoding="utf-8")
         assert f"`{transform}`" in text
-        assert "one optional positional bronze-table argument" in text
+        assert "one or more ordered" in text
+        assert "`--bronze-table <table>`" in text
+        assert "no flat-path or Bronze-table default" in text
         assert "`trips`" in text
         assert "`createOrReplace()`" in text
         assert "upstream DAG dependency" not in text

@@ -10,9 +10,9 @@ Star schema design is the foundation of dimensional data warehousing. This scena
 
 ### 2.1 Input Source
 
-Source: TPC-H Parquet datasets in S3 (`s3a://landing/tpch/`), downloaded via `make datasets`.
+Source: TPC-H Parquet objects from one resolver-verified immutable generation published by `make datasets`.
 
-**orders table** (`s3a://landing/tpch/orders`):
+**orders table** (`orders.parquet` in the resolved generation):
 
 | Column | Type | Notes |
 |---|---|---|
@@ -21,7 +21,7 @@ Source: TPC-H Parquet datasets in S3 (`s3a://landing/tpch/`), downloaded via `ma
 | `o_totalprice` | double | Order total |
 | `o_orderstatus` | string | Order status |
 
-**customer table** (`s3a://landing/tpch/customer`):
+**customer table** (`customer.parquet` in the resolved generation):
 
 | Column | Type | Notes |
 |---|---|---|
@@ -29,7 +29,7 @@ Source: TPC-H Parquet datasets in S3 (`s3a://landing/tpch/`), downloaded via `ma
 | `c_name` | string | Customer name |
 | `c_mktsegment` | string | Market segment |
 
-**lineitem table** (`s3a://landing/tpch/lineitem`):
+**lineitem table** (`lineitem.parquet` in the resolved generation):
 
 | Column | Type | Notes |
 |---|---|---|
@@ -77,10 +77,10 @@ Airflow DAG: `star_schema_tpch` — a scheduled batch DAG.
 
 ## 7. Dependencies
 
-- **Dataset:** TPC-H Parquet (`orders`, `customer`, `lineitem`) from `s3a://landing/tpch/`
+- **Dataset:** resolver-verified immutable TPC-H Parquet (`orders.parquet`, `customer.parquet`, `lineitem.parquet`)
 - **Atlas services:** A1-A4 (Spark, Iceberg, S3 catalog, lakehouse catalog)
 - **Other:** None
-- **Note:** Reads directly from S3 landing — no medallion intermediate layers
+- **Note:** Reads the resolver-returned immutable S3 objects directly — no medallion intermediate layers
 
 ## 8. Known Issues & Caveats
 

@@ -33,19 +33,21 @@ from pyspark.sql import functions as F
 spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
 ```
 
+Both setup implementations choose an explicit notebook scale override before `DATASET_SCALE`, default to `small`, and call the internal resolver once. They validate and retain one verified immutable generation as `datasetSparkUris` / `dataset_spark_uris`.
+
 ### 2.2 Read
 
 **Scala (Zeppelin):**
 
 ```scala
-val raw = spark.read.json("s3a://landing/gh_archive")
+val raw = spark.read.json(datasetSparkUris: _*)
 raw.printSchema()
 ```
 
 **PySpark (Jupyter):**
 
 ```python
-raw = spark.read.json("s3a://landing/gh_archive")
+raw = spark.read.json(list(dataset_spark_uris))
 raw.printSchema()
 ```
 

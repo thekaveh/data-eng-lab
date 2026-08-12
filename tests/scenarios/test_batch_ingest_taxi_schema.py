@@ -7,18 +7,8 @@ from pathlib import Path
 
 import nbformat
 
-from datasets.registry import load_registry, resolve_scale
-
 ROOT = Path(__file__).resolve().parents[2]
 SCENARIO = ROOT / "scenarios" / "batch_ingest-nyc_taxi-spark-iceberg"
-
-
-def _taxi_paths_for_scale(scale_name: str) -> list[str]:
-    dataset = load_registry(ROOT / "datasets" / "registry.yaml")["nyc_taxi"]
-    return [
-        url.replace("https://d37ci6vzurychx.cloudfront.net/trip-data/", "s3a://landing/nyc_taxi/")
-        for url in resolve_scale(dataset, scale_name).urls
-    ]
 
 
 def _zeppelin_read_code() -> str:
@@ -31,22 +21,23 @@ def _jupyter_read_code() -> str:
     return next(cell.source for cell in note.cells if cell.cell_type == "code" and "taxi_paths" in cell.source)
 
 
-def test_batch_ingest_notebooks_use_default_scale_paths_and_normalize_before_union():
-    """Default notebooks match ``make datasets`` and normalize each selected object."""
-    declared = _taxi_paths_for_scale("small")
+def test_batch_ingest_notebooks_resolve_expected_scale_and_normalize_before_union():
+    """Each notebook resolves one frozen run scale and normalizes every returned object."""
     zeppelin, jupyter = _zeppelin_read_code(), _jupyter_read_code()
     for code in (zeppelin, jupyter):
-        assert 'spark.read.parquet("s3a://landing/nyc_taxi/")' not in code
+        assert "s3a://landing/nyc_taxi" not in code
         assert "passenger_count" in code
         assert 'cast("double")' in code or "cast('double')" in code
         assert "unionByName" in code
-        assert all(path in code for path in declared)
-    assert 'val taxiDatasetScale = "small"' in zeppelin
-    assert "taxi_dataset_scale = 'small'" in jupyter
-    assert "taxiPathsByScale" in zeppelin
-    assert "taxi_paths_by_scale" in jupyter
-    assert "val taxiPaths = taxiPathsByScale.getOrElse(" in zeppelin
-    assert "taxi_paths = taxi_paths_by_scale[taxi_dataset_scale]" in jupyter
+        assert "taxi_paths" in code or "taxiPaths" in code
+    full_notebooks = (
+        (SCENARIO / "zeppelin/notebook.zpln").read_text(encoding="utf-8"),
+        (SCENARIO / "jupyter/notebook.ipynb").read_text(encoding="utf-8"),
+    )
+    for notebook in full_notebooks:
+        assert "DATASET_SCALE" in notebook
+        assert "expected_scale" in notebook
+        assert "nyc_taxi" in notebook
 
 
 def test_batch_ingest_notebooks_preserve_bronze_output_contract():

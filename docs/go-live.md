@@ -25,6 +25,8 @@ commands in eight phases: stale-symlink cleanup → `env backfill` → consumer
 plus `ATLAS_MINIO_HOST_ENDPOINT` assertion → Iceberg namespace registration →
 preflight (Layer 1 + Layer 2). All nine `data-eng` services are containerized by
 default via the manifest's `env.values` — no `--<svc>-source` CLI flags needed.
+`make up` starts services only; it does not acquire datasets or change a dataset
+active pointer.
 
 This launches ~20+ containers including:
 - Spark (standalone master + worker)
@@ -115,6 +117,28 @@ RUN_INFRA=1 uv run pytest tests/infra/test_layer2_live.py::test_layer2_matrix_al
 ```
 
 **Expected:** All L2 edges pass: spark→minio+iceberg, jupyter→pyiceberg, airflow→minio+spark, zeppelin→spark, trino→lakehouse (unless `TRINO_SOURCE=disabled`), spark→redpanda (unless `REDPANDA_SOURCE=disabled`). Optional-service edges are gated on the Atlas `*_SOURCE` values in `infra/.env` (set to `container` by `atlas.consumer.yml`), so on a default stack every edge runs.
+
+### 2.5 Publish and verify the dataset tier
+
+Dataset acquisition is a separate, explicit operation after MinIO is healthy:
+
+```bash
+make datasets SCALE=small
+uv run python scripts/download_datasets.py --scale small --verify-only
+```
+
+The first command publishes a complete locked generation when none is active,
+or verifies the existing active pointer, immutable manifest, object bytes, and
+physical schemas. The second command is read-only and fails when active state is
+missing, corrupt, or at another scale. The rule is that runtime mismatch never updates the registry;
+intentional lock changes use the issue #80 audit and review workflow in
+[Datasets](datasets.md).
+
+Set `DATASET_SCALE=tiny|small|medium` for a run-scoped default. Explicit Airflow
+run configuration `{"dataset_scale":"tiny"}` or a notebook scale override takes
+precedence; `small` applies only when neither an explicit value nor
+`DATASET_SCALE` is present. The internal `dataset-resolver` verifies the selected
+generation before returning one immutable URI set to the run.
 
 ---
 
@@ -299,11 +323,12 @@ Run the end-to-end lakehouse pipeline via Airflow.
 #### Prerequisites
 
 - The `nyc-taxi-etl` JAR must already be published to `s3a://jars/nyc-taxi-etl/0.1.0/app.jar` via Jenkins (section 3.5 above).
-- Landing-zone Parquet data must be present in MinIO. Populate it with:
+- A verified NYC Taxi generation must be active in MinIO. Publish and verify it with:
    ```bash
-   uv run python scripts/download_datasets.py
+   make datasets SCALE=small
+   uv run python scripts/download_datasets.py --scale small --verify-only
    ```
-   This seeds `s3a://landing/nyc_taxi/` with the NYC taxi Parquet files consumed by the ETL.
+   Trigger the DAG with `{"dataset_scale":"small"}` to make the expected scale explicit.
 
 #### Running the DAG
 
@@ -314,14 +339,14 @@ Run the end-to-end lakehouse pipeline via Airflow.
     - Submits `s3a://jars/nyc-taxi-etl/0.1.0/app.jar` to the Spark standalone cluster in cluster deploy-mode through `spark_default` (`spark://spark-master:7077`).
     - Passes the full `spark.sql.catalog.lakehouse.*` configuration so the driver finds the Iceberg REST catalog.
     - Confirms the returned driver ID through Atlas's in-network Spark REST endpoint (`spark-master:6066`), requiring `FINISHED` and `success: true`.
-    - Reads Parquet from `s3a://landing/nyc_taxi/`.
+    - Resolves NYC Taxi during task execution, validates the requested scale, and passes the returned immutable generation URIs to Spark.
     - Writes to `lakehouse.bronze.nyc_taxi_trips`.
 
 **Expected output:**
 - DAG run completes with status **Success**.
-- Spark driver logs (in the Spark History UI or Airflow task logs) show:
+- Spark driver logs (in the Spark History UI or Airflow task logs) show the verified immutable URI arguments and target table without a flat landing-path fallback:
    ```text
-   [spark-submit] ... Reading from s3a://landing/nyc_taxi/ ...
+   [spark-submit] ... s3://landing/nyc_taxi/_generations/<plan-id>/<publication-id>/yellow_tripdata_2023-01.parquet ...
    [spark-submit] ... Writing to iceberg table lakehouse.bronze.nyc_taxi_trips ...
    ```
 - Verify the table in Spark (via Zeppelin or Jupyter):
