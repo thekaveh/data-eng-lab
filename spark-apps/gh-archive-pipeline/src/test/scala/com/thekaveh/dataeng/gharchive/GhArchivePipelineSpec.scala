@@ -1,0 +1,251 @@
+package com.thekaveh.dataeng.gharchive
+
+import org.apache.spark.sql.{DataFrame, Row, SparkSession}
+import org.apache.spark.sql.types._
+import org.scalatest.BeforeAndAfterAll
+import org.scalatest.funsuite.AnyFunSuite
+
+import java.sql.Timestamp
+import java.time.Instant
+import scala.collection.mutable
+
+class GhArchivePipelineSpec extends AnyFunSuite with BeforeAndAfterAll {
+  private var spark: SparkSession = _
+  private val plan = "1" * 64
+  private val publication = "0123456789ab4def8123456789abcdef"
+  private val manifest = "2" * 64
+  private val names = Vector.tabulate(6)(hour => s"2023-01-01-$hour.json.gz")
+
+  private def uri(name: String, p: String = plan, pub: String = publication): String =
+    s"s3://landing/gh_archive/_generations/$p/$pub/$name"
+
+  private def args(scale: String, selected: Seq[String], p: String = plan,
+                   pub: String = publication, digest: String = manifest): Array[String] =
+    (selected.map(uri(_)) ++ Seq(
+      "--dataset-scale", scale,
+      "--plan-id", p,
+      "--publication-id", pub,
+      "--manifest-sha256", digest
+    )).toArray
+
+  private val ActorSchema = StructType(Seq(StructField("login", StringType, nullable = true)))
+  private val RepoSchema = StructType(Seq(StructField("name", StringType, nullable = true)))
+  private val NestedSchema = StructType(Seq(
+    StructField("id", StringType, nullable = true),
+    StructField("type", StringType, nullable = true),
+    StructField("actor", ActorSchema, nullable = true),
+    StructField("repo", RepoSchema, nullable = true),
+    StructField("created_at", StringType, nullable = true)
+  ))
+
+  private def nested(rows: Seq[(String, String, String, String, String)]): DataFrame =
+    spark.createDataFrame(spark.sparkContext.parallelize(rows.map { case (id, kind, actor, repo, created) =>
+      Row(id, kind, Row(actor), Row(repo), created)
+    }), NestedSchema)
+
+  private def eventRows(rows: Seq[(String, String, String, String, String)]): DataFrame =
+    GhArchiveTransforms.flatten(nested(rows))
+
+  override def beforeAll(): Unit = {
+    spark = SparkSession.builder().appName("gh-archive-pipeline-test").master("local[2]")
+      .config("spark.ui.enabled", "false")
+      .config("spark.sql.session.timeZone", "UTC")
+      .config("spark.sql.legacy.timeParserPolicy", "CORRECTED")
+      .getOrCreate()
+  }
+
+  override def afterAll(): Unit = if (spark != null) spark.stop()
+
+  test("parses each scale using the exact chronological immutable inventory") {
+    val expected = Seq(
+      "tiny" -> names.take(1),
+      "small" -> names.take(3),
+      "medium" -> names
+    )
+    expected.foreach { case (scale, objects) =>
+      val parsed = GhArchiveSources.parse(args(scale, objects))
+      assert(parsed.canonicalUris == objects.map(uri(_)))
+      assert(parsed.sparkUris == objects.map(name => "s3a://" + uri(name).stripPrefix("s3://")))
+      assert(parsed.provenance == Provenance(scale, plan, publication, manifest))
+    }
+  }
+
+  test("rejects malformed duplicate missing extra reordered flat and cross-generation arguments") {
+    val canonical = names.take(3).map(uri(_))
+    val metadata = Seq("--dataset-scale", "small", "--plan-id", plan,
+      "--publication-id", publication, "--manifest-sha256", manifest)
+    val invalid = Seq(
+      (canonical.dropRight(1) ++ metadata).toArray,
+      ((canonical :+ canonical.head) ++ metadata).toArray,
+      (canonical.reverse ++ metadata).toArray,
+      ((canonical :+ uri(names(3))) ++ metadata).toArray,
+      (canonical.updated(1, canonical(1).replace("/_generations/", "/")) ++ metadata).toArray,
+      (canonical.updated(1, canonical(1).replace("s3://", "s3a://")) ++ metadata).toArray,
+      (canonical.updated(1, canonical(1).replace(names(1), "deep/" + names(1))) ++ metadata).toArray,
+      (canonical.updated(1, uri(names(1), pub = "0123456789ab4def9123456789abcdef")) ++ metadata).toArray,
+      args("small", names.take(3), p = "3" * 64),
+      args("small", names.take(3), pub = "not-a-uuid"),
+      args("small", names.take(3), digest = "A" * 64),
+      args("large", names.take(3))
+    )
+    invalid.foreach(value => assertThrows[IllegalArgumentException](GhArchiveSources.parse(value)))
+  }
+
+  test("flattens exact required nested strings and conserves rows") {
+    val source = nested(Seq(
+      ("2", "PushEvent", "alice", "acme/repo", "2023-01-01T00:00:01Z"),
+      ("1", "PushEvent", "alice", "acme/repo", "2023-01-01T00:00:00Z")
+    )).withColumn("ignored_payload", org.apache.spark.sql.functions.lit("allowed"))
+    val flat = GhArchiveTransforms.flatten(source)
+    assert(flat.schema == GhArchiveTransforms.EventsSchema)
+    assert(flat.count() == source.count())
+    assert(flat.orderBy("id").collect().map(_.getString(0)).toSeq == Seq("1", "2"))
+  }
+
+  test("rejects missing wrong null blank duplicate and empty nested source values") {
+    val valid = nested(Seq(("1", "PushEvent", "alice", "acme/repo", "2023-01-01T00:00:00Z")))
+    val invalid = Seq(
+      valid.drop("type"),
+      valid.withColumn("id", org.apache.spark.sql.functions.col("id").cast(LongType)),
+      nested(Seq((null, "PushEvent", "alice", "acme/repo", "2023-01-01T00:00:00Z"))),
+      nested(Seq(("1", " ", "alice", "acme/repo", "2023-01-01T00:00:00Z"))),
+      nested(Seq(("1", "PushEvent", null, "acme/repo", "2023-01-01T00:00:00Z"))),
+      nested(Seq(("1", "PushEvent", "alice", "", "2023-01-01T00:00:00Z"))),
+      nested(Seq(
+        ("1", "PushEvent", "alice", "acme/repo", "2023-01-01T00:00:00Z"),
+        ("1", "CreateEvent", "bob", "other/repo", "2023-01-01T00:00:01Z")
+      )),
+      nested(Seq.empty)
+    )
+    invalid.foreach(frame => assertThrows[IllegalArgumentException](GhArchiveTransforms.flatten(frame).count()))
+  }
+
+  test("accepts only exact whole-second UTC timestamps") {
+    val accepted = eventRows(Seq(("1", "PushEvent", "alice", "acme/repo", "2023-01-01T23:59:59Z")))
+    assert(accepted.head().getTimestamp(4) == Timestamp.from(Instant.parse("2023-01-01T23:59:59Z")))
+    val rejected = Seq(
+      "2023-01-01T00:00:00.000Z", "2023-01-01T00:00:00+00:00",
+      "2023-01-01T01:00:00+01:00", "2023-01-01T00:00:00",
+      "2023-01-01T00:00:00z", " 2023-01-01T00:00:00Z",
+      "2023-01-01T00:00:00Z ", "2023-02-29T00:00:00Z",
+      "2023-13-01T00:00:00Z", "2023-01-01T24:00:00Z"
+    )
+    rejected.zipWithIndex.foreach { case (value, index) =>
+      assertThrows[IllegalArgumentException](eventRows(Seq(
+        (index.toString, "PushEvent", "alice", "acme/repo", value)
+      )).count())
+    }
+  }
+
+  test("sessionizes deterministically at the exact 1800 second boundary") {
+    val events = eventRows(Seq(
+      ("b", "PushEvent", "alice", "a/r", "2023-01-01T00:00:00Z"),
+      ("a", "CreateEvent", "alice", "a/r", "2023-01-01T00:00:00Z"),
+      ("c", "PushEvent", "alice", "a/r", "2023-01-01T00:30:00Z"),
+      ("d", "PushEvent", "alice", "a/r", "2023-01-01T01:00:01Z"),
+      ("e", "PushEvent", "bob", "b/r", "2023-01-01T04:00:00Z")
+    ))
+    val sessions = GhArchiveTransforms.sessionize(events)
+    assert(sessions.schema == GhArchiveTransforms.SessionsSchema)
+    val selected = sessions.orderBy("actor_login", "created_at", "id").collect().map { row =>
+      (row.getString(0), Option(row.getTimestamp(5)), row.getInt(6), row.getLong(7))
+    }.toSeq
+    assert(selected.map { case (id, _, fresh, session) => (id, fresh, session) } == Seq(
+      ("a", 1, 1L), ("b", 0, 1L), ("c", 0, 1L), ("d", 1, 2L), ("e", 1, 1L)
+    ))
+    assert(selected.head._2.isEmpty)
+    assert(selected(1)._2.contains(Timestamp.from(Instant.parse("2023-01-01T00:00:00Z"))))
+    assert(sessions.count() == events.count())
+  }
+
+  test("session results are repeatable under input reordering") {
+    val rows = Seq(
+      ("1", "PushEvent", "alice", "a/r", "2023-01-01T00:00:00Z"),
+      ("2", "PushEvent", "alice", "a/r", "2023-01-01T00:45:00Z"),
+      ("3", "PushEvent", "bob", "b/r", "2023-01-01T00:00:00Z")
+    )
+    val forward = GhArchiveTransforms.sessionize(eventRows(rows)).orderBy("id").collect().toSeq
+    val reverse = GhArchiveTransforms.sessionize(eventRows(rows.reverse)).orderBy("id").collect().toSeq
+    assert(forward == reverse)
+  }
+
+  test("flatten replaces the exact event table and verifies rows schema key and provenance") {
+    val source = nested(Seq(
+      ("1", "PushEvent", "alice", "a/r", "2023-01-01T00:00:00Z"),
+      ("2", "CreateEvent", "bob", "b/r", "2023-01-01T00:00:01Z")
+    ))
+    val resolved = GhArchiveSources.parse(args("tiny", names.take(1)))
+    val writer = new MemoryWriter
+    val result = GhArchiveFlatten.runResolved(resolved, source, writer)
+    assert(result == FlattenResult(2L, resolved.provenance))
+    assert(writer.calls == Seq("namespace", s"replace:${GhArchiveFlatten.EventsTable}",
+      s"read:${GhArchiveFlatten.EventsTable}", s"properties:${GhArchiveFlatten.EventsTable}"))
+    assert(writer.frames(GhArchiveFlatten.EventsTable).schema == GhArchiveTransforms.EventsSchema)
+    assert(writer.properties(GhArchiveFlatten.EventsTable) == resolved.provenance.properties)
+  }
+
+  test("sessionization checks matching event properties before reading rows or writing") {
+    val resolved = GhArchiveSources.parse(args("tiny", names.take(1)))
+    val writer = new MemoryWriter
+    writer.properties(GhArchiveFlatten.EventsTable) = resolved.provenance.properties.updated(
+      "data_eng_lab.dataset.publication_id", "fedcba9876544abc8123456789abcdef")
+    assertThrows[IllegalStateException](GhArchiveSessionization.runResolved(resolved, writer))
+    assert(writer.calls == Seq(s"properties:${GhArchiveFlatten.EventsTable}"))
+
+    writer.calls.clear()
+    writer.properties(GhArchiveFlatten.EventsTable) = resolved.provenance.properties +
+      ("data_eng_lab.dataset.unexpected" -> "forbidden")
+    assertThrows[IllegalStateException](GhArchiveSessionization.runResolved(resolved, writer))
+    assert(writer.calls == Seq(s"properties:${GhArchiveFlatten.EventsTable}"))
+  }
+
+  test("same-generation rerun converges after failure between flatten and session writes") {
+    val resolved = GhArchiveSources.parse(args("tiny", names.take(1)))
+    val source = nested(Seq(
+      ("1", "PushEvent", "alice", "a/r", "2023-01-01T00:00:00Z"),
+      ("2", "PushEvent", "alice", "a/r", "2023-01-01T00:45:00Z")
+    ))
+    val writer = new MemoryWriter
+    GhArchiveFlatten.runResolved(resolved, source, writer)
+    writer.failNextSessionWrite = true
+    assertThrows[RuntimeException](GhArchiveSessionization.runResolved(resolved, writer))
+    assert(writer.frames.keySet == Set(GhArchiveFlatten.EventsTable))
+
+    GhArchiveFlatten.runResolved(resolved, source, writer)
+    val result = GhArchiveSessionization.runResolved(resolved, writer)
+    assert(result == SessionResult(2L, resolved.provenance))
+    assert(writer.frames.keySet == Set(GhArchiveFlatten.EventsTable, GhArchiveSessionization.SessionsTable))
+    assert(writer.properties.values.toSet == Set(resolved.provenance.properties))
+    assert(writer.frames(GhArchiveSessionization.SessionsTable).orderBy("id").collect().map(_.getLong(7)).toSeq ==
+      Seq(1L, 2L))
+  }
+
+  private final class MemoryWriter extends TableWriter {
+    val calls = mutable.ArrayBuffer.empty[String]
+    val frames = mutable.Map.empty[String, DataFrame]
+    val properties = mutable.Map.empty[String, Map[String, String]]
+    var failNextSessionWrite = false
+
+    def createNamespace(): Unit = calls += "namespace"
+
+    def replace(table: String, frame: DataFrame, provenance: Provenance): Unit = {
+      calls += s"replace:$table"
+      if (table == GhArchiveSessionization.SessionsTable && failNextSessionWrite) {
+        failNextSessionWrite = false
+        throw new RuntimeException("injected session write failure")
+      }
+      frames(table) = spark.createDataFrame(frame.rdd, frame.schema)
+      properties(table) = provenance.properties
+    }
+
+    def readFrame(table: String): DataFrame = {
+      calls += s"read:$table"
+      frames.getOrElse(table, throw new IllegalStateException(s"missing table $table"))
+    }
+
+    def readProperties(table: String): Map[String, String] = {
+      calls += s"properties:$table"
+      properties.getOrElse(table, Map.empty)
+    }
+  }
+}
