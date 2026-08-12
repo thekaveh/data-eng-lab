@@ -75,7 +75,7 @@ def _unsupported_atlas_export_offenders(paths: Iterable[Path], *, root: Path = R
 
 def test_catalog_has_expected_atlas_artifacts():
     assert len(sorted((ROOT / "scenarios").rglob("dag.py"))) == 0
-    assert len(sorted((ROOT / "spark-apps").rglob("dag.py"))) == 2
+    assert len(sorted((ROOT / "spark-apps").rglob("dag.py"))) == 3
     assert len(sorted((ROOT / "scenarios").rglob("notebook.zpln"))) == 19
     assert len(sorted((ROOT / "scenarios").rglob("notebook.ipynb"))) == 19
 
