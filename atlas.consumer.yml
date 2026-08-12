@@ -40,6 +40,7 @@ env:
     JENKINS_SOURCE: container
     TRINO_SOURCE: container
     REDPANDA_SOURCE: container
+    DATASET_SCALE: small             # run-scoped default; explicit consumer inputs win
 
 compose_overlays:
   - ./compose/data-eng-lab.yml      # DAG/dataset/probe bind-mounts into Atlas services
