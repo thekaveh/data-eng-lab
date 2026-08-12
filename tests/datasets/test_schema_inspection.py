@@ -282,36 +282,256 @@ def test_parquet_legacy_timestamp_annotations_preserve_utc_semantics(converted_t
     assert normalize_parquet_schema([row]) == (ObservedField("value", "timestamp-tz", True),)
 
 
-def test_every_production_parquet_schema_has_frozen_realistic_metadata_mapping():
+@pytest.mark.parametrize(
+    ("annotation", "duckdb_type"),
+    [
+        (
+            "TimestampType(isAdjustedToUTC=0, unit=TimeUnit("
+            "MILLIS=MilliSeconds(), MICROS=MicroSeconds(), NANOS=<null>))",
+            "TIMESTAMP",
+        ),
+        (
+            "TimestampType(isAdjustedToUTC=0, unit=TimeUnit("
+            "MILLIS=<null>, MICROS=<null>, NANOS=NanoSeconds()))garbage",
+            "TIMESTAMP_NS",
+        ),
+        (
+            "garbageTimestampType(isAdjustedToUTC=0, unit=TimeUnit("
+            "MILLIS=<null>, MICROS=<null>, NANOS=NanoSeconds()))",
+            "TIMESTAMP_NS",
+        ),
+        (
+            "TimestampType(isAdjustedToUTC=0, isAdjustedToUTC=1, unit=TimeUnit("
+            "MILLIS=<null>, MICROS=MicroSeconds(), NANOS=<null>))",
+            "TIMESTAMP WITH TIME ZONE",
+        ),
+        (
+            "TimestampType(isAdjustedToUTC=true, unit=TimeUnit("
+            "MILLIS=<null>, MICROS=MicroSeconds(), NANOS=<null>))",
+            "TIMESTAMP WITH TIME ZONE",
+        ),
+        (
+            "TimestampType(isAdjustedToUTC=0, unit=TimeUnit("
+            "MILLIS=<null>, MICROS=<null>, NANOS=<null>))",
+            "TIMESTAMP",
+        ),
+        (
+            "TimestampType(isAdjustedToUTC=0, unit=TimeUnit("
+            "MILLIS=<null>, MICROS=MicroSeconds(), NANOS=<null>), force_set_converted_type=0)",
+            "TIMESTAMP",
+        ),
+    ],
+)
+def test_parquet_timestamp_annotation_requires_exact_duckdb_1_5_4_shape(
+    annotation: str, duckdb_type: str
+):
+    row = parquet_row(
+        "value",
+        duckdb_type,
+        type="INT64",
+        logical_type=annotation,
+    )
+
+    with pytest.raises(ValueError, match="timestamp|integer annotation"):
+        normalize_parquet_schema([row])
+
+
+@pytest.mark.parametrize(
+    "unit",
+    [
+        "MILLIS=MilliSeconds(), MICROS=<null>, NANOS=<null>",
+        "MILLIS=<null>, MICROS=MicroSeconds(), NANOS=<null>",
+        "MILLIS=<null>, MICROS=<null>, NANOS=NanoSeconds()",
+    ],
+)
+def test_parquet_timestamp_annotation_accepts_each_exact_supported_unit(unit: str):
+    row = parquet_row(
+        "value",
+        "TIMESTAMP",
+        type="INT64",
+        logical_type=f"TimestampType(isAdjustedToUTC=0, unit=TimeUnit({unit}))",
+    )
+
+    assert normalize_parquet_schema([row]) == (ObservedField("value", "timestamp", True),)
+
+
+FROZEN_PRODUCTION_PARQUET_SCHEMAS = {
+    ("nyc_taxi", "nyc_yellow_2023_01"): (
+        ("VendorID", "int64", True),
+        ("tpep_pickup_datetime", "timestamp", True),
+        ("tpep_dropoff_datetime", "timestamp", True),
+        ("passenger_count", "float64", True),
+        ("trip_distance", "float64", True),
+        ("RatecodeID", "float64", True),
+        ("store_and_fwd_flag", "string", True),
+        ("PULocationID", "int64", True),
+        ("DOLocationID", "int64", True),
+        ("payment_type", "int64", True),
+        ("fare_amount", "float64", True),
+        ("extra", "float64", True),
+        ("mta_tax", "float64", True),
+        ("tip_amount", "float64", True),
+        ("tolls_amount", "float64", True),
+        ("improvement_surcharge", "float64", True),
+        ("total_amount", "float64", True),
+        ("congestion_surcharge", "float64", True),
+        ("airport_fee", "float64", True),
+    ),
+    ("nyc_taxi", "nyc_yellow_2023_02_06"): (
+        ("VendorID", "int32", True),
+        ("tpep_pickup_datetime", "timestamp", True),
+        ("tpep_dropoff_datetime", "timestamp", True),
+        ("passenger_count", "int64", True),
+        ("trip_distance", "float64", True),
+        ("RatecodeID", "int64", True),
+        ("store_and_fwd_flag", "string", True),
+        ("PULocationID", "int32", True),
+        ("DOLocationID", "int32", True),
+        ("payment_type", "int64", True),
+        ("fare_amount", "float64", True),
+        ("extra", "float64", True),
+        ("mta_tax", "float64", True),
+        ("tip_amount", "float64", True),
+        ("tolls_amount", "float64", True),
+        ("improvement_surcharge", "float64", True),
+        ("total_amount", "float64", True),
+        ("congestion_surcharge", "float64", True),
+        ("Airport_fee", "float64", True),
+    ),
+    ("tpch", "customer"): (
+        ("c_custkey", "int64", True),
+        ("c_name", "string", True),
+        ("c_address", "string", True),
+        ("c_nationkey", "int32", True),
+        ("c_phone", "string", True),
+        ("c_acctbal", "decimal(15,2)", True),
+        ("c_mktsegment", "string", True),
+        ("c_comment", "string", True),
+    ),
+    ("tpch", "lineitem"): (
+        ("l_orderkey", "int64", True),
+        ("l_partkey", "int64", True),
+        ("l_suppkey", "int64", True),
+        ("l_linenumber", "int64", True),
+        ("l_quantity", "decimal(15,2)", True),
+        ("l_extendedprice", "decimal(15,2)", True),
+        ("l_discount", "decimal(15,2)", True),
+        ("l_tax", "decimal(15,2)", True),
+        ("l_returnflag", "string", True),
+        ("l_linestatus", "string", True),
+        ("l_shipdate", "date", True),
+        ("l_commitdate", "date", True),
+        ("l_receiptdate", "date", True),
+        ("l_shipinstruct", "string", True),
+        ("l_shipmode", "string", True),
+        ("l_comment", "string", True),
+    ),
+    ("tpch", "nation"): (
+        ("n_nationkey", "int32", True),
+        ("n_name", "string", True),
+        ("n_regionkey", "int32", True),
+        ("n_comment", "string", True),
+    ),
+    ("tpch", "orders"): (
+        ("o_orderkey", "int64", True),
+        ("o_custkey", "int64", True),
+        ("o_orderstatus", "string", True),
+        ("o_totalprice", "decimal(15,2)", True),
+        ("o_orderdate", "date", True),
+        ("o_orderpriority", "string", True),
+        ("o_clerk", "string", True),
+        ("o_shippriority", "int32", True),
+        ("o_comment", "string", True),
+    ),
+    ("tpch", "part"): (
+        ("p_partkey", "int64", True),
+        ("p_name", "string", True),
+        ("p_mfgr", "string", True),
+        ("p_brand", "string", True),
+        ("p_type", "string", True),
+        ("p_size", "int32", True),
+        ("p_container", "string", True),
+        ("p_retailprice", "decimal(15,2)", True),
+        ("p_comment", "string", True),
+    ),
+    ("tpch", "partsupp"): (
+        ("ps_partkey", "int64", True),
+        ("ps_suppkey", "int64", True),
+        ("ps_availqty", "int64", True),
+        ("ps_supplycost", "decimal(15,2)", True),
+        ("ps_comment", "string", True),
+    ),
+    ("tpch", "region"): (
+        ("r_regionkey", "int32", True),
+        ("r_name", "string", True),
+        ("r_comment", "string", True),
+    ),
+    ("tpch", "supplier"): (
+        ("s_suppkey", "int64", True),
+        ("s_name", "string", True),
+        ("s_address", "string", True),
+        ("s_nationkey", "int32", True),
+        ("s_phone", "string", True),
+        ("s_acctbal", "decimal(15,2)", True),
+        ("s_comment", "string", True),
+    ),
+}
+
+
+def production_parquet_schemas():
     registry = load_registry(Path(__file__).parents[2] / "datasets" / "registry.yaml")
-    schemas = [
-        schema
-        for dataset in registry.values()
+    return {
+        (dataset_name, schema.id): schema
+        for dataset_name, dataset in registry.items()
         for schema in dataset.schemas.values()
         if schema.format == "parquet"
-    ]
+    }
 
-    assert len(schemas) == 10
-    for schema in schemas:
+
+def test_every_production_parquet_schema_matches_explicit_frozen_metadata_and_projection():
+    schemas = production_parquet_schemas()
+    assert schemas.keys() == FROZEN_PRODUCTION_PARQUET_SCHEMAS.keys()
+    for key, frozen_fields in FROZEN_PRODUCTION_PARQUET_SCHEMAS.items():
+        schema = schemas[key]
+        expected = tuple(ObservedField(*field) for field in frozen_fields)
+        assert tuple(
+            ObservedField(field.name, field.logical_type, field.nullable) for field in schema.fields
+        ) == expected
         rows = [
             {
                 "name": "schema",
                 "type": None,
                 "repetition_type": "REQUIRED",
-                "num_children": len(schema.fields),
+                "num_children": len(frozen_fields),
             },
             *[
                 parquet_metadata_row(
-                    field.name,
-                    field.logical_type,
-                    "OPTIONAL" if field.nullable else "REQUIRED",
+                    name,
+                    logical_type,
+                    "OPTIONAL" if nullable else "REQUIRED",
                 )
-                for field in schema.fields
+                for name, logical_type, nullable in frozen_fields
             ],
         ]
-        assert normalize_parquet_schema(rows) == tuple(
-            ObservedField(field.name, field.logical_type, field.nullable) for field in schema.fields
-        )
+        assert normalize_parquet_schema(rows) == expected
+
+
+def test_frozen_production_schema_expectation_is_independent_of_registry_objects():
+    schema = production_parquet_schemas()[("tpch", "region")]
+    mutated = replace(
+        schema,
+        fields=(replace(schema.fields[0], name="mutated_region_key"), *schema.fields[1:]),
+    )
+    mutated_projection = tuple(
+        (field.name, field.logical_type, field.nullable) for field in mutated.fields
+    )
+
+    assert mutated_projection != FROZEN_PRODUCTION_PARQUET_SCHEMAS[("tpch", "region")]
+    assert FROZEN_PRODUCTION_PARQUET_SCHEMAS[("tpch", "region")][0] == (
+        "r_regionkey",
+        "int32",
+        True,
+    )
 
 
 def test_parquet_inspection_uses_duckdb_metadata_without_value_inference(tmp_path: Path):
@@ -715,22 +935,25 @@ def test_xlsx_rejects_dtd_and_entity_declarations(tmp_path: Path, declaration: s
         verify_physical_schema(path, XLSX_CONTRACT, CONTEXT)
 
 
-def utf16_xml(value: str, byte_order: str) -> bytes:
+def utf16_xml(value: str, byte_order: str, *, bom: bool = True) -> bytes:
     if byte_order == "le":
-        return b"\xff\xfe" + value.encode("utf-16-le")
-    return b"\xfe\xff" + value.encode("utf-16-be")
+        return (b"\xff\xfe" if bom else b"") + value.encode("utf-16-le")
+    return (b"\xfe\xff" if bom else b"") + value.encode("utf-16-be")
 
 
+@pytest.mark.parametrize("bom", [True, False], ids=["bom", "bomless"])
 @pytest.mark.parametrize("byte_order", ["le", "be"])
 @pytest.mark.parametrize("member", ["worksheet", "shared_strings"])
 def test_xlsx_rejects_utf16_dtd_and_entities_before_xml_expansion(
-    tmp_path: Path, byte_order: str, member: str
+    tmp_path: Path, byte_order: str, member: str, bom: bool
 ):
     worksheet_xml = None
     shared_strings_xml = None
+    xml_declaration = '<?xml version="1.0" encoding="UTF-16"?>' if bom else ""
     if member == "worksheet":
         worksheet_xml = utf16_xml(
-            '<?xml version="1.0" encoding="UTF-16"?>'
+            xml_declaration
+            +
             '<!DOCTYPE worksheet [<!ENTITY payload "widget">]>'
             '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
             '<sheetData><row r="1">'
@@ -740,15 +963,18 @@ def test_xlsx_rejects_utf16_dtd_and_entities_before_xml_expansion(
             '<c r="B2" t="n"><v>2</v></c><c r="C2" s="1"><v>43831</v></c>'
             '</row></sheetData></worksheet>',
             byte_order,
+            bom=bom,
         )
     else:
         shared_strings_xml = utf16_xml(
-            '<?xml version="1.0" encoding="UTF-16"?>'
+            xml_declaration
+            +
             '<!DOCTYPE sst [<!ENTITY payload "name">]>'
             '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
             'count="4" uniqueCount="4"><si><t>&payload;</t></si><si><t>count</t></si>'
             '<si><t>when</t></si><si><t>widget</t></si></sst>',
             byte_order,
+            bom=bom,
         )
     path = xlsx_fixture(
         tmp_path,

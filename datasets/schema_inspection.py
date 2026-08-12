@@ -42,6 +42,12 @@ _PARQUET_INTEGER_ANNOTATION_RE = re.compile(
     r"^IntType\(bitWidth=(8|16|32|64), isSigned=(0|1|true|false)\)$",
     re.IGNORECASE,
 )
+_PARQUET_TIMESTAMP_ANNOTATION_RE = re.compile(
+    r"^TimestampType\(isAdjustedToUTC=(0|1), unit=TimeUnit\("
+    r"MILLIS=(MilliSeconds\(\)|<null>), "
+    r"MICROS=(MicroSeconds\(\)|<null>), "
+    r"NANOS=(NanoSeconds\(\)|<null>)\)\)$"
+)
 _INTEGER_RE = re.compile(r"^[+-]?[0-9]+$")
 _DECIMAL_VALUE_RE = re.compile(r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$")
 _DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
@@ -201,19 +207,18 @@ def _normalize_physical_parquet_type(row: object) -> str:
             raise ValueError("inconsistent Parquet date annotation")
         physical_logical = "date"
     elif physical == "INT64" and logical_annotation.startswith("TimestampType("):
-        if not any(
-            unit in logical_annotation
-            for unit in ("MilliSeconds()", "MicroSeconds()", "NanoSeconds()")
-        ):
+        annotation_match = _PARQUET_TIMESTAMP_ANNOTATION_RE.fullmatch(logical_annotation)
+        if annotation_match is None:
+            raise ValueError("unsupported Parquet timestamp annotation")
+        adjusted_to_utc, *units = annotation_match.groups()
+        if sum(unit != "<null>" for unit in units) != 1:
             raise ValueError("unsupported Parquet timestamp unit")
-        if "isAdjustedToUTC=1" in logical_annotation:
+        if adjusted_to_utc == "1":
             physical_logical = "timestamp-tz"
-        elif "isAdjustedToUTC=0" in logical_annotation:
+        else:
             if converted in {"TIMESTAMP_MILLIS", "TIMESTAMP_MICROS"}:
                 raise ValueError("inconsistent Parquet timestamp UTC annotation")
             physical_logical = "timestamp"
-        else:
-            raise ValueError("unsupported Parquet timestamp UTC annotation")
         if converted not in {"", "TIMESTAMP_MILLIS", "TIMESTAMP_MICROS"}:
             raise ValueError("unsupported Parquet timestamp annotation")
     elif physical == "INT64" and converted in {"TIMESTAMP_MILLIS", "TIMESTAMP_MICROS"}:
@@ -756,10 +761,14 @@ class _CheckedXmlReader:
         if probe.startswith(codecs.BOM_UTF8):
             return "utf-8-sig"
         if len(probe) >= 4:
-            if probe[:4] == b"\x00<\x00?":
+            if probe[:4] in {b"\x00\x00\x00<", b"<\x00\x00\x00"}:
+                raise ValueError("unsupported wide XML encoding")
+            if probe[0] == 0 and probe[1] == ord("<") and probe[2] == 0:
                 return "utf-16-be"
-            if probe[:4] == b"<\x00?\x00":
+            if probe[0] == ord("<") and probe[1] == 0 and probe[3] == 0:
                 return "utf-16-le"
+            if 0 in probe[:4]:
+                raise ValueError("unsupported wide XML encoding")
             return "utf-8"
         return "utf-8" if final else None
 
