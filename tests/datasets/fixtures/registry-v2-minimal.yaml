@@ -28,6 +28,26 @@ datasets:
           - {name: id, logical_type: int64, nullable: false}
         options: {}
         fingerprint: 461985269ae8c918f57558497a5f99f13964b7859f1ed36060f99e9620480064
+      json_rows:
+        format: jsonl-gzip
+        mode: minimum
+        fields:
+          - {name: id, logical_type: string, nullable: false}
+        options: {record_shape: object, compression: gzip, encoding: utf-8}
+        fingerprint: 6b10c0e0207f69766e875bd013d2dc0d87886dc768bdee95958668162789a2fb
+      workbook:
+        format: xlsx
+        mode: exact
+        fields:
+          - {name: name, logical_type: string, nullable: false}
+        options: {sheets: [Data], header_row: 1}
+        fingerprint: 2aba989728f4880eaa58a5eea452f157dc1a2992cbf2033df0f1eb28b6a31326
+      readme:
+        format: text
+        mode: exact
+        fields: []
+        options: {encoding: utf-8}
+        fingerprint: 9b25204fba55c19c1df9ee789c8a54f5a74922acb02d4a5900a99444e4a4b08d
     artifacts:
       sample:
         url: https://example.com/direct.parquet
