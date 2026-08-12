@@ -1476,8 +1476,10 @@ def _owned_staging(
     except BaseException as error:
         cleanup_errors: list[BaseException] = []
         if root_fd is not None:
+            owned_root_fd = root_fd
+            root_fd = None
             try:
-                os.close(root_fd)
+                os.close(owned_root_fd)
             except BaseException as cleanup_error:
                 cleanup_errors.append(cleanup_error)
         if root is not None:
@@ -1487,8 +1489,10 @@ def _owned_staging(
             except BaseException as cleanup_error:
                 cleanup_errors.append(cleanup_error)
         if parent_fd is not None:
+            owned_parent_fd = parent_fd
+            parent_fd = None
             try:
-                os.close(parent_fd)
+                os.close(owned_parent_fd)
             except BaseException as cleanup_error:
                 cleanup_errors.append(cleanup_error)
         if owns_parent:
@@ -1507,7 +1511,7 @@ def _owned_staging(
         primary = error
         raise
     finally:
-        cleanup_error: BaseException | None = None
+        cleanup_errors: list[BaseException] = []
         try:
             assert root_fd is not None and root is not None and parent_fd is not None
             # Design §7.3 trusts the publisher's OS identity. All compliant workers
@@ -1520,23 +1524,44 @@ def _owned_staging(
                 raise ValueError("publication staging identity changed; owned directory was displaced") from error
             if (opened.st_dev, opened.st_ino) != identity or (current.st_dev, current.st_ino) != identity:
                 raise ValueError("publication staging identity changed; foreign replacement preserved")
-            os.close(root_fd)
+            owned_root_fd = root_fd
             root_fd = None
+            try:
+                os.close(owned_root_fd)
+            except BaseException as close_error:
+                cleanup_errors.append(close_error)
             shutil.rmtree(root)
             if owns_parent:
                 private_parent.rmdir()
         except BaseException as error:
-            cleanup_error = error
+            cleanup_errors.append(error)
         finally:
             if root_fd is not None:
-                os.close(root_fd)
+                owned_root_fd = root_fd
+                root_fd = None
+                try:
+                    os.close(owned_root_fd)
+                except BaseException as close_error:
+                    cleanup_errors.append(close_error)
             if parent_fd is not None:
-                os.close(parent_fd)
-        if cleanup_error is not None:
-            _attach_staging_cleanup(cleanup_error, cleanup_error, cleanup_notes)
+                owned_parent_fd = parent_fd
+                parent_fd = None
+                try:
+                    os.close(owned_parent_fd)
+                except BaseException as close_error:
+                    cleanup_errors.append(close_error)
+        if cleanup_errors:
+            cleanup_error = cleanup_errors[0]
+            for error in cleanup_errors:
+                _attach_staging_cleanup(cleanup_error, error, cleanup_notes)
+            if len(cleanup_errors) > 1:
+                _attach_cleanup_count(cleanup_error, len(cleanup_errors), cleanup_notes)
             if primary is None:
                 raise cleanup_error
-            _attach_staging_cleanup(primary, cleanup_error, cleanup_notes)
+            for error in cleanup_errors:
+                _attach_staging_cleanup(primary, error, cleanup_notes)
+            if len(cleanup_errors) > 1:
+                _attach_cleanup_count(primary, len(cleanup_errors), cleanup_notes)
 
 
 def _attach_staging_cleanup(
@@ -1546,6 +1571,14 @@ def _attach_staging_cleanup(
 ) -> None:
     """Attach one path-neutral staging cleanup diagnostic to an error."""
     message = f"owned publication staging cleanup failed: {type(cleanup_error).__name__}"
+    if cleanup_notes is not None and message not in cleanup_notes:
+        cleanup_notes.append(message)
+    if message not in getattr(error, "__notes__", ()):
+        error.add_note(message)
+
+
+def _attach_cleanup_count(error: BaseException, count: int, cleanup_notes: list[str] | None) -> None:
+    message = f"owned publication staging cleanup encountered {count} errors"
     if cleanup_notes is not None and message not in cleanup_notes:
         cleanup_notes.append(message)
     if message not in getattr(error, "__notes__", ()):

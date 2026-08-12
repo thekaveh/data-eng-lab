@@ -2731,6 +2731,131 @@ def test_cleanup_only_failure_is_structured_in_publication_failure(tmp_path, mon
     assert any("cleanup failed" in note for note in getattr(caught.value, "__notes__", ()))
 
 
+@pytest.mark.parametrize("primary_kind", ["none", "runtime", "keyboard", "system-exit"])
+@pytest.mark.parametrize("failed", [("root",), ("parent",), ("root", "parent")])
+def test_owned_staging_close_failures_are_attempted_once_aggregated_and_preserve_primary(
+    tmp_path, monkeypatch, primary_kind, failed
+) -> None:
+    from datasets import publication as publication_module
+
+    parent = tmp_path / "trusted"
+    parent.mkdir(mode=0o700)
+    real_close = publication_module.os.close
+    close_calls: list[int] = []
+    root_descriptor: int | None = None
+    parent_descriptor: int | None = None
+    foreign_descriptor: int | None = None
+
+    def close_once(descriptor):
+        nonlocal foreign_descriptor
+        close_calls.append(descriptor)
+        target = "root" if descriptor == root_descriptor else "parent" if descriptor == parent_descriptor else "foreign"
+        real_close(descriptor)
+        if target in failed:
+            if target == "root":
+                foreign_descriptor = publication_module.os.open(parent, publication_module.os.O_RDONLY)
+                assert foreign_descriptor == descriptor
+            raise OSError(f"{target} close uncertain")
+
+    monkeypatch.setattr(publication_module.os, "close", close_once)
+    monkeypatch.setattr(publication_module.shutil, "rmtree", lambda path: path.rmdir())
+    cleanup_notes: list[str] = []
+    primary = {
+        "runtime": RuntimeError("body"),
+        "keyboard": KeyboardInterrupt(),
+        "system-exit": SystemExit(31),
+    }.get(primary_kind)
+
+    expected_type = OSError if primary is None else type(primary)
+    with pytest.raises(expected_type) as caught:
+        with publication_module._owned_staging(parent, cleanup_notes=cleanup_notes) as staging:
+            parent_descriptor = next(descriptor for descriptor in range(3, 256) if _same_open_inode(descriptor, parent))
+            root_descriptor = next(
+                descriptor
+                for descriptor in range(3, 256)
+                if descriptor != parent_descriptor and _same_open_inode(descriptor, staging)
+            )
+            if primary is not None:
+                raise primary
+
+    if primary is not None:
+        assert caught.value is primary
+    assert close_calls.count(root_descriptor) == 1
+    assert close_calls.count(parent_descriptor) == 1
+    assert "owned publication staging cleanup failed: OSError" in cleanup_notes
+    assert any("staging cleanup failed" in note for note in getattr(caught.value, "__notes__", ()))
+    if failed == ("root", "parent"):
+        assert "owned publication staging cleanup encountered 2 errors" in cleanup_notes
+        assert any("encountered 2 errors" in note for note in getattr(caught.value, "__notes__", ()))
+    if foreign_descriptor is not None:
+        assert close_calls.count(foreign_descriptor) == 1
+        real_close(foreign_descriptor)
+
+
+def _same_open_inode(descriptor: int, path: Path) -> bool:
+    try:
+        opened = os.fstat(descriptor)
+    except OSError:
+        return False
+    status = path.stat()
+    return (opened.st_dev, opened.st_ino) == (status.st_dev, status.st_ino)
+
+
+def test_publication_parent_close_failure_is_structured_before_pointer_commit(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+    from datasets import publication as publication_module
+
+    platform_temp = tmp_path / "platform-temp"
+    platform_temp.mkdir(mode=0o1777)
+    monkeypatch.setattr(publication_module.tempfile, "gettempdir", lambda: str(platform_temp))
+    real_open = publication_module.os.open
+    real_close = publication_module.os.close
+    failed = False
+    private_parent_descriptor: int | None = None
+
+    def capture_private_parent_open(path, *args, **kwargs):
+        nonlocal private_parent_descriptor
+        descriptor = real_open(path, *args, **kwargs)
+        if Path(path).name.startswith("data-eng-lab-publication-"):
+            private_parent_descriptor = descriptor
+        return descriptor
+
+    def fail_private_parent_close(descriptor):
+        nonlocal failed
+        real_close(descriptor)
+        if descriptor == private_parent_descriptor and not failed:
+            failed = True
+            raise OSError("parent close uncertain")
+
+    monkeypatch.setattr(publication_module.os, "open", capture_private_parent_open)
+    monkeypatch.setattr(publication_module.os, "close", fail_private_parent_close)
+    monkeypatch.setattr(
+        "datasets.publication.acquire_lease",
+        lambda client, dataset, publication_id, owner_nonce, *, bucket: _publication_lease(
+            store, plan, publication_id, owner_nonce
+        ),
+    )
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    with pytest.raises(PublicationFailure) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (VerifiedFile(source, expected),),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert caught.value.result.cleanup_warning == "owned publication staging cleanup failed: OSError"
+    assert any("staging cleanup failed" in note for note in getattr(caught.value, "__notes__", ()))
+    assert active_pointer_key("sample") not in store.objects
+
+
 def test_stop_failure_does_not_mask_primary_and_release_is_attempted(tmp_path, monkeypatch) -> None:
     plan = resolve_scale(_dataset(), "small")
     store = FakeS3()
