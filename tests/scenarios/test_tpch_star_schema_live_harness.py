@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -122,3 +123,77 @@ def test_resolver_does_not_refresh_an_existing_verified_publication():
     live._resolve_or_publish_tiny(runner=runner)
     assert not any("--refresh" in command for command in calls)
     assert any("--verify-only" in command for command in calls)
+
+
+def test_paused_dags_test_discovers_exactly_one_terminal_api_run_and_driver():
+    calls = []
+    driver_sets = iter([{"old-driver"}, {"old-driver", "new-driver"}])
+    api_calls = 0
+
+    def api(_method, _path, _body=None):
+        nonlocal api_calls
+        api_calls += 1
+        runs = [] if api_calls == 1 else [
+            {
+                "dag_run_id": "manual__owned",
+                "state": "success",
+                "start_date": "2026-08-12T20:30:00Z",
+                "end_date": "2026-08-12T20:30:30Z",
+            }
+        ]
+        return {"dag_runs": runs}
+
+    def runner(*command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout="bounded output", stderr="")
+
+    run, driver = live._execute_paused_test_run(
+        api=api,
+        runner=runner,
+        drivers=lambda: next(driver_sets),
+        terminal=lambda found: {"driverState": "FINISHED", "success": found == "new-driver"},
+        window_start="2026-08-12T20:29:59Z",
+        owned=set(),
+        logical_date=datetime(2026, 8, 12, 20, 30, tzinfo=timezone.utc),
+    )
+    assert run["dag_run_id"] == "manual__owned" and driver == "new-driver"
+    command, kwargs = calls[0]
+    assert command[:5] == ("docker", "exec", "data-eng-lab-airflow-scheduler", "bash", "-o")
+    assert any("airflow dags test" in argument for argument in command)
+    assert "--use-executor" in command and "2026-08-12T20:30:00+00:00" in command
+    assert kwargs["timeout"] == 900
+
+
+def test_paused_dags_test_rejects_zero_or_multiple_new_api_runs():
+    for runs in (
+        [],
+        [
+            {"dag_run_id": "one", "state": "success", "start_date": "2026-08-12T20:30:00Z"},
+            {"dag_run_id": "two", "state": "success", "start_date": "2026-08-12T20:30:01Z"},
+        ],
+    ):
+        responses = iter([{"dag_runs": []}, {"dag_runs": runs}])
+        with pytest.raises(AssertionError, match="exactly one new API-visible run"):
+            live._execute_paused_test_run(
+                api=lambda *_args, **_kwargs: next(responses),
+                runner=lambda *command, **_kwargs: subprocess.CompletedProcess(command, 0, stdout="", stderr=""),
+                drivers=lambda: set(),
+                terminal=lambda _driver: {},
+                window_start="2026-08-12T20:29:59Z",
+                owned=set(),
+                logical_date=datetime(2026, 8, 12, 20, 30, tzinfo=timezone.utc),
+            )
+
+
+def test_paused_dags_test_redacts_bounded_failure_diagnostics():
+    error = subprocess.CalledProcessError(1, ("docker",), output="secret-value\n" + "x" * 20000)
+
+    with pytest.raises(AssertionError) as caught:
+        live._execute_dag_test(
+            datetime(2026, 8, 12, 20, 30, tzinfo=timezone.utc),
+            runner=lambda *_args, **_kwargs: (_ for _ in ()).throw(error),
+            secrets=("secret-value",),
+        )
+    message = str(caught.value)
+    assert "secret-value" not in message and "<redacted>" in message
+    assert len(message) <= 5000

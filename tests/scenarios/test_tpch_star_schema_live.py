@@ -8,9 +8,8 @@ import subprocess
 import time
 import urllib.error
 import urllib.request
-import uuid
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -122,19 +121,6 @@ def _wait_for_dag(timeout: int = 300) -> None:
     raise TimeoutError(f"Airflow did not load {DAG_ID}")
 
 
-def _wait_for_run(run_id: str, timeout: int = 900) -> dict:
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        run = _airflow("GET", f"/dags/{DAG_ID}/dagRuns/{run_id}")
-        state = str(run.get("state", "")).lower()
-        if state == "success":
-            return run
-        if state in {"failed", "upstream_failed"}:
-            raise AssertionError(f"Airflow run {run_id} ended in {state}")
-        time.sleep(5)
-    raise TimeoutError(f"Airflow run {run_id} did not finish")
-
-
 @contextmanager
 def _paused_dag(api=None):
     request = api or _airflow
@@ -159,11 +145,28 @@ def _run_timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value.replace("Z", "+00:00"))
 
 
-def _assert_owned_runs(api, window_start: str, expected: set[str], *, require_terminal: bool = False) -> dict:
+def _list_runs(api) -> list[dict]:
     document = api("GET", f"/dags/{DAG_ID}/dagRuns?limit=100&order_by=start_date")
-    runs = document.get("dag_runs", [])
+    return document.get("dag_runs", [])
+
+
+def _acceptance_timestamp(run: dict) -> datetime | None:
+    for key in ("start_date", "logical_date", "queued_at"):
+        value = run.get(key)
+        if isinstance(value, str) and value:
+            return _run_timestamp(value)
+    return None
+
+
+def _validate_owned_runs(
+    runs: list[dict], window_start: str, expected: set[str], *, require_terminal: bool = False,
+) -> dict:
     start = _run_timestamp(window_start)
-    in_window = {run["dag_run_id"]: run for run in runs if _run_timestamp(run["start_date"]) >= start}
+    in_window = {
+        run["dag_run_id"]: run
+        for run in runs
+        if (timestamp := _acceptance_timestamp(run)) is not None and timestamp >= start
+    }
     unexpected = set(in_window) - expected
     missing = expected - set(in_window)
     if unexpected or missing:
@@ -186,6 +189,12 @@ def _assert_owned_runs(api, window_start: str, expected: set[str], *, require_te
         if non_success:
             raise AssertionError(f"owned DAG runs are not terminal successes: {non_success}")
     return in_window
+
+
+def _assert_owned_runs(api, window_start: str, expected: set[str], *, require_terminal: bool = False) -> dict:
+    return _validate_owned_runs(
+        _list_runs(api), window_start, expected, require_terminal=require_terminal,
+    )
 
 
 def _resolve_or_publish_tiny(runner=None) -> dict:
@@ -272,19 +281,77 @@ def _properties(table: str) -> dict[str, str]:
     return {str(key): str(value) for key, value in rows}
 
 
-def _trigger_and_verify(run_id: str) -> tuple[dict, str]:
-    before = _driver_ids()
-    _airflow(
-        "POST",
-        f"/dags/{DAG_ID}/dagRuns",
-        {"dag_run_id": run_id, "logical_date": None, "conf": {"dataset_scale": "tiny"}},
+def _execute_dag_test(
+    logical_date: datetime, *, runner=None, secrets: tuple[str, ...] = (),
+) -> subprocess.CompletedProcess[str]:
+    execute = runner or _run
+    project = _env("PROJECT_NAME", "data-eng-lab")
+    command = (
+        "docker",
+        "exec",
+        f"{project}-airflow-scheduler",
+        "bash",
+        "-o",
+        "pipefail",
+        "-c",
+        'airflow dags test "$@" 2>&1 | tail -n 200',
+        "airflow-dags-test",
+        DAG_ID,
+        logical_date.replace(microsecond=0).isoformat(),
+        "--use-executor",
+        "--conf",
+        '{"dataset_scale":"tiny"}',
     )
-    run = _wait_for_run(run_id)
-    new_drivers = _driver_ids() - before
-    assert len(new_drivers) == 1, f"expected one new Spark driver, got {sorted(new_drivers)}"
+    try:
+        return execute(*command, timeout=900)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        output = "\n".join(
+            str(value) for value in (
+                getattr(error, "stdout", None),
+                getattr(error, "output", None),
+                getattr(error, "stderr", None),
+            ) if value
+        )
+        for secret in secrets:
+            if secret:
+                output = output.replace(secret, "<redacted>")
+        if len(output) > 4400:
+            output = output[:500] + "\n...<truncated>...\n" + output[-3800:]
+        raise AssertionError(f"paused Airflow test execution failed:\n{output}") from error
+
+
+def _execute_paused_test_run(
+    *, api, runner, drivers, terminal, window_start: str, owned: set[str], logical_date: datetime,
+) -> tuple[dict, str]:
+    before_runs = _list_runs(api)
+    _validate_owned_runs(before_runs, window_start, owned, require_terminal=True)
+    before_run_ids = {run["dag_run_id"] for run in before_runs}
+    before_drivers = drivers()
+
+    _execute_dag_test(
+        logical_date,
+        runner=runner,
+        secrets=(
+            _env("AIRFLOW_ADMIN_PASSWORD"),
+            _env("MINIO_ROOT_PASSWORD"),
+            _env("MINIO_ICEBERG_SECRET_KEY"),
+        ),
+    )
+
+    after_runs = _list_runs(api)
+    new_run_ids = {run["dag_run_id"] for run in after_runs} - before_run_ids
+    if len(new_run_ids) != 1:
+        raise AssertionError(f"expected exactly one new API-visible run, got {sorted(new_run_ids)}")
+    run_id = new_run_ids.pop()
+    expected = owned | {run_id}
+    in_window = _validate_owned_runs(after_runs, window_start, expected, require_terminal=True)
+
+    new_drivers = drivers() - before_drivers
+    assert len(new_drivers) == 1, f"expected exactly one new Spark driver, got {sorted(new_drivers)}"
     driver_id = new_drivers.pop()
-    _spark_terminal(driver_id)
-    return run, driver_id
+    status = terminal(driver_id)
+    assert status["driverState"] == "FINISHED" and status["success"] is True
+    return in_window[run_id], driver_id
 
 
 @pytest.mark.skipif(os.environ.get("RUN_INFRA") != "1", reason="needs the canonical live Atlas stack")
@@ -294,8 +361,7 @@ def test_tpch_star_schema_live_acceptance():
         _wait_for_dag()
         with _paused_dag():
             window_start = datetime.now(timezone.utc).isoformat()
-            first_run_id = f"issue107_first_{uuid.uuid4().hex}"
-            second_run_id = f"issue107_rerun_{uuid.uuid4().hex}"
+            first_logical_date = datetime.now(timezone.utc).replace(microsecond=0)
             _assert_owned_runs(_airflow, window_start, set())
 
             _run("mvn", "-q", "-B", "-f", str(APP / "pom.xml"), "package")
@@ -321,7 +387,16 @@ def test_tpch_star_schema_live_acceptance():
             assert len(resolved["objects"]) == 8 and all(item["size_bytes"] > 0 for item in resolved["objects"])
 
             _assert_owned_runs(_airflow, window_start, set())
-            first_run, first_driver = _trigger_and_verify(first_run_id)
+            first_run, first_driver = _execute_paused_test_run(
+                api=_airflow,
+                runner=_run,
+                drivers=_driver_ids,
+                terminal=_spark_terminal,
+                window_start=window_start,
+                owned=set(),
+                logical_date=first_logical_date,
+            )
+            first_run_id = first_run["dag_run_id"]
             _assert_owned_runs(_airflow, window_start, {first_run_id})
             first = {
                 "dim": _snapshot_table("lakehouse.gold.dim_customer"),
@@ -330,7 +405,20 @@ def test_tpch_star_schema_live_acceptance():
                 "fact_properties": _properties("fct_orders"),
             }
             _assert_owned_runs(_airflow, window_start, {first_run_id})
-            second_run, second_driver = _trigger_and_verify(second_run_id)
+            second_logical_date = max(
+                datetime.now(timezone.utc).replace(microsecond=0),
+                first_logical_date + timedelta(seconds=1),
+            )
+            second_run, second_driver = _execute_paused_test_run(
+                api=_airflow,
+                runner=_run,
+                drivers=_driver_ids,
+                terminal=_spark_terminal,
+                window_start=window_start,
+                owned={first_run_id},
+                logical_date=second_logical_date,
+            )
+            second_run_id = second_run["dag_run_id"]
             _assert_owned_runs(_airflow, window_start, {first_run_id, second_run_id})
             second = {
                 "dim": _snapshot_table("lakehouse.gold.dim_customer"),
