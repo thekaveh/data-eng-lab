@@ -3,6 +3,7 @@ from __future__ import annotations
 import shlex
 from pathlib import Path
 
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -84,6 +85,17 @@ def _is_endpoint_assert(command: tuple[str, ...]) -> bool:
     return False
 
 
+def _is_network_only_pytest(command: tuple[str, ...]) -> bool:
+    if not any(Path(token).name == "pytest" for token in command):
+        return False
+    for index, token in enumerate(command):
+        if token == "-m" and index + 1 < len(command):
+            return command[index + 1].strip() == "network"
+        if token.startswith("-m="):
+            return token.partition("=")[2].strip() == "network"
+    return False
+
+
 def _assert_no_indirect_shell_execution(job: dict) -> None:
     """Reject constructs that can conceal a live command from fragment parsing."""
     shell_names = {"bash", "dash", "fish", "ksh", "powershell", "pwsh", "sh", "zsh"}
@@ -143,7 +155,23 @@ def test_static_ci_does_not_run_obsolete_host_tpch_network_install():
     commands = _run_commands(static_job)
     assert 'uv run pytest -m "not infra and not network" -q' in commands
     assert "INSTALL tpch" not in commands
-    assert 'pytest -m "network"' not in commands
+    assert not any(_is_network_only_pytest(command) for command in _executable_commands(static_job))
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        ("uv", "run", "pytest", "-m", "network", "-q"),
+        ("uv", "run", "pytest", "-q", "-m=network"),
+        ("pytest", "--maxfail=1", "-m", "network"),
+    ],
+)
+def test_network_only_pytest_guard_rejects_marker_order_and_spelling(command):
+    assert _is_network_only_pytest(command)
+
+
+def test_network_only_pytest_guard_allows_canonical_offline_marker():
+    assert not _is_network_only_pytest(("uv", "run", "pytest", "-m", "not infra and not network", "-q"))
 
 
 def test_ci_covers_main_and_develop_pushes_and_pull_requests():
