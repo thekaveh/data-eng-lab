@@ -213,7 +213,7 @@ with DAG(
         conf=spark_conf,
         application_args=[],
         dataset="nyc_taxi",
-        static_args=(),
+        static_args=("--bronze-table", "lakehouse.bronze.nyc_taxi_trips"),
         rest_host="spark-master",
         verbose=True,
     )

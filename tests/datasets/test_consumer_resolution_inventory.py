@@ -130,13 +130,23 @@ def test_scala_entrypoints_require_explicit_verified_immutable_uri_arguments():
         assert '"s3a://" + uri.stripPrefix("s3://")' in text
 
 
-def test_medallion_processing_is_driven_by_frozen_resolver_inputs():
+def test_medallion_preserves_bronze_to_silver_to_gold_business_boundary():
     text = (
         ROOT / "spark-apps/nyc-taxi-medallion/src/main/scala/com/thekaveh/dataeng/medallion/NycTaxiMedallion.scala"
     ).read_text(encoding="utf-8")
-    assert "readResolved" in text
-    assert "arguments.sparkUris" in text
-    assert "spark.table(arguments.bronzeTable)" not in text
+    assert "spark.table(arguments.bronzeTable)" in text
+    assert "readResolved" not in text
+    assert "spark.read.parquet" not in text
+    assert 'withColumn("passenger_count"' not in text
+    assert 'filter(F.col("tpep_pickup_datetime")' not in text
+    assert 'withColumn("trip_date"' not in text
+
+
+def test_medallion_dag_passes_explicit_bronze_table_after_frozen_evidence():
+    text = (ROOT / "spark-apps/nyc-taxi-medallion/dag.py").read_text(encoding="utf-8")
+    assert 'static_args=("--bronze-table", "lakehouse.bronze.nyc_taxi_trips")' in text
+    assert "immutable_uris = _resolve_dataset(self.dataset, _effective_scale(context))" in text
+    assert "self.application_args = [*immutable_uris, *self.static_args]" in text
 
 
 def test_streaming_checkpoint_is_keyed_by_frozen_publication_identity():
