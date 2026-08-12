@@ -611,10 +611,12 @@ If all above pass, the Atlas enablement is **validated for production use** and 
 
 After a successful go-live run:
 
-1. **Scenario classification:** Track the existing 19 validated paired scenario
-   artifacts through [issue #82](https://github.com/thekaveh/data-eng-lab/issues/82),
-   which classifies their executable paths and identifies which scenarios need
-   production Airflow DAGs. The scenario catalog count is not a production-DAG count.
+1. **Scenario execution:** Use the [execution-mode matrix](scenarios/execution-modes.md)
+   delivered by [issue #82](https://github.com/thekaveh/data-eng-lab/issues/82)
+   as the authority for all 19 validated paired scenarios. Only `nyc_taxi_etl`
+   and `nyc_taxi_medallion` are production DAGs today; approved children must
+   pass their own implementation and live-acceptance gates before this runbook
+   advertises another Airflow entrypoint.
 2. **Automation:** Integrate this runbook into CI/CD so every Atlas release is validated end-to-end.
 3. **Documentation:** Update this runbook as new scenarios are added (e.g., additional streaming sources, Trino BI patterns).
 

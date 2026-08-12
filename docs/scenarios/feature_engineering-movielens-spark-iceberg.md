@@ -44,16 +44,13 @@ Both languages implement identical feature engineering with user aggregation, it
 
 ## 5. Orchestration
 
-Airflow DAG: `feature_engineering_movielens` — a scheduled batch DAG.
+Classification: **approved new production DAG**. No production DAG exists yet. Child #108 owns the versioned feature contract, Spark application, operator-owned Airflow task, and live acceptance; until it passes, run the paired notebooks only.
 
 ## 6. Usage
 
 1. Ensure the `silver` and `gold` Iceberg namespaces exist: `scripts/register_iceberg.py`
 2. Populate the landing zone: `make datasets`
-3. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
-     ```bash
-     airflow dags trigger feature_engineering_movielens
-     ```
+3. Open either notebook on the Atlas stack.
 4. Verify:
      ```bash
      spark-sql -e "SELECT * FROM lakehouse.silver.user_features LIMIT 10"

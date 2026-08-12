@@ -37,16 +37,13 @@ Both languages implement identical join optimization approaches with multiple st
 
 ## 5. Orchestration
 
-Airflow DAG: `join_optimization_tpch` — a scheduled batch DAG.
+Classification: **intentionally notebook-only**. No Airflow DAG or schedule exists. Join plans and timing depend on the selected scale and cluster, so this remains an operator-run performance experiment in the paired notebooks.
 
 ## 6. Usage
 
 1. Ensure the `silver` Iceberg namespace exists: `scripts/register_iceberg.py`
 2. Populate the landing zone: `make datasets`
-3. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
-     ```bash
-     airflow dags trigger join_optimization_tpch
-     ```
+3. Open either notebook on the Atlas stack.
 4. Verify:
      ```bash
      spark-sql -e "SELECT COUNT(*) FROM lakehouse.silver.tpch_joined_optimized"

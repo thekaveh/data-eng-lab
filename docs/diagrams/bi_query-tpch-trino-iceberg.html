@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>data-eng-lab — bi_query-tpch-trino-iceberg</title></head>
+<head><meta charset="utf-8"><title>data-eng-lab - bi_query-tpch-trino-iceberg</title></head>
 <body>
-  <!-- Verified against scenarios/bi_query-tpch-trino-iceberg/jupyter/notebook.ipynb and dag.py on 2026-07-31. -->
+  <!-- Verified against the paired notebooks and scenarios/execution-modes.yaml on 2026-08-12. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="600" viewBox="0 0 1280 600" font-family="'JetBrains Mono', 'Courier New', monospace" role="img" aria-labelledby="diagram-title diagram-description">
   <title id="diagram-title">BI query: TPC-H with Trino and Iceberg</title>
   <desc id="diagram-description">Architecture and query-flow diagram for the TPC-H business-intelligence scenario.</desc>
@@ -23,8 +23,8 @@
         <rect width="1280" height="600" fill="url(#grid)"/>
 
         <!-- Title -->
-        <text x="640" y="38" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">bi query — TPC-H via Trino (SQL-only, no Spark)</text>
-        <text x="640" y="60" fill="#94a3b8" font-size="12" text-anchor="middle">Multi-engine lakehouse: Trino reads Spark-written gold marts, aggregates revenue by segment, writes summary — pure ANSI SQL</text>
+        <text x="640" y="38" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">bi query - TPC-H via Trino (SQL-only, no Spark)</text>
+        <text x="640" y="60" fill="#94a3b8" font-size="12" text-anchor="middle">Multi-engine lakehouse: Trino reads Spark-written gold marts, aggregates revenue by segment, writes summary - pure ANSI SQL</text>
 
         <!-- ================= GOLD INPUT (produced by Spark) ================= -->
         <rect x="30" y="120" width="270" height="360" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
@@ -35,25 +35,25 @@
         <text x="165" y="216" fill="#ffffff" font-size="14" font-weight="700" text-anchor="middle">fct_orders</text>
         <text x="165" y="232" fill="#94a3b8" font-size="9" text-anchor="middle">lakehouse.gold.fct_orders</text>
         <line x1="70" y1="244" x2="260" y2="244" stroke="#334155" stroke-width="1"/>
-        <text x="165" y="262" fill="#ffffff" font-size="9" text-anchor="middle">o_orderkey · o_custkey (FK)</text>
-        <text x="165" y="278" fill="#ffffff" font-size="9" text-anchor="middle">revenue · line_count</text>
+        <text x="165" y="262" fill="#ffffff" font-size="9" text-anchor="middle">o_orderkey | o_custkey (FK)</text>
+        <text x="165" y="278" fill="#ffffff" font-size="9" text-anchor="middle">revenue | line_count</text>
 
         <rect x="50" y="310" width="230" height="120" rx="8" fill="#1e293b" stroke="#f59e0b" stroke-width="1.5"/>
         <text x="165" y="334" fill="#f59e0b" font-size="10" font-weight="600" text-anchor="middle">DIMENSION</text>
         <text x="165" y="356" fill="#ffffff" font-size="14" font-weight="700" text-anchor="middle">dim_customer</text>
         <text x="165" y="372" fill="#94a3b8" font-size="9" text-anchor="middle">lakehouse.gold.dim_customer</text>
         <line x1="70" y1="384" x2="260" y2="384" stroke="#334155" stroke-width="1"/>
-        <text x="165" y="402" fill="#ffffff" font-size="9" text-anchor="middle">c_custkey (PK) · c_name</text>
+        <text x="165" y="402" fill="#ffffff" font-size="9" text-anchor="middle">c_custkey (PK) | c_name</text>
         <text x="165" y="418" fill="#ffffff" font-size="9" text-anchor="middle">c_mktsegment</text>
 
         <!-- ================= TRINO (emphasized, SQL-only) ================= -->
         <rect x="340" y="120" width="560" height="360" rx="14" fill="rgba(34, 211, 238, 0.06)" stroke="#22d3ee" stroke-width="2"/>
-        <text x="620" y="146" fill="#22d3ee" font-size="14" font-weight="700" text-anchor="middle">TRINO — SQL query engine (no Spark cluster)</text>
+        <text x="620" y="146" fill="#22d3ee" font-size="14" font-weight="700" text-anchor="middle">TRINO - SQL query engine (no Spark cluster)</text>
 
         <rect x="370" y="168" width="500" height="70" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
-        <text x="620" y="192" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Trino coordinator · trino:8080</text>
+        <text x="620" y="192" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Trino coordinator | trino:8080</text>
         <text x="620" y="210" fill="#94a3b8" font-size="9" text-anchor="middle">connect(host='trino', port=8080, user='atlas', catalog='lakehouse')</text>
-        <text x="620" y="226" fill="#22d3ee" font-size="9" text-anchor="middle">trino.dbapi → cur.execute(sql) · ANSI SQL over Iceberg</text>
+        <text x="620" y="226" fill="#22d3ee" font-size="9" text-anchor="middle">trino.dbapi to cur.execute(sql) | ANSI SQL over Iceberg</text>
 
         <!-- JOIN + AGGREGATE SQL -->
         <rect x="370" y="252" width="500" height="140" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
@@ -68,8 +68,8 @@
 
         <!-- CTAS write -->
         <rect x="370" y="406" width="500" height="58" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
-        <text x="620" y="428" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">CREATE TABLE AS SELECT → writes back to gold</text>
-        <text x="620" y="448" fill="#94a3b8" font-size="9" text-anchor="middle">CREATE TABLE IF NOT EXISTS lakehouse.gold.bi_segment_revenue AS SELECT …</text>
+        <text x="620" y="428" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">CREATE TABLE AS SELECT to writes back to gold</text>
+        <text x="620" y="448" fill="#94a3b8" font-size="9" text-anchor="middle">CREATE TABLE IF NOT EXISTS lakehouse.gold.bi_segment_revenue AS SELECT ...</text>
 
         <!-- ================= GOLD OUTPUT ================= -->
         <rect x="940" y="120" width="310" height="360" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
@@ -96,14 +96,14 @@
         <!-- shared-catalog note -->
         <rect x="940" y="500" width="310" height="60" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
         <text x="1095" y="520" fill="#22d3ee" font-size="9" font-weight="600" text-anchor="middle">Same Iceberg REST catalog as Spark</text>
-        <text x="1095" y="536" fill="#94a3b8" font-size="9" text-anchor="middle">Spark writes gold · Trino reads gold</text>
+        <text x="1095" y="536" fill="#94a3b8" font-size="9" text-anchor="middle">Spark writes gold | Trino reads gold</text>
         <text x="1095" y="550" fill="#94a3b8" font-size="9" text-anchor="middle">iceberg-rest:8181 (shared metadata)</text>
 
         <!-- Orchestrator strip -->
         <rect x="30" y="500" width="880" height="60" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
         <text x="55" y="524" fill="#22d3ee" font-size="11" font-weight="600">Notebooks (identical SQL, two surfaces)</text>
-        <text x="55" y="542" fill="#94a3b8" font-size="9">Zeppelin %trino interpreter + Jupyter trino Python client → both hit trino:8080 with the same ANSI SQL</text>
-        <text x="55" y="556" fill="#94a3b8" font-size="9">Orchestration: EmptyOperator placeholder (TrinoOperator pending Atlas #268)</text>
+        <text x="55" y="542" fill="#94a3b8" font-size="9">Zeppelin %trino interpreter + Jupyter trino Python client to both hit trino:8080 with the same ANSI SQL</text>
+        <text x="55" y="556" fill="#94a3b8" font-size="9">Execution: approved new production DAG | child #83</text>
       </svg>
 </body>
 </html>

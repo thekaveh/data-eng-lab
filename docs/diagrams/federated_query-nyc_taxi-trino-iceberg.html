@@ -1,8 +1,8 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>data-eng-lab — federated_query-nyc_taxi-trino-iceberg</title></head>
+<head><meta charset="utf-8"><title>data-eng-lab - federated_query-nyc_taxi-trino-iceberg</title></head>
 <body>
-  <!-- Verified against scenarios/federated_query-nyc_taxi-trino-iceberg/jupyter/notebook.ipynb and dag.py on 2026-07-31. -->
+  <!-- Verified against the paired notebooks and scenarios/execution-modes.yaml on 2026-08-12. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="600" viewBox="0 0 1280 600" font-family="'JetBrains Mono', 'Courier New', monospace" role="img" aria-labelledby="diagram-title diagram-description">
   <title id="diagram-title">Federated query: NYC Taxi with Trino and Iceberg</title>
   <desc id="diagram-description">Architecture and query-flow diagram for the NYC Taxi federated-query scenario.</desc>
@@ -23,8 +23,8 @@
         <rect width="1280" height="600" fill="url(#grid)"/>
 
         <!-- Title -->
-        <text x="640" y="38" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">federated query — NYC Taxi via Trino (same Iceberg catalog as Spark)</text>
-        <text x="640" y="60" fill="#94a3b8" font-size="12" text-anchor="middle">SQL-only daily aggregate: bronze.nyc_taxi_trips → gold.nyc_taxi_daily_trino — no Spark cluster involved</text>
+        <text x="640" y="38" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">federated query - NYC Taxi via Trino (same Iceberg catalog as Spark)</text>
+        <text x="640" y="60" fill="#94a3b8" font-size="12" text-anchor="middle">SQL-only daily aggregate: bronze.nyc_taxi_trips to gold.nyc_taxi_daily_trino - no Spark cluster involved</text>
 
         <!-- ================= BRONZE INPUT (Spark-written) ================= -->
         <rect x="30" y="120" width="280" height="360" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
@@ -35,22 +35,22 @@
         <text x="170" y="238" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">nyc_taxi_trips</text>
         <text x="170" y="256" fill="#94a3b8" font-size="9" text-anchor="middle">lakehouse.bronze.nyc_taxi_trips</text>
         <line x1="70" y1="268" x2="270" y2="268" stroke="#334155" stroke-width="1"/>
-        <text x="170" y="288" fill="#ffffff" font-size="9" text-anchor="middle">trip_date · trip_distance</text>
-        <text x="170" y="304" fill="#ffffff" font-size="9" text-anchor="middle">fare_amount · total_amount</text>
+        <text x="170" y="288" fill="#ffffff" font-size="9" text-anchor="middle">trip_date | trip_distance</text>
+        <text x="170" y="304" fill="#ffffff" font-size="9" text-anchor="middle">fare_amount | total_amount</text>
         <text x="170" y="320" fill="#ffffff" font-size="9" text-anchor="middle">tpep_pickup_datetime</text>
-        <text x="170" y="336" fill="#ffffff" font-size="9" text-anchor="middle">PULocationID · DOLocationID</text>
+        <text x="170" y="336" fill="#ffffff" font-size="9" text-anchor="middle">PULocationID | DOLocationID</text>
         <text x="170" y="372" fill="#94a3b8" font-size="9" text-anchor="middle">populated by</text>
         <text x="170" y="388" fill="#94a3b8" font-size="9" text-anchor="middle">batch_ingest (Spark)</text>
-        <text x="170" y="414" fill="#22d3ee" font-size="9" text-anchor="middle">SELECT * … LIMIT 10</text>
+        <text x="170" y="414" fill="#22d3ee" font-size="9" text-anchor="middle">SELECT * ... LIMIT 10</text>
 
         <!-- ================= TRINO (emphasized) ================= -->
         <rect x="350" y="120" width="540" height="360" rx="14" fill="rgba(34, 211, 238, 0.06)" stroke="#22d3ee" stroke-width="2"/>
-        <text x="620" y="146" fill="#22d3ee" font-size="14" font-weight="700" text-anchor="middle">TRINO — federated SQL engine (reads Iceberg directly)</text>
+        <text x="620" y="146" fill="#22d3ee" font-size="14" font-weight="700" text-anchor="middle">TRINO - federated SQL engine (reads Iceberg directly)</text>
 
         <rect x="380" y="168" width="480" height="64" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
-        <text x="620" y="190" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Trino coordinator · trino:8080</text>
+        <text x="620" y="190" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Trino coordinator | trino:8080</text>
         <text x="620" y="208" fill="#94a3b8" font-size="9" text-anchor="middle">connect(host='trino', port=8080, user='atlas', catalog='lakehouse')</text>
-        <text x="620" y="224" fill="#22d3ee" font-size="9" text-anchor="middle">catalog=lakehouse → Iceberg connector (same REST catalog as Spark)</text>
+        <text x="620" y="224" fill="#22d3ee" font-size="9" text-anchor="middle">catalog=lakehouse to Iceberg connector (same REST catalog as Spark)</text>
 
         <!-- daily aggregate SQL -->
         <rect x="380" y="248" width="480" height="134" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
@@ -64,8 +64,8 @@
 
         <!-- CTAS write -->
         <rect x="380" y="396" width="480" height="62" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
-        <text x="620" y="418" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">CREATE TABLE AS SELECT → daily summary</text>
-        <text x="620" y="438" fill="#94a3b8" font-size="9" text-anchor="middle">CREATE TABLE IF NOT EXISTS lakehouse.gold.nyc_taxi_daily_trino AS SELECT …</text>
+        <text x="620" y="418" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">CREATE TABLE AS SELECT to daily summary</text>
+        <text x="620" y="438" fill="#94a3b8" font-size="9" text-anchor="middle">CREATE TABLE IF NOT EXISTS lakehouse.gold.nyc_taxi_daily_trino AS SELECT ...</text>
 
         <!-- ================= GOLD OUTPUT ================= -->
         <rect x="930" y="120" width="320" height="360" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
@@ -90,9 +90,9 @@
 
         <!-- shared catalog note (the key concept) -->
         <rect x="30" y="500" width="860" height="60" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1"/>
-        <text x="55" y="522" fill="#22d3ee" font-size="11" font-weight="600">One catalog, two engines — federated lakehouse</text>
-        <text x="55" y="540" fill="#94a3b8" font-size="9">Spark writes bronze via Iceberg REST (iceberg-rest:8181); Trino reads the SAME catalog via the lakehouse Iceberg connector — no data copy.</text>
-        <text x="55" y="554" fill="#94a3b8" font-size="9">Notebooks: Zeppelin %trino + Jupyter trino client run identical SQL. Orchestration: EmptyOperator placeholder (TrinoOperator pending Atlas #268).</text>
+        <text x="55" y="522" fill="#22d3ee" font-size="11" font-weight="600">One catalog, two engines - federated lakehouse</text>
+        <text x="55" y="540" fill="#94a3b8" font-size="9">Spark writes bronze via Iceberg REST (iceberg-rest:8181); Trino reads the SAME catalog via the lakehouse Iceberg connector - no data copy.</text>
+        <text x="55" y="554" fill="#94a3b8" font-size="9">Execution: approved new production DAG | child #83</text>
 
         <rect x="930" y="500" width="320" height="60" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
         <text x="1090" y="522" fill="#22d3ee" font-size="9" font-weight="600" text-anchor="middle">Verify</text>

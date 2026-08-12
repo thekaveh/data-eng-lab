@@ -190,4 +190,4 @@ unless the driver is `FINISHED` with `success: true`; it is not a false-success 
 
 ---
 
-*Maintained by `data-eng-lab`. Questions → open an issue on `thekaveh/data-eng-lab` or comment on atlas#268 / atlas#269.*
+*Maintained by `data-eng-lab`. Open a data-eng-lab issue for current support.*

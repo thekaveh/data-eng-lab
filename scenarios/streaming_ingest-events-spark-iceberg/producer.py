@@ -1,5 +1,5 @@
 """Produce synthetic events to the Redpanda `events` topic (for the streaming scenario).
-Live-gated: requires Atlas Redpanda (issue #269). Run: python producer.py [count]."""
+Live-gated: requires Atlas Redpanda. Run: python producer.py [count]."""
 from __future__ import annotations
 
 import json

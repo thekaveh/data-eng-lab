@@ -41,11 +41,11 @@ Both languages implement identical windowed streaming logic with watermark defin
 
 ## 5. Orchestration
 
-Streaming queries are long-running and not scheduled as batch DAGs. The Airflow DAG (`streaming_windows_events`) is an `EmptyOperator` placeholder.
+Classification: **intentionally unscheduled long-running streaming**. No Airflow DAG or batch schedule exists. An operator starts, monitors watermark progress, and stops the continuous notebook query and owns its `event_windows` checkpoint.
 
 ## 6. Usage
 
-1. Start Atlas with Redpanda: `make up` (requires Atlas A9 / issue #269)
+1. Start Atlas with Redpanda: `make up`
 2. Produce events: `python scenarios/streaming_ingest-events-spark-iceberg/producer.py [count]`
 3. Open either notebook on the Atlas stack and run all sections
 4. Closed windows appear in `lakehouse.gold.event_windows`
@@ -62,7 +62,7 @@ Streaming queries are long-running and not scheduled as batch DAGs. The Airflow 
 
 ## 8. Known Issues & Caveats
 
-Atlas seeds only the `atlas_stream_events` demo topic; this scenario's topic (`events`) is auto-created on first produce. Notebook execution and Scala/PySpark parity are live-gated on Atlas A9 (Redpanda). Produce events first via `streaming_ingest-events-spark-iceberg/producer.py`. Checkpoints at `s3a://checkpoints/event_windows`. Append mode emits only closed windows (after watermark passes); call `query.awaitTermination()` to block in both Scala and PySpark notebooks. The DAG (`streaming_windows_events`) is an `EmptyOperator` — Structured Streaming is long-running, not scheduled as a batch DAG.
+Atlas seeds only the `atlas_stream_events` demo topic; this scenario's topic (`events`) is auto-created on first produce. Notebook execution and Scala/PySpark parity are live-gated on Atlas A9 (Redpanda). Produce events first via `streaming_ingest-events-spark-iceberg/producer.py`. Checkpoints at `s3a://checkpoints/event_windows`. Append mode emits only closed windows (after watermark passes); call `query.awaitTermination()` to block in both Scala and PySpark notebooks.
 
 ## 9. See Also
 

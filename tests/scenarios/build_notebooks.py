@@ -33,7 +33,7 @@ def build_jupyter(name: str, py: dict) -> nbformat.NotebookNode:
     return nb
 
 
-def write_scenario(root: Path, name: str, code: dict, py: dict, dag: str, readme: str,
+def write_scenario(root: Path, name: str, code: dict, py: dict, readme: str,
                    zeppelin_interpreter: str = "%spark") -> Path:
     d = Path(root) / "scenarios" / name
     (d / "zeppelin").mkdir(parents=True, exist_ok=True)
@@ -42,5 +42,4 @@ def write_scenario(root: Path, name: str, code: dict, py: dict, dag: str, readme
     (d / "zeppelin" / "notebook.zpln").write_text(
         json.dumps(build_zeppelin(name, code, zeppelin_interpreter), indent=2) + "\n", encoding="utf-8")
     nbformat.write(build_jupyter(name, py), str(d / "jupyter" / "notebook.ipynb"))
-    (d / "dag.py").write_text(dag, encoding="utf-8")
     return d

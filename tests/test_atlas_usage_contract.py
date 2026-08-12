@@ -74,7 +74,7 @@ def _unsupported_atlas_export_offenders(paths: Iterable[Path], *, root: Path = R
 
 
 def test_catalog_has_expected_atlas_artifacts():
-    assert len(sorted((ROOT / "scenarios").rglob("dag.py"))) == 19
+    assert len(sorted((ROOT / "scenarios").rglob("dag.py"))) == 0
     assert len(sorted((ROOT / "spark-apps").rglob("dag.py"))) == 2
     assert len(sorted((ROOT / "scenarios").rglob("notebook.zpln"))) == 19
     assert len(sorted((ROOT / "scenarios").rglob("notebook.ipynb"))) == 19
@@ -187,6 +187,19 @@ def test_assembled_resolver_network_overlap_and_scale_precedence(environment_sca
     for name in ("airflow-scheduler", "jupyterhub", "zeppelin"):
         assert services[name]["environment"]["DATASET_RESOLVER_URI"] == "http://dataset-resolver:8080"
         assert services[name]["environment"]["DATASET_SCALE"] == expected
+
+
+def test_assembled_airflow_mounts_only_production_spark_app_dags():
+    services = _assembled_compose()["services"]
+    expected = "/opt/airflow/dags/data_eng_lab_spark_apps"
+    for name in ("airflow-scheduler", "airflow-dag-processor"):
+        volumes = services[name]["volumes"]
+        targets = {
+            volume["target"] if isinstance(volume, dict) else volume.split(":", 2)[1]
+            for volume in volumes
+        }
+        assert expected in targets
+        assert "/opt/airflow/dags/data_eng_lab_scenarios" not in targets
 
 
 def test_consumer_manifest_declares_runtime_scale_only_in_overlay():

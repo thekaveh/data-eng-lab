@@ -103,7 +103,38 @@ def _check_dataset_registry(root: Path, cfg: dict) -> list[Finding]:
     return [Finding("dataset.registry", "error", msg) for msg in schema.validate_registry(doc)]
 
 
-CHECKS = [_check_scenarios, _check_spark_apps, _check_dataset_registry]
+def _check_scenario_execution_modes(root: Path, _cfg: dict) -> list[Finding]:
+    matrix = root / "scenarios/execution-modes.yaml"
+    if not matrix.exists():
+        return [
+            Finding(
+                "scenario.execution_modes",
+                "error",
+                "scenarios/execution-modes.yaml is required",
+            )
+        ]
+    import importlib.util  # noqa: PLC0415
+
+    module_path = Path(__file__).resolve().parent / "scenario_execution.py"
+    spec = importlib.util.spec_from_file_location("_scenario_execution", module_path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    spec.loader.exec_module(module)
+    try:
+        module.load_execution_modes(matrix, root)
+        projection_findings = module.check_projection(root)
+    except module.ExecutionModeError as error:
+        return [Finding("scenario.execution_modes", "error", str(error))]
+    return [Finding("scenario.execution_modes", "error", message) for message in projection_findings]
+
+
+CHECKS = [
+    _check_scenarios,
+    _check_spark_apps,
+    _check_dataset_registry,
+    _check_scenario_execution_modes,
+]
 
 
 def run_checks(root: Path, cfg: dict) -> list[Finding]:
