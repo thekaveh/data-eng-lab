@@ -209,6 +209,23 @@ def test_fetch_rejects_direct_raw_size_and_digest(
     _assert_empty(tmp_path)
 
 
+def test_fetch_rejects_direct_output_that_is_not_raw_identity(
+    tmp_path: Path,
+    serve: Callable[[reg.ScalePlan, tuple[bytes, ...]], None],
+):
+    payload = b"expected\n"
+    plan = _direct_plan(payload)
+    output = replace(plan.artifacts[0].outputs[0], raw_identity=False)
+    artifact = replace(plan.artifacts[0], outputs=(output,))
+    plan = replace(plan, artifacts=(artifact,))
+    serve(plan, (payload,))
+
+    with pytest.raises(LockMismatch, match="raw_identity"):
+        http.fetch_http(plan, tmp_path)
+
+    _assert_empty(tmp_path)
+
+
 def test_fetch_rejects_raw_digest_before_archive_open(
     tmp_path: Path,
     serve: Callable[[reg.ScalePlan, tuple[bytes, ...]], None],
@@ -352,6 +369,82 @@ def test_fetch_returns_registry_order_even_when_archive_order_differs(
 
     assert tuple(item.expected.object_name for item in result) == ("a.txt", "b.txt")
     assert tuple(item.path.name for item in result) == ("a.txt", "b.txt")
+
+
+def test_fetch_uses_canonical_entries_when_public_entry_list_is_reversed(
+    tmp_path: Path,
+    serve: Callable[[reg.ScalePlan, tuple[bytes, ...]], None],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    payload = b"identical\n"
+    artifact, archive = _archive_plan(
+        [("nested/a.txt", payload), ("nested/b.txt", payload)],
+        outputs=(
+            _output("a.txt", payload, member_path="nested/a.txt"),
+            _output("b.txt", payload, member_path="nested/b.txt"),
+        ),
+    )
+    plan = _plan(artifact, unzip=True)
+    serve(plan, (archive,))
+    real_extract = http.extract_members
+    expected_inodes: dict[str, int] = {}
+
+    def reverse_entries_before_extract(
+        path: Path,
+        entries: list[acquisition.ArchiveEntry],
+        destination: Path,
+    ) -> list[Path]:
+        extracted = real_extract(path, entries, destination)
+        canonical_entries = acquisition._canonical_archive_entries(entries)
+        canonical_paths = extracted._canonical_paths()  # type: ignore[attr-defined]
+        expected_inodes.update(
+            (entry.object_name, member_path.stat().st_ino)
+            for entry, member_path in zip(canonical_entries, canonical_paths, strict=True)
+        )
+        list.reverse(entries)
+        return extracted
+
+    monkeypatch.setattr(http, "extract_members", reverse_entries_before_extract)
+
+    result = http.fetch_http(plan, tmp_path)
+
+    assert tuple(item.path.name for item in result) == ("a.txt", "b.txt")
+    assert {item.path.name: item.path.stat().st_ino for item in result} == expected_inodes
+
+
+def test_fetch_uses_canonical_paths_when_public_extracted_list_is_reversed(
+    tmp_path: Path,
+    serve: Callable[[reg.ScalePlan, tuple[bytes, ...]], None],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    payload = b"identical\n"
+    artifact, archive = _archive_plan(
+        [("nested/a.txt", payload), ("nested/b.txt", payload)],
+        outputs=(
+            _output("a.txt", payload, member_path="nested/a.txt"),
+            _output("b.txt", payload, member_path="nested/b.txt"),
+        ),
+    )
+    plan = _plan(artifact, unzip=True)
+    serve(plan, (archive,))
+    real_metadata = acquisition._bound_extracted_metadata
+    expected_inodes: dict[str, int] = {}
+
+    def reverse_paths_after_metadata(paths: list[Path]) -> list[tuple[int, str]]:
+        metadata = real_metadata(paths)
+        expected_inodes.update(
+            (name, path.stat().st_ino)
+            for name, path in zip(("a.txt", "b.txt"), paths._canonical_paths(), strict=True)  # type: ignore[attr-defined]
+        )
+        list.reverse(paths)
+        return metadata
+
+    monkeypatch.setattr(acquisition, "_bound_extracted_metadata", reverse_paths_after_metadata)
+
+    result = http.fetch_http(plan, tmp_path)
+
+    assert tuple(item.path.name for item in result) == ("a.txt", "b.txt")
+    assert {item.path.name: item.path.stat().st_ino for item in result} == expected_inodes
 
 
 def test_fetch_returns_multiple_artifacts_in_registry_order(

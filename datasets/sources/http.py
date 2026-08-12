@@ -192,6 +192,32 @@ def _require_metadata(
         raise LockMismatch(context, "sha256", expected.sha256, actual_sha256)
 
 
+def _bound_download(
+    downloaded: acquisition.DownloadedFile,
+) -> tuple[tuple[int, str], acquisition._FileBinding]:
+    return (
+        acquisition._bound_download_metadata(downloaded),
+        acquisition._download_binding(downloaded),
+    )
+
+
+def _canonical_entries(entries: list[ArchiveEntry]) -> tuple[ArchiveEntry, ...]:
+    return acquisition._canonical_archive_entries(entries)
+
+
+def _canonical_extracted(
+    extracted: list[Path],
+) -> tuple[tuple[Path, ...], tuple[acquisition._FileBinding, ...], list[tuple[int, str]]]:
+    if not isinstance(extracted, acquisition._ExtractedPaths):
+        raise ValueError("extracted outputs are not bound to owned files")
+    canonical_paths = extracted._canonical_paths()
+    bindings = extracted._bindings
+    metadata = acquisition._bound_extracted_metadata(extracted)
+    if len(canonical_paths) != len(bindings) or len(canonical_paths) != len(metadata):
+        raise ValueError("extracted output capability has inconsistent cardinality")
+    return canonical_paths, bindings, metadata
+
+
 def _require_bound_identity(bound: _BoundOutput, path: Path) -> None:
     try:
         opened = os.fstat(bound.descriptor)
@@ -257,8 +283,8 @@ def _fetch_artifact(
     releases.append(lambda downloaded=downloaded: acquisition._unbind_download(downloaded))
     raw_context = _context(plan, "raw", artifact)
     raw_expected = _raw_expected(artifact)
-    _require_metadata(acquisition._bound_download_metadata(downloaded), raw_expected, raw_context)
-    raw_binding = acquisition._download_binding(downloaded)
+    raw_metadata, raw_binding = _bound_download(downloaded)
+    _require_metadata(raw_metadata, raw_expected, raw_context)
 
     archive_outputs = tuple(output for output in artifact.outputs if output.member_path is not None)
     if archive_outputs:
@@ -270,6 +296,7 @@ def _fetch_artifact(
                 "mixed outputs",
             )
         entries = validated_zip_members(downloaded.path, ZipLimits())
+        canonical_entries = _canonical_entries(entries)
         archive_snapshot, _limits = entries._capability()  # type: ignore[attr-defined]
         if (
             (archive_snapshot.device, archive_snapshot.inode)
@@ -288,13 +315,20 @@ def _fetch_artifact(
                     archive_snapshot.sha256,
                 ),
             )
-        entries_by_member = _require_archive_mapping(plan, artifact, entries)
+        entries_by_member = _require_archive_mapping(plan, artifact, canonical_entries)
         extracted = extract_members(downloaded.path, entries, artifact_root / "members")
         releases.append(extracted.close)  # type: ignore[attr-defined]
-        acquisition._bound_extracted_metadata(extracted)
+        canonical_paths, bindings, _metadata = _canonical_extracted(extracted)
+        if len(canonical_entries) != len(canonical_paths):
+            raise ValueError("archive and extracted capabilities have inconsistent cardinality")
         paths_by_member = {
             entry.member_path: (path, binding)
-            for entry, path, binding in zip(entries, extracted, extracted._bindings, strict=True)  # type: ignore[attr-defined]
+            for entry, path, binding in zip(
+                canonical_entries,
+                canonical_paths,
+                bindings,
+                strict=True,
+            )
         }
         bound_outputs: list[_BoundOutput] = []
         for output in artifact.outputs:
