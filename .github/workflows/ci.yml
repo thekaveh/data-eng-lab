@@ -12,9 +12,6 @@ permissions:
 jobs:
   atlas-consumer-contract:
     runs-on: ubuntu-24.04
-    env:
-      MINIO_ROOT_USER: ci-placeholder-user
-      MINIO_ROOT_PASSWORD: ci-placeholder-password
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
@@ -24,6 +21,9 @@ jobs:
         with:
           enable-cache: true
       - name: Validate the pinned Atlas consumer contract
+        env:
+          MINIO_ROOT_USER: ci-placeholder-user
+          MINIO_ROOT_PASSWORD: ci-placeholder-password
         run: |
           cp infra/.env.example infra/.env
           cd infra
@@ -33,9 +33,6 @@ jobs:
 
   static-and-unit:
     runs-on: ubuntu-24.04
-    env:
-      MINIO_ROOT_USER: ci-placeholder-user
-      MINIO_ROOT_PASSWORD: ci-placeholder-password
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:

@@ -116,17 +116,26 @@ def test_ci_has_a_pinned_non_live_atlas_consumer_contract_job():
     _assert_non_live_contract(job)
 
 
-def test_ci_contract_jobs_initialize_atlas_and_use_validation_only_credentials():
+def test_ci_contract_jobs_initialize_atlas_and_scope_validation_only_credentials():
     workflow = _load_workflow()
     expected_environment = {
         "MINIO_ROOT_USER": "ci-placeholder-user",
         "MINIO_ROOT_PASSWORD": "ci-placeholder-password",
     }
-    for job_name in ("atlas-consumer-contract", "static-and-unit"):
-        job = workflow["jobs"][job_name]
+    atlas_job = workflow["jobs"]["atlas-consumer-contract"]
+    static_job = workflow["jobs"]["static-and-unit"]
+    for job in (atlas_job, static_job):
         checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
         assert checkout["with"]["submodules"] == "recursive"
-        assert job["env"] == expected_environment
+        assert "env" not in job
+
+    validation = next(
+        step
+        for step in atlas_job["steps"]
+        if step.get("name") == "Validate the pinned Atlas consumer contract"
+    )
+    assert validation["env"] == expected_environment
+    assert all("env" not in step for step in static_job["steps"])
 
 
 def test_ci_covers_main_and_develop_pushes_and_pull_requests():

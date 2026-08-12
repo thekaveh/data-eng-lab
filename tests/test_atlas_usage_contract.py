@@ -146,6 +146,10 @@ def test_dataset_resolver_is_consumer_owned_internal_and_health_wired():
 
 def _assembled_compose(scale: str | None = None) -> dict:
     environment = os.environ.copy()
+    environment.update(
+        MINIO_ROOT_USER="ci-placeholder-user",
+        MINIO_ROOT_PASSWORD="ci-placeholder-password",
+    )
     if scale is None:
         environment.pop("DATASET_SCALE", None)
     else:
