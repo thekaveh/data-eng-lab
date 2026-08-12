@@ -241,11 +241,15 @@ def _decode_canonical_mapping(body: bytes, label: str) -> dict[str, object]:
             body,
             parse_constant=lambda value: (_ for _ in ()).throw(ValueError(value)),
         )
-    except (UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
+    except (RecursionError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
         raise ValueError(f"{label} must be valid canonical JSON") from error
     if not isinstance(document, dict):
         raise ValueError(f"{label} must be a JSON mapping")
-    if canonical_json(document) != body:
+    try:
+        canonical = canonical_json(document)
+    except RecursionError as error:
+        raise ValueError(f"{label} must be encodable as canonical JSON") from error
+    if canonical != body:
         raise ValueError(f"{label} must use exact canonical JSON")
     return cast(dict[str, object], document)
 

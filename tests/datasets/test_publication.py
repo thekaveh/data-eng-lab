@@ -511,6 +511,71 @@ def test_manifest_digest_corruption_has_manifest_context(monkeypatch) -> None:
     assert caught.value.field == "manifest"
 
 
+def _nested_control_body(depth: int = 1500) -> bytes:
+    return (b'{"nested":' * depth) + b"null" + (b"}" * depth)
+
+
+@pytest.mark.parametrize("control", ["pointer", "manifest"])
+def test_deeply_nested_control_decode_is_contextual_corruption(monkeypatch, control: str) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store, manifest = _published_store(plan)
+    key = (
+        active_pointer_key("sample")
+        if control == "pointer"
+        else immutable_manifest_key("sample", manifest_sha256(manifest))
+    )
+    body = _nested_control_body()
+    assert len(body) < 1 << 20
+    if control == "manifest":
+        digest = _sha(body)
+        pointer = ActivePointer(1, "sample", immutable_manifest_key("sample", digest), digest)
+        store.seed(active_pointer_key("sample"), pointer.to_bytes(), etag='"deep-manifest-pointer"')
+        key = pointer.manifest_key
+    store.objects[key] = (body, f'"deep-{control}"', {})
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    with pytest.raises(LockMismatch) as caught:
+        resolve_active_dataset(store, {"sample": plan.dataset}, "sample", "small")
+    assert caught.value.context.dataset == "sample"
+    assert caught.value.context.scale == "small"
+    assert caught.value.context.stage == control
+    assert caught.value.field == control
+
+
+@pytest.mark.parametrize("control", ["pointer", "manifest"])
+def test_deeply_nested_control_reencode_is_contextual_corruption(monkeypatch, control: str) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store, manifest = _published_store(plan)
+    key = (
+        active_pointer_key("sample")
+        if control == "pointer"
+        else immutable_manifest_key("sample", manifest_sha256(manifest))
+    )
+    document: dict[str, object] = {"leaf": None}
+    for _ in range(1500):
+        document = {"nested": document}
+    original_loads = json.loads
+
+    def loads(value, *args, **kwargs):
+        if value == b"{}":
+            return document
+        return original_loads(value, *args, **kwargs)
+
+    monkeypatch.setattr("datasets.publication.json.loads", loads)
+    if control == "manifest":
+        digest = _sha(b"{}")
+        pointer = ActivePointer(1, "sample", immutable_manifest_key("sample", digest), digest)
+        store.seed(active_pointer_key("sample"), pointer.to_bytes(), etag='"reencode-manifest-pointer"')
+        key = pointer.manifest_key
+    store.objects[key] = (b"{}", f'"reencode-{control}"', {})
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    with pytest.raises(LockMismatch) as caught:
+        resolve_active_dataset(store, {"sample": plan.dataset}, "sample", "small")
+    assert caught.value.context.stage == control
+    assert caught.value.field == control
+
+
 def test_multi_object_resolution_preserves_registry_order_and_rejects_reversal(monkeypatch) -> None:
     plan = resolve_scale(_multi_dataset(), "small")
     store, manifest = _published_store(plan)
