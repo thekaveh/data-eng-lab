@@ -654,4 +654,4 @@ After a successful go-live run:
 
 *See also:* [Go-Live Results](go-live-results.md) — the 2026-07-04 platform validation and the scoped 2026-07-31 Atlas acceptance result.
 
-*Maintained by `data-eng-lab`.* Latest update: 2026-08-12 MovieLens production acceptance recorded.
+*Maintained by `data-eng-lab`.* Latest update: 2026-08-10 current-pin Atlas acceptance baseline recorded; MovieLens production acceptance added 2026-08-12.
