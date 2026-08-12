@@ -22,10 +22,28 @@ def test_owned_stack_rejects_preexisting_project_without_mutation():
     def runner(*command, **_kwargs):
         commands.append(command)
 
-    with pytest.raises(RuntimeError, match="already running"):
+    with pytest.raises(RuntimeError, match="already exists"):
         with live._owned_stack(runner=runner, probe=lambda: ("data-eng-lab-minio",)):
             raise AssertionError("must not enter")
     assert commands == []
+
+
+def test_owned_stack_rejects_stopped_project_container_before_any_mutation():
+    commands = []
+
+    def runner(*command, **_kwargs):
+        commands.append(command)
+        if command[:2] == ("docker", "ps"):
+            stdout = "data-eng-lab-minio\n" if "--all" in command else ""
+            return subprocess.CompletedProcess(command, 0, stdout=stdout, stderr="")
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    with pytest.raises(RuntimeError, match="already exists"):
+        with live._owned_stack(runner=runner, probe=lambda: live._stack_containers(runner=runner)):
+            commands.append(("AIRFLOW_PAUSE_MUTATION",))
+
+    assert len(commands) == 1
+    assert commands[0][:3] == ("docker", "ps", "--all")
 
 
 def test_owned_stack_cleans_up_failure_and_preserves_primary_diagnostic():
@@ -107,25 +125,18 @@ def test_owned_run_guard_uses_pre_acceptance_id_baseline_not_skewed_logical_date
     assert found == {}
 
 
-def test_resolver_refreshes_only_missing_tiny_publication_and_verifies_afterward():
+def test_resolver_failure_propagates_without_any_dataset_mutation_or_retry():
     calls = []
-    resolved = '{"dataset":"tpch","scale":"tiny","objects":[]}'
 
     def runner(*command, **_kwargs):
         calls.append(command)
-        if command[:4] == ("uv", "run", "python", "scripts/resolve_dataset.py") and len(calls) == 1:
-            raise subprocess.CalledProcessError(1, command)
-        return subprocess.CompletedProcess(command, 0, stdout=resolved, stderr="")
+        raise subprocess.CalledProcessError(1, command, output="generic resolver failure")
 
-    assert live._resolve_or_publish_tiny(runner=runner)["dataset"] == "tpch"
-    assert (
-        "uv", "run", "python", "scripts/download_datasets.py",
-        "--scale", "tiny", "--only", "tpch", "--refresh",
-    ) in calls
-    assert (
-        "uv", "run", "python", "scripts/download_datasets.py",
-        "--scale", "tiny", "--only", "tpch", "--verify-only",
-    ) in calls
+    with pytest.raises(subprocess.CalledProcessError, match="resolve_dataset.py"):
+        live._resolve_or_publish_tiny(runner=runner)
+    assert calls == [
+        ("uv", "run", "python", "scripts/resolve_dataset.py", "tpch", "--scale", "tiny")
+    ]
 
 
 def test_resolver_does_not_refresh_an_existing_verified_publication():
@@ -137,8 +148,14 @@ def test_resolver_does_not_refresh_an_existing_verified_publication():
         return subprocess.CompletedProcess(command, 0, stdout=resolved, stderr="")
 
     live._resolve_or_publish_tiny(runner=runner)
-    assert not any("--refresh" in command for command in calls)
-    assert any("--verify-only" in command for command in calls)
+    assert calls == [
+        ("uv", "run", "python", "scripts/resolve_dataset.py", "tpch", "--scale", "tiny"),
+        (
+            "uv", "run", "python", "scripts/download_datasets.py",
+            "--scale", "tiny", "--only", "tpch", "--verify-only",
+        ),
+        ("uv", "run", "python", "scripts/resolve_dataset.py", "tpch", "--scale", "tiny"),
+    ]
 
 
 def test_paused_dags_test_discovers_exactly_one_terminal_api_run_and_driver():

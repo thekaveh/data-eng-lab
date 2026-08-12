@@ -49,7 +49,8 @@ The repository stop script completed without `--cold`; all volumes and the verif
 ## Review-fix replay contract
 
 The tracked opt-in gate is now the source of truth instead of assertions over this report. From a
-clean checkout with Docker running, execute exactly:
+clean checkout with Docker running and an already resolver-verified tiny TPC-H publication, execute
+exactly:
 
 ```bash
 RUN_INFRA=1 uv run pytest tests/scenarios/test_tpch_star_schema_live.py -vv -s
@@ -78,14 +79,22 @@ The executable assertions cover exact local/published JAR SHA-256 equality; a re
 positive-size eight-object tiny publication; two explicit Airflow runs; distinct Spark drivers with
 `FINISHED` and `success=true`; exact output schemas; nonempty rows, revenue, line count, and customer
 join; equality of exactly the five `data_eng_lab.dataset*` provenance properties; deterministic
-row/schema/checksum/provenance equality after rerun; serialized run timestamps; final DAG pause; and
+row/schema/checksum/provenance equality after rerun; serialized run timestamps; the DAG paused
+throughout controlled execution with its initial pause state restored on exit; and
 volume-preserving teardown. A later subsection records the identifiers from the latest successful
-replay without replacing those runtime assertions. If the tiny publication is absent, the same
-one-command gate performs only the supported bounded
-`download_datasets.py --scale tiny --only tpch --refresh` operation, then always runs
-`--verify-only`; it never deletes legacy objects, volumes, or publication history. If any project
-container was already running, the gate refuses before mutation instead of stopping an
-operator-owned stack.
+replay without replacing those runtime assertions. The acceptance test never publishes or refreshes
+datasets: any resolver failure propagates immediately with no retry, verification, or dataset
+mutation. If the prerequisite is absent, an operator may intentionally provision it separately:
+
+```bash
+uv run python scripts/download_datasets.py --scale tiny --only tpch --refresh
+uv run python scripts/download_datasets.py --scale tiny --only tpch --verify-only
+```
+
+Only after those explicit commands succeed is the one-command acceptance replay valid. The bounded
+provisioning command never deletes legacy objects, volumes, or publication history. If any project
+container exists—including stopped, exited, or created state—the gate refuses before mutation
+instead of starting or stopping an operator-owned stack.
 
 ## Review-fix replay result
 
@@ -107,9 +116,10 @@ The first run ended at `2026-08-12T19:56:08.647176Z`; the rerun started at
 published JAR SHA-256 was
 `b15b5ca04415336aafba6d25c77b6bbff877eeea32679176f6a772073e33135d`. The gate verified both
 latest table snapshots had exact schemas, nonempty rows and measures, equal deterministic checksums
-between runs, and the same exact five properties bound to the resolver result. It paused the DAG and
-completed `scripts/stop-all.sh`; zero `data-eng-lab` containers remained while the named MinIO volume
-remained present.
+between runs, and the same exact five properties bound to the resolver result. It kept the DAG
+paused throughout both controlled runs, restored the initial pause state, and completed
+`scripts/stop-all.sh`; zero `data-eng-lab` containers remained while the named MinIO volume remained
+present.
 
 ## Paused-schedule and exclusive-ownership replay
 
@@ -128,8 +138,8 @@ pre-acceptance API run IDs, treats the set difference as authoritative, rejects 
 baseline run, and ignores terminal history regardless of logical-date skew. That regression is
 covered offline. Cleanup completed and left zero containers before the retry.
 
-The corrected canonical command passed on 2026-08-12 in 211.86 seconds. The project had zero running
-containers before entry, so the gate held exclusive stack ownership and stopped only the stack it
+The corrected canonical command passed on 2026-08-12 in 211.86 seconds. The project had zero project
+containers in any state before entry, so the gate held exclusive stack ownership and stopped only the stack it
 started. It captured an initially unpaused DAG, paused it before the acceptance window, left it
 paused through both runs, and restored the initial state on exit. Exact final identifiers were:
 

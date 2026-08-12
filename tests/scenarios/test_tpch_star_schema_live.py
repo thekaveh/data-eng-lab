@@ -51,6 +51,7 @@ def _stack_containers(runner=None) -> tuple[str, ...]:
     result = execute(
         "docker",
         "ps",
+        "--all",
         "--filter",
         f"label=com.docker.compose.project={project}",
         "--format",
@@ -65,7 +66,9 @@ def _owned_stack(runner=None, probe=None):
     inspect = probe or _stack_containers
     existing = tuple(inspect())
     if existing:
-        raise RuntimeError(f"project stack is already running; exclusive acceptance refused: {existing}")
+        raise RuntimeError(
+            f"project stack already exists (running or stopped); exclusive acceptance refused: {existing}"
+        )
     primary = None
     try:
         execute("./scripts/start-all.sh")
@@ -219,13 +222,7 @@ def _assert_owned_runs(
 def _resolve_or_publish_tiny(runner=None) -> dict:
     execute = runner or _run
     resolve = ("uv", "run", "python", "scripts/resolve_dataset.py", "tpch", "--scale", "tiny")
-    try:
-        execute(*resolve)
-    except subprocess.CalledProcessError:
-        execute(
-            "uv", "run", "python", "scripts/download_datasets.py",
-            "--scale", "tiny", "--only", "tpch", "--refresh",
-        )
+    execute(*resolve)
     execute(
         "uv", "run", "python", "scripts/download_datasets.py",
         "--scale", "tiny", "--only", "tpch", "--verify-only",
