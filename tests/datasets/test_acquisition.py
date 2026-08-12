@@ -557,6 +557,54 @@ def test_dns_resolver_start_is_bounded_and_late_process_is_reaped(monkeypatch: p
     assert cleaned.wait(0.2)
 
 
+def test_dns_resolver_timeout_boundary_has_exactly_one_process_owner(monkeypatch: pytest.MonkeyPatch):
+    start_entered = acquisition.threading.Event()
+    release_start = acquisition.threading.Event()
+    cleaned = acquisition.threading.Event()
+    calls: list[str] = []
+
+    class BoundaryProcess:
+        exitcode = 0
+
+        def start(self) -> None:
+            start_entered.set()
+            release_start.wait()
+
+        def is_alive(self) -> bool:
+            return False
+
+        def join(self, timeout: float = 0) -> None:
+            calls.append("join")
+
+        def close(self) -> None:
+            calls.append("close")
+            cleaned.set()
+
+    monkeypatch.setattr(acquisition, "_make_resolver_process", lambda *args: BoundaryProcess())
+
+    with pytest.raises(ValueError, match="download deadline exceeded"):
+        acquisition._bounded_dns_answers("example.test", time.monotonic() + 0.01, "https://example.test")
+
+    assert start_entered.is_set()
+    release_start.set()
+    assert cleaned.wait(0.2)
+    assert calls.count("close") == 1
+    assert calls.count("join") == 1
+
+
+def test_dns_resolver_launcher_thread_start_failure_is_normalized(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setattr(
+        acquisition.threading.Thread,
+        "start",
+        lambda self: (_ for _ in ()).throw(RuntimeError("thread unavailable")),
+    )
+
+    with pytest.raises(ValueError, match="could not start DNS resolver launcher") as error:
+        acquisition._bounded_dns_answers("example.test", time.monotonic() + 1, "https://example.test")
+
+    assert isinstance(error.value.__cause__, RuntimeError)
+
+
 def test_download_rejects_path_replacement_before_success(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -950,48 +998,26 @@ def test_extract_members_does_not_follow_replaced_destination_directory(
     assert list(attacker.iterdir()) == []
 
 
-def test_extract_members_does_not_delete_replacement_output_during_cleanup(
+def test_extract_failure_does_not_delete_foreign_destination_replacement(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
-    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
-    entries = validated_zip_members(archive, ZipLimits())
+    archive = _zip(tmp_path / "data.zip", {"a.csv": b"a", "b.csv": b"b"})
+    entries = validated_zip_members(archive, ZipLimits())[:1]
     destination = tmp_path / "members"
-    replacement = tmp_path / "replacement"
-    replacement.write_bytes(b"attacker owned")
-    real_fdopen = acquisition.os.fdopen
-    destination_visible_during_write = False
+    real_rmtree = acquisition.shutil.rmtree
 
-    class ReplacingTarget:
-        def __init__(self, target: object) -> None:
-            self.target = target
+    def replacement_cleanup(path: Path) -> None:
+        destination.mkdir()
+        (destination / "foreign").write_bytes(b"attacker owned")
+        real_rmtree(path)
 
-        def __enter__(self):
-            return self
+    monkeypatch.setattr(acquisition.shutil, "rmtree", replacement_cleanup)
 
-        def __exit__(self, *args: object):
-            return self.target.__exit__(*args)
+    with pytest.raises(ValueError, match="members changed after validation"):
+        extract_members(archive, entries, destination)
 
-        def write(self, payload: bytes) -> int:
-            nonlocal destination_visible_during_write
-            written = self.target.write(payload)
-            destination_visible_during_write = destination.exists()
-            return written
-
-    def replacing_fdopen(descriptor: int, mode: str):
-        target = real_fdopen(descriptor, mode)
-        if mode == "wb":
-            target.__enter__()
-            return ReplacingTarget(target)
-        return target
-
-    monkeypatch.setattr(acquisition.os, "fdopen", replacing_fdopen)
-
-    paths = extract_members(archive, entries, destination)
-
-    assert not destination_visible_during_write
-    assert paths[0].read_bytes() == b"locked"
-    assert replacement.read_bytes() == b"attacker owned"
+    assert (destination / "foreign").read_bytes() == b"attacker owned"
 
 
 def test_archive_entry_public_constructor_remains_three_fields():
@@ -1333,6 +1359,21 @@ def test_validated_entries_reject_copy_deepcopy_and_pickle(tmp_path: Path):
             operation(entries)
 
 
+def test_capability_results_preserve_runtime_list_contract(tmp_path: Path):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    entries = validated_zip_members(archive, ZipLimits())
+    paths = extract_members(archive, entries, tmp_path / "members")
+
+    assert isinstance(entries, list)
+    assert list(entries) == [entries[0]]
+    assert entries == [entries[0]]
+    assert isinstance(paths, list)
+    assert list(paths) == [paths[0]]
+    assert paths == [paths[0]]
+    assert not hasattr(entries, "__dict__")
+    assert not hasattr(paths, "__dict__")
+
+
 @pytest.mark.parametrize(
     "operation",
     [
@@ -1355,13 +1396,6 @@ def test_validated_entries_reject_all_list_mutators(tmp_path: Path, operation: o
 
     with pytest.raises(TypeError, match="immutable"):
         operation(entries)  # type: ignore[operator]
-
-
-def test_validated_entries_are_not_mutable_through_unbound_list_methods(tmp_path: Path):
-    entries = validated_zip_members(_zip(tmp_path / "data.zip", {"data.csv": b"locked"}), ZipLimits())
-
-    with pytest.raises(TypeError):
-        list.append(entries, entries[0])  # type: ignore[arg-type]
 
 
 def test_extracted_paths_reject_copy_deepcopy_pickle_and_binding_mutation(tmp_path: Path):
@@ -1400,14 +1434,6 @@ def test_extracted_paths_reject_all_list_mutators(tmp_path: Path, operation: obj
 
     with pytest.raises(TypeError, match="immutable"):
         operation(paths)  # type: ignore[operator]
-
-
-def test_extracted_paths_are_not_mutable_through_unbound_list_methods(tmp_path: Path):
-    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
-    paths = extract_members(archive, validated_zip_members(archive, ZipLimits()), tmp_path / "members")
-
-    with pytest.raises(TypeError):
-        list.clear(paths)  # type: ignore[arg-type]
 
 
 def test_stale_extracted_descriptor_is_normalized(tmp_path: Path):

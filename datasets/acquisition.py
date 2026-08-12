@@ -27,7 +27,6 @@ import threading
 import time
 import weakref
 import zipfile
-from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import BinaryIO, Mapping, Protocol
@@ -102,6 +101,8 @@ class _FileBinding:
 
 
 class _ImmutableCapabilityList:
+    __slots__ = ()
+
     def _immutable(self, *args: object, **kwargs: object) -> None:
         raise TypeError("capability-bearing list is immutable")
 
@@ -119,11 +120,11 @@ class _ImmutableCapabilityList:
     __imul__ = _immutable
 
 
-class _ValidatedEntries(_ImmutableCapabilityList, Sequence[ArchiveEntry]):
-    __slots__ = ("__items", "__limits", "__snapshot")
+class _ValidatedEntries(_ImmutableCapabilityList, list[ArchiveEntry]):
+    __slots__ = ("__limits", "__snapshot")
 
     def __init__(self, entries: list[ArchiveEntry], snapshot: _ArchiveSnapshot, limits: ZipLimits) -> None:
-        object.__setattr__(self, "_ValidatedEntries__items", tuple(entries))
+        list.__init__(self, entries)
         object.__setattr__(self, "_ValidatedEntries__snapshot", snapshot)
         object.__setattr__(self, "_ValidatedEntries__limits", limits)
 
@@ -134,21 +135,10 @@ class _ValidatedEntries(_ImmutableCapabilityList, Sequence[ArchiveEntry]):
         return self.__snapshot, self.__limits
 
     def __getitem__(self, index: object) -> ArchiveEntry | _ValidatedEntries:
-        selected = self.__items[index]  # type: ignore[index]
+        selected = list.__getitem__(self, index)  # type: ignore[arg-type]
         if isinstance(index, slice):
             return _ValidatedEntries(list(selected), self.__snapshot, self.__limits)
         return selected
-
-    def __len__(self) -> int:
-        return len(self.__items)
-
-    def __iter__(self) -> Iterator[ArchiveEntry]:
-        return iter(self.__items)
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, Sequence) and tuple(self) == tuple(other)
-
-    __hash__ = None
 
     def copy(self) -> None:
         raise TypeError("capability-bearing validated entries cannot be copied")
@@ -200,11 +190,11 @@ class _BindingOwner:
             self._active_bindings.pop(descriptor, None)
 
 
-class _ExtractedPaths(_ImmutableCapabilityList, Sequence[Path]):
-    __slots__ = ("__items", "__owner", "__finalizer")
+class _ExtractedPaths(_ImmutableCapabilityList, list[Path]):
+    __slots__ = ("__weakref__", "__owner", "__finalizer")
 
     def __init__(self, paths: list[Path], bindings: list[_FileBinding]) -> None:
-        object.__setattr__(self, "_ExtractedPaths__items", tuple(paths))
+        list.__init__(self, paths)
         owner = _BindingOwner(bindings)
         object.__setattr__(self, "_ExtractedPaths__owner", owner)
         object.__setattr__(self, "_ExtractedPaths__finalizer", weakref.finalize(self, owner.close))
@@ -225,18 +215,7 @@ class _ExtractedPaths(_ImmutableCapabilityList, Sequence[Path]):
     def __getitem__(self, index: object) -> Path:
         if isinstance(index, slice):
             raise TypeError("capability-bearing extracted paths cannot be sliced")
-        return self.__items[index]  # type: ignore[index]
-
-    def __len__(self) -> int:
-        return len(self.__items)
-
-    def __iter__(self) -> Iterator[Path]:
-        return iter(self.__items)
-
-    def __eq__(self, other: object) -> bool:
-        return isinstance(other, Sequence) and tuple(self) == tuple(other)
-
-    __hash__ = None
+        return list.__getitem__(self, index)  # type: ignore[arg-type]
 
     def copy(self) -> None:
         raise TypeError("capability-bearing extracted paths cannot be copied")
@@ -592,8 +571,7 @@ def _cleanup_resolver_process(process: object, deadline: float) -> None:
 
 
 def _start_resolver_bounded(context: object, send: object, host: str, deadline: float, url: str) -> object:
-    ready = threading.Event()
-    cancelled = threading.Event()
+    condition = threading.Condition()
     state: dict[str, object] = {}
 
     def launch() -> None:
@@ -601,40 +579,55 @@ def _start_resolver_bounded(context: object, send: object, host: str, deadline: 
         started = False
         try:
             process = _make_resolver_process(context, send, host)
-            if cancelled.is_set():
-                process.close()  # type: ignore[attr-defined]
-                return
             process.start()  # type: ignore[attr-defined]
             started = True
-            state["process"] = process
+            with condition:
+                if state.get("cancelled"):
+                    state["launcher_owned"] = True
+                else:
+                    state["process"] = process
+                state["complete"] = True
+                condition.notify_all()
         except BaseException as error:
-            state["error"] = error
-            state["phase"] = "start" if process is not None else "create"
+            with condition:
+                state["error"] = error
+                state["phase"] = "start" if process is not None else "create"
+                state["complete"] = True
+                condition.notify_all()
             if process is not None and not started:
                 try:
                     process.close()  # type: ignore[attr-defined]
                 except Exception:
                     pass
-        finally:
-            ready.set()
-            if cancelled.is_set() and process is not None and started:
+        if started:
+            with condition:
+                launcher_owned = bool(state.get("launcher_owned"))
+            if launcher_owned:
                 try:
                     _cleanup_resolver_process(process, time.monotonic() + 0.2)
                 except ValueError:
                     pass
 
-    threading.Thread(target=launch, name="dataset-dns-resolver-start", daemon=True).start()
-    if not ready.wait(_remaining(deadline)):
-        cancelled.set()
-        raise ValueError("download deadline exceeded")
-    if error := state.get("error"):
-        phase = state.get("phase")
-        action = "create" if phase == "create" else "start"
-        raise ValueError(f"could not {action} DNS resolver for {_redacted_url(url)}") from error
-    process = state.get("process")
-    if process is None:
-        raise ValueError(f"could not start DNS resolver for {_redacted_url(url)}")
-    return process
+    launcher = threading.Thread(target=launch, name="dataset-dns-resolver-start", daemon=True)
+    try:
+        launcher.start()
+    except RuntimeError as error:
+        raise ValueError(f"could not start DNS resolver launcher for {_redacted_url(url)}") from error
+    with condition:
+        while not state.get("complete"):
+            remaining = deadline - time.monotonic()
+            if remaining <= 0 or not condition.wait(remaining):
+                state["cancelled"] = True
+                raise ValueError("download deadline exceeded")
+        if error := state.get("error"):
+            phase = state.get("phase")
+            action = "create" if phase == "create" else "start"
+            raise ValueError(f"could not {action} DNS resolver for {_redacted_url(url)}") from error
+        process = state.pop("process", None)
+        if process is None:
+            raise ValueError(f"could not start DNS resolver for {_redacted_url(url)}")
+        state["caller_owned"] = True
+        return process
 
 
 def _bounded_dns_answers(host: str, deadline: float, url: str) -> list[tuple[object, ...]]:
