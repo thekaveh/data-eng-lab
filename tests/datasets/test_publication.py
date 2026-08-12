@@ -1199,6 +1199,73 @@ def test_manifest_helper_error_before_adapter_invocation_is_not_attempted(tmp_pa
     assert caught.value.result.manifest_outcome == "not-attempted"
 
 
+def test_manifest_ambiguous_error_before_adapter_invocation_is_not_attempted(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+    monkeypatch.setattr(
+        "datasets.publication.acquire_lease",
+        lambda client, dataset, publication_id, owner_nonce, *, bucket: _publication_lease(
+            store, plan, publication_id, owner_nonce
+        ),
+    )
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+    monkeypatch.setattr(
+        "datasets.publication._put_manifest_exact",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AmbiguousWrite("local serialization")),
+    )
+
+    with pytest.raises(PublicationFailure) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (VerifiedFile(source, expected),),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert caught.value.result.manifest_outcome == "not-attempted"
+    assert not any(str(request["Key"]).startswith("_data-eng-locks/manifests/") for request in store.puts)
+
+
+def test_object_ambiguous_error_before_adapter_invocation_is_not_attempted(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+    monkeypatch.setattr(
+        "datasets.publication.acquire_lease",
+        lambda client, dataset, publication_id, owner_nonce, *, bucket: _publication_lease(
+            store, plan, publication_id, owner_nonce
+        ),
+    )
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+    monkeypatch.setattr(
+        "datasets.publication.put_immutable_object",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AmbiguousWrite("local object preflight")),
+    )
+    monkeypatch.setattr(
+        "datasets.publication._verify_exact_immutable",
+        lambda *_args, **_kwargs: pytest.fail("pre-adapter error must not reconcile a write"),
+    )
+
+    with pytest.raises(AmbiguousWrite, match="preflight"):
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (VerifiedFile(source, expected),),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert not any("/_generations/" in str(request["Key"]) for request in store.puts)
+
+
 def _sha(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -2140,6 +2207,75 @@ def test_rollback_pointer_control_flow_preserves_ambiguous_target_diagnostic(mon
     assert target.physical_prefix in notes
 
 
+@pytest.mark.parametrize("interrupt_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("phase", ["rollback-put", "rollback-reconcile"])
+@pytest.mark.parametrize("when", ["before", "after"])
+def test_rollback_control_flow_put_and_reconciliation_matrix_preserves_category(
+    monkeypatch, interrupt_type, phase, when
+) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    target = _manifest(plan, publication_id=PREVIOUS_PUBLICATION_ID)
+    store, current = _published_store(plan)
+    target_digest = manifest_sha256(target)
+    store.seed(immutable_manifest_key("sample", target_digest), target.to_bytes(), etag='"target"')
+    store.seed(target.objects[0].key, b"hello\n", etag='"target-object"')
+    interrupt = interrupt_type(23) if interrupt_type is SystemExit else interrupt_type()
+    original_put = store.put_object
+
+    def trip(original, *args, **kwargs):
+        if when == "before":
+            raise interrupt
+        original(*args, **kwargs)
+        raise interrupt
+
+    def controlled_put(**request):
+        if request["Key"] != active_pointer_key("sample"):
+            return original_put(**request)
+        if phase == "rollback-put":
+            return trip(original_put, **request)
+        original_put(**request)
+        from botocore.exceptions import ClientError
+
+        raise ClientError(
+            {"Error": {"Code": "InternalError"}, "ResponseMetadata": {"HTTPStatusCode": 500}},
+            "PutObject",
+        )
+
+    monkeypatch.setattr(store, "put_object", controlled_put)
+    if phase == "rollback-reconcile":
+        from datasets import s3 as s3_module
+
+        original_read = s3_module.read_control_object
+
+        def controlled_read(*args, **kwargs):
+            key = args[2] if len(args) >= 3 else kwargs.get("key")
+            if key == active_pointer_key("sample"):
+                return trip(original_read, *args, **kwargs)
+            return original_read(*args, **kwargs)
+
+        monkeypatch.setattr(
+            s3_module,
+            "read_control_object",
+            controlled_read,
+        )
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    with pytest.raises(interrupt_type) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.ROLLBACK,
+            client=store,
+            fetcher=lambda *_: pytest.fail("source"),
+            rollback_sha256=target_digest,
+        )
+
+    assert caught.value is interrupt
+    notes = " ".join(getattr(interrupt, "__notes__", ()))
+    assert '"pointer_outcome":"ambiguous"' in notes
+    assert target_digest in notes
+    assert current.publication_id != target.publication_id
+
+
 def test_verified_result_walks_predecessor_history_in_order(monkeypatch) -> None:
     plan = resolve_scale(_dataset(), "small")
     oldest = _manifest(plan, publication_id=PREVIOUS_PUBLICATION_ID)
@@ -2370,7 +2506,7 @@ def test_owned_staging_cleans_fresh_roots_across_one_hundred_runs(tmp_path, monk
     assert list(platform_temp.iterdir()) == []
 
 
-@pytest.mark.parametrize("failure_phase", ["root-open", "root-fstat"])
+@pytest.mark.parametrize("failure_phase", ["parent-open", "root-open", "root-fstat"])
 def test_owned_staging_setup_failure_closes_fds_and_leaves_no_private_path(
     tmp_path, monkeypatch, failure_phase
 ) -> None:
@@ -2387,6 +2523,8 @@ def test_owned_staging_setup_failure_closes_fds_and_leaves_no_private_path(
     closed: list[int] = []
 
     def tracked_open(*args, **kwargs):
+        if failure_phase == "parent-open" and not opened:
+            raise OSError("injected parent open failure")
         if failure_phase == "root-open" and opened:
             raise OSError("injected root open failure")
         descriptor = real_open(*args, **kwargs)
@@ -2411,6 +2549,58 @@ def test_owned_staging_setup_failure_closes_fds_and_leaves_no_private_path(
             pytest.fail("setup unexpectedly completed")
 
     assert sorted(closed) == sorted(opened)
+    assert list(platform_temp.iterdir()) == []
+
+
+def test_owned_staging_setup_cleanup_failure_attaches_exact_residue_note(tmp_path, monkeypatch) -> None:
+    from datasets import publication as publication_module
+
+    platform_temp = tmp_path / "platform-temp"
+    platform_temp.mkdir(mode=0o1777)
+    monkeypatch.setattr(publication_module.tempfile, "gettempdir", lambda: str(platform_temp))
+    real_open = publication_module.os.open
+    real_rmdir = publication_module.Path.rmdir
+    opened = 0
+
+    def fail_root_open(*args, **kwargs):
+        nonlocal opened
+        opened += 1
+        if opened == 2:
+            raise OSError("injected root open failure")
+        return real_open(*args, **kwargs)
+
+    def fail_candidate_rmdir(path):
+        if path.name.startswith("candidate-"):
+            raise OSError("injected setup rmdir failure")
+        return real_rmdir(path)
+
+    monkeypatch.setattr(publication_module.os, "open", fail_root_open)
+    monkeypatch.setattr(publication_module.Path, "rmdir", fail_candidate_rmdir)
+
+    with pytest.raises(OSError, match="root open") as caught:
+        with publication_module._owned_staging():
+            pytest.fail("setup unexpectedly completed")
+
+    assert any("staging cleanup failed" in note for note in getattr(caught.value, "__notes__", ()))
+    publication_module.shutil.rmtree(next(platform_temp.iterdir()))
+
+
+def test_owned_staging_chmod_failure_removes_known_private_path(tmp_path, monkeypatch) -> None:
+    from datasets import publication as publication_module
+
+    platform_temp = tmp_path / "platform-temp"
+    platform_temp.mkdir(mode=0o1777)
+    monkeypatch.setattr(publication_module.tempfile, "gettempdir", lambda: str(platform_temp))
+    monkeypatch.setattr(
+        publication_module.Path,
+        "chmod",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(OSError("injected chmod failure")),
+    )
+
+    with pytest.raises(OSError, match="chmod"):
+        with publication_module._owned_staging():
+            pytest.fail("setup unexpectedly completed")
+
     assert list(platform_temp.iterdir()) == []
 
 
@@ -2488,6 +2678,44 @@ def test_failed_publication_propagates_generic_staging_cleanup_note(tmp_path, mo
         "datasets.publication._put_manifest_exact",
         lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("manifest preflight")),
     )
+
+    with pytest.raises(PublicationFailure) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (VerifiedFile(source, expected),),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert caught.value.result.cleanup_warning is not None
+    assert "cleanup failed" in caught.value.result.cleanup_warning
+    assert any("cleanup failed" in note for note in getattr(caught.value, "__notes__", ()))
+
+
+def test_cleanup_only_failure_is_structured_in_publication_failure(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+    from datasets import publication as publication_module
+
+    original_rmtree = publication_module.shutil.rmtree
+
+    def remove_then_fail(path):
+        original_rmtree(path)
+        raise OSError("sole cleanup failure")
+
+    monkeypatch.setattr(publication_module.shutil, "rmtree", remove_then_fail)
+    monkeypatch.setattr(
+        "datasets.publication.acquire_lease",
+        lambda client, dataset, publication_id, owner_nonce, *, bucket: _publication_lease(
+            store, plan, publication_id, owner_nonce
+        ),
+    )
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
 
     with pytest.raises(PublicationFailure) as caught:
         publish_dataset(
@@ -2734,7 +2962,11 @@ def test_pointer_conflict_reports_proven_unreferenced_candidate(tmp_path, monkey
     assert "concurrent publisher" in str(caught.value.__cause__)
 
 
-def test_two_real_concurrent_publishers_and_reader_observe_only_complete_generations(tmp_path, monkeypatch) -> None:
+@pytest.mark.parametrize("repeat", range(3))
+def test_two_real_concurrent_publishers_and_reader_observe_only_complete_generations(
+    tmp_path, monkeypatch, repeat
+) -> None:
+    del repeat
     plan = resolve_scale(_dataset(), "small")
     store, old_manifest = _published_store(plan)
     source = tmp_path / "readme.txt"
@@ -2747,6 +2979,7 @@ def test_two_real_concurrent_publishers_and_reader_observe_only_complete_generat
     blocked_once = False
     results: list[object] = []
     errors: list[BaseException] = []
+    reader_errors: list[BaseException] = []
     observed: list[str] = []
 
     def block_first_generation(**request):
@@ -2772,10 +3005,13 @@ def test_two_real_concurrent_publishers_and_reader_observe_only_complete_generat
             errors.append(error)
 
     def read_while_publishing() -> None:
-        while not stop_reader.is_set():
-            resolved = resolve_active_dataset(store, {"sample": plan.dataset}, "sample", "small")
-            observed.append(resolved.manifest_sha256)
-            time.sleep(0.002)
+        try:
+            while not stop_reader.is_set():
+                resolved = resolve_active_dataset(store, {"sample": plan.dataset}, "sample", "small")
+                observed.append(resolved.manifest_sha256)
+                time.sleep(0.002)
+        except BaseException as error:
+            reader_errors.append(error)
 
     monkeypatch.setattr(store, "put_object", block_first_generation)
     monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
@@ -2791,16 +3027,29 @@ def test_two_real_concurrent_publishers_and_reader_observe_only_complete_generat
     writers = [first, second]
     for writer in writers:
         writer.join(5)
+    assert all(not writer.is_alive() for writer in writers)
+    assert len(results) == 1
+    committed_digest = results[0].manifest_sha256
+    deadline = time.monotonic() + 2
+    while committed_digest not in observed and time.monotonic() < deadline:
+        time.sleep(0.002)
     stop_reader.set()
     reader.join(2)
+    assert not reader.is_alive()
 
     assert len(results) == 1
     assert len(errors) == 1
+    assert isinstance(errors[0], ConditionalConflict)
+    assert "lease" in str(errors[0])
+    assert reader_errors == []
     resolved = resolve_active_dataset(store, {"sample": plan.dataset}, "sample", "small")
     assert resolved.manifest_sha256 == results[0].manifest_sha256
     assert len(resolved.objects) == 1
     assert observed
-    assert set(observed) <= {manifest_sha256(old_manifest), results[0].manifest_sha256}
+    old_digest = manifest_sha256(old_manifest)
+    assert old_digest in observed
+    assert committed_digest in observed
+    assert set(observed) <= {old_digest, committed_digest}
 
 
 def test_object_control_flow_attempt_is_reported_possible_without_wrapping(tmp_path, monkeypatch) -> None:
@@ -2840,6 +3089,181 @@ def test_object_control_flow_attempt_is_reported_possible_without_wrapping(tmp_p
     notes = " ".join(getattr(interrupt, "__notes__", ()))
     assert '"possible_object_keys":["sample/_generations/' in notes
     assert not any(thread.name.startswith("dataset-source-") for thread in threading.enumerate())
+
+
+@pytest.mark.parametrize("interrupt_type", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("when", ["before", "after"])
+@pytest.mark.parametrize(
+    "phase",
+    [
+        "source-acquisition",
+        "candidate-verification",
+        "object1-put",
+        "object1-reread",
+        "object2-put",
+        "object2-reread",
+        "manifest-put",
+        "manifest-reread",
+        "final-lease-checkpoint",
+        "pointer-put",
+        "pointer-reconcile",
+        "local-cleanup",
+        "release",
+    ],
+)
+def test_publication_control_flow_matrix_preserves_category_inventory_and_quiescence(
+    tmp_path,
+    monkeypatch,
+    phase,
+    when,
+    interrupt_type,
+) -> None:
+    plan = resolve_scale(_multi_dataset(), "small")
+    store = FakeS3()
+    alpha = tmp_path / "alpha.txt"
+    beta = tmp_path / "beta.txt"
+    alpha.write_bytes(b"alpha\n")
+    beta.write_bytes(b"beta\n")
+    files = (
+        VerifiedFile(alpha, ExpectedObject("alpha.txt", 6, _sha(b"alpha\n"), "readme")),
+        VerifiedFile(beta, ExpectedObject("beta.txt", 5, _sha(b"beta\n"), "readme")),
+    )
+    interrupt = interrupt_type(19) if interrupt_type is SystemExit else interrupt_type()
+    from datasets import publication as publication_module
+
+    def trip(original, *args, **kwargs):
+        if when == "before":
+            raise interrupt
+        original(*args, **kwargs)
+        raise interrupt
+
+    def fetcher(*_args):
+        if phase == "source-acquisition":
+            return trip(lambda: files)
+        return files
+
+    original_verify = publication_module._verify_candidate_files
+    if phase == "candidate-verification":
+        monkeypatch.setattr(
+            publication_module,
+            "_verify_candidate_files",
+            lambda *args, **kwargs: trip(original_verify, *args, **kwargs),
+        )
+
+    original_put = store.put_object
+
+    def controlled_put(**request):
+        key = str(request["Key"])
+        if phase == "pointer-reconcile" and key == active_pointer_key("sample"):
+            original_put(**request)
+            from botocore.exceptions import ClientError
+
+            raise ClientError(
+                {"Error": {"Code": "InternalError"}, "ResponseMetadata": {"HTTPStatusCode": 500}},
+                "PutObject",
+            )
+        selected = (
+            (phase == "object1-put" and key.endswith("/alpha.txt"))
+            or (phase == "object2-put" and key.endswith("/beta.txt"))
+            or (phase == "manifest-put" and key.startswith("_data-eng-locks/manifests/"))
+            or (phase == "pointer-put" and key == active_pointer_key("sample"))
+        )
+        return trip(original_put, **request) if selected else original_put(**request)
+
+    monkeypatch.setattr(store, "put_object", controlled_put)
+    original_exact = publication_module._verify_exact_immutable
+
+    def controlled_exact(client, selected_plan, bucket, key, expected, metadata):
+        selected = (phase == "object1-reread" and key.endswith("/alpha.txt")) or (
+            phase == "object2-reread" and key.endswith("/beta.txt")
+        )
+        args = (client, selected_plan, bucket, key, expected, metadata)
+        return trip(original_exact, *args) if selected else original_exact(*args)
+
+    monkeypatch.setattr(publication_module, "_verify_exact_immutable", controlled_exact)
+    original_read_manifest = publication_module._read_manifest
+    if phase == "manifest-reread":
+        monkeypatch.setattr(
+            publication_module,
+            "_read_manifest",
+            lambda *args, **kwargs: trip(original_read_manifest, *args, **kwargs),
+        )
+    original_checkpoint = publication_module._LeaseKeepalive.renew_if_needed_and_checkpoint
+    if phase == "final-lease-checkpoint":
+        monkeypatch.setattr(
+            publication_module._LeaseKeepalive,
+            "renew_if_needed_and_checkpoint",
+            lambda self: trip(original_checkpoint, self),
+        )
+    original_rmtree = publication_module.shutil.rmtree
+    if phase == "local-cleanup":
+        monkeypatch.setattr(publication_module.tempfile, "gettempdir", lambda: str(tmp_path))
+        monkeypatch.setattr(
+            publication_module.shutil,
+            "rmtree",
+            lambda path: trip(original_rmtree, path),
+        )
+    if phase == "pointer-reconcile":
+        from datasets import s3 as s3_module
+
+        original_control_read = s3_module.read_control_object
+
+        def controlled_control_read(*args, **kwargs):
+            key = args[2] if len(args) >= 3 else kwargs.get("key")
+            if key == active_pointer_key("sample"):
+                return trip(original_control_read, *args, **kwargs)
+            return original_control_read(*args, **kwargs)
+
+        monkeypatch.setattr(
+            s3_module,
+            "read_control_object",
+            controlled_control_read,
+        )
+
+    monkeypatch.setattr(
+        "datasets.publication.acquire_lease",
+        lambda client, dataset, publication_id, owner_nonce, *, bucket: _publication_lease(
+            store, plan, publication_id, owner_nonce
+        ),
+    )
+    if phase == "release":
+        monkeypatch.setattr(
+            "datasets.publication.release_lease",
+            lambda *_args, **_kwargs: trip(lambda: None),
+        )
+    else:
+        monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    with pytest.raises(interrupt_type) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=fetcher,
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert caught.value is interrupt
+    assert not any(thread.name.startswith("dataset-source-") for thread in threading.enumerate())
+    notes = " ".join(getattr(interrupt, "__notes__", ()))
+    if phase in {"pointer-put", "pointer-reconcile"}:
+        assert '"pointer_outcome":"ambiguous"' in notes
+    elif phase == "release":
+        assert "committed before lease release interruption" in notes
+        assert active_pointer_key("sample") in store.objects
+    else:
+        assert active_pointer_key("sample") not in store.objects
+    if (
+        phase.startswith("object2")
+        or phase.startswith("manifest")
+        or phase
+        in {
+            "final-lease-checkpoint",
+            "local-cleanup",
+        }
+    ):
+        assert '"attempted_object_keys"' in notes
 
 
 def test_manifest_conflict_reports_explicit_outcome_and_proven_object_orphans(tmp_path, monkeypatch) -> None:

@@ -1451,7 +1451,14 @@ def _owned_staging(
         if not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode):
             raise ValueError("platform temporary root must be a directory")
         private_parent = Path(tempfile.mkdtemp(prefix="data-eng-lab-publication-", dir=platform_parent))
-        private_parent.chmod(0o700)
+        try:
+            private_parent.chmod(0o700)
+        except BaseException as error:
+            try:
+                private_parent.rmdir()
+            except BaseException as cleanup_error:
+                _attach_staging_cleanup(error, cleanup_error, cleanup_notes)
+            raise
     else:
         private_parent = Path(parent)
         acquisition._require_trusted_parent(private_parent)
@@ -1466,22 +1473,31 @@ def _owned_staging(
         root_fd = os.open(root.name, open_flags | nofollow, dir_fd=parent_fd)
         status = os.fstat(root_fd)
         identity = (status.st_dev, status.st_ino)
-    except BaseException:
+    except BaseException as error:
+        cleanup_errors: list[BaseException] = []
         if root_fd is not None:
-            os.close(root_fd)
+            try:
+                os.close(root_fd)
+            except BaseException as cleanup_error:
+                cleanup_errors.append(cleanup_error)
         if root is not None:
             try:
                 # The root has not been exposed to a producer yet and is known empty.
                 root.rmdir()
-            except OSError:
-                pass
+            except BaseException as cleanup_error:
+                cleanup_errors.append(cleanup_error)
         if parent_fd is not None:
-            os.close(parent_fd)
+            try:
+                os.close(parent_fd)
+            except BaseException as cleanup_error:
+                cleanup_errors.append(cleanup_error)
         if owns_parent:
             try:
                 private_parent.rmdir()
-            except OSError:
-                pass
+            except BaseException as cleanup_error:
+                cleanup_errors.append(cleanup_error)
+        for cleanup_error in cleanup_errors:
+            _attach_staging_cleanup(error, cleanup_error, cleanup_notes)
         raise
     primary: BaseException | None = None
     try:
@@ -1517,12 +1533,23 @@ def _owned_staging(
             if parent_fd is not None:
                 os.close(parent_fd)
         if cleanup_error is not None:
+            _attach_staging_cleanup(cleanup_error, cleanup_error, cleanup_notes)
             if primary is None:
                 raise cleanup_error
-            message = f"owned publication staging cleanup failed: {type(cleanup_error).__name__}"
-            if cleanup_notes is not None:
-                cleanup_notes.append(message)
-            primary.add_note(message)
+            _attach_staging_cleanup(primary, cleanup_error, cleanup_notes)
+
+
+def _attach_staging_cleanup(
+    error: BaseException,
+    cleanup_error: BaseException,
+    cleanup_notes: list[str] | None,
+) -> None:
+    """Attach one path-neutral staging cleanup diagnostic to an error."""
+    message = f"owned publication staging cleanup failed: {type(cleanup_error).__name__}"
+    if cleanup_notes is not None and message not in cleanup_notes:
+        cleanup_notes.append(message)
+    if message not in getattr(error, "__notes__", ()):
+        error.add_note(message)
 
 
 def _list_legacy_keys(client, plan: ScalePlan, bucket: str) -> tuple[str, ...]:
@@ -1875,9 +1902,16 @@ def _stage_and_commit_candidate(
                 metadata = _object_metadata(plan, publication_id, file.expected)
 
                 def upload_object() -> bool:
+                    began = False
+
+                    def mark_began() -> None:
+                        nonlocal began
+                        began = True
+                        inventory.attempted_object_keys.append(key)
+
                     tracking_client = _WriteTrackingClient(
                         client,
-                        lambda: inventory.attempted_object_keys.append(key),
+                        mark_began,
                     )
                     try:
                         put_immutable_object(
@@ -1891,6 +1925,8 @@ def _stage_and_commit_candidate(
                         inventory.proven_object_keys.append(key)
                         return tracking_client.write_failed
                     except AmbiguousWrite:
+                        if not began:
+                            raise
                         try:
                             _verify_exact_immutable(client, plan, bucket, key, file.expected, metadata)
                         except BaseException:
@@ -1899,11 +1935,12 @@ def _stage_and_commit_candidate(
                         inventory.proven_object_keys.append(key)
                         return True
                     except ConditionalConflict:
-                        if tracking_client.write_failed:
+                        if began and tracking_client.write_failed:
                             inventory.possible_object_keys.append(key)
                         raise
                     except BaseException:
-                        inventory.possible_object_keys.append(key)
+                        if began:
+                            inventory.possible_object_keys.append(key)
                         raise
 
                 reconciled = (
@@ -1946,7 +1983,8 @@ def _stage_and_commit_candidate(
                 try:
                     manifest_reconciled = _put_manifest_exact(tracking_client, bucket, key, body)
                 except AmbiguousWrite:
-                    inventory.manifest_outcome = "possible"
+                    if began:
+                        inventory.manifest_outcome = "possible"
                     raise
                 except ConditionalConflict:
                     if began:

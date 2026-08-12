@@ -6,7 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from datasets.publication import PublishMode, PublishResult
+from datasets.publication import PublicationFailure, PublishMode, PublishResult
 
 ROOT = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location("download_datasets", ROOT / "scripts" / "download_datasets.py")
@@ -122,6 +122,40 @@ def test_run_reports_partial_failure_and_continues(tmp_path: Path, monkeypatch, 
     output = capsys.readouterr()
     assert "nyc_taxi" in output.err
     assert "movielens" in output.out
+
+
+def test_run_surfaces_structured_cleanup_warning_from_publication_failure(tmp_path: Path, monkeypatch, capsys) -> None:
+    cleanup = "owned publication staging cleanup failed: OSError"
+    cause = OSError("cleanup")
+    cause.add_note(cleanup)
+
+    def fail(plan, **_kwargs):
+        result = PublishResult(
+            plan.dataset.name,
+            plan.scale,
+            "failed-candidate",
+            None,
+            "1" * 32,
+            0,
+            cleanup_warning=cleanup,
+        )
+        raise PublicationFailure(result, cause)
+
+    monkeypatch.setattr(cli, "publish_dataset", fail)
+    code = cli.run(
+        REG,
+        infra_dir=tmp_path,
+        scale="tiny",
+        only=["nyc_taxi"],
+        force=False,
+        dry_run=False,
+        client=object(),
+    )
+
+    captured = capsys.readouterr()
+    assert code == 1
+    assert f'"cleanup_warning":"{cleanup}"' in captured.err
+    assert f"note: {cleanup}" in captured.err
 
 
 def test_resolve_failure_is_per_dataset_and_does_not_abort_remaining_work(tmp_path, monkeypatch) -> None:
