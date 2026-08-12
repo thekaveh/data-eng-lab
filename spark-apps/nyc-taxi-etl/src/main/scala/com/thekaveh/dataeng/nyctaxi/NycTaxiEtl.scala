@@ -7,7 +7,7 @@ object NycTaxiEtl {
   final case class Arguments(uris: Seq[String], sparkUris: Seq[String], table: String)
 
   private val ImmutableUri =
-    "^(s3://landing/nyc_taxi/_generations/[0-9a-f]{64}/[0-9a-f]{32}/)[A-Za-z0-9._-]+\\.parquet$".r
+    "^(s3://landing/nyc_taxi/_generations/[0-9a-f]{64}/[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}/)[A-Za-z0-9._-]+\\.parquet$".r
 
   def parseArguments(args: Array[String]): Arguments = {
     require(args.nonEmpty, "verified immutable NYC Taxi URI arguments are required")

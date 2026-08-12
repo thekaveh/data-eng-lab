@@ -37,6 +37,9 @@ def test_scaffolded_notebooks_resolve_one_expected_scale_immutable_generation(tm
         assert "dataset_spark_uris" in text or "datasetSparkUris" in text
         assert "readNBytes" in text or "read(_MAX_RESOLUTION_BYTES + 1)" in text
         assert "STRICT_DUPLICATE_DETECTION" in text or "object_pairs_hook" in text
+        normalized = text.replace("{{", "{").replace("}}", "}")
+        assert r"[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}" in normalized
+        assert r"[0-9a-f]{32}" not in normalized
 
 
 def test_scaffold_output_passes_the_verifier(tmp_path: Path):

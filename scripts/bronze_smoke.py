@@ -79,7 +79,10 @@ def resolve_dataset(dataset: str, scale: str, resolver_uri: str, *, opener=urlli
         manifest_sha256 = document["manifest_sha256"]
         if not isinstance(plan, str) or re.fullmatch(r"[0-9a-f]{64}", plan) is None:
             raise ValueError
-        if not isinstance(publication, str) or re.fullmatch(r"[0-9a-f]{32}", publication) is None:
+        if (
+            not isinstance(publication, str)
+            or re.fullmatch(r"[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}", publication) is None
+        ):
             raise ValueError
         if not isinstance(manifest_sha256, str) or re.fullmatch(r"[0-9a-f]{64}", manifest_sha256) is None:
             raise ValueError
@@ -125,7 +128,7 @@ def _spark_uri(canonical_uri: str) -> str:
     if (
         not isinstance(canonical_uri, str)
         or re.fullmatch(
-            r"s3://landing/[a-z0-9_.-]+/_generations/[0-9a-f]{64}/[0-9a-f]{32}/[A-Za-z0-9._-]+",
+            r"s3://landing/[a-z0-9_.-]+/_generations/[0-9a-f]{64}/[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}/[A-Za-z0-9._-]+",
             canonical_uri,
         )
         is None

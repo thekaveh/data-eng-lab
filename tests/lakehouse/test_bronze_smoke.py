@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location("bronze_smoke", ROOT / "scripts" / "bronze_smoke.py")
 bs = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(bs)
+VALID_PUBLICATION_ID = "0123456789ab4def8123456789abcdef"
 
 
 def test_bronze_table_name_default():
@@ -40,7 +41,7 @@ class _Response(io.BytesIO):
         self.close()
 
 
-def _resolution(*, dataset="nyc_taxi", scale="small", objects=None):
+def _resolution(*, dataset="nyc_taxi", scale="small", objects=None, publication=VALID_PUBLICATION_ID):
     if objects is None:
         objects = [
             {
@@ -48,7 +49,7 @@ def _resolution(*, dataset="nyc_taxi", scale="small", objects=None):
                 "uri": "s3://landing/nyc_taxi/_generations/"
                 + "1" * 64
                 + "/"
-                + "a" * 32
+                + publication
                 + "/yellow_tripdata_2023-01.parquet",
                 "size_bytes": 3,
                 "sha256": "2" * 64,
@@ -60,7 +61,7 @@ def _resolution(*, dataset="nyc_taxi", scale="small", objects=None):
         "scale": scale,
         "plan_id": "1" * 64,
         "manifest_sha256": "2" * 64,
-        "publication_id": "a" * 32,
+        "publication_id": publication,
         "objects": objects,
     }
 
@@ -73,7 +74,7 @@ def test_resolve_dataset_posts_exact_request_once_and_preserves_object_order():
             {
                 **_resolution()["objects"][0],
                 "object_name": "yellow_tripdata_2023-02.parquet",
-                "uri": _resolution()["objects"][0]["uri"].replace("01", "02"),
+                "uri": _resolution()["objects"][0]["uri"].replace("2023-01", "2023-02"),
             },
         ]
     )
@@ -123,6 +124,19 @@ def test_build_bronze_converts_only_validated_canonical_uris_to_spark_s3a():
     assert seen == [canonical.replace("s3://", "s3a://", 1)]
     with pytest.raises(ValueError, match="verified immutable URI"):
         bs.build_bronze(Spark(), ("s3://landing/nyc_taxi/file.parquet",), "lakehouse.bronze.taxi")
+    with pytest.raises(ValueError, match="verified immutable URI"):
+        generic_hex = canonical.replace(VALID_PUBLICATION_ID, "a" * 32)
+        bs.build_bronze(Spark(), (generic_hex,), "lakehouse.bronze.taxi")
+
+
+def test_resolve_dataset_rejects_generic_hex_publication_id():
+    document = _resolution(publication="a" * 32)
+
+    def opener(*_args, **_kwargs):
+        return _Response(json.dumps(document).encode())
+
+    with pytest.raises(ValueError, match="dataset resolution failed"):
+        bs.resolve_dataset("nyc_taxi", "small", "http://resolver:8080", opener=opener)
 
 
 @pytest.mark.parametrize(

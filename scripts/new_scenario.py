@@ -97,7 +97,7 @@ val publicationId = datasetResolution.get("publication_id").asText
 val manifestSha256 = datasetResolution.get("manifest_sha256").asText
 require(
   planId.matches("[0-9a-f]{{64}}") &&
-  publicationId.matches("[0-9a-f]{{32}}") &&
+  publicationId.matches("[0-9a-f]{{12}}4[0-9a-f]{{3}}[89ab][0-9a-f]{{15}}") &&
   manifestSha256.matches("[0-9a-f]{{64}}")
 )
 val objectsNode = datasetResolution.get("objects")
@@ -191,7 +191,7 @@ if (
     not isinstance(plan_id, str)
     or not re.fullmatch(r"[0-9a-f]{{64}}", plan_id)
     or not isinstance(publication_id, str)
-    or not re.fullmatch(r"[0-9a-f]{{32}}", publication_id)
+    or not re.fullmatch(r"[0-9a-f]{{12}}4[0-9a-f]{{3}}[89ab][0-9a-f]{{15}}", publication_id)
     or not isinstance(manifest_sha256, str)
     or not re.fullmatch(r"[0-9a-f]{{64}}", manifest_sha256)
 ):

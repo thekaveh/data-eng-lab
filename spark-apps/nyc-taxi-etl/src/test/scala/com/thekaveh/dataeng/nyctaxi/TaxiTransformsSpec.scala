@@ -65,7 +65,7 @@ class TaxiTransformsSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   test("entrypoint requires ordered immutable URI arguments and an explicit table") {
     val generation = "1" * 64
-    val publication = "a" * 32
+    val publication = "0123456789ab4def8123456789abcdef"
     val first = s"s3://landing/nyc_taxi/_generations/$generation/$publication/2023-01.parquet"
     val second = s"s3://landing/nyc_taxi/_generations/$generation/$publication/2023-02.parquet"
     val parsed = NycTaxiEtl.parseArguments(Array(first, second, "--table", "lakehouse.bronze.taxi"))
@@ -74,7 +74,12 @@ class TaxiTransformsSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(parsed.table == "lakehouse.bronze.taxi")
     assertThrows[IllegalArgumentException](NycTaxiEtl.parseArguments(Array.empty))
     assertThrows[IllegalArgumentException](NycTaxiEtl.parseArguments(Array("s3://landing/nyc_taxi/file")))
-    val other = s"s3://landing/nyc_taxi/_generations/$generation/${"b" * 32}/2023-02.parquet"
+    val genericHex = s"s3://landing/nyc_taxi/_generations/$generation/${"a" * 32}/2023-02.parquet"
+    assertThrows[IllegalArgumentException](
+      NycTaxiEtl.parseArguments(Array(first, genericHex, "--table", "lakehouse.bronze.taxi"))
+    )
+    val other =
+      s"s3://landing/nyc_taxi/_generations/$generation/0123456789ab4def9123456789abcdef/2023-02.parquet"
     assertThrows[IllegalArgumentException](
       NycTaxiEtl.parseArguments(Array(first, other, "--table", "lakehouse.bronze.taxi"))
     )

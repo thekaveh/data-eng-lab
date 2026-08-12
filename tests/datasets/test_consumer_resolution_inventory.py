@@ -15,6 +15,9 @@ ROOT = Path(__file__).resolve().parents[2]
 LEGACY_LANDING_PATTERN = re.compile(r"s3a?://landing/(?:\{dataset\}|[a-z0-9_.-]+)(?:/(?!_generations/)|(?=[\"' )]))")
 RESOLVER_BYPASS_PATTERN = re.compile(r"landingPrefix|pathsForScale|DefaultScale")
 SCALES = ("tiny", "small", "medium")
+VALID_PUBLICATION_ID = "0123456789ab4def8123456789abcdef"
+INVALID_GENERIC_HEX_ID = "a" * 32
+UUID4_HEX_PATTERN = r"[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}"
 RESOLVED_NOTEBOOKS = {
     "batch_ingest-nyc_taxi-spark-iceberg": "nyc_taxi",
     "feature_engineering-movielens-spark-iceberg": "movielens",
@@ -96,18 +99,12 @@ def test_each_migrated_notebook_bootstraps_one_frozen_expected_scale_result(scen
 
 def test_jupyter_resolver_bootstrap_imports_precede_executable_statements():
     for scenario in RESOLVED_NOTEBOOKS:
-        notebook = nbformat.read(
-            ROOT / "scenarios" / scenario / "jupyter" / "notebook.ipynb", as_version=4
-        )
+        notebook = nbformat.read(ROOT / "scenarios" / scenario / "jupyter" / "notebook.ipynb", as_version=4)
         source = next(
-            cell.source
-            for cell in notebook.cells
-            if cell.cell_type == "code" and "/v1/resolve" in cell.source
+            cell.source for cell in notebook.cells if cell.cell_type == "code" and "/v1/resolve" in cell.source
         )
         statements = ast.parse(source).body
-        first_executable = next(
-            node for node in statements if not isinstance(node, (ast.Import, ast.ImportFrom))
-        )
+        first_executable = next(node for node in statements if not isinstance(node, (ast.Import, ast.ImportFrom)))
         late_imports = [
             node.lineno
             for node in statements
@@ -139,6 +136,26 @@ def test_dags_and_smoke_defer_exact_resolution_to_run_time():
         assert "expected_scale" in text
         assert "_generations/" in text
         assert "size_bytes" in text and "sha256" in text and "schema_id" in text
+
+
+def test_every_runtime_consumer_requires_canonical_lowercase_uuid4_publication_ids():
+    paths = (
+        ROOT / "scripts/bronze_smoke.py",
+        ROOT / "scripts/new_scenario.py",
+        ROOT / "spark-apps/nyc-taxi-etl/dag.py",
+        ROOT / "spark-apps/nyc-taxi-medallion/dag.py",
+        ROOT / "spark-apps/nyc-taxi-etl/src/main/scala/com/thekaveh/dataeng/nyctaxi/NycTaxiEtl.scala",
+        ROOT / "spark-apps/nyc-taxi-medallion/src/main/scala/com/thekaveh/dataeng/medallion/NycTaxiMedallion.scala",
+        *(
+            ROOT / "scenarios" / scenario / runtime / filename
+            for scenario in sorted(RESOLVED_NOTEBOOKS)
+            for runtime, filename in (("jupyter", "notebook.ipynb"), ("zeppelin", "notebook.zpln"))
+        ),
+    )
+    for path in paths:
+        text = path.read_text(encoding="utf-8").replace("{{", "{").replace("}}", "}")
+        assert UUID4_HEX_PATTERN in text, path
+        assert r"[0-9a-f]{32}" not in text, path
 
 
 def test_scala_entrypoints_require_explicit_verified_immutable_uri_arguments():
@@ -181,9 +198,8 @@ def test_streaming_checkpoint_is_keyed_by_frozen_publication_identity():
         assert "dataset_scale" in text
 
 
-def _taxi_resolution_body(*, objects=None, extra=None) -> bytes:
+def _taxi_resolution_body(*, objects=None, extra=None, publication=VALID_PUBLICATION_ID) -> bytes:
     plan = "1" * 64
-    publication = "a" * 32
     names = tuple(f"yellow_tripdata_2023-{month:02d}.parquet" for month in range(1, 4))
     document = {
         "dataset": "nyc_taxi",
@@ -265,6 +281,14 @@ def test_jupyter_bootstrap_executes_strict_success_and_spark_boundary(monkeypatc
 def test_jupyter_bootstrap_rejects_malformed_responses(monkeypatch, body):
     with pytest.raises((ValueError, json.JSONDecodeError)):
         _run_taxi_jupyter_bootstrap(monkeypatch, body)
+
+
+def test_jupyter_bootstrap_rejects_generic_hex_publication_id(monkeypatch):
+    with pytest.raises(ValueError, match="dataset resolution failed"):
+        _run_taxi_jupyter_bootstrap(
+            monkeypatch,
+            _taxi_resolution_body(publication=INVALID_GENERIC_HEX_ID),
+        )
 
 
 def test_jupyter_explicit_empty_scale_override_does_not_fall_through(monkeypatch):

@@ -81,7 +81,7 @@ def _resolve_dataset(dataset: str, scale: str) -> tuple[str, ...]:
             not isinstance(plan, str)
             or re.fullmatch(r"[0-9a-f]{64}", plan) is None
             or not isinstance(publication, str)
-            or re.fullmatch(r"[0-9a-f]{32}", publication) is None
+            or re.fullmatch(r"[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}", publication) is None
         ):
             raise ValueError
         if (
