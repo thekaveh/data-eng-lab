@@ -991,6 +991,61 @@ def test_download_cleanup_quarantines_before_identity_check(
     assert quarantined[0].read_bytes() == b"foreign replacement"
 
 
+@pytest.mark.parametrize("failure", ["open", "fstat", "close"])
+def test_download_committed_owned_publication_ignores_verification_housekeeping_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+):
+    _public_dns(monkeypatch, "192.0.0.9")
+    destination = tmp_path / "target"
+    committed = False
+    injected = False
+    real_publish = acquisition._publish_path_exclusive
+    real_open = acquisition.os.open
+    real_fstat = acquisition.os.fstat
+    real_close = acquisition.os.close
+
+    def publish(source: Path, target: Path) -> None:
+        nonlocal committed
+        real_publish(source, target)
+        committed = True
+
+    def maybe_open(path: object, *args: object, **kwargs: object) -> int:
+        nonlocal injected
+        if failure == "open" and committed and Path(path) == destination and not injected:
+            injected = True
+            raise OSError("post-rename open failed")
+        return real_open(path, *args, **kwargs)
+
+    def maybe_fstat(descriptor: int):
+        nonlocal injected
+        status = real_fstat(descriptor)
+        if failure == "fstat" and committed and not injected and stat.S_ISREG(status.st_mode):
+            injected = True
+            raise OSError("post-rename fstat failed")
+        return status
+
+    def maybe_close(descriptor: int) -> None:
+        nonlocal injected
+        if failure == "close" and committed and not injected:
+            injected = True
+            real_close(descriptor)
+            raise OSError("post-rename close failed")
+        real_close(descriptor)
+
+    monkeypatch.setattr(acquisition, "_publish_path_exclusive", publish)
+    monkeypatch.setattr(acquisition.os, "open", maybe_open)
+    monkeypatch.setattr(acquisition.os, "fstat", maybe_fstat)
+    monkeypatch.setattr(acquisition.os, "close", maybe_close)
+
+    downloaded = download_bounded("https://example.test/file", destination, 10, transport=FakeTransport())
+
+    assert injected
+    assert downloaded.path.read_bytes() == b"locked"
+    assert acquisition._bound_download_metadata(downloaded) == (6, hashlib.sha256(b"locked").hexdigest())
+
+
 def test_download_publication_disappearance_is_normalized_without_binding_leak(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1395,6 +1450,66 @@ def test_extract_cleanup_quarantines_before_identity_check(
 
     assert quarantined
     assert (quarantined[0] / "foreign").read_bytes() == b"foreign replacement"
+
+
+@pytest.mark.parametrize("failure", ["open", "fstat", "verification_close", "staging_close"])
+def test_extract_committed_owned_publication_ignores_verification_housekeeping_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: str,
+):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    entries = validated_zip_members(archive, ZipLimits())
+    destination = tmp_path / "members"
+    committed = False
+    post_commit_closes = 0
+    injected = False
+    real_publish = acquisition._publish_path_exclusive
+    real_open = acquisition.os.open
+    real_fstat = acquisition.os.fstat
+    real_close = acquisition.os.close
+
+    def publish(source: Path, target: Path) -> None:
+        nonlocal committed
+        real_publish(source, target)
+        committed = True
+
+    def maybe_open(path: object, *args: object, **kwargs: object) -> int:
+        nonlocal injected
+        if failure == "open" and committed and Path(path) == destination and not injected:
+            injected = True
+            raise OSError("post-rename open failed")
+        return real_open(path, *args, **kwargs)
+
+    def maybe_fstat(descriptor: int):
+        nonlocal injected
+        status = real_fstat(descriptor)
+        if failure == "fstat" and committed and not injected and stat.S_ISDIR(status.st_mode):
+            injected = True
+            raise OSError("post-rename fstat failed")
+        return status
+
+    def maybe_close(descriptor: int) -> None:
+        nonlocal injected, post_commit_closes
+        if committed:
+            post_commit_closes += 1
+            expected = 1 if failure == "verification_close" else 2
+            if failure in {"verification_close", "staging_close"} and post_commit_closes == expected:
+                injected = True
+                real_close(descriptor)
+                raise OSError("post-rename close failed")
+        real_close(descriptor)
+
+    monkeypatch.setattr(acquisition, "_publish_path_exclusive", publish)
+    monkeypatch.setattr(acquisition.os, "open", maybe_open)
+    monkeypatch.setattr(acquisition.os, "fstat", maybe_fstat)
+    monkeypatch.setattr(acquisition.os, "close", maybe_close)
+
+    paths = extract_members(archive, entries, destination)
+
+    assert injected
+    assert paths[0].read_bytes() == b"locked"
+    assert acquisition._bound_extracted_metadata(paths) == [(6, hashlib.sha256(b"locked").hexdigest())]
 
 
 def test_archive_entry_public_constructor_remains_three_fields():

@@ -767,7 +767,8 @@ def download_bounded(
     downloaded_file: DownloadedFile | None = None
     binding_descriptor: int | None = None
     owned_identity: tuple[int, int] | None = None
-    published = False
+    committed = False
+    succeeded = False
     try:
         try:
             descriptor, raw_staging_path = tempfile.mkstemp(
@@ -904,12 +905,10 @@ def download_bounded(
             raise ValueError("destination changed during download") from None
         except OSError as error:
             raise ValueError("destination disappeared during publication") from error
-        try:
-            published_descriptor = _open_owned_path(destination, owned_identity, directory=False)
-            os.close(published_descriptor)
-        except (OSError, ValueError) as error:
-            raise ValueError("download publication identity changed") from error
-        published = True
+        committed = True
+        if not _published_path_is_owned(destination, owned_identity, directory=False):
+            raise ValueError("download publication identity changed")
+        succeeded = True
         return downloaded_file
     finally:
         if target is not None:
@@ -917,14 +916,14 @@ def download_bounded(
                 target.close()
             except OSError:
                 pass
-        if downloaded_file is not None and not published:
+        if downloaded_file is not None and not succeeded:
             _unbind_download(downloaded_file)
         if binding_descriptor is not None:
             try:
                 os.close(binding_descriptor)
             except OSError:
                 pass
-        if staging_path is not None and owned_identity is not None and not published:
+        if staging_path is not None and owned_identity is not None and not committed:
             try:
                 _quarantine_owned_path(staging_path, owned_identity, directory=False)
             except OSError as error:
@@ -1443,6 +1442,28 @@ def _open_owned_path(path: Path, identity: tuple[int, int], *, directory: bool) 
     return descriptor
 
 
+def _close_after_commit(descriptor: int) -> None:
+    try:
+        os.close(descriptor)
+    except OSError:
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+
+
+def _published_path_is_owned(path: Path, identity: tuple[int, int], *, directory: bool) -> bool:
+    try:
+        descriptor = _open_owned_path(path, identity, directory=directory)
+    except (OSError, ValueError):
+        try:
+            return _path_matches_identity(path, identity, directory=directory)
+        except OSError:
+            return False
+    _close_after_commit(descriptor)
+    return True
+
+
 def _quarantine_owned_path(path: Path, identity: tuple[int, int], *, directory: bool) -> None:
     kind = "extract" if directory else "download"
     for _attempt in range(8):
@@ -1700,15 +1721,12 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
     except BaseException as error:
         cleanup(error)
         raise
-    try:
-        published_descriptor = _open_owned_path(destination, staging_identity, directory=True)
-        os.close(published_descriptor)
-        os.close(destination_descriptor)
-        destination_descriptor = None
-    except (OSError, ValueError) as error:
+    if not _published_path_is_owned(destination, staging_identity, directory=True):
         changed = ValueError("extraction publication identity changed")
         cleanup(changed)
-        raise changed from error
+        raise changed
+    _close_after_commit(destination_descriptor)
+    destination_descriptor = None
     return capability
 
 
