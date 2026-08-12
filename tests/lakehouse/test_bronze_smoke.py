@@ -91,6 +91,40 @@ def test_resolve_dataset_posts_exact_request_once_and_preserves_object_order():
     assert json.loads(request.data) == {"dataset": "nyc_taxi", "expected_scale": "small"}
 
 
+def test_build_bronze_converts_only_validated_canonical_uris_to_spark_s3a():
+    seen = []
+
+    class Reader:
+        def parquet(self, *uris):
+            seen.extend(uris)
+            return Frame()
+
+    class Frame:
+        def writeTo(self, _table):
+            return self
+
+        def using(self, _format):
+            return self
+
+        def createOrReplace(self):
+            return None
+
+        def count(self):
+            return 1
+
+    class Spark:
+        read = Reader()
+
+        def table(self, _table):
+            return Frame()
+
+    canonical = _resolution()["objects"][0]["uri"]
+    assert bs.build_bronze(Spark(), (canonical,), "lakehouse.bronze.taxi") == 1
+    assert seen == [canonical.replace("s3://", "s3a://", 1)]
+    with pytest.raises(ValueError, match="verified immutable URI"):
+        bs.build_bronze(Spark(), ("s3://landing/nyc_taxi/file.parquet",), "lakehouse.bronze.taxi")
+
+
 @pytest.mark.parametrize(
     "document",
     [

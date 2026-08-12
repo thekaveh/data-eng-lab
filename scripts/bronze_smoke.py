@@ -21,6 +21,7 @@ _RESULT_FIELDS = {
     "objects",
 }
 _OBJECT_FIELDS = {"object_name", "uri", "size_bytes", "sha256", "schema_id"}
+_MAX_JSON_DEPTH = 16
 
 
 def effective_scale(explicit: str | None, environment: Mapping[str, str]) -> str:
@@ -37,6 +38,18 @@ def _unique_mapping(pairs):
             raise ValueError("dataset resolution failed")
         result[key] = value
     return result
+
+
+def _reject_constant(_value):
+    raise ValueError("dataset resolution failed")
+
+
+def _json_depth(value) -> int:
+    if isinstance(value, dict):
+        return 1 + max((_json_depth(item) for item in value.values()), default=0)
+    if isinstance(value, list):
+        return 1 + max((_json_depth(item) for item in value), default=0)
+    return 0
 
 
 def resolve_dataset(dataset: str, scale: str, resolver_uri: str, *, opener=urllib.request.urlopen) -> tuple[str, ...]:
@@ -56,8 +69,8 @@ def resolve_dataset(dataset: str, scale: str, resolver_uri: str, *, opener=urlli
             body = response.read((1 << 20) + 1)
         if len(body) > 1 << 20:
             raise ValueError
-        document = json.loads(body, object_pairs_hook=_unique_mapping)
-        if not isinstance(document, dict) or set(document) != _RESULT_FIELDS:
+        document = json.loads(body, object_pairs_hook=_unique_mapping, parse_constant=_reject_constant)
+        if not isinstance(document, dict) or set(document) != _RESULT_FIELDS or _json_depth(document) > _MAX_JSON_DEPTH:
             raise ValueError
         if document["dataset"] != dataset or document["scale"] != scale:
             raise ValueError
@@ -108,8 +121,22 @@ def bronze_table(name: str) -> str:
     return f"lakehouse.bronze.{name}"
 
 
+def _spark_uri(canonical_uri: str) -> str:
+    if (
+        not isinstance(canonical_uri, str)
+        or re.fullmatch(
+            r"s3://landing/[a-z0-9_.-]+/_generations/[0-9a-f]{64}/[0-9a-f]{32}/[A-Za-z0-9._-]+",
+            canonical_uri,
+        )
+        is None
+    ):
+        raise ValueError("verified immutable URI is required")
+    return canonical_uri.replace("s3://", "s3a://", 1)
+
+
 def build_bronze(spark, immutable_uris: Sequence[str], table: str) -> int:
-    df = spark.read.parquet(*immutable_uris)
+    spark_uris = tuple(_spark_uri(uri) for uri in immutable_uris)
+    df = spark.read.parquet(*spark_uris)
     (df.writeTo(table).using("iceberg").createOrReplace())
     return spark.table(table).count()
 

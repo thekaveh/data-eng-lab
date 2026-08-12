@@ -40,8 +40,6 @@ class TaxiTransformsSpec extends AnyFunSuite with BeforeAndAfterAll {
     val s = spark
     import s.implicits._
     val landing = Files.createTempDirectory("nyc-taxi-landing")
-    val prefix = landing.toUri.toString.stripSuffix("/")
-
     Seq((ts("2023-01-01 10:00:00"), 2L, 5.0))
       .toDF("tpep_pickup_datetime", "passenger_count", "fare_amount")
       .write.parquet(landing.resolve("yellow_tripdata_2023-01.parquet").toString)
@@ -52,7 +50,14 @@ class TaxiTransformsSpec extends AnyFunSuite with BeforeAndAfterAll {
       .toDF("tpep_pickup_datetime", "passenger_count", "fare_amount")
       .write.parquet(landing.resolve("yellow_tripdata_2023-03.parquet").toString)
 
-    val raw = TaxiLanding.read(s, prefix)
+    val raw = TaxiLanding.readResolved(
+      s,
+      Seq(
+        landing.resolve("yellow_tripdata_2023-01.parquet").toString,
+        landing.resolve("yellow_tripdata_2023-02.parquet").toString,
+        landing.resolve("yellow_tripdata_2023-03.parquet").toString
+      )
+    )
     assert(raw.schema("passenger_count").dataType.typeName == "double")
     assert(raw.count() == 3)
     assert(TaxiTransforms.clean(raw).count() == 2)
@@ -65,6 +70,7 @@ class TaxiTransformsSpec extends AnyFunSuite with BeforeAndAfterAll {
     val second = s"s3://landing/nyc_taxi/_generations/$generation/$publication/2023-02.parquet"
     val parsed = NycTaxiEtl.parseArguments(Array(first, second, "--table", "lakehouse.bronze.taxi"))
     assert(parsed.uris == Seq(first, second))
+    assert(parsed.sparkUris == Seq(first, second).map(_.replace("s3://", "s3a://")))
     assert(parsed.table == "lakehouse.bronze.taxi")
     assertThrows[IllegalArgumentException](NycTaxiEtl.parseArguments(Array.empty))
     assertThrows[IllegalArgumentException](NycTaxiEtl.parseArguments(Array("s3://landing/nyc_taxi/file")))

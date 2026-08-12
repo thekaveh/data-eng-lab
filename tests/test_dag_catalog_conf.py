@@ -284,3 +284,15 @@ def test_dataset_dags_freeze_valid_scale_precedence_and_exact_request_contract()
         assert '"dataset": dataset' in text
         assert '"expected_scale": scale' in text
         assert "_generations/" in text
+
+
+def test_dataset_dags_bound_and_strictly_parse_resolution_documents():
+    for path in sorted((ROOT / "spark-apps").rglob("dag.py")):
+        text = path.read_text(encoding="utf-8")
+        assert "response.read(_MAX_RESOLUTION_BYTES + 1)" in text
+        assert "object_pairs_hook=_unique_mapping" in text
+        assert "parse_constant=_reject_constant" in text
+        assert "_json_depth(document) > _MAX_JSON_DEPTH" in text
+        assert "not objects" in text
+        assert 'not isinstance(item["object_name"], str)' in text
+        assert 'not isinstance(item["uri"], str)' in text

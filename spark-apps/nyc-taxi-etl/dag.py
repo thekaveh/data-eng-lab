@@ -21,6 +21,30 @@ _EXPECTED_NAMES = {
     "medium": tuple(f"yellow_tripdata_2023-{month:02d}.parquet" for month in range(1, 7)),
 }
 _OBJECT_FIELDS = {"object_name", "uri", "size_bytes", "sha256", "schema_id"}
+_RESULT_FIELDS = {"dataset", "scale", "plan_id", "manifest_sha256", "publication_id", "objects"}
+_MAX_RESOLUTION_BYTES = 1 << 20
+_MAX_JSON_DEPTH = 16
+
+
+def _unique_mapping(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("dataset resolution failed")
+        result[key] = value
+    return result
+
+
+def _reject_constant(_value):
+    raise ValueError("dataset resolution failed")
+
+
+def _json_depth(value) -> int:
+    if isinstance(value, dict):
+        return 1 + max((_json_depth(item) for item in value.values()), default=0)
+    if isinstance(value, list):
+        return 1 + max((_json_depth(item) for item in value), default=0)
+    return 0
 
 
 def _effective_scale(context) -> str:
@@ -44,33 +68,47 @@ def _resolve_dataset(dataset: str, scale: str) -> tuple[str, ...]:
     )
     try:
         with urllib.request.urlopen(request, timeout=120) as response:
-            body = response.read((1 << 20) + 1)
-        if len(body) > 1 << 20:
+            body = response.read(_MAX_RESOLUTION_BYTES + 1)
+        if len(body) > _MAX_RESOLUTION_BYTES:
             raise ValueError
-        document = json.loads(body)
-        if set(document) != {"dataset", "scale", "plan_id", "manifest_sha256", "publication_id", "objects"}:
+        document = json.loads(body, object_pairs_hook=_unique_mapping, parse_constant=_reject_constant)
+        if not isinstance(document, dict) or set(document) != _RESULT_FIELDS or _json_depth(document) > _MAX_JSON_DEPTH:
             raise ValueError
         if document["dataset"] != dataset or document["scale"] != scale:
             raise ValueError
         plan, publication = document["plan_id"], document["publication_id"]
         if (
-            re.fullmatch(r"[0-9a-f]{64}", plan or "") is None
-            or re.fullmatch(r"[0-9a-f]{32}", publication or "") is None
+            not isinstance(plan, str)
+            or re.fullmatch(r"[0-9a-f]{64}", plan) is None
+            or not isinstance(publication, str)
+            or re.fullmatch(r"[0-9a-f]{32}", publication) is None
         ):
             raise ValueError
-        if re.fullmatch(r"[0-9a-f]{64}", document["manifest_sha256"] or "") is None:
+        if (
+            not isinstance(document["manifest_sha256"], str)
+            or re.fullmatch(r"[0-9a-f]{64}", document["manifest_sha256"]) is None
+        ):
             raise ValueError
         objects = document["objects"]
-        if not isinstance(objects, list) or any(
-            not isinstance(item, dict)
-            or set(item) != _OBJECT_FIELDS
-            or isinstance(item["size_bytes"], bool)
-            or not isinstance(item["size_bytes"], int)
-            or item["size_bytes"] < 0
-            or re.fullmatch(r"[0-9a-f]{64}", item["sha256"] or "") is None
-            or not isinstance(item["schema_id"], str)
-            or not item["schema_id"]
-            for item in objects
+        if (
+            not isinstance(objects, list)
+            or not objects
+            or any(
+                not isinstance(item, dict)
+                or set(item) != _OBJECT_FIELDS
+                or isinstance(item["size_bytes"], bool)
+                or not isinstance(item["size_bytes"], int)
+                or item["size_bytes"] < 0
+                or not isinstance(item["object_name"], str)
+                or re.fullmatch(r"[A-Za-z0-9._-]+", item["object_name"]) is None
+                or item["object_name"] in {".", ".."}
+                or not isinstance(item["uri"], str)
+                or not isinstance(item["sha256"], str)
+                or re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is None
+                or not isinstance(item["schema_id"], str)
+                or not item["schema_id"]
+                for item in objects
+            )
         ):
             raise ValueError
         names = tuple(item.get("object_name") for item in objects)
@@ -88,12 +126,11 @@ def _resolve_dataset(dataset: str, scale: str) -> tuple[str, ...]:
 class AtlasSparkSubmitOperator(SparkSubmitOperator):
     """Spark submit operator with standalone-driver REST confirmation."""
 
-    def __init__(self, *, rest_host: str = "spark-master", dataset: str, target_option: str, target: str, **kwargs):
+    def __init__(self, *, rest_host: str = "spark-master", dataset: str, static_args=(), **kwargs):
         super().__init__(**kwargs)
         self.rest_host = rest_host
         self.dataset = dataset
-        self.target_option = target_option
-        self.target = target
+        self.static_args = tuple(static_args)
 
     def _get_hook(self):
         return RestConfirmingSparkHook(
@@ -103,7 +140,7 @@ class AtlasSparkSubmitOperator(SparkSubmitOperator):
 
     def execute(self, context):
         immutable_uris = _resolve_dataset(self.dataset, _effective_scale(context))
-        self.application_args = [*immutable_uris, self.target_option, self.target]
+        self.application_args = [*immutable_uris, *self.static_args]
         return super().execute(context)
 
 
@@ -176,8 +213,7 @@ with DAG(
         conf=spark_conf,
         application_args=[],
         dataset="nyc_taxi",
-        target_option="--table",
-        target="lakehouse.bronze.nyc_taxi_trips",
+        static_args=("--table", "lakehouse.bronze.nyc_taxi_trips"),
         rest_host="spark-master",
         verbose=True,
     )

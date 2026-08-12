@@ -1,10 +1,10 @@
 package com.thekaveh.dataeng.nyctaxi
 
 import com.thekaveh.dataeng.nyctaxi.transforms.TaxiTransforms
-import org.apache.spark.sql.{DataFrame, SparkSession, functions => F}
+import org.apache.spark.sql.SparkSession
 
 object NycTaxiEtl {
-  final case class Arguments(uris: Seq[String], table: String)
+  final case class Arguments(uris: Seq[String], sparkUris: Seq[String], table: String)
 
   private val ImmutableUri =
     "^(s3://landing/nyc_taxi/_generations/[0-9a-f]{64}/[0-9a-f]{32}/)[A-Za-z0-9._-]+\\.parquet$".r
@@ -21,13 +21,9 @@ object NycTaxiEtl {
       case _ => throw new IllegalArgumentException("verified immutable NYC Taxi URI arguments are required")
     }
     require(generationPrefixes.distinct.size == 1, "immutable NYC Taxi URI arguments must share one generation")
-    Arguments(uris, args.last)
+    val sparkUris = uris.map(uri => "s3a://" + uri.stripPrefix("s3://"))
+    Arguments(uris, sparkUris, args.last)
   }
-
-  private def readResolved(spark: SparkSession, uris: Seq[String]): DataFrame =
-    uris
-      .map(uri => spark.read.parquet(uri).withColumn("passenger_count", F.col("passenger_count").cast("double")))
-      .reduce(_.unionByName(_))
 
   def main(args: Array[String]): Unit = {
     val arguments = parseArguments(args)
@@ -36,7 +32,7 @@ object NycTaxiEtl {
     try {
       val ns = arguments.table.substring(0, arguments.table.lastIndexOf('.'))  // e.g. lakehouse.bronze
       spark.sql(s"CREATE NAMESPACE IF NOT EXISTS $ns")
-      val cleaned = TaxiTransforms.clean(readResolved(spark, arguments.uris))
+      val cleaned = TaxiTransforms.clean(TaxiLanding.readResolved(spark, arguments.sparkUris))
       cleaned.writeTo(arguments.table).using("iceberg").createOrReplace()
       // scalastyle:off println
       println(s"wrote ${arguments.table}: ${spark.table(arguments.table).count()} rows")

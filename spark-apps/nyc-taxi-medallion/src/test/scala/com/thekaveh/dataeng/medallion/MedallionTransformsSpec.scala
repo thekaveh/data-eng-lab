@@ -38,11 +38,9 @@ class MedallionTransformsSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   test("entrypoint requires immutable resolver evidence and an explicit bronze table") {
     val uri = s"s3://landing/nyc_taxi/_generations/${"1" * 64}/${"a" * 32}/taxi.parquet"
-    val parsed = NycTaxiMedallion.parseArguments(
-      Array(uri, "--bronze-table", "lakehouse.bronze.nyc_taxi_trips")
-    )
+    val parsed = NycTaxiMedallion.parseArguments(Array(uri))
     assert(parsed.uris == Seq(uri))
-    assert(parsed.bronzeTable == "lakehouse.bronze.nyc_taxi_trips")
+    assert(parsed.sparkUris == Seq(uri.replace("s3://", "s3a://")))
     assertThrows[IllegalArgumentException](NycTaxiMedallion.parseArguments(Array.empty))
     assertThrows[IllegalArgumentException](
       NycTaxiMedallion.parseArguments(Array("s3://landing/nyc_taxi/taxi.parquet"))
@@ -50,7 +48,7 @@ class MedallionTransformsSpec extends AnyFunSuite with BeforeAndAfterAll {
     val other = s"s3://landing/nyc_taxi/_generations/${"1" * 64}/${"b" * 32}/taxi.parquet"
     assertThrows[IllegalArgumentException](
       NycTaxiMedallion.parseArguments(
-        Array(uri, other, "--bronze-table", "lakehouse.bronze.nyc_taxi_trips")
+        Array(uri, other)
       )
     )
   }

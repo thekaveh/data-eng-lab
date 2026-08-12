@@ -34,6 +34,9 @@ def test_scaffolded_notebooks_resolve_one_expected_scale_immutable_generation(tm
         assert "_generations/" in text
         assert "size_bytes" in text and "sha256" in text and "schema_id" in text
         assert "s3a://landing/" not in text
+        assert "dataset_spark_uris" in text or "datasetSparkUris" in text
+        assert "readNBytes" in text or "read(_MAX_RESOLUTION_BYTES + 1)" in text
+        assert "STRICT_DUPLICATE_DETECTION" in text or "object_pairs_hook" in text
 
 
 def test_scaffold_output_passes_the_verifier(tmp_path: Path):

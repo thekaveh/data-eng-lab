@@ -35,7 +35,7 @@ def _scala_cell(section: str, dataset: str) -> str:
     # Zeppelin `%spark` paragraphs are SCALA — use Scala placeholders.
     return {
         "2. Setup": _scala_resolver_bootstrap(dataset),
-        "3. Read": "val df = spark.read.parquet(datasetUris: _*)",
+        "3. Read": "val df = spark.read.parquet(datasetSparkUris: _*)",
         "4. Transform": "// TODO (Phase 2b): scenario transform",
         "5. Write": f'// df.writeTo("lakehouse.bronze.{dataset}").using("iceberg").createOrReplace()',
         "6. Verify": f'// spark.table("lakehouse.bronze.{dataset}").count()',
@@ -45,7 +45,7 @@ def _scala_cell(section: str, dataset: str) -> str:
 def _py_cell(section: str, dataset: str) -> str:
     # Jupyter cells are PySpark (Python).
     return {
-        "3. Read": "df = spark.read.parquet(*dataset_uris)",
+        "3. Read": "df = spark.read.parquet(*dataset_spark_uris)",
         "4. Transform": "# TODO (Phase 2b): scenario transform",
         "5. Write": f'# df.writeTo("lakehouse.bronze.{dataset}").using("iceberg").createOrReplace()',
         "6. Verify": f'# spark.table("lakehouse.bronze.{dataset}").count()',
@@ -55,10 +55,11 @@ def _py_cell(section: str, dataset: str) -> str:
 def _scala_resolver_bootstrap(dataset: str) -> str:
     return f'''import java.net.{{HttpURLConnection, URL}}
 import java.nio.charset.StandardCharsets
-import com.fasterxml.jackson.databind.ObjectMapper
+import com.fasterxml.jackson.core.JsonParser
+import com.fasterxml.jackson.databind.{{JsonNode, ObjectMapper}}
 import scala.collection.JavaConverters._
 
-val datasetScaleOverride = Option(z.input("dataset_scale", "")).filter(_.nonEmpty)
+val datasetScaleOverride = Option(z.input("dataset_scale", null))
 val datasetScale = datasetScaleOverride.orElse(Option(System.getenv("DATASET_SCALE"))).getOrElse("small")
 require(Set("tiny", "small", "medium").contains(datasetScale), "invalid DATASET_SCALE")
 val resolverUri = Option(System.getenv("DATASET_RESOLVER_URI"))
@@ -68,12 +69,28 @@ val resolverConnection = new URL(resolverUri.stripSuffix("/") + "/v1/resolve")
 resolverConnection.setRequestMethod("POST")
 resolverConnection.setRequestProperty("Content-Type", "application/json")
 resolverConnection.setDoOutput(true)
+resolverConnection.setConnectTimeout(30000)
+resolverConnection.setReadTimeout(30000)
 val resolverRequest = "{{\\\"dataset\\\":\\\"{dataset}\\\",\\\"expected_scale\\\":\\\"" + datasetScale + "\\\"}}"
-resolverConnection.getOutputStream.write(resolverRequest.getBytes(StandardCharsets.UTF_8))
+val resolverOutput = resolverConnection.getOutputStream
+resolverOutput.write(resolverRequest.getBytes(StandardCharsets.UTF_8))
+resolverOutput.close()
 require(resolverConnection.getResponseCode == 200, "dataset resolution failed")
-val datasetResolution = new ObjectMapper().readTree(resolverConnection.getInputStream)
+val resolutionBytes = resolverConnection.getInputStream.readNBytes((1 << 20) + 1)
+require(resolutionBytes.length <= (1 << 20), "dataset resolution failed")
+val mapper = new ObjectMapper().enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
+val datasetResolution = mapper.readTree(resolutionBytes)
+def jsonDepth(node: JsonNode): Int =
+  if (node.isContainerNode) 1 + node.elements.asScala.map(jsonDepth).foldLeft(0)(math.max) else 0
+require(jsonDepth(datasetResolution) <= 16, "dataset resolution failed")
 val datasetResolutionFields = Set("dataset", "scale", "plan_id", "manifest_sha256", "publication_id", "objects")
 require(datasetResolution.fieldNames.asScala.toSet == datasetResolutionFields)
+require(
+  datasetResolution.get("dataset").isTextual && datasetResolution.get("scale").isTextual &&
+  datasetResolution.get("plan_id").isTextual && datasetResolution.get("publication_id").isTextual &&
+  datasetResolution.get("manifest_sha256").isTextual,
+  "dataset resolution failed"
+)
 require(datasetResolution.get("dataset").asText == "{dataset}" && datasetResolution.get("scale").asText == datasetScale)
 val planId = datasetResolution.get("plan_id").asText
 val publicationId = datasetResolution.get("publication_id").asText
@@ -83,18 +100,24 @@ require(
   publicationId.matches("[0-9a-f]{{32}}") &&
   manifestSha256.matches("[0-9a-f]{{64}}")
 )
-val datasetObjects = datasetResolution.get("objects").elements.asScala.toVector
+val objectsNode = datasetResolution.get("objects")
+require(objectsNode.isArray && objectsNode.size > 0, "dataset resolution failed")
+val datasetObjects = objectsNode.elements.asScala.toVector
 val datasetObjectFields = Set("object_name", "uri", "size_bytes", "sha256", "schema_id")
 require(datasetObjects.forall {{ item =>
   item.fieldNames.asScala.toSet == datasetObjectFields &&
+  item.get("object_name").isTextual && item.get("object_name").asText.matches("[A-Za-z0-9._-]+") &&
+  !Set(".", "..").contains(item.get("object_name").asText) && item.get("uri").isTextual &&
   item.get("size_bytes").isIntegralNumber && item.get("size_bytes").asLong >= 0 &&
-  item.get("sha256").asText.matches("[0-9a-f]{{64}}") && item.get("schema_id").asText.nonEmpty
+  item.get("sha256").isTextual && item.get("sha256").asText.matches("[0-9a-f]{{64}}") &&
+  item.get("schema_id").isTextual && item.get("schema_id").asText.nonEmpty
 }})
 val datasetObjectNames = datasetObjects.map(_.get("object_name").asText)
 val datasetUris = datasetObjects.map(_.get("uri").asText)
 require(datasetUris.nonEmpty && datasetObjectNames.distinct.size == datasetObjectNames.size)
 val generationPrefix = s"s3://landing/{dataset}/_generations/$planId/$publicationId/"
 require(datasetUris.zip(datasetObjectNames).forall {{ case (uri, name) => uri == generationPrefix + name }})
+val datasetSparkUris = datasetUris.map(uri => "s3a://" + uri.stripPrefix("s3://"))
 resolverConnection.disconnect()
 spark.version'''
 
@@ -106,9 +129,33 @@ import re
 import urllib.request
 from pyspark.sql import SparkSession
 
+_MAX_RESOLUTION_BYTES = 1 << 20
+_MAX_JSON_DEPTH = 16
+
+def _unique_mapping(pairs):
+    result = {{}}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("dataset resolution failed")
+        result[key] = value
+    return result
+
+def _reject_constant(_value):
+    raise ValueError("dataset resolution failed")
+
+def _json_depth(value):
+    if isinstance(value, dict):
+        return 1 + max((_json_depth(item) for item in value.values()), default=0)
+    if isinstance(value, list):
+        return 1 + max((_json_depth(item) for item in value), default=0)
+    return 0
+
 spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
-dataset_scale_override = globals().get("dataset_scale_override")
-dataset_scale = dataset_scale_override or os.environ.get("DATASET_SCALE", "small")
+dataset_scale = (
+    globals()["dataset_scale_override"]
+    if "dataset_scale_override" in globals()
+    else os.environ.get("DATASET_SCALE", "small")
+)
 if dataset_scale not in ("tiny", "small", "medium"):
     raise ValueError("invalid DATASET_SCALE")
 resolver_uri = os.environ["DATASET_RESOLVER_URI"].rstrip("/")
@@ -123,8 +170,17 @@ resolver_request = urllib.request.Request(
     method="POST",
 )
 with urllib.request.urlopen(resolver_request, timeout=120) as response:
-    dataset_resolution = json.load(response)
-if set(dataset_resolution) != {{"dataset", "scale", "plan_id", "manifest_sha256", "publication_id", "objects"}}:
+    resolution_body = response.read(_MAX_RESOLUTION_BYTES + 1)
+if len(resolution_body) > _MAX_RESOLUTION_BYTES:
+    raise ValueError("dataset resolution failed")
+dataset_resolution = json.loads(
+    resolution_body, object_pairs_hook=_unique_mapping, parse_constant=_reject_constant
+)
+if (
+    not isinstance(dataset_resolution, dict)
+    or set(dataset_resolution) != {{"dataset", "scale", "plan_id", "manifest_sha256", "publication_id", "objects"}}
+    or _json_depth(dataset_resolution) > _MAX_JSON_DEPTH
+):
     raise ValueError("dataset resolution failed")
 if dataset_resolution.get("dataset") != "{dataset}" or dataset_resolution.get("scale") != dataset_scale:
     raise ValueError("dataset resolution failed")
@@ -147,9 +203,14 @@ dataset_object_fields = {{"object_name", "uri", "size_bytes", "sha256", "schema_
 if any(
     not isinstance(item, dict)
     or set(item) != dataset_object_fields
+    or not isinstance(item["object_name"], str)
+    or not re.fullmatch(r"[A-Za-z0-9._-]+", item["object_name"])
+    or item["object_name"] in {{".", ".."}}
+    or not isinstance(item["uri"], str)
     or isinstance(item["size_bytes"], bool)
     or not isinstance(item["size_bytes"], int)
     or item["size_bytes"] < 0
+    or not isinstance(item["sha256"], str)
     or not re.fullmatch(r"[0-9a-f]{{64}}", item["sha256"])
     or not isinstance(item["schema_id"], str)
     or not item["schema_id"]
@@ -162,7 +223,8 @@ generation_prefix = f"s3://landing/{dataset}/_generations/{{plan_id}}/{{publicat
 if len(set(dataset_object_names)) != len(dataset_object_names) or any(
     uri != generation_prefix + name for uri, name in zip(dataset_uris, dataset_object_names, strict=True)
 ):
-    raise ValueError("dataset resolution failed")'''
+    raise ValueError("dataset resolution failed")
+dataset_spark_uris = tuple(uri.replace("s3://", "s3a://", 1) for uri in dataset_uris)'''
 
 
 def zeppelin_notebook(name: str) -> dict:
