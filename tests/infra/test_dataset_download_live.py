@@ -9,9 +9,11 @@ import uuid
 from dataclasses import replace
 
 import pytest
+from botocore.exceptions import EndpointConnectionError
 
 from datasets.locking import canonical_json
 from datasets.publication import (
+    ActivePointer,
     PublishMode,
     active_pointer_key,
     immutable_manifest_key,
@@ -83,6 +85,30 @@ class _MutationCounter:
     def delete_objects(self, **request):
         self.deletes += 1
         return self._client.delete_objects(**request)
+
+    def __getattr__(self, name: str):
+        return getattr(self._client, name)
+
+
+class _LoseExactPointerPutResponse:
+    """Commit one exact conditional pointer PUT, then lose its response."""
+
+    def __init__(self, client, pointer_key: str) -> None:
+        self._client = client
+        self._pointer_key = pointer_key
+        self.pointer_put_attempts = 0
+        self.lost_responses = 0
+
+    def put_object(self, **request):
+        if request.get("Key") != self._pointer_key:
+            return self._client.put_object(**request)
+        assert request.get("IfNoneMatch") == "*" or "IfMatch" in request
+        self.pointer_put_attempts += 1
+        response = self._client.put_object(**request)
+        if self.lost_responses == 0:
+            self.lost_responses += 1
+            raise EndpointConnectionError(endpoint_url="https://redacted.invalid")
+        return response
 
     def __getattr__(self, name: str):
         return getattr(self._client, name)
@@ -245,6 +271,62 @@ def test_tiny_http_publication_is_idempotent_and_recovers_without_mixed_generati
                     "scale_switch_manifest_sha256": small_first.manifest_sha256,
                     "scale_switch_publication_id": small_first.publication_id,
                     "scale_switch_rollback_manifest_sha256": small_rollback.manifest_sha256,
+                }
+            ).decode("utf-8")
+        )
+    finally:
+        _cleanup_dataset(client, dataset)
+        close = getattr(client, "close", None)
+        if callable(close):
+            close()
+
+
+def test_publish_reconciles_lost_real_minio_active_pointer_response_without_retry() -> None:
+    registry = load_registry(REGISTRY_PATH)
+    run_id = uuid.uuid4().hex
+    dataset = _test_dataset(registry["movielens"], run_id)
+    plan = resolve_scale(dataset, "tiny")
+    registry_view = {dataset.name: dataset}
+    client = s3_client_from_env(ROOT / "infra")
+    pointer_key = active_pointer_key(dataset.name)
+    losing_client = _LoseExactPointerPutResponse(client, pointer_key)
+    try:
+        result = publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=losing_client,
+            fetcher=fetch_http,
+            raw_registry_sha256=_registry_sha256(),
+        )
+
+        assert losing_client.pointer_put_attempts == 1
+        assert losing_client.lost_responses == 1
+        assert result.status == "published-reconciled"
+        # `committed` is the canonical pointer outcome; reconciliation is
+        # carried by the status because the exact intended bytes were observed.
+        assert result.pointer_outcome == "committed"
+        assert result.manifest_sha256 is not None
+        assert result.manifest_key == immutable_manifest_key(dataset.name, result.manifest_sha256)
+
+        pointer_snapshot = read_control_object(client, BUCKET, pointer_key)
+        pointer = ActivePointer.from_bytes(pointer_snapshot.body)
+        resolved = resolve_active_dataset(client, registry_view, dataset.name, "tiny")
+        assert pointer_snapshot.etag.startswith('"') and pointer_snapshot.etag.endswith('"')
+        assert pointer.dataset == dataset.name
+        assert pointer.manifest_key == result.manifest_key
+        assert pointer.manifest_sha256 == result.manifest_sha256
+        assert resolved.manifest_sha256 == result.manifest_sha256
+        assert resolved.publication_id == result.publication_id
+        assert all(f"/{result.publication_id}/" in item.uri for item in resolved.objects)
+        print(
+            canonical_json(
+                {
+                    "dataset": dataset.name,
+                    "manifest_sha256": result.manifest_sha256,
+                    "pointer_etag": pointer_snapshot.etag,
+                    "pointer_put_attempts": losing_client.pointer_put_attempts,
+                    "publication_id": result.publication_id,
+                    "status": result.status,
                 }
             ).decode("utf-8")
         )
