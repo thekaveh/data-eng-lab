@@ -1522,19 +1522,13 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
             archive_stream.close()
         except OSError:
             cleanup_failed = True
-        if staging_root is not None:
-            if staging_identity is None:
-                try:
-                    recovered = staging_root.lstat()
-                    if stat.S_ISDIR(recovered.st_mode):
-                        staging_identity = (recovered.st_dev, recovered.st_ino)
-                except OSError:
-                    pass
-            if staging_identity is not None:
-                try:
-                    _quarantine_owned_path(staging_root, staging_identity, directory=True)
-                except OSError:
-                    cleanup_failed = True
+        if staging_root is not None and staging_identity is None:
+            raise ValueError("extraction cleanup ownership is uncertain") from error
+        if staging_root is not None and staging_identity is not None:
+            try:
+                _quarantine_owned_path(staging_root, staging_identity, directory=True)
+            except OSError:
+                cleanup_failed = True
         if cleanup_failed:
             raise ValueError("extraction cleanup failed") from error
         raise ValueError("extraction parent is unavailable") from error

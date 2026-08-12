@@ -1692,29 +1692,39 @@ def test_extract_staging_open_cleanup_failure_is_controlled(
     assert "staging open failed" in str(error.value.__cause__)
 
 
-def test_extract_transient_initial_staging_lstat_failure_cleans_owned_directory(
+def test_extract_first_staging_identity_failure_preserves_unknown_path_and_original(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ):
     archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
     entries = validated_zip_members(archive, ZipLimits())
     real_lstat = acquisition.Path.lstat
+    moved_staging = tmp_path / "moved-extraction"
+    foreign_staging: list[Path] = []
     failed = False
 
     def fail_first_staging_lstat(path: Path):
         nonlocal failed
         if path.name.startswith(".dataset-extract-") and not failed:
             failed = True
-            raise OSError("transient staging lstat failure")
+            path.replace(moved_staging)
+            path.mkdir()
+            (path / "foreign").write_bytes(b"foreign replacement")
+            foreign_staging.append(path)
+            raise OSError("first staging identity observation failed")
         return real_lstat(path)
 
     monkeypatch.setattr(acquisition.Path, "lstat", fail_first_staging_lstat)
 
-    with pytest.raises(ValueError, match="extraction parent is unavailable"):
+    with pytest.raises(ValueError, match="cleanup ownership is uncertain") as error:
         extract_members(archive, entries, tmp_path / "members")
 
     assert failed
-    assert list(tmp_path.glob(".dataset-extract-*")) == []
+    assert isinstance(error.value.__cause__, OSError)
+    assert "first staging identity observation failed" in str(error.value.__cause__)
+    assert moved_staging.is_dir()
+    assert (foreign_staging[0] / "foreign").read_bytes() == b"foreign replacement"
+    assert list(tmp_path.glob(".dataset-cleanup-extract-*")) == []
 
 
 def test_download_requires_owned_non_writable_trusted_parent(tmp_path: Path):
