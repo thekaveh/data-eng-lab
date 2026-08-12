@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import hashlib
 import io
+import os
+import shutil
 import zipfile
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
-from typing import Callable
 
 import pytest
-import responses
 
+from datasets import acquisition
 from datasets import registry as reg
 from datasets.acquisition import DownloadedFile, ResponseEvidence
 from datasets.locking import schema_fingerprint
@@ -134,21 +136,30 @@ def _archive_plan(
 
 @pytest.fixture
 def serve(monkeypatch: pytest.MonkeyPatch) -> Callable[[reg.ScalePlan, tuple[bytes, ...]], None]:
-    with responses.RequestsMock(assert_all_requests_are_fired=False) as mocked:
+    def register(plan: reg.ScalePlan, payloads: tuple[bytes, ...]) -> None:
+        bodies = dict(zip((artifact.url for artifact in plan.artifacts), payloads, strict=True))
 
-        def register(plan: reg.ScalePlan, payloads: tuple[bytes, ...]) -> None:
-            bodies = dict(zip((artifact.url for artifact in plan.artifacts), payloads, strict=True))
-            for url, payload in bodies.items():
-                mocked.get(url, body=payload)
+        def fake_download(url: str, destination: Path, max_bytes: int) -> DownloadedFile:
+            payload = bodies[url]
+            destination.write_bytes(payload)
+            descriptor = os.open(destination, os.O_RDONLY)
+            status = os.fstat(descriptor)
+            downloaded = DownloadedFile(destination, ResponseEvidence())
+            acquisition._bind_download(
+                downloaded,
+                acquisition._FileBinding(
+                    status.st_dev,
+                    status.st_ino,
+                    len(payload),
+                    _sha256(payload),
+                    descriptor,
+                ),
+            )
+            return downloaded
 
-            def fake_download(url: str, destination: Path, max_bytes: int) -> DownloadedFile:
-                payload = bodies[url]
-                destination.write_bytes(payload)
-                return DownloadedFile(destination, ResponseEvidence())
+        monkeypatch.setattr(http, "download_bounded", fake_download)
 
-            monkeypatch.setattr(http, "download_bounded", fake_download, raising=False)
-
-        yield register
+    return register
 
 
 def _assert_empty(path: Path) -> None:
@@ -400,21 +411,211 @@ def test_fetch_does_not_publish_an_earlier_artifact_when_a_later_one_fails(
     _assert_empty(tmp_path)
 
 
-def test_fetch_rolls_back_publication_and_keeps_caller_owned_files(
+def test_fetch_rolls_back_first_link_when_second_link_loses_a_race(
     tmp_path: Path,
     serve: Callable[[reg.ScalePlan, tuple[bytes, ...]], None],
+    monkeypatch: pytest.MonkeyPatch,
 ):
-    sentinel = tmp_path / "b.txt"
-    sentinel.write_bytes(b"caller owned")
     artifact, archive = _archive_plan(
         [("a.txt", b"a\n"), ("b.txt", b"b\n")],
     )
     plan = _plan(artifact, unzip=True)
     serve(plan, (archive,))
+    real_link = os.link
+    calls = 0
+
+    def competing_second_link(source: Path, target: Path) -> None:
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            target.write_bytes(b"caller won")
+            raise FileExistsError(target)
+        real_link(source, target)
+
+    monkeypatch.setattr(http.os, "link", competing_second_link)
 
     with pytest.raises(FileExistsError):
         http.fetch_http(plan, tmp_path)
 
-    assert sentinel.read_bytes() == b"caller owned"
     assert not (tmp_path / "a.txt").exists()
-    assert list(tmp_path.iterdir()) == [sentinel]
+    assert (tmp_path / "b.txt").read_bytes() == b"caller won"
+
+
+def test_fetch_rejects_source_replacement_after_output_verification(
+    tmp_path: Path,
+    serve: Callable[[reg.ScalePlan, tuple[bytes, ...]], None],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    payload = b"locked\n"
+    plan = _direct_plan(payload)
+    serve(plan, (payload,))
+    real_verify = getattr(http, "_verify_bound_output", None)
+
+    def replace_after_verification(bound: object, *args: object, **kwargs: object) -> object:
+        assert real_verify is not None
+        result = real_verify(bound, *args, **kwargs)
+        source = bound.source_path  # type: ignore[attr-defined]
+        source.replace(source.with_name("verified-original"))
+        source.write_bytes(b"foreign\n")
+        return result
+
+    monkeypatch.setattr(http, "_verify_bound_output", replace_after_verification, raising=False)
+
+    with pytest.raises(ValueError, match="identity"):
+        http.fetch_http(plan, tmp_path)
+
+    _assert_empty(tmp_path)
+
+
+def test_fetch_rechecks_bound_bytes_when_inode_mutates_during_link(
+    tmp_path: Path,
+    serve: Callable[[reg.ScalePlan, tuple[bytes, ...]], None],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    payload = b"locked\n"
+    plan = _direct_plan(payload)
+    serve(plan, (payload,))
+    real_link = os.link
+
+    def mutate_then_link(source: Path, target: Path) -> None:
+        source.write_bytes(b"mutate\n")
+        real_link(source, target)
+
+    monkeypatch.setattr(http.os, "link", mutate_then_link)
+
+    with pytest.raises(LockMismatch, match="sha256"):
+        http.fetch_http(plan, tmp_path)
+
+    _assert_empty(tmp_path)
+
+
+def test_fetch_retains_extracted_bindings_through_publication(
+    tmp_path: Path,
+    serve: Callable[[reg.ScalePlan, tuple[bytes, ...]], None],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    artifact, archive = _archive_plan([("data.txt", b"locked\n")])
+    plan = _plan(artifact, unzip=True)
+    serve(plan, (archive,))
+    retained: list[int] = []
+    real_extract = http.extract_members
+    real_link = os.link
+
+    def capture_extract(*args: object, **kwargs: object) -> list[Path]:
+        paths = real_extract(*args, **kwargs)
+        retained.extend(binding.descriptor for binding in paths._bindings)  # type: ignore[attr-defined]
+        return paths
+
+    def assert_retained(source: Path, target: Path) -> None:
+        assert retained
+        for descriptor in retained:
+            os.fstat(descriptor)
+        real_link(source, target)
+
+    monkeypatch.setattr(http, "extract_members", capture_extract)
+    monkeypatch.setattr(http.os, "link", assert_retained)
+
+    result = http.fetch_http(plan, tmp_path)
+
+    assert result[0].path.read_bytes() == b"locked\n"
+    for descriptor in retained:
+        with pytest.raises(OSError):
+            os.fstat(descriptor)
+
+
+def test_fetch_never_deletes_foreign_transaction_directory_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    payload = b"locked\n"
+    plan = _direct_plan(payload)
+    displaced_roots: list[Path] = []
+
+    def replace_transaction_root(url: str, destination: Path, max_bytes: int) -> DownloadedFile:
+        transaction_root = destination.parent.parent
+        displaced = tmp_path / "displaced-owned-root"
+        transaction_root.replace(displaced)
+        transaction_root.mkdir()
+        (transaction_root / "foreign.txt").write_bytes(b"foreign")
+        displaced_roots.append(displaced)
+        raise RuntimeError("download failed after replacement")
+
+    monkeypatch.setattr(http, "download_bounded", replace_transaction_root)
+
+    with pytest.raises(RuntimeError, match="download failed after replacement"):
+        http.fetch_http(plan, tmp_path)
+
+    assert displaced_roots[0].exists()
+    assert any(path.read_bytes() == b"foreign" for path in tmp_path.rglob("foreign.txt"))
+
+
+def test_fetch_rollback_continues_after_unlink_failure_and_preserves_primary(
+    tmp_path: Path,
+    serve: Callable[[reg.ScalePlan, tuple[bytes, ...]], None],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    artifact, archive = _archive_plan(
+        [("a.txt", b"a\n"), ("b.txt", b"b\n"), ("c.txt", b"c\n")],
+    )
+    plan = _plan(artifact, unzip=True)
+    serve(plan, (archive,))
+    real_link = os.link
+    real_unlink = acquisition.os.unlink
+    links = 0
+    cleanup_attempts: list[Path] = []
+
+    def fail_third_link(source: Path, target: Path) -> None:
+        nonlocal links
+        links += 1
+        if links == 3:
+            target.write_bytes(b"competitor")
+            raise FileExistsError("third link lost")
+        real_link(source, target)
+
+    def fail_first_rollback(path: Path, *args: object, **kwargs: object) -> None:
+        candidate = Path(path)
+        if candidate.parent == tmp_path and candidate.name.startswith(".dataset-cleanup-download-"):
+            cleanup_attempts.append(candidate)
+            if len(cleanup_attempts) == 1:
+                raise OSError("first rollback unlink failed")
+        real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(http.os, "link", fail_third_link)
+    monkeypatch.setattr(acquisition.os, "unlink", fail_first_rollback)
+
+    with pytest.raises(FileExistsError, match="third link lost") as error:
+        http.fetch_http(plan, tmp_path)
+
+    assert len(cleanup_attempts) == 2
+    assert not (tmp_path / "a.txt").exists()
+    assert not (tmp_path / "b.txt").exists()
+    assert (tmp_path / "c.txt").read_bytes() == b"competitor"
+    assert any(path.read_bytes() == b"b\n" for path in tmp_path.glob(".dataset-cleanup-download-*"))
+    assert any("first rollback unlink failed" in note for note in error.value.__notes__)
+
+
+def test_fetch_preserves_primary_when_transaction_rmtree_fails(
+    tmp_path: Path,
+    serve: Callable[[reg.ScalePlan, tuple[bytes, ...]], None],
+    monkeypatch: pytest.MonkeyPatch,
+):
+    payload = b"locked\n"
+    plan = _direct_plan(payload)
+    artifact = replace(plan.artifacts[0], raw=replace(plan.artifacts[0].raw, sha256=_sha256(b"wrong")))
+    plan = replace(plan, artifacts=(artifact,))
+    serve(plan, (payload,))
+    real_rmtree = shutil.rmtree
+    attempts: list[Path] = []
+
+    def fail_rmtree(path: Path, *args: object, **kwargs: object) -> None:
+        attempts.append(Path(path))
+        raise OSError("transaction rmtree failed")
+
+    monkeypatch.setattr(acquisition.shutil, "rmtree", fail_rmtree)
+
+    with pytest.raises(LockMismatch, match="sha256") as error:
+        http.fetch_http(plan, tmp_path)
+
+    assert len(attempts) == 1
+    assert any("transaction rmtree failed" in note for note in error.value.__notes__)
+    monkeypatch.setattr(acquisition.shutil, "rmtree", real_rmtree)
