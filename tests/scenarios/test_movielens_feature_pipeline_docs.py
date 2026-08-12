@@ -84,3 +84,11 @@ def test_execution_mode_is_promoted_to_the_live_proven_entrypoint():
     assert row["execution_entrypoint"] == "spark-apps/movielens-feature-pipeline/dag.py"
     assert row["child_issue"] is None
     assert row["schedule_policy"].startswith("@daily")
+
+
+def test_public_indexes_and_projection_count_the_four_production_apps():
+    assert "Four CI-built Maven applications" in _read(ROOT / "README.md")
+    assert "Four CI-built Maven applications" in _read(ROOT / "docs/index.md")
+    projection = _read(ROOT / "docs/scenarios/execution-modes.md")
+    assert "`movielens_feature_pipeline`" in projection
+    assert "four production DAGs today" in projection

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
+import io
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -76,6 +78,19 @@ def test_owned_stack_cleans_up_failure_and_preserves_primary_diagnostic():
             raise ValueError("primary")
     assert commands == [("./scripts/start-all.sh",), ("./scripts/stop-all.sh",)]
     assert any("cleanup diagnostic" in note for note in caught.value.__notes__)
+
+
+def test_owned_stack_rejects_lingering_project_container_after_cleanup():
+    probes = iter([(), ("data-eng-lab-minio",)])
+
+    with pytest.raises(RuntimeError, match="cleanup left project containers"):
+        with live._owned_stack(
+            runner=lambda *command, **_kwargs: subprocess.CompletedProcess(
+                command, 0, stdout="", stderr=""
+            ),
+            probe=lambda: next(probes),
+        ):
+            pass
 
 
 def test_paused_acceptance_records_and_restores_initial_state_without_unpausing_during_body():
@@ -236,6 +251,79 @@ def test_resolver_does_not_refresh_an_existing_verified_publication():
     ]
 
 
+def test_resolver_rejects_pointer_change_across_read_only_verification():
+    calls = []
+    responses = iter(
+        [
+            '{"dataset":"movielens","scale":"tiny","publication_id":"before","objects":[]}',
+            "",
+            '{"dataset":"movielens","scale":"tiny","publication_id":"after","objects":[]}',
+        ]
+    )
+
+    def runner(*command, **_kwargs):
+        calls.append(command)
+        return subprocess.CompletedProcess(command, 0, stdout=next(responses), stderr="")
+
+    with pytest.raises(AssertionError, match="changed during verify-only"):
+        live._resolve_or_publish_tiny(runner=runner)
+    assert len(calls) == 3
+    assert not any("--refresh" in command for command in calls)
+
+
+def test_source_row_count_reads_the_resolved_ratings_object_and_rejects_header_drift():
+    class Client:
+        def __init__(self, content):
+            self.content = content
+
+        def get_object(self, *, Bucket, Key):
+            assert Bucket == "landing"
+            assert Key == "movielens/_generations/plan/publication/ratings.csv"
+            return {"Body": io.BytesIO(self.content)}
+
+    content = b"userId,movieId,rating,timestamp\n1,10,4.0,100\n2,11,5.0,101\n"
+    resolved = {
+        "objects": [
+            {
+                "object_name": "ratings.csv",
+                "uri": "s3://landing/movielens/_generations/plan/publication/ratings.csv",
+                "size_bytes": len(content),
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+        ]
+    }
+    assert live._ratings_source_row_count(Client(content), resolved) == 2
+    reordered = content.replace(b"userId,movieId", b"movieId,userId")
+    reordered_resolution = {
+        "objects": [
+            {
+                **resolved["objects"][0],
+                "sha256": hashlib.sha256(reordered).hexdigest(),
+            }
+        ]
+    }
+    with pytest.raises(AssertionError, match="exact header"):
+        live._ratings_source_row_count(Client(reordered), reordered_resolution)
+
+
+def test_pointer_snapshot_binds_nonempty_body_and_etag():
+    class Client:
+        def __init__(self, etag='"pointer-etag"'):
+            self.etag = etag
+
+        def get_object(self, *, Bucket, Key):
+            assert Bucket == "landing"
+            assert Key == "_data-eng-locks/current/movielens.json"
+            return {"Body": io.BytesIO(b'{"dataset":"movielens"}'), "ETag": self.etag}
+
+    assert live._pointer_snapshot(Client()) == (
+        b'{"dataset":"movielens"}',
+        '"pointer-etag"',
+    )
+    with pytest.raises(AssertionError, match="ETag"):
+        live._pointer_snapshot(Client(etag=None))
+
+
 def test_live_harness_is_movielens_specific_and_never_refreshes_the_pointer():
     text = (ROOT / "tests/scenarios/test_movielens_feature_pipeline_live.py").read_text(encoding="utf-8")
     assert "tpch" not in text.lower()
@@ -248,6 +336,9 @@ def test_live_harness_is_movielens_specific_and_never_refreshes_the_pointer():
         '"movielens_latest_small_ratings"',
         "sum(num_ratings)",
         "sum(popularity)",
+        "100836",
+        '"377574ef54523af2"',
+        '"4c87d628b90fe38e"',
     ):
         assert value in text
 

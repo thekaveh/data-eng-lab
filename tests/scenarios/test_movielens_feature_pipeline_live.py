@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import csv
 import hashlib
 import importlib.util
+import io
 import json
 import os
 import subprocess
@@ -11,6 +13,7 @@ import urllib.request
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 import pytest
 
@@ -82,6 +85,11 @@ def _owned_stack(runner=None, probe=None):
     finally:
         try:
             execute("./scripts/stop-all.sh")
+            remaining = tuple(inspect())
+            if remaining:
+                raise RuntimeError(
+                    f"volume-preserving cleanup left project containers: {remaining}"
+                )
         except BaseException as cleanup_error:
             if primary is None:
                 raise
@@ -271,12 +279,55 @@ def _assert_owned_runs(
 def _resolve_or_publish_tiny(runner=None) -> dict:
     execute = runner or _run
     resolve = ("uv", "run", "python", "scripts/resolve_dataset.py", "movielens", "--scale", "tiny")
-    execute(*resolve)
+    before = json.loads(execute(*resolve).stdout)
     execute(
         "uv", "run", "python", "scripts/download_datasets.py",
         "--scale", "tiny", "--only", "movielens", "--verify-only",
     )
-    return json.loads(execute(*resolve).stdout)
+    after = json.loads(execute(*resolve).stdout)
+    if before != after:
+        raise AssertionError("MovieLens resolution changed during verify-only")
+    return after
+
+
+def _pointer_snapshot(client) -> tuple[bytes, str]:
+    response = client.get_object(
+        Bucket=_env("MINIO_BUCKET_LANDING", "landing"),
+        Key="_data-eng-locks/current/movielens.json",
+    )
+    body = response["Body"].read()
+    etag = response.get("ETag")
+    if not isinstance(body, bytes) or not body:
+        raise AssertionError("MovieLens active pointer body must be nonempty bytes")
+    if not isinstance(etag, str) or not etag:
+        raise AssertionError("MovieLens active pointer ETag must be nonempty")
+    return body, etag
+
+
+def _ratings_source_row_count(client, resolved: dict) -> int:
+    matches = [item for item in resolved["objects"] if item["object_name"] == "ratings.csv"]
+    if len(matches) != 1:
+        raise AssertionError("resolved publication must contain exactly one ratings.csv")
+    source = matches[0]
+    parsed = urlparse(source["uri"])
+    if parsed.scheme != "s3" or not parsed.netloc or not parsed.path.startswith("/"):
+        raise AssertionError("ratings.csv must have a canonical s3 URI")
+    payload = client.get_object(Bucket=parsed.netloc, Key=parsed.path[1:])["Body"].read()
+    if not isinstance(payload, bytes) or len(payload) != source["size_bytes"]:
+        raise AssertionError("ratings.csv bytes do not match the verified resolver size")
+    if hashlib.sha256(payload).hexdigest() != source["sha256"]:
+        raise AssertionError("ratings.csv bytes do not match the verified resolver digest")
+    rows = csv.reader(io.StringIO(payload.decode("utf-8"), newline=""))
+    if next(rows, None) != ["userId", "movieId", "rating", "timestamp"]:
+        raise AssertionError("ratings.csv must have the exact header")
+    count = 0
+    for row in rows:
+        if len(row) != 4:
+            raise AssertionError("ratings.csv contains a row with the wrong field count")
+        count += 1
+    if count <= 0:
+        raise AssertionError("ratings.csv must contain at least one data row")
+    return count
 
 
 def _driver_ids() -> set[str]:
@@ -460,6 +511,7 @@ def test_movielens_feature_pipeline_live_acceptance():
             published = minio.get_object(Bucket=bucket, Key=key)["Body"].read()
             assert hashlib.sha256(published).hexdigest() == jar_sha256
 
+            pointer_before = _pointer_snapshot(minio)
             resolved = _resolve_or_publish_tiny()
             assert resolved["dataset"] == "movielens" and resolved["scale"] == "tiny"
             assert [
@@ -473,6 +525,8 @@ def test_movielens_feature_pipeline_live_acceptance():
                 ("movies.csv", "movielens_latest_small_movies"),
             ]
             assert all(item["size_bytes"] > 0 for item in resolved["objects"])
+            source_rows = _ratings_source_row_count(minio, resolved)
+            assert source_rows == 100836
 
             _assert_owned_runs(_airflow, window_start, set(), baseline=baseline)
             first_run, first_driver = _execute_paused_test_run(
@@ -520,7 +574,16 @@ def test_movielens_feature_pipeline_live_acceptance():
             }
 
             assert first == second
-            assert first["user"]["row_count"] > 0 and first["movie"]["row_count"] > 0
+            assert first["user"] == {
+                "schema": sorted(["userId:long", "avg_rating:double", "num_ratings:long"]),
+                "row_count": 610,
+                "checksum": "377574ef54523af2",
+            }
+            assert first["movie"] == {
+                "schema": sorted(["movieId:long", "movie_avg:double", "popularity:long"]),
+                "row_count": 9724,
+                "checksum": "4c87d628b90fe38e",
+            }
             assert first["user"]["schema"] == sorted(
                 ["userId:long", "avg_rating:double", "num_ratings:long"]
             )
@@ -545,7 +608,7 @@ def test_movielens_feature_pipeline_live_acceptance():
             )[0]
             assert int(user_measures[0]) == first["user"]["row_count"]
             assert int(movie_measures[0]) == first["movie"]["row_count"]
-            assert int(user_measures[1]) == int(movie_measures[1]) > 0
+            assert int(user_measures[1]) == int(movie_measures[1]) == source_rows
             assert all(float(value) >= 0.0 for value in (*user_measures[2:], *movie_measures[2:]))
             assert first_driver != second_driver
             assert datetime.fromisoformat(second_run["start_date"]) >= datetime.fromisoformat(first_run["end_date"])
@@ -556,3 +619,4 @@ def test_movielens_feature_pipeline_live_acceptance():
                 require_terminal=True,
                 baseline=baseline,
             )
+            assert _pointer_snapshot(minio) == pointer_before

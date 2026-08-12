@@ -67,7 +67,7 @@ Every curated table is an Apache Iceberg table accessed through the Atlas Iceber
 | [Scenario catalog](docs/scenarios/index.md) | All 19 end-to-end scenarios, dependencies, execution modes, and source datasets |
 | [Execution-mode matrix](docs/scenarios/execution-modes.md) | Four existing production DAGs, five approved children, seven notebook-only scenarios, and three unscheduled streams |
 | [Notebook walkthroughs](docs/notebooks/index.md) | Side-by-side docs for 17 Scala/PySpark pairs and two Trino SQL/client pairs |
-| [Spark apps](docs/spark-apps/index.md) | Three CI-built Maven applications published by Jenkins and submitted through Airflow |
+| [Spark apps](docs/spark-apps/index.md) | Four CI-built Maven applications published by Jenkins and submitted through Airflow |
 | [Datasets](docs/datasets.md) | NYC Taxi, TPC-H, Online Retail, GH Archive, and MovieLens data plus synthetic events |
 | [Lakehouse design](docs/lakehouse.md) | Landing, bronze, silver, gold, namespaces, buckets, and catalog behavior |
 | [Atlas enablement](docs/atlas-enablement.md) | Accepted consumer configuration and the A1–A9 infrastructure record |
@@ -81,7 +81,7 @@ Every curated table is an Apache Iceberg table accessed through the Atlas Iceber
 | Dual-language Scala/PySpark parity pairs | 17 |
 | Redpanda-backed Structured Streaming scenarios | 3 |
 | Incremental file-source Structured Streaming scenarios | 1 |
-| CI-built Maven Spark apps | 3 |
+| CI-built Maven Spark apps | 4 |
 | Curated downloaded datasets | 5 |
 | Iceberg medallion layers | 3 |
 

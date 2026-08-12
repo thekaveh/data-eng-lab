@@ -5,6 +5,8 @@ import org.apache.spark.sql.types._
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
 
+import java.nio.charset.StandardCharsets
+import java.nio.file.Files
 import scala.collection.mutable
 
 class MovieLensFeaturePipelineSpec extends AnyFunSuite with BeforeAndAfterAll {
@@ -124,6 +126,33 @@ class MovieLensFeaturePipelineSpec extends AnyFunSuite with BeforeAndAfterAll {
       ratings(Seq((1L, 10L, Double.PositiveInfinity, 100L)))
     )
     invalid.foreach(frame => assertThrows[IllegalArgumentException](FeatureTransforms.validateRatings(frame)))
+  }
+
+  test("CSV read rejects missing extra and reordered source headers") {
+    def source(header: String): String = {
+      val directory = Files.createTempDirectory("movielens-header-")
+      val path = directory.resolve("ratings.csv")
+      Files.writeString(path, s"$header\n1,10,4.0,100\n", StandardCharsets.UTF_8)
+      path.toUri.toString
+    }
+
+    assert(MovieLensFeaturePipeline.readRatings(
+      spark, source("userId,movieId,rating,timestamp")
+    ).count() == 1L)
+    Seq(
+      "userId,movieId,rating",
+      "userId,movieId,rating,timestamp,extra",
+      "movieId,userId,rating,timestamp",
+      "memberId,movieId,rating,timestamp",
+      "userId,userId,rating,timestamp",
+      "\ufeffuserId,movieId,rating,timestamp",
+      " userId,movieId,rating,timestamp",
+      "userId,movieId,rating,timestamp "
+    ).foreach { header =>
+      withClue(s"header=$header ") {
+        assertThrows[Exception](MovieLensFeaturePipeline.readRatings(spark, source(header)).count())
+      }
+    }
   }
 
   test("builds exact notebook features and counts duplicate rating events separately") {

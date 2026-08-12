@@ -2,6 +2,8 @@ package com.thekaveh.dataeng.movielens
 
 import org.apache.spark.sql.{DataFrame, SparkSession}
 
+import java.nio.charset.StandardCharsets
+
 final case class RunResult(userRows: Long, movieRows: Long, provenance: Provenance)
 
 trait TableWriter {
@@ -31,6 +33,29 @@ final class IcebergTableWriter(spark: SparkSession) extends TableWriter {
 object MovieLensFeaturePipeline {
   val UserTable = "lakehouse.gold.ml_user_features"
   val MovieTable = "lakehouse.gold.ml_movie_features"
+  private val RatingsHeader = "userId,movieId,rating,timestamp"
+
+  def readRatings(spark: SparkSession, uri: String): DataFrame = {
+    val files = spark.sparkContext.binaryFiles(uri, minPartitions = 1).values.take(2)
+    if (files.length != 1)
+      throw new IllegalArgumentException("ratings.csv must resolve to exactly one file")
+    val stream = files.head.open()
+    val lineBytes = try {
+      Iterator.continually(stream.read()).takeWhile(value => value != -1 && value != '\n')
+        .map(_.toByte).toArray
+    } finally stream.close()
+    val header = new String(lineBytes, StandardCharsets.UTF_8).stripSuffix("\r")
+    if (header != RatingsHeader)
+      throw new IllegalArgumentException(s"ratings.csv must have exact header: $RatingsHeader")
+    spark.read
+      .option("header", "true")
+      .option("enforceSchema", "false")
+      .option("mode", "FAILFAST")
+      .option("encoding", "UTF-8")
+      .option("delimiter", ",")
+      .schema(FeatureTransforms.RatingsSchema)
+      .csv(uri)
+  }
 
   private def sameRows(expected: DataFrame, actual: DataFrame): Boolean =
     expected.exceptAll(actual).limit(1).count() == 0 && actual.exceptAll(expected).limit(1).count() == 0
@@ -84,13 +109,7 @@ object MovieLensFeaturePipeline {
     val sources = MovieLensSources.parse(args)
     val spark = SparkSession.builder().appName("movielens-feature-pipeline").getOrCreate()
     try {
-      val ratings = spark.read
-        .option("header", "true")
-        .option("mode", "FAILFAST")
-        .option("encoding", "UTF-8")
-        .option("delimiter", ",")
-        .schema(FeatureTransforms.RatingsSchema)
-        .csv(sources.sparkUri("ratings.csv"))
+      val ratings = readRatings(spark, sources.sparkUri("ratings.csv"))
       val result = runResolved(sources, ratings, new IcebergTableWriter(spark))
       // scalastyle:off println
       println(s"wrote $UserTable=${result.userRows}, $MovieTable=${result.movieRows}, " +
