@@ -45,7 +45,7 @@ Classification: **intentionally unscheduled long-running streaming**. No Airflow
 
 ## 6. Usage
 
-1. Start the Atlas stack with Redpanda: `make up` (requires Atlas A9 / issue #269)
+1. Start the Atlas stack with Redpanda: `make up`
 2. Produce events: `python scenarios/streaming_ingest-events-spark-iceberg/producer.py [count]` (defaults to 100)
 3. Open either notebook on the Atlas stack and run all sections
 4. Verify output:

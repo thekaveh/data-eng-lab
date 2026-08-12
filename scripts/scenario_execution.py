@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from yaml.constructor import ConstructorError
 
 CLASSIFICATIONS = (
     "existing production DAG",
@@ -38,6 +39,33 @@ class ExecutionModeError(ValueError):
     """Raised when the execution-mode contract is malformed or inconsistent."""
 
 
+class _UniqueKeySafeLoader(yaml.SafeLoader):
+    """Safe YAML loader that rejects duplicate keys instead of overwriting them."""
+
+
+def _construct_unique_mapping(
+    loader: _UniqueKeySafeLoader, node: yaml.MappingNode, deep: bool = False
+) -> dict[Any, Any]:
+    mapping: dict[Any, Any] = {}
+    for key_node, value_node in node.value:
+        key = loader.construct_object(key_node, deep=deep)
+        if key in mapping:
+            raise ConstructorError(
+                "while constructing a mapping",
+                node.start_mark,
+                f"duplicate mapping key: {key!r}",
+                key_node.start_mark,
+            )
+        mapping[key] = loader.construct_object(value_node, deep=deep)
+    return mapping
+
+
+_UniqueKeySafeLoader.add_constructor(
+    yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG,
+    _construct_unique_mapping,
+)
+
+
 @dataclasses.dataclass(frozen=True)
 class ExecutionMode:
     scenario_id: str
@@ -55,7 +83,7 @@ class ExecutionMode:
 def parse_execution_modes(text: str) -> tuple[ExecutionMode, ...]:
     """Parse the closed execution-mode YAML schema without repository I/O."""
     try:
-        document = yaml.safe_load(text)
+        document = yaml.load(text, Loader=_UniqueKeySafeLoader)
     except yaml.YAMLError as error:
         raise ExecutionModeError(f"invalid YAML: {error}") from error
     if not isinstance(document, dict):
@@ -65,8 +93,8 @@ def parse_execution_modes(text: str) -> tuple[ExecutionMode, ...]:
         raise ExecutionModeError(f"unknown top-level fields: {sorted(unknown)}")
     if missing := _TOP_LEVEL_FIELDS - actual_top:
         raise ExecutionModeError(f"missing top-level fields: {sorted(missing)}")
-    if document["version"] != 1:
-        raise ExecutionModeError("version must be 1")
+    if isinstance(document["version"], bool) or type(document["version"]) is not int or document["version"] != 1:
+        raise ExecutionModeError("version must be integer 1")
     rows = document["scenarios"]
     if not isinstance(rows, list):
         raise ExecutionModeError("scenarios must be a list")
@@ -238,9 +266,9 @@ def render_markdown(modes: tuple[ExecutionMode, ...]) -> str:
             mode.owner,
             f"{mode.runtime}; {mode.schedule_policy}",
             execution,
-            "; ".join(mode.dependencies),
+            _join_contract_items(mode.dependencies),
             mode.justification,
-            "; ".join(mode.acceptance_contract),
+            _join_contract_items(mode.acceptance_contract),
         )
         lines.append("| " + " | ".join(_markdown_cell(cell) for cell in cells) + " |")
     lines.extend(
@@ -272,6 +300,10 @@ def render_markdown(modes: tuple[ExecutionMode, ...]) -> str:
 
 def _markdown_cell(value: str) -> str:
     return value.replace("|", "\\|").replace("\n", " ").strip()
+
+
+def _join_contract_items(items: tuple[str, ...]) -> str:
+    return "; ".join(item.rstrip(".;") for item in items) + "."
 
 
 def check_projection(root: Path) -> tuple[str, ...]:

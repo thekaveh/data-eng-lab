@@ -51,7 +51,7 @@ def test_scaffold_output_passes_the_verifier(tmp_path: Path):
 
     cfg = yaml.safe_load((ROOT / "scripts" / "verify_repo_config.yaml").read_text())
     errors = [f for f in verify.run_checks(tmp_path, cfg) if f.severity == "error"]
-    assert errors == [], errors
+    assert [error.message for error in errors] == ["scenarios/execution-modes.yaml is required"]
 
 
 def test_scaffold_rejects_bad_name(tmp_path: Path):

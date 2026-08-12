@@ -38,14 +38,12 @@ services:
       dataset-resolver:
         condition: service_healthy
     volumes:
-      - ../scenarios:/opt/airflow/dags/data_eng_lab_scenarios:ro
       - ../spark-apps:/opt/airflow/dags/data_eng_lab_spark_apps:ro
       - ../datasets:/opt/data-eng-lab/datasets:ro
       - ../tests/infra/probes:/opt/probes:ro
 
   airflow-dag-processor:
     volumes:
-      - ../scenarios:/opt/airflow/dags/data_eng_lab_scenarios:ro
       - ../spark-apps:/opt/airflow/dags/data_eng_lab_spark_apps:ro
 
   jupyterhub:

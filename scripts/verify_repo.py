@@ -106,7 +106,13 @@ def _check_dataset_registry(root: Path, cfg: dict) -> list[Finding]:
 def _check_scenario_execution_modes(root: Path, _cfg: dict) -> list[Finding]:
     matrix = root / "scenarios/execution-modes.yaml"
     if not matrix.exists():
-        return []
+        return [
+            Finding(
+                "scenario.execution_modes",
+                "error",
+                "scenarios/execution-modes.yaml is required",
+            )
+        ]
     import importlib.util  # noqa: PLC0415
 
     module_path = Path(__file__).resolve().parent / "scenario_execution.py"

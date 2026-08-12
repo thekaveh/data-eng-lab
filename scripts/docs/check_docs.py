@@ -123,10 +123,13 @@ def check_execution_modes(repo_root: Path) -> tuple[Finding, ...]:
     root = repo_root.resolve()
     matrix = root / "scenarios/execution-modes.yaml"
     projection = root / "docs/scenarios/execution-modes.md"
+    missing = []
     if not matrix.exists():
-        if projection.exists():
-            return (_error("scenario execution-mode projection exists without its canonical matrix"),)
-        return ()
+        missing.append(_error("scenario execution-mode canonical matrix is missing"))
+    if not projection.exists():
+        missing.append(_error("scenario execution-mode public projection is missing"))
+    if missing:
+        return tuple(missing)
     try:
         return tuple(_error(message) for message in check_projection(root))
     except ExecutionModeError as error:

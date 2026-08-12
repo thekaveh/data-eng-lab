@@ -45,7 +45,7 @@ Both languages define identical quality-check functions (`check_null`, `check_ne
 
 ## 5. Orchestration
 
-Classification: **approved new production DAG**. No production DAG exists yet. Child #91 owns durable quality facts, thresholds, failure semantics, operator response, and live acceptance; until it passes, run the paired notebooks only.
+Classification: **approved new production DAG**. No production DAG exists yet. Child #91 owns the production Atlas Airflow DAG and Spark standalone application, durable Bronze/Silver/Gold quality facts, thresholds, dashboard or query surface, failure semantics, operator response, and terminal live Airflow/Spark acceptance. Until it passes, run the paired notebooks only.
 
 ## 6. Usage
 

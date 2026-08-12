@@ -46,7 +46,7 @@ Classification: **intentionally unscheduled long-running streaming**. No Airflow
 
 ## 6. Usage
 
-1. Start Atlas with Redpanda: `make up` (requires Atlas A9 / issue #269)
+1. Start Atlas with Redpanda: `make up`
 2. Produce CDC events to the `online_retail_cdc` topic (JSON: `invoice`, `stock_code`, `quantity`, `price`)
 3. Open either notebook on the Atlas stack and run all sections
 4. The `writeStream.foreachBatch` call upserts each micro-batch; verify:

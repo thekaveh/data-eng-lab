@@ -1,10 +1,10 @@
 # table_maintenance-nyc_taxi-spark-iceberg
 
-Demonstrates Iceberg table maintenance operations: overwrite, VACUUM, and time travel on NYC taxi trip data.
+Demonstrates Iceberg file compaction, snapshot expiry, and orphan-file removal on a scenario-owned NYC taxi table.
 
 ## 1. Purpose
 
-Iceberg provides powerful table maintenance operations that are essential for production lakehouse management: time travel (querying historical table versions), overwriting data by partition (efficiently replacing bad or outdated partitions), and VACUUM (removing orphan files and cleaning up old snapshots). This scenario shows all three operations in action on real taxi trip data.
+The paired notebooks copy Bronze NYC taxi rows into an isolated table, add another snapshot, compact data files with `rewrite_data_files`, expire older snapshots with `retain_last => 1`, and call `remove_orphan_files`. These are destructive operator demonstrations, not a production retention policy.
 
 ## 2. Data Model
 
@@ -28,20 +28,20 @@ Source: `lakehouse.bronze.nyc_taxi_trips` (populated by `batch_ingest-nyc_taxi-s
 
 | Table | Layer | Key Columns |
 |---|---|---|
-| `lakehouse.silver.maintenance_demo` | Silver | Demonstrates overwrite, VACUUM, and time travel |
+| `lakehouse.silver.nyc_taxi_tm` | Silver | Scenario-owned compaction and cleanup target |
 
 ## 3. Architecture
 
 ![Architecture](../../docs/diagrams/img/table_maintenance-nyc_taxi-spark-iceberg.png)
 
-NYC taxi trip data from the bronze table flows through Spark batch processing demonstrating three Iceberg maintenance operations: (1) partition overwrite — replacing a specific date partition with new data, (2) VACUUM — cleaning up orphan metadata and data files, and (3) time travel — querying historical versions of the table using version or timestamp.
+NYC taxi trip data is copied from Bronze into `nyc_taxi_tm`. The notebooks append a filtered copy, inspect file metadata, compact files, expire snapshots while retaining one, remove orphan files, and inspect the resulting snapshot and file counts.
 
 ## 4. Notebooks
 
-- **Zeppelin (Scala):** `zeppelin/notebook.zpln` — Sections: Overview, Create Table with Seed Data, Apply Changes (overwrite a partition), Time Travel (query previous version), VACUUM (clean up orphan files), Verify
-- **Jupyter (PySpark):** `jupyter/notebook.ipynb` — Same sections; same maintenance operations using PySpark with `OPTION (overwritePartitions = true)`, `VACUUM`, and time travel syntax `VERSION AS OF` / `TIMESTAMP AS OF`
+- **Zeppelin (Scala):** `zeppelin/notebook.zpln` — creates and appends to `nyc_taxi_tm`, then calls `rewrite_data_files`, `expire_snapshots`, and `remove_orphan_files`
+- **Jupyter (PySpark):** `jupyter/notebook.ipynb` — executes the same SQL procedures and verification queries
 
-Both languages implement identical maintenance operations: seed data insertion, partition overwrite, time travel, and VACUUM.
+Both languages implement the same compaction, snapshot-expiry, orphan-removal, and metadata-verification sequence.
 
 ## 5. Orchestration
 
@@ -53,7 +53,7 @@ Classification: **intentionally notebook-only**. No Airflow DAG or schedule exis
 2. Open either notebook on the Atlas stack.
 3. Verify:
      ```bash
-     spark-sql -e "SELECT COUNT(*) FROM lakehouse.silver.maintenance_demo"
+     spark-sql -e "SELECT COUNT(*) FROM lakehouse.silver.nyc_taxi_tm"
      ```
 
 ## 7. Dependencies
@@ -64,7 +64,7 @@ Classification: **intentionally notebook-only**. No Airflow DAG or schedule exis
 
 ## 8. Known Issues & Caveats
 
-Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. Both `silver` and `gold` namespaces must exist; run `scripts/register_iceberg.py` first. VACUUM retention is set to safety minimums — do not set retention below 1008 minutes (1 day) in production. The `retainLast(1)` ensures at least one history version is always kept.
+Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `silver` namespace must exist; run `scripts/register_iceberg.py` first. The notebooks deliberately pass `older_than => current_timestamp()` and retain only one snapshot, so run them only against the isolated scenario table.
 
 ## See Also
 
