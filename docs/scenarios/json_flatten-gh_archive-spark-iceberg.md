@@ -10,7 +10,7 @@ Handling semi-structured nested data is a common ETL pattern in data engineering
 
 ### 2.1 Input Source
 
-Source: `s3a://landing/gh_archive/*.json.gz` (compressed JSON files from GitHub Archive, downloaded via `make datasets`).
+Source: compressed GitHub Archive JSON objects from one resolver-verified immutable generation published by `make datasets`.
 
 | Column | Type | Source |
 |---|---|---|
@@ -58,7 +58,7 @@ Airflow DAG: `json_flatten_gh_archive` — a scheduled batch DAG.
 
 ## 7. Dependencies
 
-- **Dataset:** GitHub Archive compressed JSON from `s3a://landing/gh_archive/`
+- **Dataset:** resolver-verified immutable GitHub Archive compressed JSON
 - **Atlas services:** A1-A4 (Spark, Iceberg, S3 catalog, lakehouse catalog)
 - **Other:** None
 

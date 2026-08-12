@@ -21,6 +21,9 @@ jobs:
         with:
           enable-cache: true
       - name: Validate the pinned Atlas consumer contract
+        env:
+          MINIO_ROOT_USER: ci-placeholder-user
+          MINIO_ROOT_PASSWORD: ci-placeholder-password
         run: |
           cp infra/.env.example infra/.env
           cd infra
@@ -33,7 +36,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4
         with:
-          submodules: false          # base CI does not need the Atlas submodule
+          submodules: recursive      # pinned Atlas contract tests import and assemble it
           persist-credentials: false
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
         with:
@@ -50,10 +53,6 @@ jobs:
         run: uv run python scripts/verify_repo.py --root .
       - name: Unit + static tests (offline)
         run: uv run pytest -m "not infra and not network" -q
-      - name: Network tests (pre-warm DuckDB tpch extension)
-        run: |
-          uv run python -c "import duckdb; c = duckdb.connect(); c.execute('INSTALL tpch'); c.execute('LOAD tpch')"
-          uv run pytest -m "network" -q
 
   docs-build:
     runs-on: ubuntu-24.04

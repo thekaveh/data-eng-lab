@@ -22,7 +22,7 @@ TPC-H is locked as a generator rather than an HTTP artifact. The canonical envir
 
 The strict fail-on-drift policy accepts one size, digest, and schema identity for each locked item. Mutable sources are not exempt: changed upstream bytes require a reviewed lock update after provenance, licensing, schema, and downstream compatibility are reconsidered.
 
-Issue #80 defines the contract boundary. The lock is defined, validated, and parsed, but it does not verify downloaded, extracted, generated, uploaded, or reused bytes. Contract runtime enforcement is tracked in issue #81; until that work lands, neither a successful download nor an existing MinIO object is a runtime verification claim.
+Issue #80 defines the reviewed lock-update boundary. Runtime publication enforces that contract: acquisition verifies raw and extracted bytes, physical schemas, and generated outputs before upload; publication streams candidate objects back from MinIO before committing an immutable manifest; and one conditional write changes the active pointer. A default rerun verifies the complete active generation instead of treating object existence, metadata, `HEAD`, or ETag as proof.
 
 ## 2. Current Datasets
 
@@ -41,7 +41,7 @@ Issue #80 defines the contract boundary. The lock is defined, validated, and par
 3. For HTTP data, add each source once under `artifacts`, lock its raw bytes and landing outputs, then reference artifact identifiers from each `scales` tier. For generated data, add the complete `generator` environment and per-tier output locks.
 4. Add a fetch implementation only when the source is neither the existing `http` nor `tpch` kind.
 5. Audit the source or generator with the reviewed procedure below, validate the registry, and run all dataset and documentation gates.
-6. Add the scenario folder and paired notebooks that consume the landing objects.
+6. Add the scenario folder and paired notebooks that resolve the expected scale and consume only the returned immutable generation URIs.
 
 ## 4. Reviewed Evidence and Source Realities
 
@@ -51,7 +51,7 @@ The issue #80 review acquired 15 unique HTTP artifacts, recorded 25 HTTP landing
 - **GH Archive:** the minimum JSON contract locks the fields consumed by the scenarios while permitting additional event fields. Exact artifact digests still detect any byte change.
 - **Online Retail II:** the archive contains one `online_retail_II.xlsx` workbook, not CSV. Its two exact sheets are `Year 2009-2010` and `Year 2010-2011`, both with the locked header and nullability contract.
 - **MovieLens:** `ml-latest-small.zip` is a mutable alias and `latest-small` is not a source revision. Its bundled README supplies publication identity `2018-09-26`. Latest-small and 25M have distinct bundled usage terms, so release-specific terms control rather than a shared label being treated as permission for every archive.
-- **MovieLens release identity:** artifact-level provenance governs the selected release. Both mutually exclusive archives intentionally use scale-local landing identity for shared flattened names such as `ratings.csv`. Runtime issue #81 must atomically replace the selected release and prevent mixed stale-release objects under the shared prefix.
+- **MovieLens release identity:** artifact-level provenance governs the selected release. Both mutually exclusive archives intentionally use scale-local logical names such as `ratings.csv`. Publication places each release in a separate immutable generation, and the active pointer changes only after the complete selected release verifies, so a run cannot mix stale objects from another release.
 - **TPC-H:** all three scales use the same eight complete Parquet schemas and the same locked generator environment. Reference runs load the preverified extension offline; they do not install it at runtime.
 
 ## 5. Authoritative Sources, Licenses, and Attribution
@@ -83,7 +83,7 @@ Audit a direct HTTP source into a candidate file outside the repository:
 uv run python scripts/audit_dataset_lock.py http --url https://example.org/path/artifact.parquet --output /private/tmp/dataset-lock-candidate.yaml
 ```
 
-Add `--archive` for a ZIP source. The command emits candidate metadata only: it neither changes the registry nor uploads to MinIO.
+Add `--archive` for a ZIP source. The command emits candidate metadata only: it neither changes the registry nor uploads to MinIO. This intentional issue #80 audit, review, and registry-edit workflow is the only way to accept changed source or generator bytes. A runtime mismatch never updates the registry, recalculates a lock, or blesses newly observed bytes.
 
 Build and run the canonical TPC-H exporter with networking disabled during generation:
 
@@ -101,20 +101,38 @@ make docs-check
 make docs-wiki
 ```
 
-## 7. Usage
+## 7. Verified Publication and Recovery
+
+`make up` starts and health-checks services; `make up` does not acquire datasets. After MinIO is running, publish or verify the selected tier explicitly:
 
 ```bash
-make up                    # boot the Atlas data-eng track; MinIO must be running
-make datasets              # land the small tier
-make datasets SCALE=tiny   # CI-sized subset
-make datasets SCALE=medium # more data; heavier queries
-uv run python scripts/download_datasets.py --scale medium --only nyc_taxi
-uv run python scripts/download_datasets.py --dry-run
+make datasets SCALE=small
+uv run python scripts/download_datasets.py --scale small --verify-only
+uv run python scripts/download_datasets.py --scale small --only movielens --refresh
+uv run python scripts/download_datasets.py --scale small --only movielens --rollback-manifest <64-hex-digest>
 ```
 
-The downloader reads MinIO credentials and the published S3 port from `infra/.env`. It currently skips an existing object unless `--force` is specified, but that existence check is not digest, size, schema, or provenance verification; issue #81 owns fail-before-use enforcement.
+The downloader reads MinIO credentials and the published S3 port from `infra/.env`. Its actions are:
 
-## 8. Related Scenarios by Dataset
+- **Default:** `make datasets SCALE=small`, or the CLI with no action flag, streams and schema-checks the active pointer, immutable manifest, and every referenced object. An exact active generation returns without an upstream request, upload, pointer write, or delete. A missing pointer triggers initial publication; exact legacy flat objects may first be streamed into owned staging, verified, and migrated into a new immutable generation without reacquisition.
+- **Verify only:** `--verify-only` performs the same complete active-generation check without acquisition, generation, repair, lease acquisition, upload, or pointer mutation. It fails if there is no valid active generation and cannot be combined with `--dry-run`.
+- **Refresh:** `--refresh` reacquires or regenerates the complete selected plan, verifies local and remote content, writes a new immutable manifest, and conditionally switches the pointer. Deprecated `--force` is only an alias for `--refresh`; it never bypasses a digest or schema lock.
+- **Rollback:** `--rollback-manifest <64-hex-digest>` accepts exactly one explicit `--only` dataset and one explicit `--scale`. Use a manifest digest reported by `--dry-run` or the result's retained-history fields. Rollback re-verifies that retained manifest, all referenced bytes, all schemas, and the current selected-plan identity before a conditional pointer replacement. A historical manifest from a changed selected plan is rejected.
+- **Dry run:** `--dry-run` reads and validates current state without an upstream source request or S3 mutation. Its canonical JSON describes the intended pointer precondition and reports retained, unreferenced, candidate, or ambiguous history where that inventory can be proven.
+
+Publication is atomic per dataset, not across a multi-dataset invocation. A corrupt active object, manifest, or pointer fails closed in default and verify-only modes. A pointer precondition failure identifies a concurrent publisher and is not retried with a stale ETag. Lost-response and other ambiguous write diagnostics distinguish an exact self-commit from a competing or absent value; operators must use the reported state rather than blindly repeat a pointer change.
+
+Immutable manifest history and prior generations remain retained. There is no automatic garbage collection in issue #81. Publication output reports proven orphan keys and retained, unreferenced, ambiguous, or inactive history when determinable. Manual deletion is safe only after proving an object is unreachable from every immutable manifest; do not infer safety from the current pointer alone.
+
+## 8. Consumer Resolution and Expected Scale
+
+Every dataset-dependent run supplies `tiny`, `small`, or `medium`. The precedence is explicit parameter, then `DATASET_SCALE`, then `small`: a CLI `--scale`, Airflow run configuration `dataset_scale`, or notebook override wins; otherwise the run reads `DATASET_SCALE`; only then does the launcher use the documented `small` default. A consumer never accepts whichever scale happens to be active.
+
+Containers call the internal, read-only `dataset-resolver` service at `POST /v1/resolve` with exactly `dataset` and `expected_scale`; host workflows may use `scripts/resolve_dataset.py`. Resolution verifies the pointer and manifest structure, selected-plan identity, ordered object set, every remote byte stream, and each physical schema before returning the immutable URI tuple. A failure returns no partial URI list. Airflow resolves during task execution, and notebooks resolve once in their bootstrap paragraph; each run retains that one manifest and URI tuple even if the active pointer changes later.
+
+The trust boundary begins after that complete resolver gate. The run relies on trusted MinIO storage and administrators, and on only the compliant publisher mutating generation, manifest, pointer, and lease keys. The application-level protocol does not claim protection from malicious code with the same broad development credentials, storage-administrator mutation, or disk corruption after verification. The next full resolution or verification detects an out-of-band change and fails closed.
+
+## 9. Related Scenarios by Dataset
 
 ### NYC Taxi (`nyc_taxi`)
 - [batch_ingest-nyc_taxi-spark-iceberg](scenarios/batch_ingest-nyc_taxi-spark-iceberg.md)
@@ -147,7 +165,7 @@ The downloader reads MinIO credentials and the published S3 port from `infra/.en
 - [streaming_ingest-events-spark-iceberg](scenarios/streaming_ingest-events-spark-iceberg.md)
 - [streaming_windows-events-spark-iceberg](scenarios/streaming_windows-events-spark-iceberg.md)
 
-## 9. See Also
+## 10. See Also
 
 - [Scenario Catalog](scenarios/index.md)
 - [Lakehouse Architecture](lakehouse.md)

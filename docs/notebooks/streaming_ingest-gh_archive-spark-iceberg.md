@@ -35,20 +35,26 @@ from pyspark.sql.types import StringType, StructType
 spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
 ```
 
+Both setup implementations choose an explicit notebook scale override before `DATASET_SCALE`, default to `small`, and call the internal resolver once. They validate and retain one verified immutable generation plus its publication and manifest identities.
+
 ### 2.2 Read
 
 **Scala (Zeppelin):**
 
 ```scala
 val schema = new StructType().add("id", StringType).add("type", StringType).add("created_at", StringType)
-val stream = spark.readStream.schema(schema).json("s3a://landing/gh_archive")
+val streams = datasetSparkUris.map(uri => spark.readStream.schema(schema).json(uri))
+val stream = streams.reduce(_.unionByName(_))
 ```
 
 **PySpark (Jupyter):**
 
 ```python
 schema = StructType().add("id", StringType()).add("type", StringType()).add("created_at", StringType())
-stream = spark.readStream.schema(schema).json("s3a://landing/gh_archive")
+streams = [spark.readStream.schema(schema).json(uri) for uri in dataset_spark_uris]
+stream = streams[0]
+for next_stream in streams[1:]:
+    stream = stream.unionByName(next_stream)
 ```
 
 ### 2.3 Transform
@@ -70,14 +76,14 @@ events = stream.withColumn("created_at", F.col("created_at").cast("timestamp"))
 **Scala (Zeppelin):**
 
 ```scala
-val query = events.writeStream.format("iceberg").outputMode("append").option("checkpointLocation", "s3a://checkpoints/gh_events_file").toTable("lakehouse.bronze.gh_events_stream")
+val query = events.writeStream.format("iceberg").outputMode("append").option("checkpointLocation", s"s3a://checkpoints/gh_events_file/$datasetScale/$publicationId/$manifestSha256").toTable("lakehouse.bronze.gh_events_stream")
 // query.awaitTermination() to keep stream running
 ```
 
 **PySpark (Jupyter):**
 
 ```python
-query = events.writeStream.format("iceberg").outputMode("append").option("checkpointLocation", "s3a://checkpoints/gh_events_file").toTable("lakehouse.bronze.gh_events_stream")
+query = events.writeStream.format("iceberg").outputMode("append").option("checkpointLocation", f"s3a://checkpoints/gh_events_file/{dataset_scale}/{publication_id}/{manifest_sha256}").toTable("lakehouse.bronze.gh_events_stream")
 # query.awaitTermination() to keep stream running
 ```
 

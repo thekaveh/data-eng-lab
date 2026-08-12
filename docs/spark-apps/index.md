@@ -8,7 +8,7 @@ The data products form a sequence: `nyc-taxi-etl` creates the Bronze table, and 
 
 | Application | Description | Source | Target | DAG |
 |---|---|---|---|---|
-| [nyc-taxi-etl](nyc-taxi-etl.md) | Raw Parquet → Bronze Iceberg with quality filtering | `s3a://landing/nyc_taxi/` | `lakehouse.bronze.nyc_taxi_trips` | `nyc_taxi_etl` |
+| [nyc-taxi-etl](nyc-taxi-etl.md) | Raw Parquet → Bronze Iceberg with quality filtering | resolver-verified immutable NYC Taxi generation | `lakehouse.bronze.nyc_taxi_trips` | `nyc_taxi_etl` |
 | [nyc-taxi-medallion](nyc-taxi-medallion.md) | Bronze → Silver dedup → Gold daily aggregation | `lakehouse.bronze.nyc_taxi_trips` | `lakehouse.silver.*`, `lakehouse.gold.*` | `nyc_taxi_medallion` |
 
 ## 2. CI/CD Pipeline

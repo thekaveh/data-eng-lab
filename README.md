@@ -45,7 +45,7 @@ make datasets
 make verify
 ```
 
-The launcher validates `atlas.consumer.yml`, materializes the Atlas environment, starts the data-engineering track, registers the Iceberg namespaces, and runs the repository preflight. See [Getting started](docs/getting-started.md) for prerequisites, endpoints, and the complete walkthrough.
+The launcher validates `atlas.consumer.yml`, materializes the Atlas environment, starts the data-engineering track, registers the Iceberg namespaces, and runs the repository preflight. `make datasets` is a separate step that verifies or publishes locked datasets as verified immutable generations; stack startup does not download them. See [Getting started](docs/getting-started.md) for prerequisites, endpoints, and the complete walkthrough.
 
 ## 2. Architecture
 

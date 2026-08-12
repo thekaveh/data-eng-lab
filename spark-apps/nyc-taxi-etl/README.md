@@ -1,6 +1,6 @@
 # NYC Taxi ETL — Raw to Bronze
 
-This Spark application reads the configured NYC Taxi Parquet landing set, normalizes the monthly schemas, filters invalid trips, and replaces the Bronze Iceberg table. Jenkins builds and publishes the application artifact; Airflow submits it to the Atlas Spark standalone cluster and confirms the terminal driver status.
+This Spark application reads one resolver-verified immutable NYC Taxi Parquet generation, normalizes the monthly schemas, filters invalid trips, and replaces the Bronze Iceberg table. Jenkins builds and publishes the application artifact; Airflow resolves the requested scale during task execution, submits the immutable URIs to the Atlas Spark standalone cluster, and confirms the terminal driver status.
 
 ## 1. Architecture
 
@@ -19,11 +19,11 @@ Jenkins publishes the Maven output as `s3a://jars/nyc-taxi-etl/0.1.0/app.jar`. T
 - **Entrypoint class:** `com.thekaveh.dataeng.nyctaxi.NycTaxiEtl`
 - **Automation:** `Jenkinsfile` and `dag.py` at the application root
 
-The entrypoint accepts two positional arguments: the landing prefix followed by the target table. Their defaults are `s3a://landing/nyc_taxi/` and `lakehouse.bronze.nyc_taxi_trips`.
+The entrypoint requires one or more ordered `s3://landing/nyc_taxi/_generations/<plan-id>/<publication-id>/<object>.parquet` arguments followed by `--table <target>`. It rejects empty, duplicate, malformed, or cross-generation URI sets and has no flat-path or table default.
 
 ## 3. Transform Logic
 
-`TaxiLanding.read` selects the configured monthly objects, reads each Parquet file separately, casts `passenger_count` to `double`, and then unions the normalized DataFrames. Its default `small` scale selects the January through March 2023 files.
+`TaxiLanding.readResolved` reads each resolver-ordered immutable URI separately, casts `passenger_count` to `double`, and then unions the normalized DataFrames. Scale selection belongs to the Airflow task and resolver, not the Scala application.
 
 `TaxiTransforms.clean` then:
 
@@ -51,7 +51,7 @@ OpenLineage injection, while `_get_hook()` wraps the provider hook with Atlas's
 
 - **application:** `s3a://jars/nyc-taxi-etl/0.1.0/app.jar`
 - **class:** `com.thekaveh.dataeng.nyctaxi.NycTaxiEtl`
-- **arguments:** `s3a://landing/nyc_taxi/`, then `lakehouse.bronze.nyc_taxi_trips`
+- **arguments:** the resolver-ordered immutable NYC Taxi URIs, then `--table`, then `lakehouse.bronze.nyc_taxi_trips`
 - **submission:** Spark standalone cluster mode through `spark://spark-master:7077`
 - **Iceberg extension:** `org.apache.iceberg.spark.extensions.IcebergSparkSessionExtensions`
 - **completion:** the wrapped hook captures the standalone driver ID from the submission log and requires `driverState=FINISHED` plus `success=true` from `spark-master:6066`
@@ -62,14 +62,15 @@ Spark is a `provided` Maven dependency. The Atlas Spark image supplies the Spark
 
 - The Atlas Spark, Airflow, MinIO, and Iceberg REST services are running.
 - Jenkins has the MinIO endpoint and Iceberg access credentials used by the publish stage.
-- `s3a://landing/nyc_taxi/` contains the monthly Parquet files for the selected scale.
+- `make datasets SCALE=<tier>` has published and verified the expected NYC Taxi generation.
+- The Airflow task can reach the internal `dataset-resolver`; an explicit run configuration `dataset_scale` takes precedence over `DATASET_SCALE`, then the documented `small` default.
 - `s3a://jars/nyc-taxi-etl/0.1.0/app.jar` has been published.
 - The consumer overlay mounts `spark-apps/` below `/opt/airflow/dags`, where the DAG can import Atlas's shared `RestConfirmingSparkHook` adapter from the DAG root.
 
 ## 7. Data Flow
 
 ```text
-selected landing Parquet files
+resolver-verified immutable Parquet files from one generation
   -> per-file passenger_count normalization
   -> TaxiTransforms.clean
   -> lakehouse.bronze.nyc_taxi_trips (create or replace)

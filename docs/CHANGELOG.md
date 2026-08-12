@@ -14,8 +14,11 @@ All notable changes to this project are documented here (Keep a Changelog format
   per-object SHA-256 and size identities, canonical generator inputs, and schema
   fingerprints. MovieLens now carries exact artifact-level provenance for each
   mutually exclusive release while retaining intentional scale-local flattened
-  names; runtime enforcement remains explicitly deferred to issue #81,
-  including atomic release replacement and stale-object prevention.
+  names. Dataset acquisition now verifies raw, extracted, generated, uploaded,
+  reused, and consumed bytes plus physical schemas. Publications use verified
+  immutable generations, content-addressed manifest history, and one conditional
+  active-pointer switch; runtime consumers require an expected scale and retain
+  one resolver result per run.
 - Atlas is now pinned at `c6cf73d7168db1a7840fc45c9ed3e385071996d8`.
   Both production Spark DAGs again use `SparkSubmitOperator` ownership: their
   `AtlasSparkSubmitOperator` subclass preserves provider execution and

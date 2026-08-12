@@ -33,18 +33,20 @@ from pyspark.sql import functions as F
 spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
 ```
 
+Both setup implementations choose an explicit notebook scale override before `DATASET_SCALE`, default to `small`, and call the internal resolver once. They validate and retain one verified immutable generation as `datasetObjectByName` / `dataset_object_by_name`.
+
 ### 2.2 Read
 
 **Scala (Zeppelin):**
 
 ```scala
-val ratings = spark.read.option("header", true).option("inferSchema", true).csv("s3a://landing/movielens/ratings.csv")
+val ratings = spark.read.option("header", true).option("inferSchema", true).csv(datasetObjectByName("ratings.csv"))
 ```
 
 **PySpark (Jupyter):**
 
 ```python
-ratings = spark.read.option("header", True).option("inferSchema", True).csv("s3a://landing/movielens/ratings.csv")
+ratings = spark.read.option("header", True).option("inferSchema", True).csv(dataset_object_by_name["ratings.csv"])
 ```
 
 ### 2.3 Transform

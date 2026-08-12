@@ -59,7 +59,7 @@ All nine data-engineering services are containerized by default through the mani
 
 ## 5. Load datasets
 
-The live MinIO service must exist before the downloader can populate its landing bucket. After `make up` succeeds, load the default `small` tier or select another supported scale:
+The live MinIO service must exist before publication can use its landing bucket. `make up` starts services; it does not acquire datasets. After it succeeds, verify or publish the default `small` tier, or select another supported scale:
 
 ```bash
 make datasets
@@ -68,6 +68,8 @@ make datasets SCALE=medium
 ```
 
 The downloaded registry contains NYC Taxi, TPC-H, Online Retail, GitHub Archive, and MovieLens. Synthetic event scenarios use their producer instead of a downloaded dataset. See [Datasets](datasets.md) for licenses, formats, and scenario mappings.
+
+The dataset command verifies the active pointer, immutable manifest, bytes, and physical schemas before reuse. Consumers request an expected scale with this precedence: an explicit CLI, Airflow, or notebook parameter; then `DATASET_SCALE`; then the default `small`. The internal resolver returns one verified immutable URI set for that run and fails rather than accepting an active generation at another scale. See [Datasets](datasets.md) for refresh, verify-only, rollback, history, and recovery procedures.
 
 ## 6. Verify the stack and repository
 

@@ -35,4 +35,32 @@ class MedallionTransformsSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(row.getAs[Long]("trips") == 2)
     assert(math.abs(row.getAs[Double]("avg_fare") - 6.0) < 1e-9)
   }
+
+  test("entrypoint requires immutable resolver evidence before an explicit bronze table") {
+    val uri =
+      s"s3://landing/nyc_taxi/_generations/${"1" * 64}/0123456789ab4def8123456789abcdef/taxi.parquet"
+    val parsed = NycTaxiMedallion.parseArguments(
+      Array(uri, "--bronze-table", "lakehouse.bronze.nyc_taxi_trips")
+    )
+    assert(parsed.uris == Seq(uri))
+    assert(parsed.sparkUris == Seq(uri.replace("s3://", "s3a://")))
+    assert(parsed.bronzeTable == "lakehouse.bronze.nyc_taxi_trips")
+    assertThrows[IllegalArgumentException](NycTaxiMedallion.parseArguments(Array.empty))
+    assertThrows[IllegalArgumentException](
+      NycTaxiMedallion.parseArguments(Array("s3://landing/nyc_taxi/taxi.parquet"))
+    )
+    val genericHex = s"s3://landing/nyc_taxi/_generations/${"1" * 64}/${"a" * 32}/taxi.parquet"
+    assertThrows[IllegalArgumentException](
+      NycTaxiMedallion.parseArguments(
+        Array(uri, genericHex, "--bronze-table", "lakehouse.bronze.nyc_taxi_trips")
+      )
+    )
+    val other =
+      s"s3://landing/nyc_taxi/_generations/${"1" * 64}/0123456789ab4def9123456789abcdef/taxi.parquet"
+    assertThrows[IllegalArgumentException](
+      NycTaxiMedallion.parseArguments(
+        Array(uri, other, "--bronze-table", "lakehouse.bronze.nyc_taxi_trips")
+      )
+    )
+  }
 }

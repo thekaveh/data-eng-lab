@@ -2,7 +2,7 @@
 <html lang="en">
 <head><meta charset="utf-8"><title>data-eng-lab — nyc-taxi-etl</title></head>
 <body>
-  <!-- Verified against spark-apps/nyc-taxi-etl/Jenkinsfile, dag.py, pom.xml, and Scala sources on 2026-07-31. -->
+  <!-- Verified against the Task 10 DAG, resolver contract, Scala arguments, Jenkinsfile, and pom.xml on 2026-08-12. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="560" viewBox="0 0 1280 560" font-family="'JetBrains Mono', 'Courier New', monospace" role="img" aria-labelledby="diagram-title diagram-description">
   <title id="diagram-title">NYC Taxi ETL Spark application</title>
   <desc id="diagram-description">Build, orchestration, and runtime data flow for the NYC Taxi ETL Spark application.</desc>
@@ -21,7 +21,7 @@
 
         <!-- Title -->
         <text x="640" y="40" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">nyc-taxi-etl — Spark App (CI/CD → Bronze)</text>
-        <text x="640" y="62" fill="#94a3b8" font-size="12" text-anchor="middle">Jenkins builds &amp; shades a Scala JAR → MinIO jars/ → Airflow Hook + REST confirm → Spark cluster → Iceberg bronze</text>
+        <text x="640" y="62" fill="#94a3b8" font-size="12" text-anchor="middle">Jenkins publishes the JAR; Airflow resolves one expected-scale generation before Spark submission</text>
 
         <!-- ================= SECTION DIVIDER ================= -->
         <line x1="636" y1="100" x2="636" y2="440" stroke="#334155" stroke-width="1" stroke-dasharray="4,4"/>
@@ -86,18 +86,18 @@
         <text x="760" y="176" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Airflow</text>
         <text x="760" y="196" fill="#22d3ee" font-size="10" font-weight="700" text-anchor="middle">DAG: nyc_taxi_etl</text>
         <line x1="675" y1="210" x2="845" y2="210" stroke="#1e293b" stroke-width="1"/>
-        <text x="760" y="230" fill="#fb923c" font-size="9" font-weight="600" text-anchor="middle">Hook + REST confirm</text>
-        <text x="760" y="248" fill="#ffffff" font-size="8" text-anchor="middle">task: submit_nyc_taxi_etl</text>
-        <text x="760" y="266" fill="#94a3b8" font-size="8" text-anchor="middle">schedule: @daily</text>
-        <text x="760" y="282" fill="#94a3b8" font-size="8" text-anchor="middle">deploy_mode: cluster</text>
-        <text x="760" y="298" fill="#94a3b8" font-size="8" text-anchor="middle">conn_id: spark_default</text>
-        <text x="760" y="318" fill="#22d3ee" font-size="8" text-anchor="middle">java_class:</text>
-        <text x="760" y="332" fill="#22d3ee" font-size="8" text-anchor="middle">…nyctaxi.NycTaxiEtl</text>
+        <text x="760" y="230" fill="#fb923c" font-size="8" font-weight="600" text-anchor="middle">Airflow task execution calls dataset-resolver</text>
+        <text x="760" y="248" fill="#ffffff" font-size="8" text-anchor="middle">NYC Taxi + expected scale</text>
+        <text x="760" y="266" fill="#94a3b8" font-size="8" text-anchor="middle">active pointer + immutable manifest</text>
+        <text x="760" y="284" fill="#94a3b8" font-size="8" text-anchor="middle">ordered immutable objects</text>
+        <text x="760" y="302" fill="#22d3ee" font-size="8" text-anchor="middle">Hook + REST terminal confirmation</text>
+        <text x="760" y="320" fill="#94a3b8" font-size="8" text-anchor="middle">cluster mode · spark_default</text>
+        <text x="760" y="338" fill="#22d3ee" font-size="8" text-anchor="middle">…nyctaxi.NycTaxiEtl</text>
 
         <!-- args banner -->
         <rect x="660" y="360" width="200" height="44" rx="5" fill="#0a0f1f" stroke="#fb923c" stroke-width="0.8"/>
-        <text x="760" y="378" fill="#fb923c" font-size="8" font-weight="700" text-anchor="middle">application_args</text>
-        <text x="760" y="394" fill="#ffffff" font-size="8" text-anchor="middle">s3a://landing/nyc_taxi/</text>
+        <text x="760" y="378" fill="#fb923c" font-size="7" font-weight="700" text-anchor="middle">s3a projection only after verification</text>
+        <text x="760" y="394" fill="#ffffff" font-size="7" text-anchor="middle">ordered s3 URIs → --table bronze target</text>
 
         <!-- Spark cluster -->
         <rect x="890" y="150" width="170" height="150" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>

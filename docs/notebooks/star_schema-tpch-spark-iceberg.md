@@ -33,22 +33,24 @@ from pyspark.sql import functions as F
 spark = SparkSession.builder.remote("sc://spark-connect:15002").getOrCreate()
 ```
 
+Both setup implementations choose an explicit notebook scale override before `DATASET_SCALE`, default to `small`, and call the internal resolver once. They validate and retain one verified immutable generation as `datasetObjectByName` / `dataset_object_by_name`.
+
 ### 2.2 Read
 
 **Scala (Zeppelin):**
 
 ```scala
-val orders = spark.read.parquet("s3a://landing/tpch/orders")
-val customer = spark.read.parquet("s3a://landing/tpch/customer")
-val lineitem = spark.read.parquet("s3a://landing/tpch/lineitem")
+val orders = spark.read.parquet(datasetObjectByName("orders.parquet"))
+val customer = spark.read.parquet(datasetObjectByName("customer.parquet"))
+val lineitem = spark.read.parquet(datasetObjectByName("lineitem.parquet"))
 ```
 
 **PySpark (Jupyter):**
 
 ```python
-orders = spark.read.parquet("s3a://landing/tpch/orders")
-customer = spark.read.parquet("s3a://landing/tpch/customer")
-lineitem = spark.read.parquet("s3a://landing/tpch/lineitem")
+orders = spark.read.parquet(dataset_object_by_name["orders.parquet"])
+customer = spark.read.parquet(dataset_object_by_name["customer.parquet"])
+lineitem = spark.read.parquet(dataset_object_by_name["lineitem.parquet"])
 ```
 
 ### 2.3 Transform

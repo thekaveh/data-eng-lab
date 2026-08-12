@@ -10,7 +10,7 @@ Iceberg's time travel feature is a differentiator from traditional data warehous
 
 ### 2.1 Input Source
 
-Source: `s3a://landing/nyc_taxi/taxi_data.csv` (local CSV seed) plus NYC Taxi Trips Parquet data.
+Source: `lakehouse.bronze.nyc_taxi_trips`, copied into the scenario-owned `lakehouse.silver.nyc_taxi_tt` table. The Bronze prerequisite originates from a resolver-verified immutable generation.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -61,7 +61,7 @@ Airflow DAG: `time_travel_nyc_taxi` — a scheduled batch DAG.
 
 ## 7. Dependencies
 
-- **Dataset:** NYC Taxi Trips CSV Parquet from `s3a://landing/nyc_taxi/`
+- **Dataset:** scenario-owned NYC Taxi rows in `lakehouse.silver.nyc_taxi_tt`
 - **Atlas services:** A1-A4 (Spark, Iceberg, S3 catalog, lakehouse catalog)
 - **Other:** Iceberg time travel must be enabled (default configuration)
 

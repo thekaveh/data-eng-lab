@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import stat
 import struct
@@ -10,12 +11,113 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import requests
 import responses
 import yaml
 
+from datasets import acquisition
 from scripts import audit_dataset_lock as audit
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_bound_metadata_helpers_are_internal_only():
+    assert not hasattr(acquisition, "bound_download_metadata")
+    assert not hasattr(acquisition, "bound_extracted_metadata")
+    assert callable(acquisition._bound_download_metadata)
+    assert callable(acquisition._bound_extracted_metadata)
+
+
+@pytest.fixture(autouse=True)
+def shared_download_transport(monkeypatch: pytest.MonkeyPatch):
+    def process_factory(context: object, send: object, host: str):
+        class InlineProcess:
+            def start(self) -> None:
+                acquisition._resolve_worker(send, host)
+
+            def is_alive(self) -> bool:
+                return False
+
+            def join(self, timeout: float = 0) -> None:
+                pass
+
+            def close(self) -> None:
+                pass
+
+        return InlineProcess()
+
+    class ResponseAdapter:
+        def __init__(self, response: requests.Response, peer: str) -> None:
+            self.status = response.status_code
+            self.headers = response.headers
+            self.peer_address = peer
+            self._response = response
+            self._socket = audit_response_socket(response)
+
+        def read1(self, amount: int, *, decode_content: bool) -> bytes:
+            return self._response.raw.read1(amount, decode_content=decode_content)
+
+        def settimeout(self, timeout: float) -> None:
+            if self._socket is not None:
+                self._socket.settimeout(timeout)
+            elif not isinstance(getattr(self._response.raw, "_fp", None), io.BytesIO):
+                raise ValueError("HTTP transport does not expose a bounded socket")
+
+        def close(self) -> None:
+            if close := getattr(self._response, "close", None):
+                close()
+
+    class RequestsTransport:
+        trust_env = False
+
+        def request(self, *, url: str, address: str, headers: dict[str, str], timeout: float, **kwargs: object):
+            response = requests.get(
+                url,
+                stream=True,
+                timeout=timeout,
+                allow_redirects=False,
+                headers=headers,
+            )
+            response.raise_for_status()
+            return ResponseAdapter(response, address)
+
+    monkeypatch.setattr(
+        acquisition.socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [(2, 1, 6, "", ("192.0.0.9", 443))],
+    )
+    monkeypatch.setattr(acquisition, "_make_resolver_process", process_factory)
+    monkeypatch.setattr(audit, "DOWNLOAD_TRANSPORT", RequestsTransport())
+
+
+def audit_response_socket(response: requests.Response) -> object | None:
+    connection = getattr(response.raw, "_connection", None)
+    if response_socket := getattr(connection, "sock", None):
+        return response_socket
+    http_response = getattr(response.raw, "_fp", None)
+    buffered_reader = getattr(http_response, "fp", None)
+    socket_io = getattr(buffered_reader, "raw", None)
+    return getattr(socket_io, "_sock", None)
+
+
+def test_audit_and_production_share_the_same_zip_policy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    archive = tmp_path / "data.zip"
+    archive.write_bytes(zip_bytes({"data.csv": b"locked"}))
+    called: list[tuple[Path, acquisition.ZipLimits]] = []
+
+    def sentinel_policy(path: Path, limits: acquisition.ZipLimits):
+        called.append((path, limits))
+        return [acquisition.ArchiveEntry("data.csv", "data.csv", 6)]
+
+    monkeypatch.setattr(audit, "validated_zip_members", sentinel_policy)
+    monkeypatch.setattr(audit, "_canonical_archive_entries", tuple)
+    monkeypatch.setattr(audit, "extract_members", lambda *args: [tmp_path / "extracted"])
+    monkeypatch.setattr(audit, "_bound_extracted_metadata", lambda *args: [(6, hashlib.sha256(b"locked").hexdigest())])
+    (tmp_path / "extracted").write_bytes(b"locked")
+
+    audit._archive_outputs(archive, tmp_path)
+
+    assert called == [(archive, audit._zip_limits())]
 
 
 @pytest.mark.parametrize(
@@ -268,14 +370,14 @@ def test_audit_http_emits_raw_direct_output_and_response_evidence():
 @responses.activate
 def test_audit_http_streams_with_120_second_timeout(monkeypatch: pytest.MonkeyPatch):
     responses.add(responses.GET, "https://source.invalid/data.csv", body=b"locked", status=200)
-    request_get = audit.requests.get
+    request_get = requests.get
     arguments: dict[str, object] = {}
 
     def recording_get(url: str, **kwargs: object):
         arguments.update(kwargs)
         return request_get(url, **kwargs)
 
-    monkeypatch.setattr(audit.requests, "get", recording_get)
+    monkeypatch.setattr(requests, "get", recording_get)
 
     audit.audit_http("https://source.invalid/data.csv", archive=False)
 
@@ -332,7 +434,7 @@ def test_audit_http_rejects_redirect_without_location():
 @responses.activate
 def test_audit_http_rejects_redirect_overflow(monkeypatch: pytest.MonkeyPatch):
     source = "https://source.invalid/data.csv"
-    monkeypatch.setattr(audit, "MAX_REDIRECTS", 1)
+    monkeypatch.setattr(acquisition, "_MAX_REDIRECTS", 1)
     responses.add(responses.GET, source, status=302, headers={"Location": "/next.csv"})
     responses.add(
         responses.GET,
@@ -400,7 +502,7 @@ def test_audit_http_enforces_overall_streaming_deadline_and_cleans_temp(
         last_tick = next(ticks, last_tick)
         return last_tick
 
-    monkeypatch.setattr(audit.time, "monotonic", monotonic)
+    monkeypatch.setattr(acquisition.time, "monotonic", monotonic)
     created = record_audit_temp_directories(monkeypatch)
 
     with pytest.raises(ValueError, match="download deadline exceeded"):
@@ -465,8 +567,8 @@ def test_audit_http_rebounds_every_transport_read_to_cumulative_deadline(
             yield b"b"
 
     response = FakeResponse()
-    monkeypatch.setattr(audit.time, "monotonic", lambda: clock["now"])
-    monkeypatch.setattr(audit.requests, "get", lambda *args, **kwargs: response)
+    monkeypatch.setattr(acquisition.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
 
     result = audit.audit_http("https://source.invalid/data.csv", archive=False)
 
@@ -504,7 +606,7 @@ def test_audit_http_rejects_blocking_transport_without_bounded_socket(
         def raise_for_status(self) -> None:
             return None
 
-    monkeypatch.setattr(audit.requests, "get", lambda *args, **kwargs: FakeResponse())
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: FakeResponse())
 
     with pytest.raises(ValueError, match="transport does not expose a bounded socket"):
         audit.audit_http("https://source.invalid/data.csv", archive=False)
@@ -834,7 +936,7 @@ def test_audit_zip_rejects_member_count_limit_and_cleans_temp(monkeypatch: pytes
 def test_audit_zip_rejects_declared_member_size_limit_and_cleans_temp(monkeypatch: pytest.MonkeyPatch):
     source = "https://source.invalid/data.zip"
     responses.add(responses.GET, source, body=zip_bytes({"large.csv": b"ab"}), status=200)
-    monkeypatch.setattr(audit, "MAX_MEMBER_BYTES", 1)
+    monkeypatch.setattr(acquisition, "_MAX_ZIP_MEMBER_BYTES", 1)
     created = record_audit_temp_directories(monkeypatch)
 
     with pytest.raises(ValueError, match="member large.csv exceeds 1 bytes"):
@@ -903,7 +1005,7 @@ def test_audit_zip_preflights_metadata_bounds_before_zipfile_construction(
         zipfile_constructed = True
         raise AssertionError("ZipFile metadata parsing was reached before preflight")
 
-    monkeypatch.setattr(audit.zipfile, "ZipFile", forbidden_zipfile)
+    monkeypatch.setattr(acquisition.zipfile, "ZipFile", forbidden_zipfile)
 
     with pytest.raises(ValueError, match=message):
         audit.audit_http(source, archive=True)
@@ -940,7 +1042,7 @@ def test_audit_zip_rejects_false_eocd_signature_in_comment_before_zipfile(
         zipfile_constructed = True
         raise AssertionError("ZipFile was constructed for ambiguous EOCD")
 
-    monkeypatch.setattr(audit.zipfile, "ZipFile", forbidden_zipfile)
+    monkeypatch.setattr(acquisition.zipfile, "ZipFile", forbidden_zipfile)
 
     with pytest.raises(ValueError, match="ambiguous end-of-central-directory record"):
         audit.audit_http(source, archive=True)
@@ -963,7 +1065,7 @@ def test_audit_zip_rejects_divergent_zip64_layout_before_zipfile(
         zipfile_constructed = True
         raise AssertionError("ZipFile was constructed for divergent ZIP64 metadata")
 
-    monkeypatch.setattr(audit.zipfile, "ZipFile", forbidden_zipfile)
+    monkeypatch.setattr(acquisition.zipfile, "ZipFile", forbidden_zipfile)
 
     with pytest.raises(ValueError, match="ZIP64 record layout is inconsistent"):
         audit.audit_http(source, archive=True)
@@ -999,7 +1101,7 @@ def test_audit_zip_stream_validates_central_directory_before_zipfile(
         zipfile_constructed = True
         raise AssertionError("ZipFile was constructed before central-directory validation")
 
-    monkeypatch.setattr(audit.zipfile, "ZipFile", forbidden_zipfile)
+    monkeypatch.setattr(acquisition.zipfile, "ZipFile", forbidden_zipfile)
 
     with pytest.raises(ValueError, match=message):
         audit.audit_http(source, archive=True)
@@ -1035,6 +1137,113 @@ def test_audit_zip_converts_corrupt_content_to_value_error():
 
     with pytest.raises(ValueError, match="artifact is not a valid ZIP archive"):
         audit.audit_http(source, archive=True)
+
+
+@responses.activate
+def test_audit_zip_converts_crc_corruption_to_value_error():
+    source = "https://source.invalid/data.zip"
+    payload = bytearray(zip_bytes({"data.csv": b"locked"}))
+    local_header = payload.index(b"PK\x03\x04")
+    filename_size, extra_size = struct.unpack_from("<2H", payload, local_header + 26)
+    payload[local_header + 30 + filename_size + extra_size] ^= 0xFF
+    responses.add(responses.GET, source, body=bytes(payload), status=200)
+
+    with pytest.raises(ValueError, match="artifact is not a valid ZIP archive"):
+        audit.audit_http(source, archive=True)
+
+
+@responses.activate
+def test_audit_rejects_raw_archive_replacement_before_publishing_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    original = zip_bytes({"data.csv": b"first!"})
+    replacement = zip_bytes({"data.csv": b"second"})
+    source = "https://source.invalid/data.zip"
+    responses.add(responses.GET, source, body=original, status=200)
+
+    real_archive_outputs = audit._archive_outputs
+
+    def replacing_archive_outputs(raw_path: Path, temporary_root: Path):
+        outputs = real_archive_outputs(raw_path, temporary_root)
+        raw_path.write_bytes(replacement)
+        return outputs
+
+    monkeypatch.setattr(audit, "_archive_outputs", replacing_archive_outputs)
+
+    with pytest.raises(ValueError, match="archive changed during audit"):
+        audit.audit_http(source, archive=True)
+
+
+@responses.activate
+def test_audit_rejects_early_extracted_output_replacement_before_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    source = "https://source.invalid/data.zip"
+    responses.add(
+        responses.GET,
+        source,
+        body=zip_bytes({"a.csv": b"a", "b.csv": b"b"}),
+        status=200,
+    )
+    real_bound_metadata = audit._bound_extracted_metadata
+
+    def replacing_metadata(paths: list[Path]):
+        first = paths[0]
+        first.unlink()
+        first.write_bytes(b"foreign")
+        return real_bound_metadata(paths)
+
+    monkeypatch.setattr(audit, "_bound_extracted_metadata", replacing_metadata)
+
+    with pytest.raises(ValueError, match="extracted output changed"):
+        audit.audit_http(source, archive=True)
+
+
+def test_audit_pairs_bound_metadata_with_canonical_entries_during_public_list_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    archive = tmp_path / "data.zip"
+    archive.write_bytes(zip_bytes({"a.csv": b"a", "b.csv": b"bb"}))
+    real_validated = audit.validated_zip_members
+    real_bound = audit._bound_extracted_metadata
+    observed: dict[str, list[acquisition.ArchiveEntry]] = {}
+
+    def capture_entries(path: Path, limits: acquisition.ZipLimits):
+        entries = real_validated(path, limits)
+        observed["entries"] = entries
+        return entries
+
+    def mutate_during_hash(paths: list[Path]):
+        metadata = real_bound(paths)
+        list.__setitem__(
+            observed["entries"],
+            0,
+            acquisition.ArchiveEntry("b.csv", "renamed.csv", 999),
+        )
+        return metadata
+
+    monkeypatch.setattr(audit, "validated_zip_members", capture_entries)
+    monkeypatch.setattr(audit, "_bound_extracted_metadata", mutate_during_hash)
+
+    outputs = audit._archive_outputs(archive, tmp_path)
+
+    assert outputs == [
+        {
+            "object_name": "a.csv",
+            "member_path": "a.csv",
+            "size_bytes": 1,
+            "sha256": hashlib.sha256(b"a").hexdigest(),
+        },
+        {
+            "object_name": "b.csv",
+            "member_path": "b.csv",
+            "size_bytes": 2,
+            "sha256": hashlib.sha256(b"bb").hexdigest(),
+        },
+    ]
 
 
 @responses.activate

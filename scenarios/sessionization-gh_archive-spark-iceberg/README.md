@@ -10,7 +10,7 @@ Sessionization is a foundational pattern in event-driven analytics, used to unde
 
 ### 2.1 Input Source
 
-Source: `lakehouse.silver.gh_events` (populated by the upstream `json_flatten-gh_archive-spark-iceberg` scenario).
+Source: compressed GitHub Archive JSON objects from one resolver-verified immutable generation. The notebook sessionizes them directly and writes `lakehouse.silver.gh_sessions`.
 
 | Column | Type | Notes |
 |---|---|---|
@@ -45,7 +45,7 @@ Airflow DAG: `sessionization_gh_archive` — a scheduled batch DAG.
 ## 6. Usage
 
 1. Ensure the `silver` Iceberg namespace exists: `scripts/register_iceberg.py`
-2. Populate GitHub Archive data and run the prerequisite JSON flatten scenario: `make datasets` followed by `airflow dags trigger json_flatten_gh_archive` (or ensure `lakehouse.silver.gh_events` exists)
+2. Publish the expected GitHub Archive tier with `make datasets SCALE=<tier>`.
 3. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
       ```bash
    airflow dags trigger sessionization_gh_archive
@@ -63,11 +63,11 @@ Airflow DAG: `sessionization_gh_archive` — a scheduled batch DAG.
 
 ## 8. Known Issues & Caveats
 
-The 30-minute gap threshold is hardcoded as 1800 seconds and not externally configurable. The `silver` namespace must exist; run `scripts/register_iceberg.py` first. Requires upstream data in `lakehouse.silver.gh_events`; ensure the JSON flatten scenario has run first.
+The 30-minute gap threshold is hardcoded as 1800 seconds and not externally configurable. The `silver` namespace must exist; run `scripts/register_iceberg.py` first. The notebook resolves and verifies GitHub Archive directly, so it does not depend on the JSON-flatten table.
 
 ## See Also
 
-- [Upstream: json_flatten-gh_archive-spark-iceberg](../json_flatten-gh_archive-spark-iceberg/README.md) — Produces the events table this scenario consumes
+- [Related: json_flatten-gh_archive-spark-iceberg](../json_flatten-gh_archive-spark-iceberg/README.md) — Produces a separate flattened-events table from the same source dataset
 - [Related: schema_evolution-gh_archive-spark-iceberg](../schema_evolution-gh_archive-spark-iceberg/README.md) — Another GitHub Archive processing scenario
 - [Datasets](../../docs/datasets.md)
 - [Lakehouse Architecture](../../docs/lakehouse.md)

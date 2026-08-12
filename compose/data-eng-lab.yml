@@ -1,9 +1,42 @@
 # data-eng-lab overlay — appended to Atlas's compose invocation via the
 # compose_overlays: entry in atlas.consumer.yml (no legacy user-service symlink).
 # Relative host paths resolve against the compose project dir (infra/), so
-# ../scenarios == <repo>/scenarios. Patches existing Atlas services only.
+# ../scenarios == <repo>/scenarios. Adds one consumer-owned internal service
+# and patches existing Atlas consumers; Atlas source remains unchanged.
 services:
+  dataset-resolver:
+    build:
+      context: ..
+      dockerfile: datasets/resolver.Dockerfile
+    platform: linux/amd64
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+    depends_on:
+      minio:
+        condition: service_healthy
+    networks:
+      - backend-network
+    healthcheck:
+      test:
+        - CMD
+        - /opt/venv/bin/python
+        - -c
+        - import socket,urllib.request; host=socket.inet_ntoa(bytes((127,0,0,1))); urllib.request.urlopen('http://'+host+':8080/healthz', timeout=2).read()
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
   airflow-scheduler:
+    environment:
+      DATASET_RESOLVER_URI: http://dataset-resolver:8080
+      DATASET_SCALE: ${DATASET_SCALE:-small}
+    depends_on:
+      dataset-resolver:
+        condition: service_healthy
     volumes:
       - ../scenarios:/opt/airflow/dags/data_eng_lab_scenarios:ro
       - ../spark-apps:/opt/airflow/dags/data_eng_lab_spark_apps:ro
@@ -16,6 +49,20 @@ services:
       - ../spark-apps:/opt/airflow/dags/data_eng_lab_spark_apps:ro
 
   jupyterhub:
+    environment:
+      DATASET_RESOLVER_URI: http://dataset-resolver:8080
+      DATASET_SCALE: ${DATASET_SCALE:-small}
+    depends_on:
+      dataset-resolver:
+        condition: service_healthy
     volumes:
       - ../datasets:/home/jovyan/data-eng-lab/datasets:ro
       - ../tests/infra/probes:/opt/probes:ro
+
+  zeppelin:
+    environment:
+      DATASET_RESOLVER_URI: http://dataset-resolver:8080
+      DATASET_SCALE: ${DATASET_SCALE:-small}
+    depends_on:
+      dataset-resolver:
+        condition: service_healthy

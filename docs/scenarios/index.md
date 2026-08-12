@@ -88,7 +88,7 @@ Window-based sessionization on timestamped events. Gap-based session boundary de
 
 Each scenario follows a dual-notebook pattern across Zeppelin and JupyterHub. The 17 Spark pairs must produce equivalent output, validated by `tests/scenarios/parity.py`; the two Trino pairs are execution-gated but excluded from Scala/PySpark parity. Airflow DAGs provide an orchestration alternative for batch scenarios.
 
-The three broker-backed scenarios require Redpanda and their Kafka topics (created through `REDPANDA_DEMO_TOPICS` or a scenario producer). The GH Archive streaming-ingest scenario instead requires downloaded files in `s3a://landing/gh_archive/`. All four store checkpoint state in MinIO's `checkpoints` bucket, so a rerun resumes from the last processed offset or file unless its checkpoint is intentionally reset.
+The three broker-backed scenarios require Redpanda and their Kafka topics (created through `REDPANDA_DEMO_TOPICS` or a scenario producer). The GH Archive streaming-ingest scenario instead requests one resolver-verified immutable file set. All four store checkpoint state in MinIO's `checkpoints` bucket, so a rerun resumes from the last processed offset or file unless its checkpoint is intentionally reset.
 
 ## 3. See Also
 
