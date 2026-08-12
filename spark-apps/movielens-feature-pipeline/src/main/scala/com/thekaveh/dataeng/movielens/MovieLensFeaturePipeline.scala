@@ -34,16 +34,27 @@ object MovieLensFeaturePipeline {
   val UserTable = "lakehouse.gold.ml_user_features"
   val MovieTable = "lakehouse.gold.ml_movie_features"
   private val RatingsHeader = "userId,movieId,rating,timestamp"
+  private val MaxHeaderBytes = 1024
 
   def readRatings(spark: SparkSession, uri: String): DataFrame = {
     val files = spark.sparkContext.binaryFiles(uri, minPartitions = 1).values.take(2)
     if (files.length != 1)
       throw new IllegalArgumentException("ratings.csv must resolve to exactly one file")
     val stream = files.head.open()
-    val lineBytes = try {
-      Iterator.continually(stream.read()).takeWhile(value => value != -1 && value != '\n')
-        .map(_.toByte).toArray
+    val buffer = new Array[Byte](MaxHeaderBytes)
+    var length = 0
+    var next = -1
+    try {
+      next = stream.read()
+      while (next != -1 && next != '\n' && length < MaxHeaderBytes) {
+        buffer(length) = next.toByte
+        length += 1
+        next = stream.read()
+      }
+      if (length == MaxHeaderBytes && next != -1 && next != '\n')
+        throw new IllegalArgumentException(s"ratings.csv header exceeds $MaxHeaderBytes bytes")
     } finally stream.close()
+    val lineBytes = buffer.take(length)
     val header = new String(lineBytes, StandardCharsets.UTF_8).stripSuffix("\r")
     if (header != RatingsHeader)
       throw new IllegalArgumentException(s"ratings.csv must have exact header: $RatingsHeader")

@@ -105,6 +105,16 @@ and four-production-DAG counts. The review-corrected live harness passed in `263
 driver identifiers are the two rows above. Final cleanup preserved every volume and left zero
 `data-eng-lab` project containers.
 
+A final read-only quality pass found an unrelated catalog-count sentence and requested a defensive
+bound on malformed unterminated headers. The public scenario catalog now states four production
+DAGs. The header probe now allocates at most `1024` bytes and closes its source stream in `finally`;
+physical tests cover valid input, exact-limit, over-limit, and unterminated input in addition to the
+exact-header cases above. The final packaged JAR SHA-256 is
+`6fbbf035205a3f269de0e6336a861d7e17445c2c1baa2e34bfbe58b7e9e6571f`. The live replay was not
+repeated for this rejection-only bound: the accepted exact 31-byte production header follows the
+same read and Spark parse path, while Maven's physical suite proves it unchanged and fails closed
+only on headers over `1024` bytes.
+
 ## Replay commands
 
 These commands are replayable after the explicit verified-tiny prerequisite is satisfied. Secrets

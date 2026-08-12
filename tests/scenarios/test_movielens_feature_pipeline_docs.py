@@ -92,3 +92,6 @@ def test_public_indexes_and_projection_count_the_four_production_apps():
     projection = _read(ROOT / "docs/scenarios/execution-modes.md")
     assert "`movielens_feature_pipeline`" in projection
     assert "four production DAGs today" in projection
+    catalog = _read(ROOT / "docs/scenarios/index.md")
+    assert "four production DAGs" in catalog
+    assert "two production DAGs" not in catalog

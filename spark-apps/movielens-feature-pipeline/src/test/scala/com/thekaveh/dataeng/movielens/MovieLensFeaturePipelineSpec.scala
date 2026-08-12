@@ -155,6 +155,22 @@ class MovieLensFeaturePipelineSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
   }
 
+  test("CSV read bounds at-limit over-limit and unterminated source headers") {
+    def reject(bytes: Array[Byte]): IllegalArgumentException = {
+      val directory = Files.createTempDirectory("movielens-long-header-")
+      val path = directory.resolve("ratings.csv")
+      Files.write(path, bytes)
+      intercept[IllegalArgumentException](MovieLensFeaturePipeline.readRatings(spark, path.toUri.toString))
+    }
+
+    val atLimit = reject(Array.fill[Byte](1024)(97.toByte) ++ Array('\n'.toByte))
+    assert(atLimit.getMessage.startsWith("ratings.csv must have exact header"))
+    val overLimit = reject(Array.fill[Byte](1025)(97.toByte) ++ Array('\n'.toByte))
+    assert(overLimit.getMessage == "ratings.csv header exceeds 1024 bytes")
+    val unterminated = reject(Array.fill[Byte](1024 * 1024)(97.toByte))
+    assert(unterminated.getMessage == "ratings.csv header exceeds 1024 bytes")
+  }
+
   test("builds exact notebook features and counts duplicate rating events separately") {
     val source = ratings(Seq(
       (1L, 10L, 4.0, 100L),
