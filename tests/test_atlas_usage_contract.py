@@ -155,7 +155,7 @@ def _assembled_compose(scale: str | None = None) -> dict:
             "docker",
             "compose",
             "--env-file",
-            str(ROOT / "infra" / ".env"),
+            str(ROOT / "infra" / ".env.example"),
             "-f",
             str(ROOT / "infra" / "docker-compose.yml"),
             "-f",
