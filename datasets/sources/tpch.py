@@ -188,15 +188,15 @@ class _OwnedDirectory:
         )
         status = os.stat(self.root_name, dir_fd=self.parent_descriptor, follow_symlinks=False)
         opened = os.fstat(self.root_descriptor)
-        if (
-            not stat.S_ISDIR(status.st_mode)
-            or not stat.S_ISDIR(opened.st_mode)
-            or (status.st_dev, status.st_ino) != self.root_identity
-            or (opened.st_dev, opened.st_ino) != self.root_identity
-        ):
+        try:
+            _trusted_directory_status(status, "transaction staging", self.root_identity)
+            _trusted_directory_status(opened, "transaction staging", self.root_identity)
+        except ValueError:
             raise ValueError("TPC-H transaction staging changed")
         path_status = self.root.lstat()
-        if (path_status.st_dev, path_status.st_ino) != self.root_identity or not stat.S_ISDIR(path_status.st_mode):
+        try:
+            _trusted_directory_status(path_status, "transaction staging", self.root_identity)
+        except ValueError:
             raise ValueError("TPC-H transaction staging path changed")
 
 
@@ -266,6 +266,39 @@ def _directory_flags() -> int:
     return flags | getattr(os, "O_NOFOLLOW", 0)
 
 
+def _trusted_directory_status(
+    status: os.stat_result,
+    label: str,
+    identity: tuple[int, int] | None = None,
+) -> tuple[int, int]:
+    actual_identity = (status.st_dev, status.st_ino)
+    if (
+        not stat.S_ISDIR(status.st_mode)
+        or status.st_uid != os.geteuid()
+        or status.st_mode & 0o022
+        or (identity is not None and actual_identity != identity)
+    ):
+        raise ValueError(f"TPC-H {label} must remain a trusted directory")
+    return actual_identity
+
+
+def _open_trusted_directory(
+    path: str | Path,
+    label: str,
+    *,
+    dir_fd: int | None = None,
+) -> tuple[int, tuple[int, int]]:
+    descriptor = -1
+    try:
+        descriptor = os.open(path, _directory_flags(), dir_fd=dir_fd)
+        identity = _trusted_directory_status(os.fstat(descriptor), label)
+        return descriptor, identity
+    except BaseException:
+        if descriptor >= 0:
+            os.close(descriptor)
+        raise
+
+
 def _verify_parent_binding(
     parent_path: Path,
     parent_descriptor: int,
@@ -276,13 +309,11 @@ def _verify_parent_binding(
         opened = os.fstat(parent_descriptor)
     except OSError as error:
         raise ValueError("TPC-H destination parent changed") from error
-    if (
-        not stat.S_ISDIR(current.st_mode)
-        or not stat.S_ISDIR(opened.st_mode)
-        or (current.st_dev, current.st_ino) != parent_identity
-        or (opened.st_dev, opened.st_ino) != parent_identity
-    ):
-        raise ValueError("TPC-H destination parent changed")
+    try:
+        _trusted_directory_status(current, "destination parent", parent_identity)
+        _trusted_directory_status(opened, "destination parent", parent_identity)
+    except ValueError:
+        raise ValueError("TPC-H destination parent changed from trusted directory") from None
 
 
 def _verify_destination_binding(
@@ -296,19 +327,23 @@ def _verify_destination_binding(
     descriptor = -1
     try:
         current = os.stat(destination_name, dir_fd=parent_descriptor, follow_symlinks=False)
-        descriptor = os.open(destination_name, _directory_flags(), dir_fd=parent_descriptor)
+        descriptor, opened_identity = _open_trusted_directory(
+            destination_name,
+            "destination directory",
+            dir_fd=parent_descriptor,
+        )
         opened = os.fstat(descriptor)
     except OSError as error:
         raise ValueError("TPC-H destination directory changed") from error
     finally:
         if descriptor >= 0:
             os.close(descriptor)
-    if (
-        not stat.S_ISDIR(current.st_mode)
-        or not stat.S_ISDIR(opened.st_mode)
-        or (current.st_dev, current.st_ino) != destination_identity
-        or (opened.st_dev, opened.st_ino) != destination_identity
-    ):
+    try:
+        _trusted_directory_status(current, "destination directory", destination_identity)
+        _trusted_directory_status(opened, "destination directory", destination_identity)
+    except ValueError:
+        raise ValueError("TPC-H destination directory changed from trusted directory") from None
+    if opened_identity != destination_identity:
         raise ValueError("TPC-H destination directory changed")
 
 
@@ -817,23 +852,24 @@ def owned_directory(destination: Path) -> Iterator[_OwnedDirectory]:
     acquisition._require_trusted_parent(destination)
     parent_path = destination.parent
     acquisition._require_trusted_parent(parent_path)
-    parent_descriptor = os.open(parent_path, _directory_flags())
-    parent_status = os.fstat(parent_descriptor)
-    parent_identity = (parent_status.st_dev, parent_status.st_ino)
+    parent_descriptor = -1
+    parent_identity: tuple[int, int] | None = None
     destination_descriptor = -1
     root_descriptor = -1
     root_name: str | None = None
     root_identity: tuple[int, int] | None = None
     primary: BaseException | None = None
     try:
+        parent_descriptor, parent_identity = _open_trusted_directory(
+            parent_path,
+            "destination parent",
+        )
         _verify_parent_binding(parent_path, parent_descriptor, parent_identity)
-        destination_descriptor = os.open(
+        destination_descriptor, destination_identity = _open_trusted_directory(
             destination.name,
-            _directory_flags(),
+            "destination directory",
             dir_fd=parent_descriptor,
         )
-        destination_status = os.fstat(destination_descriptor)
-        destination_identity = (destination_status.st_dev, destination_status.st_ino)
         for _ in range(100):
             candidate = f".dataset-tpch-{secrets.token_hex(16)}"
             try:
@@ -845,8 +881,14 @@ def owned_directory(destination: Path) -> Iterator[_OwnedDirectory]:
         if root_name is None:
             raise RuntimeError("could not allocate canonical TPC-H transaction staging")
         root_status = os.stat(root_name, dir_fd=parent_descriptor, follow_symlinks=False)
-        root_identity = (root_status.st_dev, root_status.st_ino)
-        root_descriptor = os.open(root_name, _directory_flags(), dir_fd=parent_descriptor)
+        root_identity = _trusted_directory_status(root_status, "transaction staging")
+        root_descriptor, opened_root_identity = _open_trusted_directory(
+            root_name,
+            "transaction staging",
+            dir_fd=parent_descriptor,
+        )
+        if opened_root_identity != root_identity:
+            raise ValueError("TPC-H transaction staging changed")
         transaction = _OwnedDirectory(
             parent_path / root_name,
             root_name,

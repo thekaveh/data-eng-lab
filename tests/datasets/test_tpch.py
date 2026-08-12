@@ -461,6 +461,89 @@ def test_transaction_staging_is_sibling_and_rejects_destination_rebind_during_cr
     assert not list(tmp_path.glob(".dataset-tpch-*"))
 
 
+@pytest.mark.parametrize("target", ["parent", "destination"])
+def test_descriptor_trust_rejects_world_writable_swap_immediately_before_open(
+    tmp_path, fake_runner, tpch_plan, monkeypatch, target
+):
+    destination = tmp_path / "destination"
+    destination.mkdir()
+    real_open = tpch.os.open
+    swapped = False
+
+    def swap_then_open(path, flags, *args, **kwargs):
+        nonlocal swapped
+        expected = tmp_path if target == "parent" else destination.name
+        if not swapped and path == expected:
+            swapped = True
+            swap_path = tmp_path if target == "parent" else destination
+            swap_path.chmod(0o777)
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(tpch.os, "open", swap_then_open)
+
+    with pytest.raises(ValueError, match="trusted directory"):
+        tpch.generate_tpch(tpch_plan, destination, runner=fake_runner)
+
+    assert not list(tmp_path.glob(".dataset-tpch-*"))
+    assert not list(destination.iterdir())
+
+
+@pytest.mark.parametrize("target", ["parent", "destination"])
+def test_descriptor_trust_rejects_chmod_drift_during_generation(tmp_path, fake_runner, tpch_plan, target):
+    destination = tmp_path / "destination"
+    original_run = fake_runner.run
+
+    def chmod_during_run(contract, scale, output_root, metadata_path):
+        original_run(contract, scale, output_root, metadata_path)
+        (tmp_path if target == "parent" else destination).chmod(0o777)
+
+    fake_runner.run = chmod_during_run
+
+    with pytest.raises(ValueError, match="trusted directory"):
+        tpch.generate_tpch(tpch_plan, destination, runner=fake_runner)
+
+    assert not list(tmp_path.glob(".dataset-tpch-*"))
+    assert not list(destination.glob("*.parquet"))
+
+
+def test_parent_fstat_failure_closes_opened_descriptor_once(tmp_path, fake_runner, tpch_plan, monkeypatch):
+    real_open = tpch.os.open
+    real_fstat = tpch.os.fstat
+    real_close = tpch.os.close
+    parent_descriptor = None
+    close_calls = 0
+
+    def track_parent_open(path, flags, *args, **kwargs):
+        nonlocal parent_descriptor
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if path == tmp_path:
+            parent_descriptor = descriptor
+        return descriptor
+
+    def fail_parent_fstat(descriptor):
+        if descriptor == parent_descriptor:
+            raise OSError("simulated parent fstat failure")
+        return real_fstat(descriptor)
+
+    def track_close(descriptor):
+        nonlocal close_calls
+        if descriptor == parent_descriptor:
+            close_calls += 1
+        return real_close(descriptor)
+
+    monkeypatch.setattr(tpch.os, "open", track_parent_open)
+    monkeypatch.setattr(tpch.os, "fstat", fail_parent_fstat)
+    monkeypatch.setattr(tpch.os, "close", track_close)
+
+    with pytest.raises(OSError, match="parent fstat failure"):
+        tpch.generate_tpch(tpch_plan, tmp_path / "destination", runner=fake_runner)
+
+    assert close_calls == 1
+    assert parent_descriptor is not None
+    with pytest.raises(OSError):
+        os.fstat(parent_descriptor)
+
+
 def test_destination_rebind_after_final_rename_rolls_back_bound_outputs(tmp_path, fake_runner, tpch_plan, monkeypatch):
     destination = tmp_path / "destination"
     displaced = tmp_path / "displaced"
