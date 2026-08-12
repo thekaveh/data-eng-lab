@@ -80,6 +80,7 @@ def test_default_exact_reuse_does_not_list_inventory(monkeypatch) -> None:
     result = publish_dataset(plan, mode=PublishMode.DEFAULT, client=store, fetcher=lambda *_: ())
 
     assert result.status == "verified-existing"
+    assert result.inventory_state == "not-requested"
 
 
 def _publication_lease(store: FakeS3, plan, publication_id: str, owner_nonce: str) -> Lease:
@@ -284,6 +285,19 @@ def test_keepalive_checkpoint_waits_for_renewed_capability(monkeypatch) -> None:
     assert checked == ['"successor"']
 
 
+def test_keepalive_start_has_no_background_s3_mutator() -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    lease = _publication_lease(store, plan, PUBLICATION_ID, "a" * 32)
+    from datasets import publication as publication_module
+
+    keepalive = publication_module._LeaseKeepalive(store, lease)
+    keepalive.start()
+
+    assert not any(thread.name == f"dataset-lease-{lease.dataset}" for thread in threading.enumerate())
+    assert keepalive.stop() == lease
+
+
 def test_keepalive_start_failure_releases_acquired_lease(monkeypatch) -> None:
     plan = resolve_scale(_dataset(), "small")
     store = FakeS3()
@@ -458,6 +472,24 @@ def test_dry_run_missing_pointer_performs_no_lease_source_or_write(monkeypatch) 
     assert result.publication_prefix == publication_prefix(plan, result.publication_id)
     assert result.pointer_action == "create"
     assert result.pointer_precondition == "If-None-Match: *"
+    assert store.puts == []
+
+
+def test_dry_run_refresh_runs_complete_inventory_without_mutation(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store, _manifest_value = _published_store(plan)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.REFRESH,
+        client=store,
+        fetcher=lambda *_: pytest.fail("source"),
+        dry_run=True,
+    )
+
+    assert result.status == "dry-run-refresh"
+    assert result.inventory_state == "complete"
     assert store.puts == []
 
 
@@ -834,6 +866,34 @@ class FakeS3:
         return {
             "ETag": etag,
             "ResponseMetadata": {"HTTPHeaders": {"date": format_datetime(datetime.now(UTC), usegmt=True)}},
+        }
+
+
+class InventoryS3(FakeS3):
+    def list_objects_v2(
+        self,
+        *,
+        Bucket,
+        Prefix,
+        Delimiter=None,
+        ContinuationToken=None,
+    ):
+        del Bucket, ContinuationToken
+        matches = sorted(key for key in self.objects if key.startswith(Prefix))
+        if Delimiter is None:
+            return {"Contents": [{"Key": key} for key in matches], "IsTruncated": False}
+        direct = []
+        common = set()
+        for key in matches:
+            remainder = key.removeprefix(Prefix)
+            if "/" in remainder:
+                common.add(f"{Prefix}{remainder.split('/', 1)[0]}/")
+            else:
+                direct.append({"Key": key})
+        return {
+            "Contents": direct,
+            "CommonPrefixes": [{"Prefix": value} for value in sorted(common)],
+            "IsTruncated": False,
         }
 
 
@@ -1467,6 +1527,52 @@ def test_rollback_result_uses_pointer_state_observed_by_transaction(monkeypatch)
     assert store.puts[-1]["IfMatch"] == '"pointer-B"'
     assert result.pointer_precondition == 'If-Match: "pointer-B"'
     assert result.previous_manifest_sha256 == manifest_sha256(current_manifest)
+    assert result.pointer_outcome == "committed"
+    assert result.manifest_outcome == "existing-retained"
+    assert result.manifest_key == immutable_manifest_key("sample", manifest_sha256(target))
+    assert result.publication_prefix == target.physical_prefix
+    assert result.inventory_state == "complete"
+
+
+def test_rollback_inventory_closes_target_and_previous_active_history_transitively(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    manifest_a = _manifest(plan, publication_id=PREVIOUS_PUBLICATION_ID)
+    manifest_b = replace(
+        _manifest(plan, publication_id="123e4567e89b42d3a456426614174002"),
+        previous_manifest_key=immutable_manifest_key("sample", manifest_sha256(manifest_a)),
+        previous_manifest_sha256=manifest_sha256(manifest_a),
+    )
+    manifest_c = replace(
+        _manifest(plan),
+        previous_manifest_key=immutable_manifest_key("sample", manifest_sha256(manifest_b)),
+        previous_manifest_sha256=manifest_sha256(manifest_b),
+    )
+    seeded, _ = _published_store(plan, manifest_c)
+    store = InventoryS3()
+    store.objects.update(seeded.objects)
+    for manifest in (manifest_a, manifest_b):
+        store.seed(
+            immutable_manifest_key("sample", manifest_sha256(manifest)),
+            manifest.to_bytes(),
+            etag='"history"',
+        )
+        store.seed(manifest.objects[0].key, b"hello\n", etag='"history-object"')
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.ROLLBACK,
+        client=store,
+        fetcher=lambda *_: pytest.fail("source"),
+        rollback_sha256=manifest_sha256(manifest_a),
+    )
+
+    assert set(result.retained_manifest_keys) == {
+        immutable_manifest_key("sample", manifest_sha256(manifest_b)),
+        immutable_manifest_key("sample", manifest_sha256(manifest_c)),
+    }
+    assert result.unreferenced_manifest_keys == ()
+    assert result.candidate_generation_prefixes == ()
 
 
 def test_verified_result_walks_predecessor_history_in_order(monkeypatch) -> None:
@@ -1545,33 +1651,6 @@ def test_history_accepts_prior_scale_contract_and_excludes_all_reachable_generat
         previous_manifest_sha256=manifest_sha256(prior),
     )
 
-    class InventoryS3(FakeS3):
-        def list_objects_v2(
-            self,
-            *,
-            Bucket,
-            Prefix,
-            Delimiter=None,
-            ContinuationToken=None,
-        ):
-            del Bucket, ContinuationToken
-            matches = sorted(key for key in self.objects if key.startswith(Prefix))
-            if Delimiter is None:
-                return {"Contents": [{"Key": key} for key in matches], "IsTruncated": False}
-            direct = []
-            common = set()
-            for key in matches:
-                remainder = key.removeprefix(Prefix)
-                if "/" in remainder:
-                    common.add(f"{Prefix}{remainder.split('/', 1)[0]}/")
-                else:
-                    direct.append({"Key": key})
-            return {
-                "Contents": direct,
-                "CommonPrefixes": [{"Prefix": value} for value in sorted(common)],
-                "IsTruncated": False,
-            }
-
     seeded, _ = _published_store(current_plan, current)
     store = InventoryS3()
     store.objects.update(seeded.objects)
@@ -1591,6 +1670,30 @@ def test_history_accepts_prior_scale_contract_and_excludes_all_reachable_generat
 
     assert result.retained_manifest_keys == (immutable_manifest_key("sample", manifest_sha256(prior)),)
     assert result.candidate_generation_prefixes == (orphan_prefix,)
+
+
+def test_valid_unreferenced_manifest_keeps_its_generation_out_of_orphan_candidates(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    seeded, _current = _published_store(plan)
+    store = InventoryS3()
+    store.objects.update(seeded.objects)
+    unreferenced = _manifest(plan, publication_id="123e4567e89b42d3a456426614174003")
+    unreferenced_key = immutable_manifest_key("sample", manifest_sha256(unreferenced))
+    store.seed(unreferenced_key, unreferenced.to_bytes(), etag='"unreferenced"')
+    store.seed(unreferenced.objects[0].key, b"hello\n", etag='"unreferenced-object"')
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.DEFAULT,
+        client=store,
+        fetcher=lambda *_: pytest.fail("source"),
+        dry_run=True,
+    )
+
+    assert result.unreferenced_manifest_keys == (unreferenced_key,)
+    assert unreferenced.physical_prefix not in result.candidate_generation_prefixes
+    assert result.inventory_state == "complete"
 
 
 def test_generation_inventory_uses_one_global_request_budget(monkeypatch) -> None:
@@ -1721,6 +1824,35 @@ def test_owned_staging_atomic_cleanup_restores_last_moment_foreign_swap(tmp_path
     assert list(moved.iterdir()) == []
 
 
+def test_owned_staging_never_path_unlinks_after_atomic_identity_proof(tmp_path, monkeypatch) -> None:
+    from datasets import publication as publication_module
+
+    parent = tmp_path / "trusted"
+    parent.mkdir(mode=0o700)
+    exchanged = False
+    original_exchange = publication_module._exchange_directory_names
+    original_rmdir = publication_module.os.rmdir
+
+    def exchange(*args):
+        nonlocal exchanged
+        original_exchange(*args)
+        exchanged = True
+
+    def reject_post_exchange_rmdir(*args, **kwargs):
+        if exchanged:
+            pytest.fail("path rmdir remained after atomic identity proof")
+        return original_rmdir(*args, **kwargs)
+
+    monkeypatch.setattr(publication_module, "_exchange_directory_names", exchange)
+    monkeypatch.setattr(publication_module.os, "rmdir", reject_post_exchange_rmdir)
+
+    cleanup_notes: list[str] = []
+    with publication_module._owned_staging(parent, cleanup_notes=cleanup_notes) as staging:
+        (staging / "owned.txt").write_text("owned")
+
+    assert cleanup_notes == ["owned staging residue retained after descriptor-safe cleanup"]
+
+
 def test_stop_failure_does_not_mask_primary_and_release_is_attempted(tmp_path, monkeypatch) -> None:
     plan = resolve_scale(_dataset(), "small")
     store = FakeS3()
@@ -1798,6 +1930,39 @@ def test_pointer_commit_with_unavailable_reconciliation_is_explicitly_ambiguous(
     assert caught.value.result.pointer_outcome == "ambiguous"
     assert caught.value.result.proven_orphan_keys == ()
     assert caught.value.result.manifest_outcome == "reference-ambiguous"
+
+
+def test_committed_publication_inventory_failure_is_warning_not_failure(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        return _publication_lease(store, plan, publication_id, owner_nonce)
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+    monkeypatch.setattr(
+        "datasets.publication._attach_verified_history",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(AmbiguousWrite("inventory unavailable")),
+    )
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.DEFAULT,
+        client=store,
+        fetcher=lambda *_: (VerifiedFile(source, expected),),
+        raw_registry_sha256=RAW_REGISTRY_SHA256,
+    )
+
+    assert result.pointer_outcome == "committed"
+    assert result.inventory_state == "unavailable-warning"
+    assert result.cleanup_warning is not None
+    assert "inventory unavailable" in result.cleanup_warning
 
 
 @pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(9)])
@@ -1881,7 +2046,7 @@ def test_pointer_conflict_reports_proven_unreferenced_candidate(tmp_path, monkey
     assert result.pointer_outcome == "conflict"
     assert result.status == "concurrent-publisher"
     assert result.manifest_outcome == "written-unreferenced"
-    assert result.proven_orphan_keys == result.attempted_object_keys
+    assert result.proven_orphan_keys == ()
     assert "concurrent publisher" in str(caught.value.__cause__)
 
 

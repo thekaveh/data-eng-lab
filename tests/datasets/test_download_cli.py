@@ -57,6 +57,37 @@ def test_run_dispatches_publish_mode_and_preserves_registry_order(tmp_path: Path
     ]
 
 
+def test_run_surfaces_inventory_state_and_residue_warning(tmp_path: Path, monkeypatch, capsys) -> None:
+    def fake_publish(plan, **_kwargs):
+        return PublishResult(
+            plan.dataset.name,
+            plan.scale,
+            "published",
+            "a" * 64,
+            "1" * 32,
+            1,
+            cleanup_warning="owned staging residue retained after descriptor-safe cleanup",
+            inventory_state="unavailable-warning",
+        )
+
+    monkeypatch.setattr(cli, "publish_dataset", fake_publish)
+    code = cli.run(
+        REG,
+        infra_dir=tmp_path,
+        scale="tiny",
+        only=["nyc_taxi"],
+        force=False,
+        dry_run=False,
+        refresh=True,
+        client=object(),
+    )
+
+    captured = capsys.readouterr()
+    assert code == 0
+    assert '"inventory_state":"unavailable-warning"' in captured.out
+    assert "owned staging residue" in captured.err
+
+
 def test_run_reports_partial_failure_and_continues(tmp_path: Path, monkeypatch, capsys) -> None:
     seen: list[str] = []
 

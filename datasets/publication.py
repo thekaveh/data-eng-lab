@@ -66,9 +66,6 @@ _MAX_LEGACY_LIST_PAGES = 10_000
 _MAX_LEGACY_LIST_KEYS = 100_000
 _MAX_HISTORY_DEPTH = 1_000
 _MAX_GENERATION_PREFIXES = 100_000
-_RENEW_TRANSPORT_DEADLINE_SECONDS = 60.0
-_KEEPALIVE_STOP_GRACE_SECONDS = 5.0
-_KEEPALIVE_STOP_SECONDS = _RENEW_TRANSPORT_DEADLINE_SECONDS + _KEEPALIVE_STOP_GRACE_SECONDS
 _DEFAULT_LOCK_POLICY: Mapping[str, object] = MappingProxyType(
     {
         "algorithm": "sha256",
@@ -790,6 +787,7 @@ class PublishResult:
     unreferenced_manifest_keys: tuple[str, ...] = ()
     ambiguous_manifest_keys: tuple[str, ...] = ()
     candidate_generation_prefixes: tuple[str, ...] = ()
+    inventory_state: str = "not-requested"
 
     def to_document(self) -> dict[str, object]:
         return {
@@ -800,6 +798,7 @@ class PublishResult:
             "attempted_object_keys": list(self.attempted_object_keys),
             "ambiguous_manifest_keys": list(self.ambiguous_manifest_keys),
             "candidate_generation_prefixes": list(self.candidate_generation_prefixes),
+            "inventory_state": self.inventory_state,
             "manifest_key": self.manifest_key,
             "manifest_outcome": self.manifest_outcome,
             "possible_object_keys": list(self.possible_object_keys),
@@ -867,7 +866,7 @@ class _WriteTrackingClient:
 
 
 class _LeaseKeepalive:
-    """Renew one lease serially and expose only its latest proven capability."""
+    """Renew synchronously; no background thread is ever capable of S3 mutation."""
 
     def __init__(self, client, lease: Lease) -> None:
         self._client = client
@@ -877,14 +876,8 @@ class _LeaseKeepalive:
         self._error: BaseException | None = None
         self._started = False
         self._stopped = False
-        self._thread = threading.Thread(
-            target=self._run,
-            name=f"dataset-lease-{lease.dataset}",
-            daemon=True,
-        )
 
     def start(self) -> None:
-        self._thread.start()
         self._started = True
 
     def _renew_once(self) -> bool:
@@ -898,16 +891,39 @@ class _LeaseKeepalive:
                 return False
             return True
 
-    def _run(self) -> None:
-        while not self._stop.is_set():
+    def run_while_renewing(self, operation: Callable[[], object]) -> object:
+        """Run bounded acquisition work off-thread while this thread owns renewal."""
+        completed = threading.Event()
+        outcome: list[object] = []
+        errors: list[BaseException] = []
+
+        def invoke() -> None:
+            try:
+                outcome.append(operation())
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                completed.set()
+
+        worker = threading.Thread(target=invoke, name=f"dataset-source-{self._lease.dataset}", daemon=False)
+        worker.start()
+        while True:
             with self._lock:
                 lease = self._lease
             remaining = max((lease.expires_at - datetime.now(UTC)).total_seconds(), 0.0)
             interval = max(0.05, min(5.0, remaining / 3.0))
-            if self._stop.wait(interval):
-                return
+            if completed.wait(interval):
+                break
             if not self._renew_once():
-                return
+                completed.wait()
+                break
+        worker.join()
+        if errors:
+            raise errors[0]
+        with self._lock:
+            if self._error is not None:
+                raise ConditionalConflict("dataset lease renewal was lost") from self._error
+        return outcome[0]
 
     def checkpoint(self) -> Lease:
         with self._lock:
@@ -922,10 +938,6 @@ class _LeaseKeepalive:
             with self._lock:
                 return self._lease
         self._stop.set()
-        if self._started:
-            self._thread.join(_KEEPALIVE_STOP_SECONDS)
-            if self._thread.is_alive():
-                raise AmbiguousWrite("dataset lease renewal did not stop within the client deadline")
         self._stopped = True
         with self._lock:
             return self._lease
@@ -1024,6 +1036,7 @@ def _manifest_history(
     current: ImmutableManifest,
     *,
     bucket: str,
+    budget: _InventoryBudget | None = None,
 ) -> tuple[_HistoricalManifest, ...]:
     history: list[_HistoricalManifest] = []
     seen: set[str] = set()
@@ -1038,6 +1051,8 @@ def _manifest_history(
             raise _mismatch(plan, "history", "acyclic manifest chain", digest, stage="history")
         seen.add(digest)
         try:
+            if budget is not None:
+                budget.request()
             manifest = _read_historical_manifest(client, plan.dataset.name, digest, bucket)
             _validate_historical_manifest(manifest, plan)
         except (TypeError, ValueError) as error:
@@ -1105,20 +1120,13 @@ def _attach_verified_history(
     bucket: str,
     additional_reachable: tuple[tuple[str, ImmutableManifest], ...] = (),
 ) -> PublishResult:
-    history = _manifest_history(client, plan, current, bucket=bucket)
-    reachable_prefixes = {
-        current.physical_prefix,
-        *(item.manifest.physical_prefix for item in history),
-        *(manifest.physical_prefix for _key, manifest in additional_reachable),
-    }
     budget = _InventoryBudget()
-    inactive = _inactive_generation_prefixes(
-        client,
-        plan,
-        reachable_prefixes,
-        bucket=bucket,
-        budget=budget,
-    )
+    reachable_nodes = list(_manifest_history(client, plan, current, bucket=bucket, budget=budget))
+    for key, manifest in additional_reachable:
+        digest = key.removeprefix(f"_data-eng-locks/manifests/{plan.dataset.name}/").removesuffix(".json")
+        reachable_nodes.append(_HistoricalManifest(key, digest, manifest))
+        reachable_nodes.extend(_manifest_history(client, plan, manifest, bucket=bucket, budget=budget))
+    reachable_prefixes = {current.physical_prefix, *(item.manifest.physical_prefix for item in reachable_nodes)}
     if result.manifest_sha256 is None:
         raise ValueError("history inventory requires a current manifest digest")
     current_key = immutable_manifest_key(plan.dataset.name, result.manifest_sha256)
@@ -1130,8 +1138,7 @@ def _attach_verified_history(
     )
     referenced = {
         current_key,
-        *(item.key for item in history),
-        *(key for key, _manifest in additional_reachable),
+        *(item.key for item in reachable_nodes),
     }
     unreferenced: list[str] = []
     ambiguous: list[str] = []
@@ -1141,20 +1148,36 @@ def _attach_verified_history(
         digest = key.removeprefix(f"_data-eng-locks/manifests/{plan.dataset.name}/").removesuffix(".json")
         try:
             _require_sha256(digest, "inventory manifest digest")
+            budget.request()
             candidate = _read_historical_manifest(client, plan.dataset.name, digest, bucket)
             _validate_historical_manifest(candidate, plan)
         except (AmbiguousWrite, TypeError, ValueError):
             ambiguous.append(key)
         else:
             unreferenced.append(key)
+            reachable_prefixes.add(candidate.physical_prefix)
+    inactive: tuple[str, ...] = ()
+    if not ambiguous:
+        inactive = _inactive_generation_prefixes(
+            client,
+            plan,
+            reachable_prefixes,
+            bucket=bucket,
+            budget=budget,
+        )
     return replace(
         result,
-        retained_manifest_keys=tuple(dict.fromkeys((*result.retained_manifest_keys, *(item.key for item in history)))),
+        retained_manifest_keys=tuple(
+            key
+            for key in dict.fromkeys((*result.retained_manifest_keys, *(item.key for item in reachable_nodes)))
+            if key != current_key
+        ),
         previous_manifest_key=result.previous_manifest_key or current.previous_manifest_key,
         previous_manifest_sha256=result.previous_manifest_sha256 or current.previous_manifest_sha256,
         candidate_generation_prefixes=inactive,
         unreferenced_manifest_keys=tuple(unreferenced),
         ambiguous_manifest_keys=tuple(ambiguous),
+        inventory_state="complete",
     )
 
 
@@ -1312,7 +1335,11 @@ def _verify_candidate_files(plan: ScalePlan, files: tuple[VerifiedFile, ...]) ->
 
 
 @contextmanager
-def _owned_staging(parent: Path | None = None) -> Iterator[Path]:
+def _owned_staging(
+    parent: Path | None = None,
+    *,
+    cleanup_notes: list[str] | None = None,
+) -> Iterator[Path]:
     owns_parent = parent is None
     if parent is None:
         platform_parent = Path(tempfile.gettempdir())
@@ -1360,6 +1387,8 @@ def _owned_staging(parent: Path | None = None) -> Iterator[Path]:
             assert root_fd is not None and root is not None
             _remove_owned_directory_contents(root_fd)
             _remove_owned_root_atomically(private_parent, parent_fd, root.name, identity)
+            if cleanup_notes is not None:
+                cleanup_notes.append("owned staging residue retained after descriptor-safe cleanup")
         except BaseException as error:
             cleanup_error = error
         finally:
@@ -1370,14 +1399,8 @@ def _owned_staging(parent: Path | None = None) -> Iterator[Path]:
             if primary is None:
                 raise cleanup_error
             primary.add_note(f"owned publication staging cleanup failed: {type(cleanup_error).__name__}")
-        if owns_parent:
-            try:
-                private_parent.rmdir()
-            except OSError as error:
-                if primary is None and cleanup_error is None:
-                    raise ValueError("private publication staging parent cleanup failed") from error
-                if primary is not None:
-                    primary.add_note("private publication staging parent cleanup failed")
+        if owns_parent and primary is not None:
+            primary.add_note("private publication staging parent retained for descriptor-safe cleanup")
 
 
 def _remove_owned_directory_contents(directory_fd: int) -> None:
@@ -1427,35 +1450,22 @@ def _remove_owned_root_atomically(
     root_name: str,
     root_identity: tuple[int, int],
 ) -> None:
-    """Remove the owned root without ever unlinking an unverified replacement."""
+    """Quarantine the owned root without path-unlinking either exchanged name."""
     placeholder = Path(tempfile.mkdtemp(prefix="cleanup-", dir=parent))
     placeholder_status = os.stat(placeholder.name, dir_fd=parent_fd, follow_symlinks=False)
     placeholder_identity = (placeholder_status.st_dev, placeholder_status.st_ino)
-    exchanged = False
     try:
         _exchange_directory_names(parent_fd, root_name, placeholder.name)
-        exchanged = True
         displaced = os.stat(placeholder.name, dir_fd=parent_fd, follow_symlinks=False)
         displaced_identity = (displaced.st_dev, displaced.st_ino)
         if displaced_identity != root_identity:
             _exchange_directory_names(parent_fd, root_name, placeholder.name)
-            exchanged = False
             raise ValueError("publication staging identity changed; foreign replacement preserved")
         replacement = os.stat(root_name, dir_fd=parent_fd, follow_symlinks=False)
         if (replacement.st_dev, replacement.st_ino) != placeholder_identity:
             raise ValueError("publication staging cleanup placeholder identity changed")
-        os.rmdir(placeholder.name, dir_fd=parent_fd)
-        os.rmdir(root_name, dir_fd=parent_fd)
     except FileNotFoundError as error:
         raise ValueError("publication staging identity changed; owned directory was displaced") from error
-    finally:
-        if not exchanged:
-            try:
-                status = os.stat(placeholder.name, dir_fd=parent_fd, follow_symlinks=False)
-                if (status.st_dev, status.st_ino) == placeholder_identity:
-                    os.rmdir(placeholder.name, dir_fd=parent_fd)
-            except OSError:
-                pass
 
 
 def _list_legacy_keys(client, plan: ScalePlan, bucket: str) -> tuple[str, ...]:
@@ -1775,11 +1785,15 @@ def _stage_and_commit_candidate(
     reconciled = False
     inventory = _MutationInventory([], [], [])
     prefix = publication_prefix(plan, publication_id)
+    staging_cleanup_notes: list[str] = []
     try:
-        with _owned_staging() as root:
-            files = _legacy_candidates(client, plan, root, bucket) if allow_legacy else None
-            if files is None:
-                files = tuple(fetcher(plan, root))
+        with _owned_staging(cleanup_notes=staging_cleanup_notes) as root:
+
+            def acquire_files() -> tuple[VerifiedFile, ...]:
+                files = _legacy_candidates(client, plan, root, bucket) if allow_legacy else None
+                return tuple(fetcher(plan, root)) if files is None else files
+
+            files = cast(tuple[VerifiedFile, ...], keepalive.run_while_renewing(acquire_files))
             files = _verify_candidate_files(plan, files)
             staged: list[tuple[VerifiedFile, str, dict[str, str]]] = []
             for file in files:
@@ -1882,6 +1896,7 @@ def _stage_and_commit_candidate(
             manifest_outcome="referenced",
             pointer_outcome="committed",
             retained_manifest_keys=(active.pointer.manifest_key,) if active.pointer is not None else (),
+            cleanup_warning="; ".join(staging_cleanup_notes) or None,
         )
     except BaseException as error:
         pointer_ambiguous = inventory.pointer_outcome in {"ambiguous", "attempted-ambiguous"}
@@ -1892,6 +1907,10 @@ def _stage_and_commit_candidate(
         manifest_outcome = inventory.manifest_outcome
         if pointer_ambiguous and manifest_outcome == "written-unreferenced":
             manifest_outcome = "reference-ambiguous"
+        objects_are_manifest_referenced = inventory.manifest_outcome in {
+            "written-unreferenced",
+            "reference-ambiguous",
+        }
         failure = PublishResult(
             dataset=plan.dataset.name,
             scale=plan.scale,
@@ -1913,7 +1932,9 @@ def _stage_and_commit_candidate(
                 "If-None-Match: *" if active.snapshot is None else f"If-Match: {active.snapshot.etag}"
             ),
             attempted_object_keys=tuple(inventory.attempted_object_keys),
-            proven_orphan_keys=(tuple(inventory.proven_object_keys) if noncommit_proven else ()),
+            proven_orphan_keys=(
+                tuple(inventory.proven_object_keys) if noncommit_proven and not objects_are_manifest_referenced else ()
+            ),
             possible_object_keys=tuple(inventory.possible_object_keys),
             manifest_key=inventory.manifest_key,
             manifest_outcome=manifest_outcome,
@@ -1930,9 +1951,11 @@ def _stage_and_commit_candidate(
         try:
             return _attach_verified_history(client, plan, manifest, committed, bucket=bucket)
         except Exception as error:
+            warning = f"post-commit inventory unavailable: {type(error).__name__}"
             return replace(
                 committed,
-                cleanup_warning=f"post-commit inventory unavailable: {type(error).__name__}",
+                cleanup_warning=(f"{committed.cleanup_warning}; {warning}" if committed.cleanup_warning else warning),
+                inventory_state="unavailable-warning",
             )
         except BaseException as error:
             diagnostic = canonical_json(committed.to_document()).decode("utf-8")
@@ -1977,10 +2000,14 @@ def publish_dataset(
             planned = replace(
                 _result_from_resolved(rollback.resolved, "dry-run-rollback"),
                 pointer_action="replace",
+                pointer_outcome="would-replace",
                 pointer_precondition=f"If-Match: {rollback.pointer_state.snapshot.etag}",
                 previous_manifest_key=rollback.pointer_state.pointer.manifest_key,
                 previous_manifest_sha256=rollback.pointer_state.pointer.manifest_sha256,
                 retained_manifest_keys=(rollback.pointer_state.pointer.manifest_key,),
+                manifest_key=immutable_manifest_key(plan.dataset.name, cast(str, digest)),
+                manifest_outcome="would-retain-existing",
+                publication_prefix=rollback.manifest.physical_prefix,
             )
             return _attach_verified_history(
                 client,
@@ -1993,7 +2020,7 @@ def publish_dataset(
         if mode is PublishMode.REFRESH:
             current_digest = active.pointer.manifest_sha256 if active.pointer is not None else None
             intended_publication = uuid.uuid4().hex
-            return PublishResult(
+            planned = PublishResult(
                 plan.dataset.name,
                 plan.scale,
                 "dry-run-refresh",
@@ -2008,6 +2035,16 @@ def publish_dataset(
                     "If-None-Match: *" if active.snapshot is None else f"If-Match: {active.snapshot.etag}"
                 ),
             )
+            if active.pointer is not None and active.corruption is None:
+                _resolved, current = _verify_pointer_state_with_document(client, plan, active, bucket)
+                return _attach_verified_history(client, plan, current, planned, bucket=bucket)
+            if active.corruption is not None:
+                return replace(
+                    planned,
+                    inventory_state="unavailable-warning",
+                    cleanup_warning="inventory unavailable because the active pointer is corrupt",
+                )
+            return planned
         if active.pointer is not None or active.corruption is not None:
             resolved, current = _verify_pointer_state_with_document(client, plan, active, bucket)
             return _result_with_verified_history(
@@ -2050,7 +2087,11 @@ def publish_dataset(
             previous_manifest_sha256=rollback.pointer_state.pointer.manifest_sha256,
             retained_manifest_keys=(rollback.pointer_state.pointer.manifest_key,),
             pointer_action="replace",
+            pointer_outcome="reconciled" if rollback.reconciled else "committed",
             pointer_precondition=f"If-Match: {rollback.pointer_state.snapshot.etag}",
+            manifest_key=immutable_manifest_key(plan.dataset.name, cast(str, digest)),
+            manifest_outcome="existing-retained",
+            publication_prefix=rollback.manifest.physical_prefix,
         )
         try:
             return _attach_verified_history(
@@ -2065,6 +2106,7 @@ def publish_dataset(
             return replace(
                 committed,
                 cleanup_warning=f"post-commit inventory unavailable: {type(error).__name__}",
+                inventory_state="unavailable-warning",
             )
         except BaseException as error:
             diagnostic = canonical_json(committed.to_document()).decode("utf-8")
