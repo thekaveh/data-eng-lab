@@ -20,6 +20,7 @@ from datasets.acquisition import (  # noqa: E402
     ZipLimits,
     _bound_download_metadata,
     _bound_extracted_metadata,
+    _canonical_archive_entries,
     download_bounded,
     extract_members,
     validated_zip_members,
@@ -61,10 +62,11 @@ def _bound_raw_metadata(downloaded: DownloadedFile) -> tuple[int, str]:
 
 def _archive_outputs(raw_path: Path, temporary_root: Path) -> list[dict[str, object]]:
     entries = validated_zip_members(raw_path, _zip_limits())
+    canonical_entries = _canonical_archive_entries(entries)
     extracted = extract_members(raw_path, entries, temporary_root / "members")
     metadata = _bound_extracted_metadata(extracted)
     outputs: list[dict[str, object]] = []
-    for entry, (size, sha256) in zip(entries, metadata, strict=True):
+    for entry, (size, sha256) in zip(canonical_entries, metadata, strict=True):
         outputs.append(
             {
                 "object_name": entry.object_name,

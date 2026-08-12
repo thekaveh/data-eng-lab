@@ -157,6 +157,18 @@ class _ValidatedEntries(_ImmutableCapabilityList, list[ArchiveEntry]):
         raise TypeError("capability-bearing validated entries cannot be pickled")
 
 
+def _canonical_archive_entries(entries: list[ArchiveEntry]) -> tuple[ArchiveEntry, ...]:
+    """Return immutable validated entries for internal security decisions."""
+    if not isinstance(entries, _ValidatedEntries):
+        raise ValueError("entries are not bound to validated archive entries")
+    canonical = entries._canonical_entries()
+    if tuple(list.__iter__(entries)) != canonical:
+        raise ValueError("validated archive entries changed")
+    if not canonical or not all(type(entry) is ArchiveEntry for entry in canonical):
+        raise ValueError("validated archive entries are malformed")
+    return canonical
+
+
 class _BindingOwner:
     __slots__ = ("_active_bindings", "_bindings", "_closed", "_lock")
 
@@ -1387,9 +1399,7 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
     if not isinstance(entries, _ValidatedEntries):
         raise ValueError("archive entries are not bound to one validated snapshot")
     expected_snapshot, limits = entries._capability()
-    canonical_entries = entries._canonical_entries()
-    if tuple(list.__iter__(entries)) != canonical_entries:
-        raise ValueError("validated archive entries changed")
+    canonical_entries = _canonical_archive_entries(entries)
 
     archive_stream, current_snapshot = _stable_archive(path)
     try:

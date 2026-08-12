@@ -110,6 +110,7 @@ def test_audit_and_production_share_the_same_zip_policy(monkeypatch: pytest.Monk
         return [acquisition.ArchiveEntry("data.csv", "data.csv", 6)]
 
     monkeypatch.setattr(audit, "validated_zip_members", sentinel_policy)
+    monkeypatch.setattr(audit, "_canonical_archive_entries", tuple)
     monkeypatch.setattr(audit, "extract_members", lambda *args: [tmp_path / "extracted"])
     monkeypatch.setattr(audit, "_bound_extracted_metadata", lambda *args: [(6, hashlib.sha256(b"locked").hexdigest())])
     (tmp_path / "extracted").write_bytes(b"locked")
@@ -1198,6 +1199,51 @@ def test_audit_rejects_early_extracted_output_replacement_before_success(
 
     with pytest.raises(ValueError, match="extracted output changed"):
         audit.audit_http(source, archive=True)
+
+
+def test_audit_pairs_bound_metadata_with_canonical_entries_during_public_list_mutation(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    archive = tmp_path / "data.zip"
+    archive.write_bytes(zip_bytes({"a.csv": b"a", "b.csv": b"bb"}))
+    real_validated = audit.validated_zip_members
+    real_bound = audit._bound_extracted_metadata
+    observed: dict[str, list[acquisition.ArchiveEntry]] = {}
+
+    def capture_entries(path: Path, limits: acquisition.ZipLimits):
+        entries = real_validated(path, limits)
+        observed["entries"] = entries
+        return entries
+
+    def mutate_during_hash(paths: list[Path]):
+        metadata = real_bound(paths)
+        list.__setitem__(
+            observed["entries"],
+            0,
+            acquisition.ArchiveEntry("b.csv", "renamed.csv", 999),
+        )
+        return metadata
+
+    monkeypatch.setattr(audit, "validated_zip_members", capture_entries)
+    monkeypatch.setattr(audit, "_bound_extracted_metadata", mutate_during_hash)
+
+    outputs = audit._archive_outputs(archive, tmp_path)
+
+    assert outputs == [
+        {
+            "object_name": "a.csv",
+            "member_path": "a.csv",
+            "size_bytes": 1,
+            "sha256": hashlib.sha256(b"a").hexdigest(),
+        },
+        {
+            "object_name": "b.csv",
+            "member_path": "b.csv",
+            "size_bytes": 2,
+            "sha256": hashlib.sha256(b"bb").hexdigest(),
+        },
+    ]
 
 
 @responses.activate

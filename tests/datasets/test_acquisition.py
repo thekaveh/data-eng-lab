@@ -1459,6 +1459,20 @@ def test_extract_rejects_pre_call_unbound_validated_list_mutation(tmp_path: Path
     assert not (tmp_path / "members").exists()
 
 
+def test_canonical_archive_entries_helper_rejects_plain_or_mutated_inputs(tmp_path: Path):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    entries = validated_zip_members(archive, ZipLimits())
+
+    assert acquisition._canonical_archive_entries(entries) == (
+        acquisition.ArchiveEntry("data.csv", "data.csv", 6),
+    )
+    with pytest.raises(ValueError, match="not bound to validated archive entries"):
+        acquisition._canonical_archive_entries(list(entries))
+    list.__setitem__(entries, 0, acquisition.ArchiveEntry("data.csv", "renamed.csv", 6))
+    with pytest.raises(ValueError, match="validated archive entries changed"):
+        acquisition._canonical_archive_entries(entries)
+
+
 def test_extract_uses_canonical_entries_during_mid_call_unbound_mutation(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
