@@ -49,6 +49,10 @@ _EXPORTER = Path("datasets/tpch_lock_export.py")
 _LABEL_PREFIX = "io.data-eng-lab.tpch."
 
 
+class _ImageProofMismatch(RuntimeError):
+    """The inspected image ran, but its canonical proof was invalid."""
+
+
 @dataclass(frozen=True)
 class ImageEvidence:
     image_id: str
@@ -109,8 +113,8 @@ class _Publication:
             primary.add_note(f"TPC-H destination capability release failed: {error}")
 
     def commit(self) -> None:
-        self.active = False
         self.close()
+        self.active = False
 
 
 class ContainerRunner(Protocol):
@@ -252,14 +256,13 @@ def canonical_scale(scale_factor: float) -> str:
 
 def _secure_host_outputs(output_root: Path, generated: Path, metadata_path: Path) -> None:
     expected_uid = os.getuid()
-    expected_gid = os.getgid()
     paths = (output_root, generated, metadata_path, *tuple(generated.iterdir()))
     for path in paths:
         try:
             status = path.lstat()
         except OSError as error:
             raise RuntimeError("canonical TPC-H output ownership handoff is incomplete") from error
-        if stat.S_ISLNK(status.st_mode) or status.st_uid != expected_uid or status.st_gid != expected_gid:
+        if stat.S_ISLNK(status.st_mode) or status.st_uid != expected_uid:
             raise RuntimeError(f"canonical TPC-H output is not host-owned: {path}")
         if stat.S_ISDIR(status.st_mode):
             path.chmod(0o700)
@@ -293,12 +296,10 @@ class DockerContainerRunner:
             raise RuntimeError(detail) from error
 
     def _inspect_image(self) -> dict[str, object] | None:
-        try:
-            result = self._execute(["docker", "image", "inspect", self.image_tag])
-        except RuntimeError as error:
-            if "No such image" in str(error) or "No such object" in str(error):
-                return None
-            raise
+        listed = self._execute(["docker", "image", "ls", "--quiet", "--no-trunc", self.image_tag])
+        if not listed.stdout.strip():
+            return None
+        result = self._execute(["docker", "image", "inspect", self.image_tag])
         try:
             document = json.loads(result.stdout)
         except json.JSONDecodeError as error:
@@ -352,7 +353,7 @@ class DockerContainerRunner:
         try:
             document = json.loads(result.stdout)
         except json.JSONDecodeError as error:
-            raise RuntimeError("canonical TPC-H runtime probe returned invalid evidence") from error
+            raise _ImageProofMismatch("canonical TPC-H runtime probe returned invalid evidence") from error
         expected_fields = (
             "duckdb_version",
             "duckdb_wheel_sha256",
@@ -362,9 +363,9 @@ class DockerContainerRunner:
             "exporter_sha256",
         )
         if not isinstance(document, dict) or tuple(document) != expected_fields:
-            raise RuntimeError("canonical TPC-H runtime probe returned invalid evidence")
+            raise _ImageProofMismatch("canonical TPC-H runtime probe returned invalid evidence")
         if any(type(document[field]) is not str for field in expected_fields):
-            raise RuntimeError("canonical TPC-H runtime probe returned invalid evidence")
+            raise _ImageProofMismatch("canonical TPC-H runtime probe returned invalid evidence")
         return cast(dict[str, str], document)
 
     def _build_image(self, contract: GeneratorContract) -> None:
@@ -463,31 +464,63 @@ class DockerContainerRunner:
             return False
         return True
 
-    def ensure_image(self, contract: GeneratorContract) -> ImageEvidence:
-        inspection = self._inspect_image()
-        expected_labels = canonical_labels(contract, self.repository_root)
-        actual_labels = {}
-        if inspection is not None and isinstance(inspection.get("Config"), Mapping):
-            labels = cast(Mapping[str, object], inspection["Config"]).get("Labels")
-            if isinstance(labels, Mapping):
-                actual_labels = labels
-        try:
-            evidence = self._image_evidence(contract, inspection) if inspection is not None else None
-        except RuntimeError:
-            evidence = None
+    def _cheap_inspection_matches(
+        self,
+        inspection: Mapping[str, object],
+        contract: GeneratorContract,
+    ) -> bool:
+        image_id = inspection.get("Id")
+        config = inspection.get("Config")
         if (
-            inspection is None
-            or any(actual_labels.get(key) != value for key, value in expected_labels.items())
-            or evidence is None
-            or not self._evidence_matches(evidence, contract)
+            not isinstance(image_id, str)
+            or re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None
+            or not isinstance(config, Mapping)
+            or inspection.get("Os") != "linux"
+            or inspection.get("Architecture") != "amd64"
+            or tuple(config.get("Entrypoint") or ()) != CANONICAL_ENTRYPOINT
         ):
-            self._build_image(contract)
-            inspection = self._inspect_image()
-            if inspection is None:
-                raise RuntimeError("canonical TPC-H image is unavailable after build")
+            return False
+        labels = config.get("Labels")
+        environment = config.get("Env")
+        if not isinstance(labels, Mapping) or not isinstance(environment, Sequence) or isinstance(environment, str):
+            return False
+        expected_labels = canonical_labels(contract, self.repository_root)
+        if any(labels.get(key) != value for key, value in expected_labels.items()):
+            return False
+        actual_environment = {
+            item.split("=", 1)[0]: item.split("=", 1)[1]
+            for item in environment
+            if isinstance(item, str) and "=" in item
+        }
+        return all(actual_environment.get(key) == value for key, value in canonical_environment(contract).items())
+
+    def _rebuild_and_verify(self, contract: GeneratorContract) -> ImageEvidence:
+        self._build_image(contract)
+        inspection = self._inspect_image()
+        if inspection is None:
+            raise RuntimeError("canonical TPC-H image is unavailable after build")
+        if not self._cheap_inspection_matches(inspection, contract):
+            raise RuntimeError("canonical TPC-H image failed post-build config verification")
+        try:
             evidence = self._image_evidence(contract, inspection)
+        except _ImageProofMismatch as error:
+            raise RuntimeError("canonical TPC-H image failed post-build proof verification") from error
         if not self._evidence_matches(evidence, contract):
             raise RuntimeError("canonical TPC-H image failed post-build verification")
+        return evidence
+
+    def ensure_image(self, contract: GeneratorContract) -> ImageEvidence:
+        inspection = self._inspect_image()
+        if inspection is None or not self._cheap_inspection_matches(inspection, contract):
+            evidence = self._rebuild_and_verify(contract)
+        else:
+            try:
+                evidence = self._image_evidence(contract, inspection)
+            except _ImageProofMismatch:
+                evidence = self._rebuild_and_verify(contract)
+            else:
+                if not self._evidence_matches(evidence, contract):
+                    evidence = self._rebuild_and_verify(contract)
         self._verified_image_id = evidence.image_id
         return evidence
 
@@ -509,6 +542,16 @@ class DockerContainerRunner:
             "--network=none",
             "--platform",
             contract.environment.platform,
+            "--user",
+            f"{os.getuid()}:{os.getgid()}",
+            "--env",
+            "HOME=/root",
+            "--env",
+            "TMPDIR=/tmp",
+            "--tmpfs",
+            "/root:mode=0755",
+            "--mount",
+            "type=volume,destination=/root/.duckdb",
             "--volume",
             f"{output_root.resolve()}:/out",
             image_id,
@@ -519,35 +562,7 @@ class DockerContainerRunner:
             "--metadata",
             f"/out/{metadata_path.name}",
         ]
-        primary: BaseException | None = None
-        try:
-            self._execute(command)
-        except BaseException as error:
-            primary = error
-        handoff = [
-            "docker",
-            "run",
-            "--rm",
-            "--network=none",
-            "--platform",
-            contract.environment.platform,
-            "--volume",
-            f"{output_root.resolve()}:/out",
-            "--entrypoint",
-            "/bin/chown",
-            image_id,
-            "-R",
-            f"{os.getuid()}:{os.getgid()}",
-            "/out",
-        ]
-        try:
-            self._execute(handoff)
-        except BaseException as handoff_error:
-            if primary is None:
-                raise RuntimeError("canonical TPC-H output ownership handoff failed") from handoff_error
-            primary.add_note(f"TPC-H output ownership handoff failed: {handoff_error}")
-        if primary is not None:
-            raise primary
+        self._execute(command)
         if not generated.is_dir():
             raise RuntimeError("canonical TPC-H container did not create its output directory")
         _secure_host_outputs(output_root, generated, metadata_path)
@@ -786,9 +801,10 @@ def publish_verified_files(
                 follow_symlinks=False,
             )
             target_identity = _path_identity(target, directory=False)
+            if target_identity is not None:
+                publication.owned_links.append((target, target_identity))
             if target_identity != source_identity:
                 raise ValueError("published TPC-H output identity changed")
-            publication.owned_links.append((target, target_identity))
         publication.files = tuple(
             VerifiedFile(path.resolve(strict=True), item.expected) for item, path in zip(files, targets, strict=True)
         )

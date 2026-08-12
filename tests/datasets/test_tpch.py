@@ -358,6 +358,46 @@ def test_publication_rollback_preserves_concurrent_replacement(tmp_path, fake_ru
     assert not list(destination.glob(".dataset-cleanup-*"))
 
 
+def test_publication_rollback_tracks_actual_link_after_source_swap(tmp_path, fake_runner, tpch_plan, monkeypatch):
+    destination = tmp_path / "source-swap"
+    real_link = tpch.os.link
+    links = 0
+
+    def swap_source_before_first_link(source, target, **kwargs):
+        nonlocal links
+        links += 1
+        if links == 1:
+            source_path = Path(source)
+            source_path.unlink()
+            source_path.write_bytes(b"swapped after verification")
+        return real_link(source, target, **kwargs)
+
+    monkeypatch.setattr(tpch.os, "link", swap_source_before_first_link)
+    with pytest.raises(ValueError, match="identity changed"):
+        tpch.generate_tpch(tpch_plan, destination, runner=fake_runner)
+
+    assert list(destination.iterdir()) == []
+
+
+def test_publication_commit_close_failure_rolls_back_outputs(tmp_path, fake_runner, tpch_plan, monkeypatch):
+    destination = tmp_path / "commit-close"
+    real_close = tpch._Publication.close
+    failed = False
+
+    def close_then_fail(publication, primary=None):
+        nonlocal failed
+        real_close(publication, primary)
+        if primary is None and not failed:
+            failed = True
+            raise OSError("simulated close failure")
+
+    monkeypatch.setattr(tpch._Publication, "close", close_then_fail)
+    with pytest.raises(OSError, match="close failure"):
+        tpch.generate_tpch(tpch_plan, destination, runner=fake_runner)
+
+    assert list(destination.iterdir()) == []
+
+
 def test_publication_rollback_attempts_all_cleanup_and_notes_failures(tmp_path, fake_runner, tpch_plan, monkeypatch):
     destination = tmp_path / "cleanup-failures"
     real_link = tpch.os.link
@@ -398,30 +438,77 @@ def test_generate_tpch_has_no_host_fallback(tmp_path, tpch_plan, monkeypatch):
     assert not list(tmp_path.glob("*.parquet"))
 
 
-def test_docker_runner_builds_only_when_absent_or_label_mismatched(tmp_path, tpch_plan, monkeypatch):
+def test_docker_runner_rebuilds_label_drift_before_runtime_probe(tpch_plan, monkeypatch):
     contract = tpch_plan.dataset.generator
     assert contract is not None
-    assert hasattr(tpch, "DockerContainerRunner")
     runner = tpch.DockerContainerRunner(repository_root=ROOT)
     matching = tpch.canonical_labels(contract)
     inspections = [
-        None,
-        {"Config": {"Labels": matching}},
-        {"Config": {"Labels": matching}},
-        {"Config": {"Labels": {}}},
-        {"Config": {"Labels": matching}},
+        {
+            "Id": "sha256:" + "1" * 64,
+            "Os": "linux",
+            "Architecture": "amd64",
+            "Config": {
+                "Labels": {},
+                "Entrypoint": list(tpch.CANONICAL_ENTRYPOINT),
+                "Env": [f"{key}={value}" for key, value in tpch.canonical_environment(contract).items()],
+            },
+        },
+        {
+            "Id": "sha256:" + "2" * 64,
+            "Os": "linux",
+            "Architecture": "amd64",
+            "Config": {
+                "Labels": matching,
+                "Entrypoint": list(tpch.CANONICAL_ENTRYPOINT),
+                "Env": [f"{key}={value}" for key, value in tpch.canonical_environment(contract).items()],
+            },
+        },
     ]
     builds = []
     evidence = FakeRunner(tpch_plan).evidence
     monkeypatch.setattr(runner, "_inspect_image", lambda: inspections.pop(0))
     monkeypatch.setattr(runner, "_build_image", lambda contract: builds.append(contract))
-    monkeypatch.setattr(runner, "_image_evidence", lambda contract, inspection: evidence)
+    probes = []
+    monkeypatch.setattr(
+        runner,
+        "_image_evidence",
+        lambda contract, inspection: probes.append(inspection["Id"]) or replace(evidence, image_id=inspection["Id"]),
+    )
     monkeypatch.setattr(runner, "_evidence_matches", lambda evidence, contract: True)
 
-    assert runner.ensure_image(contract) == evidence
-    assert runner.ensure_image(contract) == evidence
-    assert runner.ensure_image(contract) == evidence
-    assert builds == [contract, contract]
+    assert runner.ensure_image(contract).image_id == "sha256:" + "2" * 64
+    assert builds == [contract]
+    assert probes == ["sha256:" + "2" * 64]
+
+
+def test_docker_runner_propagates_operational_probe_failure_without_build(tpch_plan, monkeypatch):
+    contract = tpch_plan.dataset.generator
+    assert contract is not None
+    runner = tpch.DockerContainerRunner(repository_root=ROOT)
+    evidence = FakeRunner(tpch_plan).evidence
+    inspection = {
+        "Id": evidence.image_id,
+        "Os": "linux",
+        "Architecture": "amd64",
+        "Config": {
+            "Labels": tpch.canonical_labels(contract),
+            "Entrypoint": list(tpch.CANONICAL_ENTRYPOINT),
+            "Env": [f"{key}={value}" for key, value in tpch.canonical_environment(contract).items()],
+        },
+    }
+    builds = []
+    monkeypatch.setattr(runner, "_inspect_image", lambda: inspection)
+    monkeypatch.setattr(
+        runner,
+        "_image_evidence",
+        lambda contract, inspection: (_ for _ in ()).throw(RuntimeError("daemon unavailable")),
+    )
+    monkeypatch.setattr(runner, "_build_image", lambda contract: builds.append(contract))
+
+    with pytest.raises(RuntimeError, match="daemon unavailable"):
+        runner.ensure_image(contract)
+    assert builds == []
 
 
 def test_docker_runner_rebuilds_forged_matching_label_image(tpch_plan, monkeypatch):
@@ -431,7 +518,13 @@ def test_docker_runner_rebuilds_forged_matching_label_image(tpch_plan, monkeypat
     matching = tpch.canonical_labels(contract)
     inspection = {
         "Id": "sha256:" + "1" * 64,
-        "Config": {"Labels": matching},
+        "Os": "linux",
+        "Architecture": "amd64",
+        "Config": {
+            "Labels": matching,
+            "Entrypoint": list(tpch.CANONICAL_ENTRYPOINT),
+            "Env": [f"{key}={value}" for key, value in tpch.canonical_environment(contract).items()],
+        },
     }
     forged = replace(
         FakeRunner(replace(tpch_plan)).evidence,
@@ -613,10 +706,9 @@ def test_docker_runner_runtime_command_is_offline_and_does_not_install(tpch_plan
 
     def execute(command):
         commands.append(command)
-        if "--entrypoint" not in command:
-            (tmp_path / "output").mkdir()
-            (tmp_path / "output" / "customer.parquet").write_bytes(b"data")
-            (tmp_path / "metadata.yaml").write_bytes(b"metadata")
+        (tmp_path / "output").mkdir()
+        (tmp_path / "output" / "customer.parquet").write_bytes(b"data")
+        (tmp_path / "metadata.yaml").write_bytes(b"metadata")
 
     monkeypatch.setattr(runner, "_execute", execute)
 
@@ -629,6 +721,16 @@ def test_docker_runner_runtime_command_is_offline_and_does_not_install(tpch_plan
         "--network=none",
         "--platform",
         "linux/amd64",
+        "--user",
+        f"{os.getuid()}:{os.getgid()}",
+        "--env",
+        "HOME=/root",
+        "--env",
+        "TMPDIR=/tmp",
+        "--tmpfs",
+        "/root:mode=0755",
+        "--mount",
+        "type=volume,destination=/root/.duckdb",
         "--volume",
         f"{tmp_path.resolve()}:/out",
         "sha256:" + "1" * 64,
@@ -639,26 +741,39 @@ def test_docker_runner_runtime_command_is_offline_and_does_not_install(tpch_plan
         "--metadata",
         "/out/metadata.yaml",
     ]
-    assert commands[1] == [
-        "docker",
-        "run",
-        "--rm",
-        "--network=none",
-        "--platform",
-        "linux/amd64",
-        "--volume",
-        f"{tmp_path.resolve()}:/out",
-        "--entrypoint",
-        "/bin/chown",
-        "sha256:" + "1" * 64,
-        "-R",
-        f"{os.getuid()}:{os.getgid()}",
-        "/out",
-    ]
+    assert len(commands) == 1
     assert all("INSTALL" not in argument and "pip" not in argument for command in commands for argument in command)
     assert stat.S_IMODE(tmp_path.stat().st_mode) == 0o700
     assert stat.S_IMODE((tmp_path / "customer.parquet").stat().st_mode) == 0o600
     assert stat.S_IMODE((tmp_path / "metadata.yaml").stat().st_mode) == 0o600
+
+
+def test_generation_failure_leaves_no_host_owned_transaction_residue(tmp_path, tpch_plan, monkeypatch):
+    contract = tpch_plan.dataset.generator
+    assert contract is not None
+    runner = tpch.DockerContainerRunner(repository_root=ROOT)
+    evidence = FakeRunner(tpch_plan).evidence
+    runner._verified_image_id = evidence.image_id
+    monkeypatch.setattr(runner, "ensure_image", lambda contract: evidence)
+    commands = []
+
+    def fail_after_host_owned_output(command):
+        commands.append(command)
+        volume = command[command.index("--volume") + 1]
+        output_root = Path(volume.removesuffix(":/out"))
+        generated = output_root / "output"
+        generated.mkdir(mode=0o700)
+        (generated / "partial.parquet").write_bytes(b"partial")
+        (generated / "partial.parquet").chmod(0o600)
+        raise RuntimeError("generation failed")
+
+    monkeypatch.setattr(runner, "_execute", fail_after_host_owned_output)
+
+    with pytest.raises(RuntimeError, match="generation failed"):
+        tpch.generate_tpch(tpch_plan, tmp_path, runner=runner)
+
+    assert len(commands) == 1
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_docker_runner_refuses_run_without_verified_image_id(tpch_plan, tmp_path):
@@ -691,6 +806,27 @@ def test_host_ownership_check_rejects_root_owned_output_simulation(tmp_path, mon
         tpch._secure_host_outputs(tmp_path, output, tmp_path / "metadata.yaml")
 
 
+def test_host_ownership_check_accepts_docker_desktop_group_remap(tmp_path, monkeypatch):
+    output = tmp_path / "output"
+    output.mkdir()
+    artifact = output / "customer.parquet"
+    artifact.write_bytes(b"data")
+    metadata = tmp_path / "metadata.yaml"
+    metadata.write_bytes(b"metadata")
+    real_lstat = Path.lstat
+
+    def remapped_group(path):
+        status = real_lstat(path)
+        values = list(status)
+        values[5] = 0 if os.getgid() != 0 else 1
+        return os.stat_result(values)
+
+    monkeypatch.setattr(Path, "lstat", remapped_group)
+    tpch._secure_host_outputs(tmp_path, output, metadata)
+
+    assert stat.S_IMODE(artifact.stat().st_mode) == 0o600
+
+
 def test_inspect_invalid_json_has_stable_error(monkeypatch):
     runner = tpch.DockerContainerRunner(repository_root=ROOT)
     monkeypatch.setattr(
@@ -700,6 +836,20 @@ def test_inspect_invalid_json_has_stable_error(monkeypatch):
     )
     with pytest.raises(RuntimeError, match="invalid image inspection evidence"):
         runner._inspect_image()
+
+
+def test_inspect_detects_missing_image_without_parsing_english_stderr(monkeypatch):
+    runner = tpch.DockerContainerRunner(repository_root=ROOT)
+    commands = []
+
+    def run(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0, "", "localized diagnostic")
+
+    monkeypatch.setattr(tpch.subprocess, "run", run)
+
+    assert runner._inspect_image() is None
+    assert commands == [["docker", "image", "ls", "--quiet", "--no-trunc", runner.image_tag]]
 
 
 def test_generate_tpch_requires_typed_generator_plan(tmp_path, tpch_plan, fake_runner):
