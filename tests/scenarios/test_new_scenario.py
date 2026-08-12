@@ -23,12 +23,26 @@ def test_scaffold_creates_valid_structure(tmp_path: Path):
     json.loads((d / "jupyter" / "notebook.ipynb").read_text())
 
 
+def test_scaffolded_notebooks_resolve_one_expected_scale_immutable_generation(tmp_path: Path):
+    d = ns.scaffold(tmp_path, NAME)
+    for path in (d / "zeppelin/notebook.zpln", d / "jupyter/notebook.ipynb"):
+        text = path.read_text(encoding="utf-8")
+        assert text.count("/v1/resolve") == 1
+        assert "DATASET_RESOLVER_URI" in text
+        assert "DATASET_SCALE" in text
+        assert "expected_scale" in text
+        assert "_generations/" in text
+        assert "size_bytes" in text and "sha256" in text and "schema_id" in text
+        assert "s3a://landing/" not in text
+
+
 def test_scaffold_output_passes_the_verifier(tmp_path: Path):
     ns.scaffold(tmp_path, NAME)
     vspec = importlib.util.spec_from_file_location("verify_repo", ROOT / "scripts" / "verify_repo.py")
     verify = importlib.util.module_from_spec(vspec)
     vspec.loader.exec_module(verify)
     import yaml
+
     cfg = yaml.safe_load((ROOT / "scripts" / "verify_repo_config.yaml").read_text())
     errors = [f for f in verify.run_checks(tmp_path, cfg) if f.severity == "error"]
     assert errors == [], errors

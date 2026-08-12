@@ -58,17 +58,19 @@ class TaxiTransformsSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(TaxiTransforms.clean(raw).count() == 2)
   }
 
-  test("uses deterministic scale paths and rejects unsupported scales") {
-    val prefix = "s3a://landing/nyc_taxi/"
-    assert(TaxiLanding.pathsForScale(prefix, "tiny") == Seq(
-      "s3a://landing/nyc_taxi/yellow_tripdata_2023-01.parquet"
-    ))
-    assert(TaxiLanding.pathsForScale(prefix) == Seq(
-      "s3a://landing/nyc_taxi/yellow_tripdata_2023-01.parquet",
-      "s3a://landing/nyc_taxi/yellow_tripdata_2023-02.parquet",
-      "s3a://landing/nyc_taxi/yellow_tripdata_2023-03.parquet"
-    ))
-    assert(TaxiLanding.pathsForScale(prefix, "medium").size == 6)
-    assertThrows[IllegalArgumentException](TaxiLanding.pathsForScale(prefix, "large"))
+  test("entrypoint requires ordered immutable URI arguments and an explicit table") {
+    val generation = "1" * 64
+    val publication = "a" * 32
+    val first = s"s3://landing/nyc_taxi/_generations/$generation/$publication/2023-01.parquet"
+    val second = s"s3://landing/nyc_taxi/_generations/$generation/$publication/2023-02.parquet"
+    val parsed = NycTaxiEtl.parseArguments(Array(first, second, "--table", "lakehouse.bronze.taxi"))
+    assert(parsed.uris == Seq(first, second))
+    assert(parsed.table == "lakehouse.bronze.taxi")
+    assertThrows[IllegalArgumentException](NycTaxiEtl.parseArguments(Array.empty))
+    assertThrows[IllegalArgumentException](NycTaxiEtl.parseArguments(Array("s3://landing/nyc_taxi/file")))
+    val other = s"s3://landing/nyc_taxi/_generations/$generation/${"b" * 32}/2023-02.parquet"
+    assertThrows[IllegalArgumentException](
+      NycTaxiEtl.parseArguments(Array(first, other, "--table", "lakehouse.bronze.taxi"))
+    )
   }
 }
