@@ -23,6 +23,22 @@ ROOT = Path(__file__).resolve().parents[2]
 
 @pytest.fixture(autouse=True)
 def shared_download_transport(monkeypatch: pytest.MonkeyPatch):
+    def process_factory(context: object, send: object, host: str):
+        class InlineProcess:
+            def start(self) -> None:
+                acquisition._resolve_worker(send, host)
+
+            def is_alive(self) -> bool:
+                return False
+
+            def join(self, timeout: float = 0) -> None:
+                pass
+
+            def close(self) -> None:
+                pass
+
+        return InlineProcess()
+
     class ResponseAdapter:
         def __init__(self, response: requests.Response, peer: str) -> None:
             self.status = response.status_code
@@ -63,6 +79,7 @@ def shared_download_transport(monkeypatch: pytest.MonkeyPatch):
         "getaddrinfo",
         lambda *args, **kwargs: [(2, 1, 6, "", ("192.0.0.9", 443))],
     )
+    monkeypatch.setattr(acquisition, "_make_resolver_process", process_factory)
     monkeypatch.setattr(audit, "DOWNLOAD_TRANSPORT", RequestsTransport())
 
 
@@ -87,6 +104,7 @@ def test_audit_and_production_share_the_same_zip_policy(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(audit, "validated_zip_members", sentinel_policy)
     monkeypatch.setattr(audit, "extract_members", lambda *args: [tmp_path / "extracted"])
+    monkeypatch.setattr(audit, "bound_extracted_metadata", lambda *args: [(6, hashlib.sha256(b"locked").hexdigest())])
     (tmp_path / "extracted").write_bytes(b"locked")
 
     audit._archive_outputs(archive, tmp_path)
@@ -1126,16 +1144,15 @@ def test_audit_zip_converts_crc_corruption_to_value_error():
         audit.audit_http(source, archive=True)
 
 
+@responses.activate
 def test_audit_rejects_raw_archive_replacement_before_publishing_evidence(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ):
     original = zip_bytes({"data.csv": b"first!"})
     replacement = zip_bytes({"data.csv": b"second"})
-
-    def fake_download(url: str, destination: Path, *args: object, **kwargs: object):
-        destination.write_bytes(original)
-        return acquisition.DownloadedFile(destination, acquisition.ResponseEvidence())
+    source = "https://source.invalid/data.zip"
+    responses.add(responses.GET, source, body=original, status=200)
 
     real_archive_outputs = audit._archive_outputs
 
@@ -1144,11 +1161,36 @@ def test_audit_rejects_raw_archive_replacement_before_publishing_evidence(
         raw_path.write_bytes(replacement)
         return outputs
 
-    monkeypatch.setattr(audit, "download_bounded", fake_download)
     monkeypatch.setattr(audit, "_archive_outputs", replacing_archive_outputs)
 
     with pytest.raises(ValueError, match="archive changed during audit"):
-        audit.audit_http("https://source.invalid/data.zip", archive=True)
+        audit.audit_http(source, archive=True)
+
+
+@responses.activate
+def test_audit_rejects_early_extracted_output_replacement_before_success(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    source = "https://source.invalid/data.zip"
+    responses.add(
+        responses.GET,
+        source,
+        body=zip_bytes({"a.csv": b"a", "b.csv": b"b"}),
+        status=200,
+    )
+    real_bound_metadata = audit.bound_extracted_metadata
+
+    def replacing_metadata(paths: list[Path]):
+        first = paths[0]
+        first.unlink()
+        first.write_bytes(b"foreign")
+        return real_bound_metadata(paths)
+
+    monkeypatch.setattr(audit, "bound_extracted_metadata", replacing_metadata)
+
+    with pytest.raises(ValueError, match="extracted output changed"):
+        audit.audit_http(source, archive=True)
 
 
 @responses.activate

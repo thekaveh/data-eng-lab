@@ -16,12 +16,15 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from datasets.acquisition import (  # noqa: E402
+    DownloadedFile,
     ZipLimits,
+    bound_download_metadata,
+    bound_extracted_metadata,
     download_bounded,
     extract_members,
     validated_zip_members,
 )
-from datasets.locking import file_metadata, validate_relative_path  # noqa: E402
+from datasets.locking import validate_relative_path  # noqa: E402
 
 REGISTRY_PATH = ROOT / "datasets" / "registry.yaml"
 DOWNLOAD_TIMEOUT_SECONDS = 120
@@ -41,18 +44,6 @@ def _artifact_name(url: str) -> str:
     return name
 
 
-def _metadata(path: Path) -> tuple[int, str]:
-    size, sha256 = file_metadata(path)
-    if size == 0:
-        raise ValueError("artifact must not be empty")
-    return size, sha256
-
-
-def _identity(path: Path) -> tuple[int, int]:
-    status = path.lstat()
-    return status.st_dev, status.st_ino
-
-
 def _zip_limits() -> ZipLimits:
     return ZipLimits(
         max_entries=MAX_ARCHIVE_MEMBERS,
@@ -63,12 +54,19 @@ def _zip_limits() -> ZipLimits:
     )
 
 
+def _bound_raw_metadata(downloaded: DownloadedFile) -> tuple[int, str]:
+    try:
+        return bound_download_metadata(downloaded)
+    except ValueError as error:
+        raise ValueError("archive changed during audit") from error
+
+
 def _archive_outputs(raw_path: Path, temporary_root: Path) -> list[dict[str, object]]:
     entries = validated_zip_members(raw_path, _zip_limits())
     extracted = extract_members(raw_path, entries, temporary_root / "members")
+    metadata = bound_extracted_metadata(extracted)
     outputs: list[dict[str, object]] = []
-    for entry, extracted_path in zip(entries, extracted, strict=True):
-        size, sha256 = _metadata(extracted_path)
+    for entry, (size, sha256) in zip(entries, metadata, strict=True):
         outputs.append(
             {
                 "object_name": entry.object_name,
@@ -95,14 +93,13 @@ def audit_http(url: str, *, archive: bool) -> dict[str, object]:
             transport=DOWNLOAD_TRANSPORT,
         )
 
-        raw_identity = _identity(raw_path)
-        raw_size, raw_sha256 = _metadata(raw_path)
-        if _identity(raw_path) != raw_identity:
-            raise ValueError("archive changed during audit")
+        raw_size, raw_sha256 = _bound_raw_metadata(downloaded)
+        if raw_size == 0:
+            raise ValueError("artifact must not be empty")
         raw = {"name": raw_name, "size_bytes": raw_size, "sha256": raw_sha256}
         if archive:
             outputs = _archive_outputs(raw_path, temporary_root)
-            if _identity(raw_path) != raw_identity or _metadata(raw_path) != (raw_size, raw_sha256):
+            if _bound_raw_metadata(downloaded) != (raw_size, raw_sha256):
                 raise ValueError("archive changed during audit")
         else:
             outputs = [
