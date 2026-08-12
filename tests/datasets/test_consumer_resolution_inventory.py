@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import json
 import re
 import urllib.request
@@ -91,6 +92,28 @@ def test_each_migrated_notebook_bootstraps_one_frozen_expected_scale_result(scen
         assert 'replace("s3://", "s3a://"' in code or '"s3a://" + uri.stripPrefix("s3://")' in code
         assert "readNBytes" in code or "read(_MAX_RESOLUTION_BYTES + 1)" in code
         assert "STRICT_DUPLICATE_DETECTION" in code or "object_pairs_hook" in code
+
+
+def test_jupyter_resolver_bootstrap_imports_precede_executable_statements():
+    for scenario in RESOLVED_NOTEBOOKS:
+        notebook = nbformat.read(
+            ROOT / "scenarios" / scenario / "jupyter" / "notebook.ipynb", as_version=4
+        )
+        source = next(
+            cell.source
+            for cell in notebook.cells
+            if cell.cell_type == "code" and "/v1/resolve" in cell.source
+        )
+        statements = ast.parse(source).body
+        first_executable = next(
+            node for node in statements if not isinstance(node, (ast.Import, ast.ImportFrom))
+        )
+        late_imports = [
+            node.lineno
+            for node in statements
+            if isinstance(node, (ast.Import, ast.ImportFrom)) and node.lineno > first_executable.lineno
+        ]
+        assert late_imports == [], f"{scenario} has imports after executable line {first_executable.lineno}"
 
 
 def test_migrated_notebooks_preserve_resolver_object_order_without_globs():
@@ -191,7 +214,16 @@ def _run_taxi_jupyter_bootstrap(monkeypatch, body: bytes, *, override="small"):
         ROOT / "scenarios/batch_ingest-nyc_taxi-spark-iceberg/jupyter/notebook.ipynb", as_version=4
     )
     source = next(cell.source for cell in notebook.cells if cell.cell_type == "code" and "/v1/resolve" in cell.source)
-    source = source[source.index("import json") :]
+    bootstrap = ast.parse(source)
+    bootstrap.body = [
+        statement
+        for statement in bootstrap.body
+        if not (isinstance(statement, ast.ImportFrom) and (statement.module or "").startswith("pyspark."))
+        and not (
+            isinstance(statement, ast.Assign)
+            and any(isinstance(target, ast.Name) and target.id == "spark" for target in statement.targets)
+        )
+    ]
 
     class Response:
         def __enter__(self):
@@ -207,7 +239,7 @@ def _run_taxi_jupyter_bootstrap(monkeypatch, body: bytes, *, override="small"):
     monkeypatch.setenv("DATASET_SCALE", "small")
     monkeypatch.setattr(urllib.request, "urlopen", lambda *_args, **_kwargs: Response())
     namespace = {} if override is None else {"dataset_scale_override": override}
-    exec(compile(source, "notebook.ipynb", "exec"), namespace)
+    exec(compile(bootstrap, "notebook.ipynb", "exec"), namespace)
     return namespace
 
 
