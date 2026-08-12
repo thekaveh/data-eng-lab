@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import gzip
+import io
 import json
 import re
+import stat
 import zipfile
 from dataclasses import replace
 from pathlib import Path
@@ -10,6 +12,7 @@ from pathlib import Path
 import duckdb
 import pytest
 
+import datasets.acquisition as acquisition
 import datasets.schema_inspection as inspection
 from datasets.locking import schema_fingerprint
 from datasets.registry import SchemaContract, SchemaField, load_registry
@@ -899,12 +902,127 @@ def valid_xlsx(tmp_path: Path) -> Path:
     )
 
 
+def append_xlsx_member(path: Path, name: str, mode: int, payload: bytes = b"payload") -> None:
+    member = zipfile.ZipInfo(name)
+    member.create_system = 3
+    member.external_attr = mode << 16
+    with zipfile.ZipFile(path, "a") as archive:
+        archive.writestr(member, payload)
+
+
 def test_xlsx_streams_shared_strings_styles_dates_and_numeric_cells(tmp_path: Path):
     path = valid_xlsx(tmp_path)
 
     assert verify_physical_schema(path, XLSX_CONTRACT, CONTEXT) == ObservedSchema(
         tuple(ObservedField(field.name, field.logical_type, field.nullable) for field in XLSX_CONTRACT.fields)
     )
+
+
+@pytest.mark.parametrize(
+    ("name", "mode"),
+    [
+        ("unsafe-link", stat.S_IFLNK | 0o777),
+        ("unsafe-fifo", stat.S_IFIFO | 0o600),
+        ("unsafe-device", stat.S_IFCHR | 0o600),
+    ],
+)
+def test_xlsx_rejects_non_regular_archive_members_before_ooxml(
+    tmp_path: Path,
+    name: str,
+    mode: int,
+):
+    path = valid_xlsx(tmp_path)
+    append_xlsx_member(path, name, mode)
+
+    with pytest.raises(LockMismatch, match="XLSX ZIP"):
+        verify_physical_schema(path, XLSX_CONTRACT, CONTEXT)
+
+
+def test_xlsx_rejects_more_than_ten_thousand_archive_members(tmp_path: Path):
+    path = valid_xlsx(tmp_path)
+    with zipfile.ZipFile(path, "a", compression=zipfile.ZIP_STORED) as archive:
+        for index in range(9_996):
+            archive.writestr(f"padding-{index}", b"")
+
+    with pytest.raises(LockMismatch, match="XLSX ZIP"):
+        verify_physical_schema(path, XLSX_CONTRACT, CONTEXT)
+
+
+def test_xlsx_rejects_oversized_central_directory_before_zipfile_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    path = valid_xlsx(tmp_path)
+    real_limits = acquisition.ZipLimits
+    monkeypatch.setattr(
+        acquisition,
+        "ZipLimits",
+        lambda **kwargs: real_limits(max_central_directory_bytes=1, **kwargs),
+    )
+    monkeypatch.setattr(
+        inspection.zipfile,
+        "ZipFile",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("ZipFile constructed")),
+    )
+
+    with pytest.raises(LockMismatch, match="XLSX ZIP"):
+        verify_physical_schema(path, XLSX_CONTRACT, CONTEXT)
+
+
+def test_xlsx_rejects_excessive_member_compression_ratio(tmp_path: Path):
+    path = xlsx_fixture(
+        tmp_path,
+        worksheet_prefix="<!--" + ("A" * (1 << 20)) + "-->",
+        data_cells=(
+            '<c r="A2" t="s"><v>3</v></c>'
+            '<c r="B2" t="n"><v>2</v></c>'
+            '<c r="C2" s="1" t="n"><v>43831</v></c>'
+        ),
+    )
+
+    with pytest.raises(LockMismatch, match="XLSX ZIP"):
+        verify_physical_schema(path, XLSX_CONTRACT, CONTEXT)
+
+
+def test_xlsx_rejects_invalid_zip_metadata_before_zipfile_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    path = tmp_path / "invalid.xlsx"
+    path.write_bytes(b"not a ZIP archive")
+    monkeypatch.setattr(
+        inspection.zipfile,
+        "ZipFile",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("ZipFile constructed")),
+    )
+
+    with pytest.raises(LockMismatch, match="XLSX ZIP"):
+        verify_physical_schema(path, XLSX_CONTRACT, CONTEXT)
+
+
+def test_xlsx_parses_the_same_stable_snapshot_that_was_preflighted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    path = valid_xlsx(tmp_path)
+    real_preflight = acquisition._preflight_zip_stream
+    preflighted = False
+
+    def replace_source_after_preflight(stream: object, limits: object) -> None:
+        nonlocal preflighted
+        real_preflight(stream, limits)  # type: ignore[arg-type]
+        preflighted = True
+        path.write_bytes(b"replacement is not an XLSX archive")
+
+    monkeypatch.setattr(acquisition, "_preflight_zip_stream", replace_source_after_preflight)
+
+    assert verify_physical_schema(path, XLSX_CONTRACT, CONTEXT) == ObservedSchema(
+        tuple(
+            ObservedField(field.name, field.logical_type, field.nullable)
+            for field in XLSX_CONTRACT.fields
+        )
+    )
+    assert preflighted
 
 
 def test_xlsx_rejects_formula_cells_before_value_validation(tmp_path: Path):
@@ -939,6 +1057,17 @@ def utf16_xml(value: str, byte_order: str, *, bom: bool = True) -> bytes:
     if byte_order == "le":
         return (b"\xff\xfe" if bom else b"") + value.encode("utf-16-le")
     return (b"\xfe\xff" if bom else b"") + value.encode("utf-16-be")
+
+
+def test_xlsx_reports_utf32le_bom_as_unsupported_wide_xml_encoding():
+    payload = b"\xff\xfe\x00\x00" + "<worksheet/>".encode("utf-32-le")
+    reader = inspection._CheckedXmlReader(
+        io.BytesIO(payload),
+        inspection._ArchiveBudget(len(payload), CONTEXT),
+    )
+
+    with pytest.raises(ValueError, match="^unsupported wide XML encoding$"):
+        reader.read()
 
 
 @pytest.mark.parametrize("bom", [True, False], ids=["bom", "bomless"])

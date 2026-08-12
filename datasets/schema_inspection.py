@@ -21,6 +21,7 @@ from xml.etree import ElementTree
 
 import duckdb
 
+from datasets import acquisition
 from datasets.locking import schema_fingerprint
 from datasets.registry import SchemaContract, SchemaField
 from datasets.verification import LockMismatch, VerificationContext, VerifiedFile
@@ -754,6 +755,8 @@ class _CheckedXmlReader:
 
     def _detect_encoding(self, *, final: bool) -> str | None:
         probe = bytes(self._raw_probe)
+        if probe.startswith((codecs.BOM_UTF32_LE, codecs.BOM_UTF32_BE)):
+            raise ValueError("unsupported wide XML encoding")
         if probe.startswith(b"\xff\xfe"):
             return "utf-16-le"
         if probe.startswith(b"\xfe\xff"):
@@ -818,34 +821,31 @@ def _safe_xlsx_archive(
     path: Path,
     locked_size: int,
     context: VerificationContext,
-) -> tuple[zipfile.ZipFile, _ArchiveBudget]:
+) -> tuple[zipfile.ZipFile, BinaryIO, _ArchiveBudget]:
     limit = _expanded_limit(locked_size)
+    stream: BinaryIO | None = None
+    archive: zipfile.ZipFile | None = None
     try:
-        archive = zipfile.ZipFile(path)
-        infos = archive.infolist()
-    except (OSError, zipfile.BadZipFile) as error:
+        limits = acquisition.ZipLimits(max_total_expanded_bytes=limit)
+        stream, snapshot = acquisition._stable_archive(path)
+        acquisition._preflight_zip_stream(stream, limits)
+        stream.seek(0)
+        archive = zipfile.ZipFile(stream)
+        acquisition._validated_members(archive.infolist(), limits, snapshot)
+    except (OSError, ValueError, zipfile.BadZipFile) as error:
+        if archive is not None:
+            archive.close()
+        if stream is not None:
+            stream.close()
+        if "uncompressed bytes" in str(error):
+            raise LockMismatch(
+                context,
+                "expanded bytes",
+                limit,
+                "archive exceeds limit",
+            ) from error
         raise LockMismatch(context, "XLSX ZIP", "valid OOXML ZIP", type(error).__name__) from error
-    names: set[str] = set()
-    total = 0
-    for info in infos:
-        candidate = PurePosixPath(info.filename)
-        if (
-            not info.filename
-            or candidate.is_absolute()
-            or "\\" in info.filename
-            or any(part in {"", ".", ".."} for part in info.filename.split("/"))
-            or info.filename in names
-            or info.flag_bits & 0x1
-            or info.compress_type not in {zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED}
-        ):
-            archive.close()
-            raise LockMismatch(context, "XLSX ZIP", "safe unique members", "unsafe member")
-        names.add(info.filename)
-        total += info.file_size
-        if total > limit:
-            archive.close()
-            raise LockMismatch(context, "expanded bytes", limit, total)
-    return archive, _ArchiveBudget(limit, context)
+    return archive, stream, _ArchiveBudget(limit, context)
 
 
 def _parse_workbook(
@@ -1120,7 +1120,7 @@ def inspect_xlsx(
     context: VerificationContext,
     locked_size: int,
 ) -> ObservedSchema:
-    archive, budget = _safe_xlsx_archive(path, locked_size, context)
+    archive, archive_stream, budget = _safe_xlsx_archive(path, locked_size, context)
     try:
         required_members = {"xl/workbook.xml", "xl/_rels/workbook.xml.rels"}
         if not required_members.issubset(archive.namelist()):
@@ -1163,6 +1163,7 @@ def inspect_xlsx(
         raise LockMismatch(context, field, "valid bounded OOXML", type(error).__name__) from error
     finally:
         archive.close()
+        archive_stream.close()
     return ObservedSchema(_expected_fields(contract))
 
 
