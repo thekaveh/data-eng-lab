@@ -1446,10 +1446,7 @@ def _close_after_commit(descriptor: int) -> None:
     try:
         os.close(descriptor)
     except OSError:
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
+        pass
 
 
 def _published_path_is_owned(path: Path, identity: tuple[int, int], *, directory: bool) -> bool:

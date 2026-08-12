@@ -1046,6 +1046,45 @@ def test_download_committed_owned_publication_ignores_verification_housekeeping_
     assert acquisition._bound_download_metadata(downloaded) == (6, hashlib.sha256(b"locked").hexdigest())
 
 
+def test_download_postcommit_close_never_retries_reused_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _public_dns(monkeypatch, "192.0.0.9")
+    destination = tmp_path / "target"
+    foreign_path = tmp_path / "foreign"
+    committed = False
+    foreign: list[int] = []
+    closes: list[int] = []
+    reused_at: list[int] = []
+    real_publish = acquisition._publish_path_exclusive
+    real_close = acquisition.os.close
+
+    def publish(source: Path, target: Path) -> None:
+        nonlocal committed
+        real_publish(source, target)
+        committed = True
+
+    def reuse_then_raise(descriptor: int) -> None:
+        closes.append(descriptor)
+        if committed and not foreign:
+            real_close(descriptor)
+            foreign.append(_reuse_descriptor(descriptor, foreign_path))
+            reused_at.append(len(closes))
+            raise OSError("close status unavailable")
+        real_close(descriptor)
+
+    monkeypatch.setattr(acquisition, "_publish_path_exclusive", publish)
+    monkeypatch.setattr(acquisition.os, "close", reuse_then_raise)
+
+    downloaded = download_bounded("https://example.test/file", destination, 10, transport=FakeTransport())
+
+    assert downloaded.path.read_bytes() == b"locked"
+    os.fstat(foreign[0])
+    assert foreign[0] not in closes[reused_at[0] :]
+    real_close(foreign[0])
+
+
 def test_download_publication_disappearance_is_normalized_without_binding_leak(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1510,6 +1549,50 @@ def test_extract_committed_owned_publication_ignores_verification_housekeeping_f
     assert injected
     assert paths[0].read_bytes() == b"locked"
     assert acquisition._bound_extracted_metadata(paths) == [(6, hashlib.sha256(b"locked").hexdigest())]
+
+
+def test_extract_postcommit_close_never_retries_reused_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    entries = validated_zip_members(archive, ZipLimits())
+    destination = tmp_path / "members"
+    foreign_path = tmp_path / "foreign"
+    committed = False
+    post_commit_closes = 0
+    foreign: list[int] = []
+    closes: list[int] = []
+    reused_at: list[int] = []
+    real_publish = acquisition._publish_path_exclusive
+    real_close = acquisition.os.close
+
+    def publish(source: Path, target: Path) -> None:
+        nonlocal committed
+        real_publish(source, target)
+        committed = True
+
+    def reuse_retained_then_raise(descriptor: int) -> None:
+        nonlocal post_commit_closes
+        closes.append(descriptor)
+        if committed:
+            post_commit_closes += 1
+            if post_commit_closes == 2:
+                real_close(descriptor)
+                foreign.append(_reuse_descriptor(descriptor, foreign_path))
+                reused_at.append(len(closes))
+                raise OSError("close status unavailable")
+        real_close(descriptor)
+
+    monkeypatch.setattr(acquisition, "_publish_path_exclusive", publish)
+    monkeypatch.setattr(acquisition.os, "close", reuse_retained_then_raise)
+
+    paths = extract_members(archive, entries, destination)
+
+    assert paths[0].read_bytes() == b"locked"
+    os.fstat(foreign[0])
+    assert foreign[0] not in closes[reused_at[0] :]
+    real_close(foreign[0])
 
 
 def test_archive_entry_public_constructor_remains_three_fields():
