@@ -80,7 +80,9 @@ def _monotonic() -> float:
     return time.monotonic()
 
 
-def _response_server_date(response: Mapping[str, object]) -> datetime:
+def _response_server_date(response: object) -> datetime:
+    if not isinstance(response, Mapping):
+        raise AmbiguousWrite("S3 response is not a mapping")
     response_metadata = response.get("ResponseMetadata")
     headers = response_metadata.get("HTTPHeaders", {}) if isinstance(response_metadata, Mapping) else {}
     raw_date = headers.get("date") if isinstance(headers, Mapping) else None
@@ -96,6 +98,13 @@ def _response_server_date(response: Mapping[str, object]) -> datetime:
     if abs(server_date - _utc_now()) > _MAX_CLOCK_SKEW:
         raise AmbiguousWrite("S3 response Date has implausible clock skew")
     return server_date
+
+
+def _response_etag(response: Mapping[str, object]) -> str:
+    etag = response.get("ETag")
+    if not isinstance(etag, str) or not etag:
+        raise AmbiguousWrite("S3 response has an invalid ETag")
+    return etag
 
 
 def _error_status(error: ClientError) -> int | None:
@@ -285,7 +294,7 @@ def stream_verify_object(
     with _owned_body(body):
         try:
             server_date = _response_server_date(response)
-            etag = response["ETag"]
+            etag = _response_etag(response)
             metadata = dict(response.get("Metadata", {}))
             size_bytes, sha256 = verify_stream(body, expected.size_bytes, expected.sha256, context)
         except LockMismatch:
@@ -379,7 +388,7 @@ def read_control_object(client, bucket: str, key: str) -> ControlSnapshot:
     with _owned_body(stream):
         try:
             server_date = _response_server_date(response)
-            etag = response["ETag"]
+            etag = _response_etag(response)
             body = _read_bounded(stream)
         except AmbiguousWrite:
             raise
@@ -424,7 +433,10 @@ def _put_control_request(
         return _reconcile_control_write(client, bucket, key, body), None
     except BotoCoreError:
         return _reconcile_control_write(client, bucket, key, body), None
-    return _reconcile_control_write(client, bucket, key, body), response
+    snapshot = _reconcile_control_write(client, bucket, key, body)
+    if not isinstance(response, Mapping):
+        raise AmbiguousWrite("S3 successful write response is not a mapping")
+    return snapshot, response
 
 
 def put_control_object(
@@ -589,7 +601,7 @@ def _read_lease_observation(client, bucket: str, key: str) -> tuple[ControlSnaps
     with _owned_body(stream):
         try:
             server_date = _response_server_date(response)
-            etag = response["ETag"]
+            etag = _response_etag(response)
             body = _read_bounded(stream)
         except AmbiguousWrite:
             raise

@@ -359,6 +359,20 @@ def test_stream_verify_sole_close_failure_is_ambiguous():
     assert isinstance(caught.value.__cause__, OSError)
 
 
+@pytest.mark.parametrize("etag", [None, 7, ""])
+def test_stream_verify_rejects_malformed_etag_and_closes_body(etag: object):
+    content = b"verified bytes"
+    body = TrackingBody(content)
+    response = _streaming_response(b"")
+    response["Body"] = body
+    response["ETag"] = etag
+
+    with pytest.raises(s3mod.AmbiguousWrite, match="ETag"):
+        s3mod.stream_verify_object(ResponseClient(response), "landing", "object", _expected(content), CONTEXT)
+
+    assert body.close_calls == 1
+
+
 def test_put_immutable_uses_if_none_match_and_get_verifies_bytes(tmp_path: Path):
     body = b"immutable bytes"
     path = tmp_path / "object.bin"
@@ -805,6 +819,19 @@ def test_read_control_bounds_body_and_closes_once():
     assert body.close_calls == 1
 
 
+@pytest.mark.parametrize("etag", [None, 7, ""])
+def test_read_control_rejects_malformed_etag_and_closes_body(etag: object):
+    body = TrackingBody(canonical_json({"pointer": "exact"}))
+    response = _streaming_response(b"")
+    response["Body"] = body
+    response["ETag"] = etag
+
+    with pytest.raises(s3mod.AmbiguousWrite, match="ETag"):
+        s3mod.read_control_object(ResponseClient(response), "landing", "active.json")
+
+    assert body.close_calls == 1
+
+
 def test_acquire_missing_lease_uses_if_none_match(monkeypatch: pytest.MonkeyPatch):
     client = FakeS3()
     _freeze_local_time(monkeypatch)
@@ -898,6 +925,29 @@ def test_acquire_released_lease_uses_opaque_if_match(monkeypatch: pytest.MonkeyP
 
     assert client.put_calls[-1]["IfMatch"] == '"opaque/released:7"'
     assert lease.owner_nonce == NONCE_A
+
+
+@pytest.mark.parametrize("etag", [None, 7, ""])
+@pytest.mark.parametrize("state", ["released", "expired-active"])
+def test_takeover_rejects_malformed_etag_without_unconditional_put(
+    monkeypatch: pytest.MonkeyPatch,
+    etag: object,
+    state: str,
+):
+    client = FakeS3()
+    _freeze_local_time(monkeypatch)
+    key = "_data-eng-locks/leases/nyc_taxi.json"
+    document = _lease_document(
+        state="released" if state == "released" else "active",
+        created_at=NOW - timedelta(seconds=60),
+        expires_at=NOW - timedelta(seconds=1) if state == "released" else NOW,
+    )
+    client.seed("landing", key, canonical_json(document), etag=etag)
+
+    with pytest.raises(s3mod.AmbiguousWrite, match="ETag"):
+        s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_B, NONCE_B)
+
+    assert client.put_calls == []
 
 
 @pytest.mark.parametrize(
@@ -1076,6 +1126,28 @@ def test_acquire_fails_closed_when_write_date_is_outside_proposal(
         s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_A, NONCE_A)
 
 
+@pytest.mark.parametrize("response", [None, 7, []])
+def test_acquire_normalizes_non_mapping_success_response(
+    monkeypatch: pytest.MonkeyPatch,
+    response: object,
+):
+    client = FakeS3()
+    _freeze_local_time(monkeypatch)
+    original_put = client.put_object
+
+    def commit_with_invalid_response(**request):
+        original_put(**request)
+        return response
+
+    client.put_object = commit_with_invalid_response
+
+    with pytest.raises(s3mod.AmbiguousWrite, match="response"):
+        s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_A, NONCE_A)
+
+    assert len(client.put_calls) == 1
+    assert client.put_calls[0]["IfNoneMatch"] == "*"
+
+
 def test_acquire_request_timeout_reconciles_exact_lease(monkeypatch: pytest.MonkeyPatch):
     client = FakeS3()
     _freeze_local_time(monkeypatch)
@@ -1156,6 +1228,26 @@ def test_renew_fails_closed_after_bounded_unchanged_observations(monkeypatch: py
         s3mod.renew_lease(client, first)
 
     assert len(client.get_calls) - get_count == 5
+    assert len(client.put_calls) == put_count
+
+
+@pytest.mark.parametrize("operation", [s3mod.renew_lease, s3mod.release_lease])
+@pytest.mark.parametrize("etag", [None, 7, ""])
+def test_renew_and_release_reject_malformed_current_etag_without_put(
+    monkeypatch: pytest.MonkeyPatch,
+    operation,
+    etag: object,
+):
+    client = FakeS3()
+    _freeze_local_time(monkeypatch)
+    lease = s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_A, NONCE_A)
+    stored = client.objects[(lease.bucket, lease.key)]
+    client.objects[(lease.bucket, lease.key)] = _StoredObject(stored.body, stored.metadata, etag)
+    put_count = len(client.put_calls)
+
+    with pytest.raises(s3mod.AmbiguousWrite, match="ETag"):
+        operation(client, lease)
+
     assert len(client.put_calls) == put_count
 
 
