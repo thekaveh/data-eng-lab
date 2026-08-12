@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import os
 import stat
 import struct
@@ -10,12 +11,87 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+import requests
 import responses
 import yaml
 
+from datasets import acquisition
 from scripts import audit_dataset_lock as audit
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+@pytest.fixture(autouse=True)
+def shared_download_transport(monkeypatch: pytest.MonkeyPatch):
+    class ResponseAdapter:
+        def __init__(self, response: requests.Response, peer: str) -> None:
+            self.status = response.status_code
+            self.headers = response.headers
+            self.peer_address = peer
+            self._response = response
+            self._socket = audit_response_socket(response)
+
+        def read1(self, amount: int, *, decode_content: bool) -> bytes:
+            return self._response.raw.read1(amount, decode_content=decode_content)
+
+        def settimeout(self, timeout: float) -> None:
+            if self._socket is not None:
+                self._socket.settimeout(timeout)
+            elif not isinstance(getattr(self._response.raw, "_fp", None), io.BytesIO):
+                raise ValueError("HTTP transport does not expose a bounded socket")
+
+        def close(self) -> None:
+            if close := getattr(self._response, "close", None):
+                close()
+
+    class RequestsTransport:
+        trust_env = False
+
+        def request(self, *, url: str, address: str, headers: dict[str, str], timeout: float, **kwargs: object):
+            response = requests.get(
+                url,
+                stream=True,
+                timeout=timeout,
+                allow_redirects=False,
+                headers=headers,
+            )
+            response.raise_for_status()
+            return ResponseAdapter(response, address)
+
+    monkeypatch.setattr(
+        acquisition.socket,
+        "getaddrinfo",
+        lambda *args, **kwargs: [(2, 1, 6, "", ("192.0.0.9", 443))],
+    )
+    monkeypatch.setattr(audit, "DOWNLOAD_TRANSPORT", RequestsTransport())
+
+
+def audit_response_socket(response: requests.Response) -> object | None:
+    connection = getattr(response.raw, "_connection", None)
+    if response_socket := getattr(connection, "sock", None):
+        return response_socket
+    http_response = getattr(response.raw, "_fp", None)
+    buffered_reader = getattr(http_response, "fp", None)
+    socket_io = getattr(buffered_reader, "raw", None)
+    return getattr(socket_io, "_sock", None)
+
+
+def test_audit_and_production_share_the_same_zip_policy(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    archive = tmp_path / "data.zip"
+    archive.write_bytes(zip_bytes({"data.csv": b"locked"}))
+    called: list[tuple[Path, acquisition.ZipLimits]] = []
+
+    def sentinel_policy(path: Path, limits: acquisition.ZipLimits):
+        called.append((path, limits))
+        return [acquisition.ArchiveEntry("data.csv", "data.csv", 6)]
+
+    monkeypatch.setattr(audit, "validated_zip_members", sentinel_policy)
+    monkeypatch.setattr(audit, "extract_members", lambda *args: [tmp_path / "extracted"])
+    (tmp_path / "extracted").write_bytes(b"locked")
+
+    audit._archive_outputs(archive, tmp_path)
+
+    assert called == [(archive, audit._zip_limits())]
 
 
 @pytest.mark.parametrize(
@@ -268,14 +344,14 @@ def test_audit_http_emits_raw_direct_output_and_response_evidence():
 @responses.activate
 def test_audit_http_streams_with_120_second_timeout(monkeypatch: pytest.MonkeyPatch):
     responses.add(responses.GET, "https://source.invalid/data.csv", body=b"locked", status=200)
-    request_get = audit.requests.get
+    request_get = requests.get
     arguments: dict[str, object] = {}
 
     def recording_get(url: str, **kwargs: object):
         arguments.update(kwargs)
         return request_get(url, **kwargs)
 
-    monkeypatch.setattr(audit.requests, "get", recording_get)
+    monkeypatch.setattr(requests, "get", recording_get)
 
     audit.audit_http("https://source.invalid/data.csv", archive=False)
 
@@ -332,7 +408,7 @@ def test_audit_http_rejects_redirect_without_location():
 @responses.activate
 def test_audit_http_rejects_redirect_overflow(monkeypatch: pytest.MonkeyPatch):
     source = "https://source.invalid/data.csv"
-    monkeypatch.setattr(audit, "MAX_REDIRECTS", 1)
+    monkeypatch.setattr(acquisition, "_MAX_REDIRECTS", 1)
     responses.add(responses.GET, source, status=302, headers={"Location": "/next.csv"})
     responses.add(
         responses.GET,
@@ -400,7 +476,7 @@ def test_audit_http_enforces_overall_streaming_deadline_and_cleans_temp(
         last_tick = next(ticks, last_tick)
         return last_tick
 
-    monkeypatch.setattr(audit.time, "monotonic", monotonic)
+    monkeypatch.setattr(acquisition.time, "monotonic", monotonic)
     created = record_audit_temp_directories(monkeypatch)
 
     with pytest.raises(ValueError, match="download deadline exceeded"):
@@ -465,8 +541,8 @@ def test_audit_http_rebounds_every_transport_read_to_cumulative_deadline(
             yield b"b"
 
     response = FakeResponse()
-    monkeypatch.setattr(audit.time, "monotonic", lambda: clock["now"])
-    monkeypatch.setattr(audit.requests, "get", lambda *args, **kwargs: response)
+    monkeypatch.setattr(acquisition.time, "monotonic", lambda: clock["now"])
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: response)
 
     result = audit.audit_http("https://source.invalid/data.csv", archive=False)
 
@@ -504,7 +580,7 @@ def test_audit_http_rejects_blocking_transport_without_bounded_socket(
         def raise_for_status(self) -> None:
             return None
 
-    monkeypatch.setattr(audit.requests, "get", lambda *args, **kwargs: FakeResponse())
+    monkeypatch.setattr(requests, "get", lambda *args, **kwargs: FakeResponse())
 
     with pytest.raises(ValueError, match="transport does not expose a bounded socket"):
         audit.audit_http("https://source.invalid/data.csv", archive=False)
@@ -903,7 +979,7 @@ def test_audit_zip_preflights_metadata_bounds_before_zipfile_construction(
         zipfile_constructed = True
         raise AssertionError("ZipFile metadata parsing was reached before preflight")
 
-    monkeypatch.setattr(audit.zipfile, "ZipFile", forbidden_zipfile)
+    monkeypatch.setattr(acquisition.zipfile, "ZipFile", forbidden_zipfile)
 
     with pytest.raises(ValueError, match=message):
         audit.audit_http(source, archive=True)
@@ -940,7 +1016,7 @@ def test_audit_zip_rejects_false_eocd_signature_in_comment_before_zipfile(
         zipfile_constructed = True
         raise AssertionError("ZipFile was constructed for ambiguous EOCD")
 
-    monkeypatch.setattr(audit.zipfile, "ZipFile", forbidden_zipfile)
+    monkeypatch.setattr(acquisition.zipfile, "ZipFile", forbidden_zipfile)
 
     with pytest.raises(ValueError, match="ambiguous end-of-central-directory record"):
         audit.audit_http(source, archive=True)
@@ -963,7 +1039,7 @@ def test_audit_zip_rejects_divergent_zip64_layout_before_zipfile(
         zipfile_constructed = True
         raise AssertionError("ZipFile was constructed for divergent ZIP64 metadata")
 
-    monkeypatch.setattr(audit.zipfile, "ZipFile", forbidden_zipfile)
+    monkeypatch.setattr(acquisition.zipfile, "ZipFile", forbidden_zipfile)
 
     with pytest.raises(ValueError, match="ZIP64 record layout is inconsistent"):
         audit.audit_http(source, archive=True)
@@ -999,7 +1075,7 @@ def test_audit_zip_stream_validates_central_directory_before_zipfile(
         zipfile_constructed = True
         raise AssertionError("ZipFile was constructed before central-directory validation")
 
-    monkeypatch.setattr(audit.zipfile, "ZipFile", forbidden_zipfile)
+    monkeypatch.setattr(acquisition.zipfile, "ZipFile", forbidden_zipfile)
 
     with pytest.raises(ValueError, match=message):
         audit.audit_http(source, archive=True)
