@@ -5,10 +5,13 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import secrets
+import shutil
 import tempfile
+import threading
 import uuid
 from collections.abc import Mapping
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from pathlib import Path
@@ -36,6 +39,7 @@ from datasets.s3 import (
     put_immutable_object,
     read_control_object,
     release_lease,
+    renew_lease,
     stream_verify_object,
 )
 from datasets.schema_inspection import verify_physical_schema
@@ -53,6 +57,8 @@ _PUBLICATION_LAYOUT_VERSION = 1
 _CONTROL_FORMAT_VERSION = 1
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _UUID4_HEX_RE = re.compile(r"^[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}$")
+_MAX_LEGACY_LIST_PAGES = 10_000
+_MAX_LEGACY_LIST_KEYS = 100_000
 _DEFAULT_LOCK_POLICY: Mapping[str, object] = MappingProxyType(
     {
         "algorithm": "sha256",
@@ -668,22 +674,38 @@ def rollback_manifest(
     """Verify historical immutable state, then repoint with the observed pointer ETag."""
     digest = _require_sha256(target_manifest_sha256, "rollback manifest digest")
     plan = resolve_scale(registry[dataset_id], expected_scale)
-    current = read_control_object(client, bucket, active_pointer_key(dataset_id))
+    resolved, _reconciled = _rollback_transaction(client, plan, digest, bucket=bucket)
+    return resolved
+
+
+def _rollback_transaction(
+    client,
+    plan: ScalePlan,
+    digest: str,
+    *,
+    bucket: str,
+    dry_run: bool = False,
+) -> tuple[ResolvedDataset, bool]:
+    current = _read_pointer_state(client, plan, bucket)
+    if current.pointer is None or current.corruption is not None:
+        _verify_pointer_state(client, plan, current, bucket)
     resolved = _resolve_manifest(client, plan, digest, bucket=bucket)
+    if dry_run:
+        return resolved, False
     pointer = ActivePointer(
         format_version=_CONTROL_FORMAT_VERSION,
-        dataset=dataset_id,
-        manifest_key=immutable_manifest_key(dataset_id, digest),
+        dataset=plan.dataset.name,
+        manifest_key=immutable_manifest_key(plan.dataset.name, digest),
         manifest_sha256=digest,
     )
-    put_control_object(
+    reconciled = _put_pointer_exact(
         client,
         bucket,
-        active_pointer_key(dataset_id),
+        active_pointer_key(plan.dataset.name),
         pointer.to_bytes(),
-        if_match=current.etag,
+        current,
     )
-    return resolved
+    return resolved, reconciled
 
 
 class PublishMode(Enum):
@@ -704,6 +726,38 @@ class PublishResult:
     publication_id: str | None
     object_count: int
     cleanup_warning: str | None = None
+    previous_manifest_key: str | None = None
+    previous_manifest_sha256: str | None = None
+    publication_prefix: str | None = None
+    pointer_action: str | None = None
+    pointer_precondition: str | None = None
+    orphan_keys: tuple[str, ...] = ()
+
+    def to_document(self) -> dict[str, object]:
+        return {
+            "cleanup_warning": self.cleanup_warning,
+            "dataset": self.dataset,
+            "manifest_sha256": self.manifest_sha256,
+            "object_count": self.object_count,
+            "orphan_keys": list(self.orphan_keys),
+            "pointer_action": self.pointer_action,
+            "pointer_precondition": self.pointer_precondition,
+            "previous_manifest_key": self.previous_manifest_key,
+            "previous_manifest_sha256": self.previous_manifest_sha256,
+            "publication_id": self.publication_id,
+            "publication_prefix": self.publication_prefix,
+            "scale": self.scale,
+            "status": self.status,
+        }
+
+
+class PublicationFailure(RuntimeError):
+    """A failed transaction that left only reported immutable orphan candidates."""
+
+    def __init__(self, result: PublishResult, cause: BaseException) -> None:
+        self.result = result
+        super().__init__(f"dataset publication failed after immutable staging: {type(cause).__name__}")
+        self.__cause__ = cause
 
 
 Fetcher = Callable[[ScalePlan, Path], tuple[VerifiedFile, ...]]
@@ -732,6 +786,57 @@ class _WriteTrackingClient:
         except (BotoCoreError, ClientError):
             self.write_failed = True
             raise
+
+
+class _LeaseKeepalive:
+    """Renew one lease serially and expose only its latest proven capability."""
+
+    def __init__(self, client, lease: Lease) -> None:
+        self._client = client
+        self._lease = lease
+        self._lock = threading.Lock()
+        self._stop = threading.Event()
+        self._error: BaseException | None = None
+        self._thread = threading.Thread(
+            target=self._run,
+            name=f"dataset-lease-{lease.dataset}",
+            daemon=True,
+        )
+
+    def start(self) -> None:
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop.is_set():
+            with self._lock:
+                lease = self._lease
+            remaining = max((lease.expires_at - datetime.now(UTC)).total_seconds(), 0.0)
+            interval = max(0.05, min(5.0, remaining / 3.0))
+            if self._stop.wait(interval):
+                return
+            try:
+                renewed = renew_lease(self._client, lease)
+            except BaseException as error:
+                with self._lock:
+                    self._error = error
+                return
+            with self._lock:
+                self._lease = renewed
+
+    def checkpoint(self) -> Lease:
+        with self._lock:
+            error = self._error
+            lease = self._lease
+        if error is not None:
+            raise ConditionalConflict("dataset lease renewal was lost") from error
+        _assert_lease_current(self._client, lease)
+        return lease
+
+    def stop(self) -> Lease:
+        self._stop.set()
+        self._thread.join()
+        with self._lock:
+            return self._lease
 
 
 def _is_missing(error: ClientError) -> bool:
@@ -819,9 +924,10 @@ def _verify_candidate_files(plan: ScalePlan, files: tuple[VerifiedFile, ...]) ->
 def _list_legacy_keys(client, plan: ScalePlan, bucket: str) -> tuple[str, ...]:
     prefix = f"{plan.dataset.landing_prefix}/"
     token: str | None = None
+    seen_tokens: set[str] = set()
     keys: list[str] = []
-    while True:
-        request: dict[str, object] = {"Bucket": bucket, "Prefix": prefix}
+    for _page in range(_MAX_LEGACY_LIST_PAGES):
+        request: dict[str, object] = {"Bucket": bucket, "Prefix": prefix, "Delimiter": "/"}
         if token is not None:
             request["ContinuationToken"] = token
         response = client.list_objects_v2(**request)
@@ -830,6 +936,12 @@ def _list_legacy_keys(client, plan: ScalePlan, bucket: str) -> tuple[str, ...]:
         contents = response.get("Contents", ())
         if not isinstance(contents, (list, tuple)):
             raise AmbiguousWrite("legacy object listing returned malformed contents")
+        common_prefixes = response.get("CommonPrefixes", ())
+        if not isinstance(common_prefixes, (list, tuple)):
+            raise AmbiguousWrite("legacy object listing returned malformed common prefixes")
+        for entry in common_prefixes:
+            if not isinstance(entry, Mapping) or not isinstance(entry.get("Prefix"), str):
+                raise AmbiguousWrite("legacy object listing returned a malformed common prefix")
         for entry in contents:
             if not isinstance(entry, Mapping) or not isinstance(entry.get("Key"), str):
                 raise AmbiguousWrite("legacy object listing returned a malformed key")
@@ -837,14 +949,22 @@ def _list_legacy_keys(client, plan: ScalePlan, bucket: str) -> tuple[str, ...]:
             if not key.startswith(prefix):
                 continue
             suffix = key[len(prefix) :]
-            if suffix and "/" not in suffix and not suffix.startswith("_data-eng-locks"):
+            if suffix and "/" not in suffix:
                 keys.append(key)
-        if not response.get("IsTruncated"):
+                if len(keys) > _MAX_LEGACY_LIST_KEYS:
+                    raise AmbiguousWrite("legacy object listing exceeds the bounded key count")
+        truncated = response.get("IsTruncated", False)
+        if not isinstance(truncated, bool):
+            raise AmbiguousWrite("legacy object listing truncation flag is invalid")
+        if not truncated:
             break
         next_token = response.get("NextContinuationToken")
-        if not isinstance(next_token, str) or not next_token or next_token == token:
+        if not isinstance(next_token, str) or not next_token or next_token in seen_tokens:
             raise AmbiguousWrite("legacy object listing pagination token is invalid")
+        seen_tokens.add(next_token)
         token = next_token
+    else:
+        raise AmbiguousWrite("legacy object listing exceeds the bounded page count")
     if len(set(keys)) != len(keys):
         raise AmbiguousWrite("legacy object listing returned duplicate keys")
     return tuple(keys)
@@ -891,10 +1011,11 @@ def _legacy_candidates(
 def _assert_lease_current(client, lease: Lease) -> None:
     try:
         snapshot = read_control_object(client, lease.bucket, lease.key)
-    except ClientError as error:
-        if _is_missing(error):
+    except AmbiguousWrite as error:
+        cause = error.__cause__
+        if isinstance(cause, ClientError) and _is_missing(cause):
             raise ConditionalConflict("dataset lease has been lost") from error
-        raise
+        raise ConditionalConflict("dataset lease state is ambiguous") from error
     intended = canonical_json(
         {
             "created_at": lease.created_at.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z"),
@@ -1017,39 +1138,45 @@ def _publish_candidate(
     allow_legacy: bool,
 ) -> PublishResult:
     publication_id = uuid.uuid4().hex
-    owner_nonce = uuid.uuid4().hex
+    owner_nonce = secrets.token_hex(16)
     lease = acquire_lease(client, plan.dataset.name, publication_id, owner_nonce, bucket=bucket)
-    committed = False
+    keepalive = _LeaseKeepalive(client, lease)
+    keepalive.start()
+    completed = False
     primary: BaseException | None = None
     result: PublishResult | None = None
     try:
         active = _read_pointer_state(client, plan, bucket)
+        if active.corruption is not None and allow_legacy:
+            _verify_pointer_state(client, plan, active, bucket)
         if active.pointer is not None and allow_legacy:
             resolved = _verify_pointer_state(client, plan, active, bucket)
             result = _result_from_resolved(resolved, "verified-existing")
+            completed = True
         else:
             result = _stage_and_commit_candidate(
                 plan,
                 client,
                 fetcher,
                 active,
-                lease,
+                keepalive,
                 publication_id,
                 bucket=bucket,
                 raw_registry_sha256=raw_registry_sha256,
                 allow_legacy=allow_legacy,
             )
-            committed = True
+            completed = True
     except BaseException as error:
         primary = error
         raise
     finally:
+        latest_lease = keepalive.stop()
         try:
-            release_lease(client, lease)
+            release_lease(client, latest_lease)
         except BaseException as cleanup_error:
             if primary is not None:
                 primary.add_note(f"dataset lease release failed: {cleanup_error}")
-            elif committed and result is not None:
+            elif completed and result is not None:
                 result = PublishResult(
                     **{
                         **asdict(result),
@@ -1068,7 +1195,7 @@ def _stage_and_commit_candidate(
     client,
     fetcher: Fetcher,
     active: _PointerState,
-    lease: Lease,
+    keepalive: _LeaseKeepalive,
     publication_id: str,
     *,
     bucket: str,
@@ -1076,8 +1203,11 @@ def _stage_and_commit_candidate(
     allow_legacy: bool,
 ) -> PublishResult:
     reconciled = False
-    with tempfile.TemporaryDirectory(prefix="dataset-publication-") as temporary:
-        root = Path(temporary)
+    temporary = Path(tempfile.mkdtemp(prefix="dataset-publication-"))
+    cleaned = False
+    orphan_keys: list[str] = []
+    try:
+        root = temporary
         files = _legacy_candidates(client, plan, root, bucket) if allow_legacy else None
         if files is None:
             files = tuple(fetcher(plan, root))
@@ -1085,7 +1215,7 @@ def _stage_and_commit_candidate(
         prefix = publication_prefix(plan, publication_id)
         staged: list[tuple[VerifiedFile, str, dict[str, str]]] = []
         for file in files:
-            _assert_lease_current(client, lease)
+            keepalive.checkpoint()
             key = f"{prefix}/{file.expected.object_name}"
             metadata = _object_metadata(plan, publication_id, file.expected)
             tracking_client = _WriteTrackingClient(client)
@@ -1103,10 +1233,11 @@ def _stage_and_commit_candidate(
                 _verify_exact_immutable(client, plan, bucket, key, file.expected, metadata)
                 reconciled = True
             staged.append((file, key, metadata))
+            orphan_keys.append(key)
         for file, key, metadata in staged:
-            _assert_lease_current(client, lease)
+            keepalive.checkpoint()
             _verify_exact_immutable(client, plan, bucket, key, file.expected, metadata)
-        _assert_lease_current(client, lease)
+        keepalive.checkpoint()
         manifest = _build_manifest(plan, publication_id, files, active, raw_registry_sha256)
         body = manifest.to_bytes()
         digest = manifest_sha256(body)
@@ -1114,7 +1245,10 @@ def _stage_and_commit_candidate(
         reconciled = _put_manifest_exact(client, bucket, key, body) or reconciled
         reread = _read_manifest(client, plan, digest, bucket)
         _validate_manifest_for_plan(reread, plan)
-        _assert_lease_current(client, lease)
+        keepalive.checkpoint()
+        shutil.rmtree(temporary)
+        cleaned = True
+        keepalive.checkpoint()
         pointer = ActivePointer(
             format_version=_CONTROL_FORMAT_VERSION,
             dataset=plan.dataset.name,
@@ -1138,7 +1272,45 @@ def _stage_and_commit_candidate(
             manifest_sha256=digest,
             publication_id=publication_id,
             object_count=len(files),
+            previous_manifest_key=active.pointer.manifest_key if active.pointer is not None else None,
+            previous_manifest_sha256=active.pointer.manifest_sha256 if active.pointer is not None else None,
+            publication_prefix=publication_prefix(plan, publication_id),
+            pointer_action="create" if active.snapshot is None else "replace",
+            pointer_precondition=(
+                "If-None-Match: *" if active.snapshot is None else f"If-Match: {active.snapshot.etag}"
+            ),
         )
+    except BaseException as error:
+        try:
+            shutil.rmtree(temporary)
+        except FileNotFoundError:
+            pass
+        except BaseException as cleanup_error:
+            error.add_note(f"local candidate cleanup failed: {type(cleanup_error).__name__}")
+        cleaned = True
+        if orphan_keys and not isinstance(error, PublicationFailure):
+            failure = PublishResult(
+                dataset=plan.dataset.name,
+                scale=plan.scale,
+                status="failed-orphaned",
+                manifest_sha256=None,
+                publication_id=publication_id,
+                object_count=len(orphan_keys),
+                publication_prefix=publication_prefix(plan, publication_id),
+                pointer_action="not-committed",
+                pointer_precondition=(
+                    "If-None-Match: *" if active.snapshot is None else f"If-Match: {active.snapshot.etag}"
+                ),
+                orphan_keys=tuple(orphan_keys),
+            )
+            raise PublicationFailure(failure, error) from error
+        raise
+    finally:
+        if not cleaned:
+            try:
+                shutil.rmtree(temporary)
+            except FileNotFoundError:
+                pass
 
 
 def publish_dataset(
@@ -1168,17 +1340,37 @@ def publish_dataset(
         if mode is PublishMode.VERIFY_ONLY:
             raise ValueError("dry-run and verify-only are redundant")
         if mode is PublishMode.ROLLBACK:
-            resolved = _resolve_manifest(client, plan, cast(str, digest), bucket=bucket)
-            return _result_from_resolved(resolved, "dry-run-rollback")
+            resolved, _reconciled = _rollback_transaction(
+                client,
+                plan,
+                cast(str, digest),
+                bucket=bucket,
+                dry_run=True,
+            )
+            return replace(
+                _result_from_resolved(resolved, "dry-run-rollback"),
+                pointer_action="replace",
+                pointer_precondition=f"If-Match: {active.snapshot.etag}",
+                previous_manifest_key=active.pointer.manifest_key,
+                previous_manifest_sha256=active.pointer.manifest_sha256,
+            )
         if mode is PublishMode.REFRESH:
             current_digest = active.pointer.manifest_sha256 if active.pointer is not None else None
+            intended_publication = uuid.uuid4().hex
             return PublishResult(
                 plan.dataset.name,
                 plan.scale,
                 "dry-run-refresh",
                 current_digest,
-                None,
+                intended_publication,
                 len(_selected_outputs(plan)),
+                previous_manifest_key=active.pointer.manifest_key if active.pointer is not None else None,
+                previous_manifest_sha256=current_digest,
+                publication_prefix=publication_prefix(plan, intended_publication),
+                pointer_action="create" if active.snapshot is None else "replace",
+                pointer_precondition=(
+                    "If-None-Match: *" if active.snapshot is None else f"If-Match: {active.snapshot.etag}"
+                ),
             )
         if active.pointer is not None or active.corruption is not None:
             resolved = _verify_pointer_state(client, plan, active, bucket)
@@ -1186,24 +1378,42 @@ def publish_dataset(
         with tempfile.TemporaryDirectory(prefix="dataset-publication-dry-run-") as temporary:
             legacy = _legacy_candidates(client, plan, Path(temporary), bucket)
         status = "dry-run-legacy-migration" if legacy is not None else "dry-run-initial"
-        return PublishResult(plan.dataset.name, plan.scale, status, None, None, len(_selected_outputs(plan)))
-    if mode is PublishMode.ROLLBACK:
-        resolved = rollback_manifest(
-            client,
-            {plan.dataset.name: plan.dataset},
+        intended_publication = uuid.uuid4().hex
+        return PublishResult(
             plan.dataset.name,
             plan.scale,
+            status,
+            None,
+            intended_publication,
+            len(_selected_outputs(plan)),
+            publication_prefix=publication_prefix(plan, intended_publication),
+            pointer_action="create",
+            pointer_precondition="If-None-Match: *",
+        )
+    if mode is PublishMode.ROLLBACK:
+        resolved, reconciled = _rollback_transaction(
+            client,
+            plan,
             cast(str, digest),
             bucket=bucket,
         )
-        return _result_from_resolved(resolved, "rolled-back")
+        return replace(
+            _result_from_resolved(
+                resolved,
+                "rolled-back-reconciled" if reconciled else "rolled-back",
+            ),
+            previous_manifest_key=active.pointer.manifest_key,
+            previous_manifest_sha256=active.pointer.manifest_sha256,
+            pointer_action="replace",
+            pointer_precondition=f"If-Match: {active.snapshot.etag}",
+        )
     if active.pointer is not None or active.corruption is not None:
         if mode is not PublishMode.REFRESH:
             resolved = _verify_pointer_state(client, plan, active, bucket)
             return _result_from_resolved(resolved, "verified-existing")
     elif mode is PublishMode.VERIFY_ONLY:
         _verify_pointer_state(client, plan, active, bucket)
-    audit_digest = raw_registry_sha256 or plan_id(plan)
+    audit_digest = _require_sha256(raw_registry_sha256, "raw registry sha256")
     return _publish_candidate(
         plan,
         client,

@@ -5,14 +5,17 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from datasets.publication import PublishMode, publish_dataset  # noqa: E402
+from datasets.locking import canonical_json  # noqa: E402
+from datasets.publication import PublicationFailure, PublishMode, publish_dataset  # noqa: E402
 from datasets.registry import load_registry, resolve_scale  # noqa: E402
 from datasets.s3 import s3_client_from_env  # noqa: E402
 from datasets.sources.http import fetch_http  # noqa: E402
@@ -40,6 +43,19 @@ def _fetch_files(plan, dest: Path):
     if plan.dataset.kind == "tpch":
         return generate_tpch(plan, dest)
     raise ValueError(f"unknown fetch kind: {plan.dataset.kind}")
+
+
+def _load_registry_snapshot(path: Path) -> tuple[dict, str]:
+    snapshot = Path(path).read_bytes()
+    digest = hashlib.sha256(snapshot).hexdigest()
+    descriptor, temporary_name = tempfile.mkstemp(prefix="dataset-registry-", suffix=".yaml")
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(snapshot)
+        registry = load_registry(Path(temporary_name))
+    finally:
+        Path(temporary_name).unlink(missing_ok=True)
+    return registry, digest
 
 
 def _publish_mode(*, force: bool, refresh: bool, verify_only: bool, rollback: str | None) -> PublishMode:
@@ -77,7 +93,7 @@ def run(
     if verify_only and dry_run:
         raise ValueError("--verify-only and --dry-run cannot be combined")
     registry_path = Path(registry_path)
-    datasets = load_registry(registry_path)
+    datasets, raw_registry_sha256 = _load_registry_snapshot(registry_path)
     pairs = plan_uploads(datasets, scale, only)
     if mode is PublishMode.ROLLBACK:
         if len(pairs) != 1 or not only or len(only) != 1:
@@ -87,11 +103,10 @@ def run(
     if client is None:
         client = s3_client_from_env(Path(infra_dir))
 
-    raw_registry_sha256 = hashlib.sha256(registry_path.read_bytes()).hexdigest()
     failed = False
     for name, selected_scale in pairs:
-        plan = resolve_scale(datasets[name], selected_scale)
         try:
+            plan = resolve_scale(datasets[name], selected_scale)
             result = publish_dataset(
                 plan,
                 mode=mode,
@@ -103,10 +118,13 @@ def run(
             )
         except Exception as error:
             failed = True
+            if isinstance(error, PublicationFailure):
+                print(canonical_json(error.result.to_document()).decode("utf-8"), file=sys.stderr)
             print(f"! {name} @ {selected_scale}: {type(error).__name__}: {error}", file=sys.stderr)
+            for note in getattr(error, "__notes__", ()):
+                print(f"! {name} note: {note}", file=sys.stderr)
             continue
-        digest = result.manifest_sha256 or "-"
-        print(f"= {name} @ {selected_scale}: {result.status} manifest={digest} objects={result.object_count}")
+        print(canonical_json(result.to_document()).decode("utf-8"))
         if result.cleanup_warning is not None:
             print(f"! {name} cleanup: {result.cleanup_warning}", file=sys.stderr)
     return 1 if failed else 0
@@ -139,7 +157,12 @@ def main(argv=None) -> int:
             parser.error("rollback requires exactly one --only dataset")
         if args.scale is None:
             parser.error("rollback requires one explicit --scale")
-    effective_scale = args.scale or "small"
+    environment_scale = os.environ.get("DATASET_SCALE")
+    if environment_scale is not None and environment_scale not in {"tiny", "small", "medium"}:
+        parser.error("DATASET_SCALE must be one of: tiny, small, medium")
+    effective_scale = args.scale or environment_scale or "small"
+    if args.force:
+        print("warning: --force is deprecated; use --refresh", file=sys.stderr)
     try:
         return run(
             args.registry,

@@ -4,8 +4,9 @@ import hashlib
 import inspect
 import io
 import json
+import threading
 from dataclasses import replace
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
 from pathlib import Path
 from types import MappingProxyType
@@ -17,6 +18,7 @@ from datasets.publication import (
     ActivePointer,
     ImmutableManifest,
     ManifestObject,
+    PublicationFailure,
     PublishMode,
     active_pointer_key,
     immutable_manifest_key,
@@ -75,13 +77,18 @@ def _publication_lease(store: FakeS3, plan, publication_id: str, owner_nonce: st
         owner_nonce=owner_nonce,
         state="active",
         created_at=now,
-        expires_at=now.replace(year=now.year + 1),
+        expires_at=now + timedelta(seconds=60),
         etag='"lease"',
         bucket="landing",
         key=key,
     )
+    _seed_lease(store, lease)
+    return lease
+
+
+def _seed_lease(store: FakeS3, lease: Lease) -> None:
     store.seed(
-        key,
+        lease.key,
         canonical_json(
             {
                 "created_at": lease.created_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
@@ -94,7 +101,165 @@ def _publication_lease(store: FakeS3, plan, publication_id: str, owner_nonce: st
         ),
         etag=lease.etag,
     )
-    return lease
+
+
+def test_mutating_publication_requires_explicit_registry_digest_before_lease(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    monkeypatch.setattr("datasets.publication.acquire_lease", lambda *args, **kwargs: pytest.fail("lease"))
+
+    with pytest.raises(ValueError, match="raw registry sha256"):
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: pytest.fail("source"),
+        )
+
+    assert store.puts == []
+
+
+def test_default_fails_if_pointer_becomes_corrupt_during_lease_acquisition(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        lease = _publication_lease(store, plan, publication_id, owner_nonce)
+        store.seed(active_pointer_key("sample"), b'{"corrupt":true}', etag='"corrupt-race"')
+        return lease
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+
+    with pytest.raises(LockMismatch, match="pointer"):
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: pytest.fail("source"),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert not any("/_generations/" in str(request["Key"]) for request in store.puts)
+
+
+def test_long_fetch_renews_lease_and_releases_latest_version(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+    renewed = threading.Event()
+    released: list[Lease] = []
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        lease = _publication_lease(store, plan, publication_id, owner_nonce)
+        short = replace(lease, expires_at=lease.created_at + timedelta(seconds=1))
+        _seed_lease(store, short)
+        return short
+
+    def renew(client, lease):
+        del client
+        created = datetime.now(UTC).replace(microsecond=0)
+        updated = replace(
+            lease,
+            created_at=created,
+            expires_at=created + timedelta(seconds=60),
+            etag='"lease-renewed"',
+        )
+        _seed_lease(store, updated)
+        renewed.set()
+        return updated
+
+    def fetch(*_args):
+        assert renewed.wait(2), "blocking acquisition was not protected by lease renewal"
+        return (VerifiedFile(source, expected),)
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.renew_lease", renew)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda client, lease: released.append(lease))
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    publish_dataset(
+        plan,
+        mode=PublishMode.DEFAULT,
+        client=store,
+        fetcher=fetch,
+        raw_registry_sha256=RAW_REGISTRY_SHA256,
+    )
+
+    assert released[-1].etag == '"lease-renewed"'
+
+
+def test_lease_renewal_failure_aborts_before_pointer_mutation(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+    renewal_attempted = threading.Event()
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        lease = _publication_lease(store, plan, publication_id, owner_nonce)
+        short = replace(lease, expires_at=lease.created_at + timedelta(seconds=1))
+        _seed_lease(store, short)
+        return short
+
+    def renew(*_args):
+        renewal_attempted.set()
+        raise ConditionalConflict("successor owns lease")
+
+    def fetch(*_args):
+        assert renewal_attempted.wait(2)
+        return (VerifiedFile(source, expected),)
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.renew_lease", renew)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    with pytest.raises(ConditionalConflict, match="renewal"):
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=fetch,
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert active_pointer_key("sample") not in store.objects
+
+
+def test_verified_existing_race_keeps_result_when_release_fails(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    published, manifest = _published_store(plan)
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        lease = _publication_lease(store, plan, publication_id, owner_nonce)
+        store.objects.update(published.objects)
+        return lease
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr(
+        "datasets.publication.release_lease",
+        lambda *_: (_ for _ in ()).throw(RuntimeError("release")),
+    )
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.DEFAULT,
+        client=store,
+        fetcher=lambda *_: pytest.fail("source"),
+        raw_registry_sha256=RAW_REGISTRY_SHA256,
+    )
+
+    assert result.manifest_sha256 == manifest_sha256(manifest)
+    assert result.cleanup_warning is not None
 
 
 def test_first_publication_uploads_generation_manifest_then_pointer(tmp_path, monkeypatch) -> None:
@@ -174,7 +339,45 @@ def test_dry_run_missing_pointer_performs_no_lease_source_or_write(monkeypatch) 
     )
 
     assert result.status == "dry-run-initial"
+    assert result.publication_id is not None
+    assert result.publication_prefix == publication_prefix(plan, result.publication_id)
+    assert result.pointer_action == "create"
+    assert result.pointer_precondition == "If-None-Match: *"
     assert store.puts == []
+
+
+def test_failure_after_immutable_upload_reports_orphan_candidate(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        return _publication_lease(store, plan, publication_id, owner_nonce)
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+    monkeypatch.setattr(
+        "datasets.publication._put_manifest_exact",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AmbiguousWrite("manifest lost")),
+    )
+
+    with pytest.raises(PublicationFailure) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (VerifiedFile(source, expected),),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    result = caught.value.result
+    assert result.status == "failed-orphaned"
+    assert result.publication_prefix is not None
+    assert result.orphan_keys == (f"{result.publication_prefix}/readme.txt",)
 
 
 def test_exact_legacy_set_migrates_without_source_request(tmp_path, monkeypatch) -> None:
@@ -201,6 +404,49 @@ def test_exact_legacy_set_migrates_without_source_request(tmp_path, monkeypatch)
     assert result.status == "published"
     assert store.objects["sample/readme.txt"][0] == b"hello\n"
     assert store.puts[-1]["Key"] == active_pointer_key("sample")
+
+
+def test_legacy_listing_paginates_direct_keys_with_delimiter() -> None:
+    plan = resolve_scale(_dataset(), "small")
+    calls: list[dict[str, object]] = []
+
+    class Paged:
+        def list_objects_v2(self, **request):
+            calls.append(request)
+            token = request.get("ContinuationToken")
+            if token is None:
+                return {
+                    "Contents": [{"Key": "sample/readme.txt"}],
+                    "CommonPrefixes": [{"Prefix": "sample/_generations/"}],
+                    "IsTruncated": True,
+                    "NextContinuationToken": "page-2",
+                }
+            return {"Contents": [], "CommonPrefixes": [], "IsTruncated": False}
+
+    from datasets import publication as publication_module
+
+    assert publication_module._list_legacy_keys(Paged(), plan, "landing") == ("sample/readme.txt",)
+    assert all(call["Delimiter"] == "/" for call in calls)
+
+
+def test_legacy_listing_rejects_continuation_token_cycle() -> None:
+    plan = resolve_scale(_dataset(), "small")
+
+    class Cyclic:
+        def list_objects_v2(self, **request):
+            token = request.get("ContinuationToken")
+            following = "A" if token in {None, "B"} else "B"
+            return {
+                "Contents": [],
+                "CommonPrefixes": [],
+                "IsTruncated": True,
+                "NextContinuationToken": following,
+            }
+
+    from datasets import publication as publication_module
+
+    with pytest.raises(AmbiguousWrite, match="pagination"):
+        publication_module._list_legacy_keys(Cyclic(), plan, "landing")
 
 
 def test_lost_pointer_response_reconciles_exact_self_commit(tmp_path, monkeypatch) -> None:
@@ -376,8 +622,16 @@ class FakeS3:
         self.body_overrides: dict[str, object] = {}
         self.lose_response_suffix: str | None = None
 
-    def list_objects_v2(self, *, Bucket: str, Prefix: str, ContinuationToken: str | None = None):
+    def list_objects_v2(
+        self,
+        *,
+        Bucket: str,
+        Prefix: str,
+        Delimiter: str,
+        ContinuationToken: str | None = None,
+    ):
         del Bucket, ContinuationToken
+        assert Delimiter == "/"
         return {
             "Contents": [{"Key": key} for key in sorted(self.objects) if key.startswith(Prefix)],
             "IsTruncated": False,
@@ -993,7 +1247,7 @@ def test_rollback_to_current_selected_plan_after_active_scale_changed(monkeypatc
     assert store.puts[-1]["IfMatch"] == '"pointer"'
 
 
-def test_rollback_uses_etag_from_corrupt_current_pointer(monkeypatch) -> None:
+def test_rollback_rejects_corrupt_current_pointer_without_mutation(monkeypatch) -> None:
     plan = resolve_scale(_dataset(), "small")
     target = _manifest(plan, publication_id=PREVIOUS_PUBLICATION_ID)
     store, _ = _published_store(plan)
@@ -1006,14 +1260,64 @@ def test_rollback_uses_etag_from_corrupt_current_pointer(monkeypatch) -> None:
     store.seed(target.objects[0].key, b"hello\n", etag='"target-object"')
     monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
 
-    rollback_manifest(
-        store,
-        {"sample": plan.dataset},
-        "sample",
-        "small",
-        manifest_sha256(target),
+    with pytest.raises(LockMismatch, match="pointer"):
+        rollback_manifest(
+            store,
+            {"sample": plan.dataset},
+            "sample",
+            "small",
+            manifest_sha256(target),
+        )
+    assert store.puts == []
+
+
+def test_rollback_lost_pointer_response_reports_reconciled_status(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    historical = _manifest(plan, publication_id=PREVIOUS_PUBLICATION_ID)
+    store, _ = _published_store(plan)
+    store.seed(
+        immutable_manifest_key("sample", manifest_sha256(historical)),
+        historical.to_bytes(),
+        etag='"historical"',
     )
-    assert store.puts[-1]["IfMatch"] == '"corrupt-etag"'
+    store.seed(historical.objects[0].key, b"hello\n", etag='"historical-object"')
+    store.lose_response_suffix = active_pointer_key("sample")
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.ROLLBACK,
+        client=store,
+        fetcher=lambda *_: pytest.fail("source"),
+        rollback_sha256=manifest_sha256(historical),
+    )
+
+    assert result.status == "rolled-back-reconciled"
+
+
+def test_rollback_dry_run_requires_an_existing_valid_current_pointer(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    historical = _manifest(plan, publication_id=PREVIOUS_PUBLICATION_ID)
+    store = FakeS3()
+    store.seed(
+        immutable_manifest_key("sample", manifest_sha256(historical)),
+        historical.to_bytes(),
+        etag='"historical"',
+    )
+    store.seed(historical.objects[0].key, b"hello\n", etag='"historical-object"')
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    with pytest.raises(LockMismatch, match="pointer"):
+        publish_dataset(
+            plan,
+            mode=PublishMode.ROLLBACK,
+            client=store,
+            fetcher=lambda *_: pytest.fail("source"),
+            rollback_sha256=manifest_sha256(historical),
+            dry_run=True,
+        )
+
+    assert store.puts == []
 
 
 def test_rollback_rejects_scale_or_selected_plan_change_before_pointer_write(monkeypatch) -> None:
