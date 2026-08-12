@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import gzip
 import json
+import re
 import zipfile
 from dataclasses import replace
 from pathlib import Path
@@ -75,43 +76,111 @@ def parquet_row(
     return row
 
 
+def parquet_metadata_row(
+    name: str,
+    logical_type: str,
+    repetition: str = "OPTIONAL",
+    *,
+    timestamp_duckdb_type: str = "TIMESTAMP_NS",
+) -> dict[str, object]:
+    types: dict[str, tuple[str, str | None, str | None, str]] = {
+        "boolean": ("BOOLEAN", None, None, "BOOLEAN"),
+        "int8": ("INT32", "INT_8", None, "TINYINT"),
+        "int16": ("INT32", "INT_16", None, "SMALLINT"),
+        "int32": ("INT32", "INT_32", None, "INTEGER"),
+        "int64": ("INT64", "INT_64", None, "BIGINT"),
+        "uint8": ("INT32", "UINT_8", None, "UTINYINT"),
+        "uint16": ("INT32", "UINT_16", None, "USMALLINT"),
+        "uint32": ("INT32", "UINT_32", None, "UINTEGER"),
+        "uint64": ("INT64", "UINT_64", None, "UBIGINT"),
+        "float32": ("FLOAT", None, None, "FLOAT"),
+        "float64": ("DOUBLE", None, None, "DOUBLE"),
+        "date": ("INT32", "DATE", None, "DATE"),
+        "timestamp": (
+            "INT64",
+            None,
+            (
+                "TimestampType(isAdjustedToUTC=0, unit=TimeUnit("
+                "MILLIS=<null>, MICROS=<null>, NANOS=NanoSeconds()))"
+            ),
+            timestamp_duckdb_type,
+        ),
+        "timestamp-tz": (
+            "INT64",
+            "TIMESTAMP_MICROS",
+            (
+                "TimestampType(isAdjustedToUTC=1, unit=TimeUnit("
+                "MILLIS=<null>, MICROS=MicroSeconds(), NANOS=<null>))"
+            ),
+            "TIMESTAMP WITH TIME ZONE",
+        ),
+        "string": ("BYTE_ARRAY", "UTF8", None, "VARCHAR"),
+        "binary": ("BYTE_ARRAY", None, None, "BLOB"),
+    }
+    decimal_match = re.fullmatch(r"decimal\(([0-9]+),([0-9]+)\)", logical_type)
+    if decimal_match is not None:
+        precision, scale = map(int, decimal_match.groups())
+        return parquet_row(
+            name,
+            f"DECIMAL({precision},{scale})",
+            repetition,
+            type="INT64",
+            converted_type="DECIMAL",
+            precision=precision,
+            scale=scale,
+            logical_type=f"DecimalType(scale={scale}, precision={precision})",
+        )
+    physical, converted, annotation, duckdb_type = types[logical_type]
+    return parquet_row(
+        name,
+        duckdb_type,
+        repetition,
+        type=physical,
+        converted_type=converted,
+        logical_type=annotation,
+    )
+
+
 @pytest.mark.parametrize(
-    ("logical", "duckdb_type"),
+    "logical",
     [
-        ("boolean", "BOOLEAN"),
-        ("int8", "TINYINT"),
-        ("int16", "SMALLINT"),
-        ("int32", "INTEGER"),
-        ("int64", "BIGINT"),
-        ("uint8", "UTINYINT"),
-        ("uint16", "USMALLINT"),
-        ("uint32", "UINTEGER"),
-        ("uint64", "UBIGINT"),
-        ("float32", "FLOAT"),
-        ("float32", "REAL"),
-        ("float64", "DOUBLE"),
-        ("date", "DATE"),
-        ("timestamp", "TIMESTAMP_S"),
-        ("timestamp", "TIMESTAMP_MS"),
-        ("timestamp", "TIMESTAMP"),
-        ("timestamp", "TIMESTAMP_NS"),
-        ("timestamp-tz", "TIMESTAMP WITH TIME ZONE"),
-        ("string", "VARCHAR"),
-        ("binary", "BLOB"),
-        ("decimal(12,2)", "DECIMAL(12,2)"),
-        ("decimal(15,2)", "DECIMAL(15,2)"),
+        "boolean",
+        "int8",
+        "int16",
+        "int32",
+        "int64",
+        "uint8",
+        "uint16",
+        "uint32",
+        "uint64",
+        "float32",
+        "float64",
+        "date",
+        "timestamp",
+        "timestamp-tz",
+        "string",
+        "binary",
+        "decimal(12,2)",
+        "decimal(15,2)",
     ],
 )
-def test_parquet_normalization_is_frozen(logical: str, duckdb_type: str):
-    assert normalize_parquet_schema([parquet_row("value", duckdb_type)]) == (
+def test_parquet_normalization_is_frozen_from_physical_metadata(logical: str):
+    assert normalize_parquet_schema([parquet_metadata_row("value", logical)]) == (
         ObservedField("value", logical, True),
     )
 
 
+@pytest.mark.parametrize("duckdb_type", ["TIMESTAMP_S", "TIMESTAMP_MS", "TIMESTAMP", "TIMESTAMP_NS"])
+def test_parquet_timestamp_units_normalize_without_changing_utc_semantics(duckdb_type: str):
+    row = parquet_metadata_row("value", "timestamp", timestamp_duckdb_type=duckdb_type)
+
+    assert normalize_parquet_schema([row]) == (ObservedField("value", "timestamp", True),)
+
+
 def test_parquet_normalization_preserves_order_and_required_nullability():
     rows = [
-        parquet_row("first", "BIGINT", "REQUIRED"),
-        parquet_row("second", "VARCHAR"),
+        parquet_metadata_row("first", "int64", "REQUIRED"),
+        parquet_metadata_row("second", "string"),
     ]
 
     assert normalize_parquet_schema(rows) == (
@@ -151,6 +220,98 @@ def test_parquet_normalization_does_not_trust_inferred_integer_without_width_ann
 
     with pytest.raises(ValueError, match="ambiguous"):
         normalize_parquet_schema([row])
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        parquet_row("value", "INTEGER", type="INT32", converted_type="INT_8"),
+        parquet_row(
+            "value",
+            "TIMESTAMP_NS",
+            type="INT64",
+            logical_type=(
+                "TimestampType(isAdjustedToUTC=1, unit=TimeUnit("
+                "MILLIS=<null>, MICROS=<null>, NANOS=NanoSeconds()))"
+            ),
+        ),
+        parquet_row("value", "BLOB", type="BYTE_ARRAY", converted_type="UTF8"),
+        parquet_row("value", "VARCHAR", type="BYTE_ARRAY"),
+        parquet_row(
+            "value",
+            "DECIMAL(10,2)",
+            type="INT64",
+            converted_type="DECIMAL",
+            precision=12,
+            scale=2,
+            logical_type="DecimalType(scale=2, precision=12)",
+        ),
+        parquet_row(
+            "value",
+            "DECIMAL(12,2)",
+            type="INT64",
+            converted_type="INT_64",
+            precision=12,
+            scale=2,
+            logical_type="DecimalType(scale=2, precision=12)",
+        ),
+        parquet_row(
+            "value",
+            "INTEGER",
+            type="INT32",
+            converted_type="DATE",
+            logical_type="DateType()",
+        ),
+        parquet_row("value", "VARCHAR", type="BYTE_ARRAY", converted_type="JSON"),
+    ],
+)
+def test_parquet_physical_annotations_are_authoritative_over_duckdb_type(row):
+    with pytest.raises(ValueError, match="inconsistent|unsupported|ambiguous"):
+        normalize_parquet_schema([row])
+
+
+@pytest.mark.parametrize("converted_type", ["TIMESTAMP_MILLIS", "TIMESTAMP_MICROS"])
+def test_parquet_legacy_timestamp_annotations_preserve_utc_semantics(converted_type: str):
+    row = parquet_row(
+        "value",
+        "TIMESTAMP WITH TIME ZONE",
+        type="INT64",
+        converted_type=converted_type,
+    )
+
+    assert normalize_parquet_schema([row]) == (ObservedField("value", "timestamp-tz", True),)
+
+
+def test_every_production_parquet_schema_has_frozen_realistic_metadata_mapping():
+    registry = load_registry(Path(__file__).parents[2] / "datasets" / "registry.yaml")
+    schemas = [
+        schema
+        for dataset in registry.values()
+        for schema in dataset.schemas.values()
+        if schema.format == "parquet"
+    ]
+
+    assert len(schemas) == 10
+    for schema in schemas:
+        rows = [
+            {
+                "name": "schema",
+                "type": None,
+                "repetition_type": "REQUIRED",
+                "num_children": len(schema.fields),
+            },
+            *[
+                parquet_metadata_row(
+                    field.name,
+                    field.logical_type,
+                    "OPTIONAL" if field.nullable else "REQUIRED",
+                )
+                for field in schema.fields
+            ],
+        ]
+        assert normalize_parquet_schema(rows) == tuple(
+            ObservedField(field.name, field.logical_type, field.nullable) for field in schema.fields
+        )
 
 
 def test_parquet_inspection_uses_duckdb_metadata_without_value_inference(tmp_path: Path):
@@ -244,6 +405,20 @@ def test_csv_requires_a_time_component_for_timestamp(tmp_path: Path):
         verify_physical_schema(path, timestamp_contract, CONTEXT)
 
 
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_csv_json_fields_reject_nonstandard_numeric_constants(tmp_path: Path, constant: str):
+    path = tmp_path / "payload.csv"
+    path.write_text(f"payload\n{constant}\n", encoding="utf-8")
+    json_contract = contract(
+        "csv",
+        (SchemaField("payload", "json", False),),
+        options={"header": True, "delimiter": ",", "encoding": "utf-8"},
+    )
+
+    with pytest.raises(LockMismatch, match="json"):
+        verify_physical_schema(path, json_contract, CONTEXT)
+
+
 JSON_CONTRACT = contract(
     "jsonl-gzip",
     (
@@ -326,6 +501,37 @@ def test_jsonl_gzip_rejects_corrupt_trailer(tmp_path: Path):
         verify_physical_schema(path, JSON_CONTRACT, CONTEXT)
 
 
+@pytest.mark.parametrize("constant", ["NaN", "Infinity", "-Infinity"])
+def test_jsonl_gzip_rejects_nonstandard_numeric_constants(tmp_path: Path, constant: str):
+    path = tmp_path / "constant.json.gz"
+    with gzip.open(path, "wb") as stream:
+        stream.write(
+            b'{"id":"1","actor":{"login":"octo"},"count":null,"extra":'
+            + constant.encode("ascii")
+            + b"}\n"
+        )
+
+    with pytest.raises(LockMismatch, match="JSON"):
+        verify_physical_schema(path, JSON_CONTRACT, CONTEXT)
+
+
+def test_jsonl_exact_mode_does_not_alias_literal_dotted_key_to_nested_nullable_path(
+    tmp_path: Path,
+):
+    path = tmp_path / "alias.json.gz"
+    write_json_gzip(path, [{"actor.login": None}])
+    exact = contract(
+        "jsonl-gzip",
+        (SchemaField("actor.login", "string", True),),
+        options={"record_shape": "object", "compression": "gzip", "encoding": "utf-8"},
+    )
+
+    with pytest.raises(LockMismatch, match="fields") as caught:
+        verify_physical_schema(path, exact, CONTEXT)
+    assert caught.value.expected == (("actor", "login"),)
+    assert caught.value.actual == (("actor.login",),)
+
+
 def test_jsonl_gzip_enforces_record_string_depth_and_expansion_bounds(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
@@ -374,6 +580,30 @@ def test_json_depth_counts_nested_containers_not_scalar_leaves(
     verify_physical_schema(path, JSON_CONTRACT, CONTEXT)
 
 
+def test_jsonl_gzip_rejects_more_than_maximum_nesting_with_typed_mismatch(tmp_path: Path):
+    path = tmp_path / "too-deep.json.gz"
+    nested = "{}"
+    for _ in range(inspection._MAX_JSON_DEPTH):
+        nested = '{"child":' + nested + "}"
+    payload = '{"id":"1","actor":{"login":"ok"},"extra":' + nested + "}\n"
+    with gzip.open(path, "wb") as stream:
+        stream.write(payload.encode("utf-8"))
+
+    with pytest.raises(LockMismatch, match="depth"):
+        verify_physical_schema(path, JSON_CONTRACT, CONTEXT)
+
+
+def test_jsonl_gzip_translates_decoder_recursion_failure_to_typed_mismatch(tmp_path: Path):
+    path = tmp_path / "parser-deep.json.gz"
+    nested = "[" * 1500 + "0" + "]" * 1500
+    payload = '{"id":"1","actor":{"login":"ok"},"extra":' + nested + "}\n"
+    with gzip.open(path, "wb") as stream:
+        stream.write(payload.encode("utf-8"))
+
+    with pytest.raises(LockMismatch, match="depth|JSON"):
+        verify_physical_schema(path, JSON_CONTRACT, CONTEXT)
+
+
 XLSX_CONTRACT = contract(
     "xlsx",
     (
@@ -393,6 +623,8 @@ def xlsx_fixture(
     shared_strings: tuple[str, ...] = ("name", "count", "when", "widget"),
     styles_xml: str | None = None,
     worksheet_prefix: str = "",
+    shared_strings_xml: bytes | None = None,
+    worksheet_xml: bytes | None = None,
 ) -> Path:
     path = tmp_path / "workbook.xlsx"
     strings = "".join(f"<si><t>{value}</t></si>" for value in shared_strings)
@@ -430,9 +662,9 @@ def xlsx_fixture(
     with zipfile.ZipFile(path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         archive.writestr("xl/workbook.xml", workbook_xml)
         archive.writestr("xl/_rels/workbook.xml.rels", relationships_xml)
-        archive.writestr("xl/sharedStrings.xml", shared_xml)
+        archive.writestr("xl/sharedStrings.xml", shared_strings_xml or shared_xml)
         archive.writestr("xl/styles.xml", styles_xml or default_styles)
-        archive.writestr("xl/worksheets/sheet1.xml", sheet_xml)
+        archive.writestr("xl/worksheets/sheet1.xml", worksheet_xml or sheet_xml)
     return path
 
 
@@ -477,6 +709,55 @@ def test_xlsx_rejects_dtd_and_entity_declarations(tmp_path: Path, declaration: s
             '<c r="A2" t="s"><v>3</v></c><c r="B2"><v>2</v></c>'
             '<c r="C2" s="1"><v>43831</v></c>'
         ),
+    )
+
+    with pytest.raises(LockMismatch, match="DTD|entity"):
+        verify_physical_schema(path, XLSX_CONTRACT, CONTEXT)
+
+
+def utf16_xml(value: str, byte_order: str) -> bytes:
+    if byte_order == "le":
+        return b"\xff\xfe" + value.encode("utf-16-le")
+    return b"\xfe\xff" + value.encode("utf-16-be")
+
+
+@pytest.mark.parametrize("byte_order", ["le", "be"])
+@pytest.mark.parametrize("member", ["worksheet", "shared_strings"])
+def test_xlsx_rejects_utf16_dtd_and_entities_before_xml_expansion(
+    tmp_path: Path, byte_order: str, member: str
+):
+    worksheet_xml = None
+    shared_strings_xml = None
+    if member == "worksheet":
+        worksheet_xml = utf16_xml(
+            '<?xml version="1.0" encoding="UTF-16"?>'
+            '<!DOCTYPE worksheet [<!ENTITY payload "widget">]>'
+            '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">'
+            '<sheetData><row r="1">'
+            '<c r="A1" t="s"><v>0</v></c><c r="B1" t="s"><v>1</v></c>'
+            '<c r="C1" t="s"><v>2</v></c></row><row r="2">'
+            '<c r="A2" t="inlineStr"><is><t>&payload;</t></is></c>'
+            '<c r="B2" t="n"><v>2</v></c><c r="C2" s="1"><v>43831</v></c>'
+            '</row></sheetData></worksheet>',
+            byte_order,
+        )
+    else:
+        shared_strings_xml = utf16_xml(
+            '<?xml version="1.0" encoding="UTF-16"?>'
+            '<!DOCTYPE sst [<!ENTITY payload "name">]>'
+            '<sst xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" '
+            'count="4" uniqueCount="4"><si><t>&payload;</t></si><si><t>count</t></si>'
+            '<si><t>when</t></si><si><t>widget</t></si></sst>',
+            byte_order,
+        )
+    path = xlsx_fixture(
+        tmp_path,
+        data_cells=(
+            '<c r="A2" t="s"><v>3</v></c><c r="B2"><v>2</v></c>'
+            '<c r="C2" s="1"><v>43831</v></c>'
+        ),
+        shared_strings_xml=shared_strings_xml,
+        worksheet_xml=worksheet_xml,
     )
 
     with pytest.raises(LockMismatch, match="DTD|entity"):
@@ -529,6 +810,34 @@ def test_xlsx_rejects_blank_nonnullable_mixed_type_and_expansion(tmp_path: Path,
     monkeypatch.setattr(inspection, "_MIN_EXPANDED_BYTES", 1)
     monkeypatch.setattr(inspection, "_EXPANSION_FACTOR", 0)
     with pytest.raises(LockMismatch, match="expanded"):
+        verify_physical_schema(path, XLSX_CONTRACT, CONTEXT)
+
+
+@pytest.mark.parametrize("index", [-1, 4])
+def test_xlsx_rejects_out_of_range_shared_string_indexes(tmp_path: Path, index: int):
+    path = xlsx_fixture(
+        tmp_path,
+        data_cells=(
+            f'<c r="A2" t="s"><v>{index}</v></c><c r="B2"><v>2</v></c>'
+            '<c r="C2" s="1"><v>43831</v></c>'
+        ),
+    )
+
+    with pytest.raises(LockMismatch, match="structure"):
+        verify_physical_schema(path, XLSX_CONTRACT, CONTEXT)
+
+
+@pytest.mark.parametrize("index", [-1, 2])
+def test_xlsx_rejects_out_of_range_style_indexes(tmp_path: Path, index: int):
+    path = xlsx_fixture(
+        tmp_path,
+        data_cells=(
+            '<c r="A2" t="s"><v>3</v></c><c r="B2"><v>2</v></c>'
+            f'<c r="C2" s="{index}"><v>43831</v></c>'
+        ),
+    )
+
+    with pytest.raises(LockMismatch, match="structure"):
         verify_physical_schema(path, XLSX_CONTRACT, CONTEXT)
 
 

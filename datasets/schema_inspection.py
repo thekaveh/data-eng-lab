@@ -35,6 +35,13 @@ _MAX_STRING_BYTES = 16 << 20
 _READ_SIZE = 1 << 20
 
 _DECIMAL_TYPE_RE = re.compile(r"^DECIMAL\(([0-9]+),([0-9]+)\)$")
+_PARQUET_DECIMAL_ANNOTATION_RE = re.compile(
+    r"^DecimalType\(scale=([0-9]+), precision=([0-9]+)\)$"
+)
+_PARQUET_INTEGER_ANNOTATION_RE = re.compile(
+    r"^IntType\(bitWidth=(8|16|32|64), isSigned=(0|1|true|false)\)$",
+    re.IGNORECASE,
+)
 _INTEGER_RE = re.compile(r"^[+-]?[0-9]+$")
 _DECIMAL_VALUE_RE = re.compile(r"^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$")
 _DATE_RE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}$")
@@ -160,56 +167,104 @@ def _normalize_physical_parquet_type(row: object) -> str:
     converted = str(converted_value).upper() if converted_value is not None else ""
     logical_value = _field_value(row, "logical_type", 10)
     logical_annotation = str(logical_value) if logical_value is not None else ""
-    if duckdb_type in {
-        "TINYINT",
-        "SMALLINT",
-        "INTEGER",
-        "BIGINT",
-        "UTINYINT",
-        "USMALLINT",
-        "UINTEGER",
-        "UBIGINT",
-    } and physical in {"INT32", "INT64"}:
-        if converted not in _PARQUET_INTEGER_ANNOTATIONS and "IntType(" not in logical_annotation:
-            raise ValueError("ambiguous Parquet integer is missing its width annotation")
-    decimal_match = _DECIMAL_TYPE_RE.fullmatch(duckdb_type)
-    if decimal_match is not None:
-        precision, scale = map(int, decimal_match.groups())
-        if not 1 <= precision <= 38 or not 0 <= scale <= precision:
-            raise ValueError("unsupported Parquet decimal precision or scale")
-        return f"decimal({precision},{scale})"
-    logical_from_duckdb = _PARQUET_DUCKDB_TYPES.get(duckdb_type)
-    if logical_from_duckdb is not None:
-        return logical_from_duckdb
+    precision_value = _field_value(row, "precision", 8)
+    scale_value = _field_value(row, "scale", 7)
 
-    if physical == "BOOLEAN":
-        return "boolean"
-    if physical == "FLOAT":
-        return "float32"
-    if physical == "DOUBLE":
-        return "float64"
-    if converted in _PARQUET_INTEGER_ANNOTATIONS:
-        return _PARQUET_INTEGER_ANNOTATIONS[converted]
-    if physical == "INT32" and converted == "DATE":
-        return "date"
-    if physical in {"INT32", "INT64"} and converted == "DECIMAL":
-        precision_value = _field_value(row, "precision", 8)
-        scale_value = _field_value(row, "scale", 7)
+    physical_logical: str
+    if physical in {"BOOLEAN", "FLOAT", "DOUBLE"}:
+        if converted or logical_annotation:
+            raise ValueError(f"unsupported annotation for Parquet {physical}")
+        physical_logical = {
+            "BOOLEAN": "boolean",
+            "FLOAT": "float32",
+            "DOUBLE": "float64",
+        }[physical]
+    elif converted == "DECIMAL" or logical_annotation.startswith("DecimalType("):
+        if physical not in {"INT32", "INT64", "BYTE_ARRAY", "FIXED_LEN_BYTE_ARRAY"}:
+            raise ValueError("unsupported Parquet decimal physical type")
+        if converted not in {"", "DECIMAL"}:
+            raise ValueError("inconsistent Parquet decimal converted annotation")
         if not isinstance(precision_value, int) or not isinstance(scale_value, int):
             raise ValueError("Parquet decimal is missing precision or scale")
+        annotation_match = _PARQUET_DECIMAL_ANNOTATION_RE.fullmatch(logical_annotation)
+        if logical_annotation and annotation_match is None:
+            raise ValueError("unsupported Parquet decimal annotation")
+        if annotation_match is not None:
+            annotation_scale, annotation_precision = map(int, annotation_match.groups())
+            if (annotation_precision, annotation_scale) != (precision_value, scale_value):
+                raise ValueError("inconsistent Parquet decimal annotation")
         if not 1 <= precision_value <= 38 or not 0 <= scale_value <= precision_value:
             raise ValueError("unsupported Parquet decimal precision or scale")
-        return f"decimal({precision_value},{scale_value})"
-    if physical == "INT64" and (
-        "TIMESTAMP" in converted or logical_annotation.startswith("TimestampType(")
-    ):
-        return "timestamp-tz" if "isAdjustedToUTC=1" in logical_annotation else "timestamp"
-    if physical in {"BYTE_ARRAY", "FIXED_LEN_BYTE_ARRAY"}:
-        if converted in {"UTF8", "STRING"} or "StringType" in logical_annotation:
-            return "string"
-        if not converted and not logical_annotation:
-            return "binary"
-    raise ValueError(f"unsupported or ambiguous Parquet type {physical or duckdb_type!r}")
+        physical_logical = f"decimal({precision_value},{scale_value})"
+    elif physical == "INT32" and (converted == "DATE" or logical_annotation == "DateType()"):
+        if converted not in {"", "DATE"} or logical_annotation not in {"", "DateType()"}:
+            raise ValueError("inconsistent Parquet date annotation")
+        physical_logical = "date"
+    elif physical == "INT64" and logical_annotation.startswith("TimestampType("):
+        if not any(
+            unit in logical_annotation
+            for unit in ("MilliSeconds()", "MicroSeconds()", "NanoSeconds()")
+        ):
+            raise ValueError("unsupported Parquet timestamp unit")
+        if "isAdjustedToUTC=1" in logical_annotation:
+            physical_logical = "timestamp-tz"
+        elif "isAdjustedToUTC=0" in logical_annotation:
+            if converted in {"TIMESTAMP_MILLIS", "TIMESTAMP_MICROS"}:
+                raise ValueError("inconsistent Parquet timestamp UTC annotation")
+            physical_logical = "timestamp"
+        else:
+            raise ValueError("unsupported Parquet timestamp UTC annotation")
+        if converted not in {"", "TIMESTAMP_MILLIS", "TIMESTAMP_MICROS"}:
+            raise ValueError("unsupported Parquet timestamp annotation")
+    elif physical == "INT64" and converted in {"TIMESTAMP_MILLIS", "TIMESTAMP_MICROS"}:
+        physical_logical = "timestamp-tz"
+    elif physical in {"INT32", "INT64"}:
+        converted_logical = _PARQUET_INTEGER_ANNOTATIONS.get(converted)
+        annotation_match = _PARQUET_INTEGER_ANNOTATION_RE.fullmatch(logical_annotation)
+        annotation_logical = None
+        if annotation_match is not None:
+            width, signed_value = annotation_match.groups()
+            signed = signed_value.lower() in {"1", "true"}
+            annotation_logical = f"{'int' if signed else 'uint'}{width}"
+        elif logical_annotation:
+            raise ValueError("unsupported Parquet integer annotation")
+        physical_logical = converted_logical or annotation_logical or ""
+        if not physical_logical:
+            raise ValueError("ambiguous Parquet integer is missing its width annotation")
+        if converted_logical and annotation_logical and converted_logical != annotation_logical:
+            raise ValueError("inconsistent Parquet integer annotations")
+        expected_physical = "INT64" if physical_logical.endswith("64") else "INT32"
+        if physical != expected_physical:
+            raise ValueError("inconsistent Parquet integer physical width")
+    elif physical in {"BYTE_ARRAY", "FIXED_LEN_BYTE_ARRAY"}:
+        string_annotation = converted in {"UTF8", "STRING"} or logical_annotation == "StringType()"
+        if string_annotation:
+            if converted not in {"", "UTF8", "STRING"} or logical_annotation not in {
+                "",
+                "StringType()",
+            }:
+                raise ValueError("inconsistent Parquet string annotation")
+            physical_logical = "string"
+        elif not converted and not logical_annotation:
+            physical_logical = "binary"
+        else:
+            raise ValueError("unsupported Parquet byte-array annotation")
+    else:
+        raise ValueError(f"unsupported or ambiguous Parquet physical type {physical!r}")
+
+    decimal_match = _DECIMAL_TYPE_RE.fullmatch(duckdb_type)
+    if decimal_match is not None:
+        duckdb_precision, duckdb_scale = map(int, decimal_match.groups())
+        duckdb_logical = f"decimal({duckdb_precision},{duckdb_scale})"
+    else:
+        duckdb_logical = _PARQUET_DUCKDB_TYPES.get(duckdb_type)
+    if duckdb_logical is None:
+        raise ValueError(f"unsupported DuckDB Parquet type {duckdb_type!r}")
+    if duckdb_logical != physical_logical:
+        raise ValueError(
+            f"inconsistent Parquet metadata: physical {physical_logical}, DuckDB {duckdb_logical}"
+        )
+    return physical_logical
 
 
 def normalize_parquet_schema(rows: Iterable[object]) -> tuple[ObservedField, ...]:
@@ -295,8 +350,8 @@ def _validate_value(value: object, logical_type: str, source: str, *, date_forma
     if logical_type == "json":
         if source == "csv" and isinstance(value, str):
             try:
-                json.loads(value)
-            except (json.JSONDecodeError, UnicodeError):
+                _strict_json_loads(value)
+            except (json.JSONDecodeError, RecursionError, UnicodeError, ValueError):
                 return False
         return source == "json" or source == "csv"
     if logical_type == "boolean":
@@ -508,6 +563,44 @@ def _json_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
     return result
 
 
+def _reject_json_constant(value: str) -> object:
+    raise ValueError(f"non-standard JSON constant {value!r}")
+
+
+def _strict_json_loads(value: str | bytes) -> object:
+    return json.loads(
+        value,
+        parse_float=Decimal,
+        parse_int=int,
+        parse_constant=_reject_json_constant,
+        object_pairs_hook=_json_object,
+    )
+
+
+def _check_json_lexical_depth(value: bytes) -> None:
+    text = value.decode("utf-8", errors="strict")
+    depth = 0
+    in_string = False
+    escaped = False
+    for character in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif character == "\\":
+                escaped = True
+            elif character == '"':
+                in_string = False
+            continue
+        if character == '"':
+            in_string = True
+        elif character in "[{":
+            depth += 1
+            if depth > _MAX_JSON_DEPTH:
+                raise ValueError("JSON depth bound exceeded")
+        elif character in "]}":
+            depth -= 1
+
+
 def _check_json_bounds(root: object) -> None:
     stack: list[tuple[object, int]] = [(root, 1)]
     while stack:
@@ -539,17 +632,17 @@ def _dotted_value(record: Mapping[str, object], path: str) -> object:
     return value
 
 
-def _json_paths(record: Mapping[str, object], terminal_paths: frozenset[str]) -> frozenset[str]:
-    paths: set[str] = set()
-    stack: list[tuple[str, object]] = [("", record)]
+def _json_paths(
+    record: Mapping[str, object], terminal_paths: frozenset[tuple[str, ...]]
+) -> frozenset[tuple[str, ...]]:
+    paths: set[tuple[str, ...]] = set()
+    stack: list[tuple[tuple[str, ...], object]] = [((), record)]
     while stack:
         prefix, value = stack.pop()
         if prefix in terminal_paths:
             paths.add(prefix)
         elif isinstance(value, Mapping) and value:
-            stack.extend(
-                (f"{prefix}.{key}" if prefix else key, item) for key, item in value.items()
-            )
+            stack.extend(((*prefix, key), item) for key, item in value.items())
         elif prefix:
             paths.add(prefix)
     return frozenset(paths)
@@ -564,7 +657,7 @@ def inspect_jsonl_gzip(
     expanded = 0
     records = 0
     expanded_limit = _expanded_limit(locked_size)
-    declared_paths = frozenset(field.name for field in contract.fields)
+    declared_paths = frozenset(tuple(field.name.split(".")) for field in contract.fields)
     try:
         with gzip.open(path, "rb") as stream:
             while True:
@@ -580,15 +673,23 @@ def inspect_jsonl_gzip(
                     continue
                 records += 1
                 try:
-                    record = json.loads(
-                        line,
-                        parse_float=Decimal,
-                        parse_int=int,
-                        object_pairs_hook=_json_object,
-                    )
+                    _check_json_lexical_depth(line)
+                    record = _strict_json_loads(line)
+                except RecursionError as error:
+                    raise LockMismatch(
+                        context,
+                        "JSON depth",
+                        f"at most {_MAX_JSON_DEPTH} levels",
+                        "decoder recursion exceeded",
+                    ) from error
                 except (json.JSONDecodeError, ValueError, UnicodeError) as error:
                     reason = str(error)
-                    field = "JSON string" if "string bound" in reason else "JSON record"
+                    if "depth" in reason:
+                        field = "JSON depth"
+                    elif "string bound" in reason:
+                        field = "JSON string"
+                    else:
+                        field = "JSON record"
                     raise LockMismatch(context, field, "one JSON object", "invalid JSON") from error
                 if not isinstance(record, dict):
                     raise LockMismatch(context, "JSON object", "object", type(record).__name__)
@@ -642,17 +743,49 @@ class _CheckedXmlReader:
     def __init__(self, stream: BinaryIO, budget: _ArchiveBudget):
         self._stream = stream
         self._budget = budget
-        self._tail = b""
+        self._raw_probe = bytearray()
+        self._decoder: codecs.IncrementalDecoder | None = None
+        self._decoded_tail = ""
+
+    def _detect_encoding(self, *, final: bool) -> str | None:
+        probe = bytes(self._raw_probe)
+        if probe.startswith(b"\xff\xfe"):
+            return "utf-16-le"
+        if probe.startswith(b"\xfe\xff"):
+            return "utf-16-be"
+        if probe.startswith(codecs.BOM_UTF8):
+            return "utf-8-sig"
+        if len(probe) >= 4:
+            if probe[:4] == b"\x00<\x00?":
+                return "utf-16-be"
+            if probe[:4] == b"<\x00?\x00":
+                return "utf-16-le"
+            return "utf-8"
+        return "utf-8" if final else None
+
+    def _scan_declarations(self, data: bytes, *, final: bool) -> None:
+        if self._decoder is None:
+            self._raw_probe.extend(data)
+            encoding = self._detect_encoding(final=final)
+            if encoding is None:
+                return
+            decoder_type = codecs.getincrementaldecoder(encoding)
+            self._decoder = decoder_type(errors="strict")
+            decoded = self._decoder.decode(bytes(self._raw_probe), final=final)
+            self._raw_probe.clear()
+        else:
+            decoded = self._decoder.decode(data, final=final)
+        checked = (self._decoded_tail + decoded).upper()
+        if "<!DOCTYPE" in checked:
+            raise ValueError("DTD declaration is forbidden")
+        if "<!ENTITY" in checked:
+            raise ValueError("entity declaration is forbidden")
+        self._decoded_tail = checked[-16:]
 
     def read(self, size: int = -1) -> bytes:
         data = self._stream.read(size)
         self._budget.add(len(data))
-        checked = (self._tail + data).upper()
-        if b"<!DOCTYPE" in checked:
-            raise ValueError("DTD declaration is forbidden")
-        if b"<!ENTITY" in checked:
-            raise ValueError("entity declaration is forbidden")
-        self._tail = checked[-16:]
+        self._scan_declarations(data, final=not data)
         return data
 
 
@@ -861,6 +994,8 @@ def _cell_value(
     if cell_type == "s":
         try:
             index = int(text)
+            if not 0 <= index < len(shared_strings):
+                raise ValueError("shared-string index is out of range")
             return shared_strings[index], False
         except (ValueError, IndexError) as error:
             raise ValueError("invalid XLSX shared-string reference") from error
@@ -879,6 +1014,8 @@ def _cell_value(
     try:
         number = Decimal(text)
         style_index = int(cell.attrib.get("s", "0"))
+        if not 0 <= style_index < len(date_styles):
+            raise ValueError("style index is out of range")
         date_formatted = date_styles[style_index]
     except (InvalidOperation, ValueError, IndexError) as error:
         raise ValueError("invalid XLSX numeric cell or style") from error
