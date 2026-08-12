@@ -75,6 +75,53 @@ class TpchStarSchemaSpec extends AnyFunSuite with BeforeAndAfterAll {
     assertThrows[IllegalArgumentException](StarSchemaTransforms.validateSources(customer, validOrders, danglingLines))
   }
 
+  test("rejects every null and duplicate business key shape") {
+    val s = spark; import s.implicits._
+    val customer = Seq((1L, "Alice", 10, "BUILDING"))
+      .toDF("c_custkey", "c_name", "c_nationkey", "c_mktsegment")
+    val orders = Seq((100L, 1L, Date.valueOf("2026-01-02")))
+      .toDF("o_orderkey", "o_custkey", "o_orderdate")
+    val lines = Seq((100L, 1L, BigDecimal("1.00"))).toDF("l_orderkey", "l_linenumber", "l_extendedprice")
+      .withColumn("l_extendedprice", org.apache.spark.sql.functions.col("l_extendedprice").cast(DecimalType(15, 2)))
+    val nullCustomer = customer.union(customer.selectExpr(
+      "cast(null as bigint) c_custkey", "c_name", "c_nationkey", "c_mktsegment"))
+    val nullOrder = orders.union(orders.selectExpr(
+      "cast(null as bigint) o_orderkey", "o_custkey", "o_orderdate"))
+    val nullLineOrder = lines.union(lines.selectExpr(
+      "cast(null as bigint) l_orderkey", "l_linenumber", "l_extendedprice"))
+    val nullLineNumber = lines.union(lines.selectExpr(
+      "l_orderkey", "cast(null as bigint) l_linenumber", "l_extendedprice"))
+    Seq(
+      () => StarSchemaTransforms.validateSources(nullCustomer, orders, lines),
+      () => StarSchemaTransforms.validateSources(customer, nullOrder, lines),
+      () => StarSchemaTransforms.validateSources(customer, orders, nullLineOrder),
+      () => StarSchemaTransforms.validateSources(customer, orders, nullLineNumber),
+      () => StarSchemaTransforms.validateSources(customer, orders.union(orders), lines),
+      () => StarSchemaTransforms.validateSources(customer, orders, lines.union(lines))
+    ).foreach(run => assertThrows[IllegalArgumentException](run()))
+  }
+
+  test("rejects missing and wrong source column types") {
+    val s = spark; import s.implicits._
+    val customer = Seq((1L, "Alice", 10, "BUILDING"))
+      .toDF("c_custkey", "c_name", "c_nationkey", "c_mktsegment")
+    val orders = Seq((100L, 1L, Date.valueOf("2026-01-02")))
+      .toDF("o_orderkey", "o_custkey", "o_orderdate")
+    val lines = Seq((100L, 1L, BigDecimal("1.00"))).toDF("l_orderkey", "l_linenumber", "l_extendedprice")
+      .withColumn("l_extendedprice", org.apache.spark.sql.functions.col("l_extendedprice").cast(DecimalType(15, 2)))
+    Seq(
+      () => StarSchemaTransforms.validateSources(customer.drop("c_name"), orders, lines),
+      () => StarSchemaTransforms.validateSources(customer.withColumn("c_custkey",
+        org.apache.spark.sql.functions.col("c_custkey").cast(StringType)), orders, lines),
+      () => StarSchemaTransforms.validateSources(customer, orders.drop("o_orderdate"), lines),
+      () => StarSchemaTransforms.validateSources(customer, orders.withColumn("o_custkey",
+        org.apache.spark.sql.functions.col("o_custkey").cast(IntegerType)), lines),
+      () => StarSchemaTransforms.validateSources(customer, orders, lines.drop("l_extendedprice")),
+      () => StarSchemaTransforms.validateSources(customer, orders, lines.withColumn("l_linenumber",
+        org.apache.spark.sql.functions.col("l_linenumber").cast(IntegerType)))
+    ).foreach(run => assertThrows[IllegalArgumentException](run()))
+  }
+
   test("writes dimension before fact, verifies provenance, and converges after an injected partial failure") {
     val s = spark; import s.implicits._
     val customer = Seq((1L, "Alice", 10, "BUILDING")).toDF("c_custkey", "c_name", "c_nationkey", "c_mktsegment")
@@ -117,5 +164,47 @@ class TpchStarSchemaSpec extends AnyFunSuite with BeforeAndAfterAll {
       def readProperties(table: String): Map[String, String] = Map.empty
     }
     assertThrows[IllegalStateException](TpchStarSchema.runResolved(TpchSources.parse(args()), customer, orders, lines, writer))
+  }
+
+  test("a first-table failure prevents the second write") {
+    val s = spark; import s.implicits._
+    val customer = Seq((1L, "Alice", 10, "BUILDING"))
+      .toDF("c_custkey", "c_name", "c_nationkey", "c_mktsegment")
+    val orders = Seq((100L, 1L, Date.valueOf("2026-01-02")))
+      .toDF("o_orderkey", "o_custkey", "o_orderdate")
+    val lines = Seq((100L, 1L, BigDecimal("1.00"))).toDF("l_orderkey", "l_linenumber", "l_extendedprice")
+      .withColumn("l_extendedprice", org.apache.spark.sql.functions.col("l_extendedprice").cast(DecimalType(15, 2)))
+    val calls = mutable.ArrayBuffer.empty[String]
+    val writer = new TableWriter {
+      def createNamespace(): Unit = calls += "namespace"
+      def replace(table: String, frame: org.apache.spark.sql.DataFrame, provenance: Provenance): Unit = {
+        calls += table
+        if (table == TpchStarSchema.DimensionTable) throw new RuntimeException("first write failed")
+      }
+      def readProperties(table: String): Map[String, String] = Map.empty
+    }
+    assertThrows[RuntimeException](
+      TpchStarSchema.runResolved(TpchSources.parse(args()), customer, orders, lines, writer))
+    assert(calls == Seq("namespace", TpchStarSchema.DimensionTable))
+  }
+
+  test("a source evaluation failure performs no table writes") {
+    val s = spark; import s.implicits._
+    val customer = Seq((1L, "Alice", 10, "BUILDING"))
+      .toDF("c_custkey", "c_name", "c_nationkey", "c_mktsegment")
+      .withColumn("c_custkey", org.apache.spark.sql.functions.expr(
+        "cast(raise_error('source failure') as bigint)"))
+    val orders = Seq((100L, 1L, Date.valueOf("2026-01-02")))
+      .toDF("o_orderkey", "o_custkey", "o_orderdate")
+    val lines = Seq((100L, 1L, BigDecimal("1.00"))).toDF("l_orderkey", "l_linenumber", "l_extendedprice")
+      .withColumn("l_extendedprice", org.apache.spark.sql.functions.col("l_extendedprice").cast(DecimalType(15, 2)))
+    val calls = mutable.ArrayBuffer.empty[String]
+    val writer = new TableWriter {
+      def createNamespace(): Unit = calls += "namespace"
+      def replace(table: String, frame: org.apache.spark.sql.DataFrame, provenance: Provenance): Unit = calls += table
+      def readProperties(table: String): Map[String, String] = Map.empty
+    }
+    assertThrows[Exception](TpchStarSchema.runResolved(TpchSources.parse(args()), customer, orders, lines, writer))
+    assert(calls.isEmpty)
   }
 }

@@ -107,7 +107,7 @@ def _resolve_dataset(dataset: str, scale: str) -> Resolution:
             or not isinstance(item["object_name"], str)
             or isinstance(item["size_bytes"], bool)
             or not isinstance(item["size_bytes"], int)
-            or item["size_bytes"] < 0
+            or item["size_bytes"] <= 0
             or not isinstance(item["sha256"], str)
             or re.fullmatch(r"[0-9a-f]{64}", item["sha256"]) is None
             or not isinstance(item["schema_id"], str)
@@ -207,6 +207,7 @@ with DAG(
     schedule="@daily",
     start_date=pendulum.datetime(2023, 1, 1, tz="UTC"),
     catchup=False,
+    max_active_runs=1,
     tags=["data-eng-lab", "scenario"],
 ) as dag:
     AtlasSparkSubmitOperator(
