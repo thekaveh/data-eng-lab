@@ -9,7 +9,7 @@
 ## Accepted artifact and immutable input
 
 - Local and published JAR: `movielens-feature-pipeline/0.1.0/app.jar`
-- JAR SHA-256: `6acd7ff2c00b806217bb225a31435fd6f56eec7ac2e117e9a9108b05f6b94568`
+- JAR SHA-256: `c9e29cd5a4148a3d0c61a66c2123539106fe0e4c36e2719114c72c3cb11faa71`
 - Dataset/scale: `movielens` / `tiny`
 - Plan ID: `a2942463086277225d704e94f2dbad83b96cdb921bf43cfa8e18268dec393ef8`
 - Publication ID: `12bfd87494fa4c3785732e3d48a18085`
@@ -36,8 +36,8 @@ pagination and `airflow dags test --use-executor` with unique whole-second logic
 
 | Run | Logical/start time | End | Airflow | Spark driver | REST terminal |
 |---|---|---|---|---|---|
-| `manual__2026-08-12T21:59:40.741979+00:00` | `2026-08-12T21:59:08Z` | `2026-08-12T22:00:32.608186Z` | `success` | `driver-20260812215946-0000` | `FINISHED`, `success=true` |
-| `manual__2026-08-12T22:00:38.976246+00:00` | `2026-08-12T22:00:36Z` | `2026-08-12T22:01:28.698005Z` | `success` | `driver-20260812220042-0001` | `FINISHED`, `success=true` |
+| `manual__2026-08-12T22:37:25.105669+00:00` | `2026-08-12T22:37:23Z` | after `2026-08-12T22:38:15Z` | `success` | `driver-20260812223730-0000` | `FINISHED`, `success=true` |
+| `manual__2026-08-12T22:38:21.930030+00:00` | `2026-08-12T22:38:19Z` | after `2026-08-12T22:39:10Z` | `success` | `driver-20260812223825-0001` | `FINISHED`, `success=true` |
 
 The API inventory gained exactly one unique run after each command. There was no third acceptance
 run and no unexpected queued/running run before teardown. The second run started after the first
@@ -73,6 +73,12 @@ The first successful run also recovered the preserved partial state from the pre
 attempt by replacing both tables with the same generation and passing schema, row-key, row-count,
 row-equality, and provenance readback. The accepted rerun then proved unchanged logical results.
 
+The final review-corrected replay independently read the resolver-identified immutable
+`ratings.csv`, verified its exact resolver size and SHA-256, required its exact four-column header,
+and counted `100836` source rows. Both feature count sums were required to equal that independent
+source count. The harness also asserted the exact table row counts and checksums shown above, not
+only equality between reruns.
+
 ## Diagnostic RED and correction
 
 The initial canonical attempt submitted `driver-20260812215239-0000` and correctly failed Airflow
@@ -89,6 +95,15 @@ A focused Scala regression reproduced this catalog-nullability boundary (RED: 1 
 the implementation was narrowed to compare exact ordered column names/types while retaining explicit
 non-null row, unique-key, finite-average, positive-count, and count-equality checks (GREEN: 10 of 10).
 The corrected canonical replay is the two-run evidence above.
+
+An independent specification review then found three executable evidence gaps. The strict-TDD
+follow-up added exact raw CSV header validation before Spark parsing (including missing, extra,
+renamed, reordered, duplicate, BOM, and whitespace cases), compared resolver results across
+`--verify-only`, compared the active-pointer body and ETag across both runs, and required the final
+all-state project-container inventory to be empty. It also reconciled the public four-application
+and four-production-DAG counts. The review-corrected live harness passed in `263.65s`; its run and
+driver identifiers are the two rows above. Final cleanup preserved every volume and left zero
+`data-eng-lab` project containers.
 
 ## Replay commands
 
