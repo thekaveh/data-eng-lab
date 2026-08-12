@@ -154,3 +154,21 @@ contained exactly those two owned successful runs in the acceptance window, no t
 unexpected queued/running run. The second start followed the first terminal end, and the post-run
 schemas, rows, measures, five provenance properties, and deterministic snapshots matched. Standard
 teardown preserved volumes and the verified TPC-H pointer; zero project containers remained.
+
+## Non-mutating prerequisite replay
+
+After removing inferred dataset refresh and extending ownership discovery to every Docker container
+state, the canonical command passed again on 2026-08-12 in 212.34 seconds. The all-state preflight
+found zero existing project containers; the resolver selected the already verified tiny publication,
+and the harness issued no refresh or other dataset mutation. Exact identifiers were:
+
+| Whole-second logical date | API-visible Airflow run | Spark driver | Result |
+|---|---|---|---|
+| `2026-08-12T20:49:21+00:00` | `manual__2026-08-12T20:49:40.681667+00:00` | `driver-20260812204945-0000` | Airflow success; Spark `FINISHED`, `success=true` |
+| `2026-08-12T20:50:15+00:00` | `manual__2026-08-12T20:50:17.297863+00:00` | `driver-20260812205019-0001` | Airflow success; Spark `FINISHED`, `success=true` |
+
+The first run ended at `2026-08-12T20:50:11.484961Z`, before the second run started at
+`2026-08-12T20:50:15Z`. Final API and driver set differences contained exactly those two owned runs
+and drivers, with no third or active unexpected run. The DAG remained paused throughout controlled
+execution and its initial pause state was restored on exit. Volume-preserving teardown completed;
+an all-state Docker query found zero project containers afterward.
