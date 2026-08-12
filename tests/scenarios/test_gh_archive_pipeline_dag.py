@@ -168,3 +168,25 @@ def test_dag_serializes_exact_task_graph(dag_module):
     by_id = {item.task_id: item for item in operators}
     assert by_id["resolve_gh_archive"].downstream == ["submit_gh_archive_flatten"]
     assert by_id["submit_gh_archive_flatten"].downstream == ["submit_gh_archive_sessionization"]
+
+
+def test_cluster_submission_has_complete_s3a_and_iceberg_credentials(dag_module):
+    module, _, _ = dag_module
+    required = {
+        "spark.app.name",
+        "spark.executor.memory",
+        "spark.driver.memory",
+        "spark.hadoop.fs.s3a.aws.credentials.provider",
+        "spark.driverEnv.AWS_ACCESS_KEY_ID",
+        "spark.driverEnv.AWS_SECRET_ACCESS_KEY",
+        "spark.driverEnv.AWS_REGION",
+        "spark.driverEnv.AWS_ENDPOINT_URL_S3",
+        "spark.executorEnv.AWS_ACCESS_KEY_ID",
+        "spark.executorEnv.AWS_SECRET_ACCESS_KEY",
+        "spark.executorEnv.AWS_REGION",
+        "spark.executorEnv.AWS_ENDPOINT_URL_S3",
+        "spark.sql.catalog.lakehouse.s3.access-key-id",
+        "spark.sql.catalog.lakehouse.s3.secret-access-key",
+        "spark.sql.catalog.lakehouse.client.region",
+    }
+    assert required <= set(module.spark_conf)
