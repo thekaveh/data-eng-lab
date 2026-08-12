@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-import ctypes
 import hashlib
 import json
 import os
 import re
 import secrets
-import shutil
 import stat
-import sys
 import tempfile
 import threading
 import uuid
@@ -1471,7 +1468,15 @@ def _owned_staging(
         cleanup_error: BaseException | None = None
         try:
             assert root_fd is not None and root is not None
-            _quarantine_and_remove_owned_root(private_parent, parent_fd, root.name, identity)
+            _clean_owned_tree_entries(root_fd)
+            try:
+                current = os.stat(root.name, dir_fd=parent_fd, follow_symlinks=False)
+            except FileNotFoundError as error:
+                raise ValueError("publication staging identity changed; owned directory was displaced") from error
+            if (current.st_dev, current.st_ino) != identity:
+                raise ValueError("publication staging identity changed; foreign replacement preserved")
+            if cleanup_notes is not None:
+                cleanup_notes.append("owned publication staging residue retained after descriptor cleanup")
         except BaseException as error:
             cleanup_error = error
         finally:
@@ -1482,60 +1487,34 @@ def _owned_staging(
             if primary is None:
                 raise cleanup_error
             primary.add_note(f"owned publication staging cleanup failed: {type(cleanup_error).__name__}")
-        if owns_parent:
+        if owns_parent and primary is not None:
+            primary.add_note("private publication staging residue retained after cleanup")
+
+
+def _clean_owned_tree_entries(directory_fd: int) -> None:
+    """Unlink safe entries through retained descriptors; never mutate file content."""
+    for name in os.listdir(directory_fd):
+        status = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+        if stat.S_ISDIR(status.st_mode):
+            child_fd = os.open(
+                name,
+                os.O_RDONLY
+                | getattr(os, "O_DIRECTORY", 0)
+                | getattr(os, "O_CLOEXEC", 0)
+                | getattr(os, "O_NOFOLLOW", 0),
+                dir_fd=directory_fd,
+            )
             try:
-                private_parent.rmdir()
-            except OSError:
-                note = "private publication staging residue retained after cleanup"
-                if cleanup_notes is not None:
-                    cleanup_notes.append(note)
-                if primary is not None:
-                    primary.add_note(note)
-
-
-def _exchange_directory_names(parent_fd: int, left: str, right: str) -> None:
-    libc = ctypes.CDLL(None, use_errno=True)
-    exchange = libc.renameat2 if sys.platform == "linux" else libc.renameatx_np
-    exchange.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
-    exchange.restype = ctypes.c_int
-    if exchange(parent_fd, os.fsencode(left), parent_fd, os.fsencode(right), 2) != 0:
-        error_number = ctypes.get_errno()
-        raise OSError(error_number, os.strerror(error_number))
-
-
-def _quarantine_and_remove_owned_root(
-    parent: Path,
-    parent_fd: int,
-    root_name: str,
-    root_identity: tuple[int, int],
-) -> None:
-    """Atomically identify the owned root, then unlink its tree without writing content."""
-    cleanup = Path(tempfile.mkdtemp(prefix="cleanup-", dir=parent))
-    cleanup_identity = cleanup.stat().st_dev, cleanup.stat().st_ino
-    exchanged = False
-    try:
-        _exchange_directory_names(parent_fd, root_name, cleanup.name)
-        exchanged = True
-        quarantined = os.stat(cleanup.name, dir_fd=parent_fd, follow_symlinks=False)
-        if (quarantined.st_dev, quarantined.st_ino) != root_identity:
-            _exchange_directory_names(parent_fd, root_name, cleanup.name)
-            exchanged = False
-            raise ValueError("publication staging identity changed; foreign replacement preserved")
-        placeholder = os.stat(root_name, dir_fd=parent_fd, follow_symlinks=False)
-        if (placeholder.st_dev, placeholder.st_ino) != cleanup_identity:
-            raise ValueError("publication cleanup placeholder identity changed")
-        shutil.rmtree(cleanup)
-        root_path = parent / root_name
-        current = root_path.lstat()
-        if (current.st_dev, current.st_ino) == cleanup_identity:
-            root_path.rmdir()
-    except FileNotFoundError as error:
-        raise ValueError("publication staging identity changed; owned directory was displaced") from error
-    finally:
-        if not exchanged and cleanup.exists():
-            current = cleanup.lstat()
-            if (current.st_dev, current.st_ino) == cleanup_identity:
-                cleanup.rmdir()
+                opened = os.fstat(child_fd)
+                if (opened.st_dev, opened.st_ino) != (status.st_dev, status.st_ino):
+                    raise ValueError("publication staging child identity changed")
+                _clean_owned_tree_entries(child_fd)
+            finally:
+                os.close(child_fd)
+        elif stat.S_ISREG(status.st_mode) or stat.S_ISLNK(status.st_mode):
+            os.unlink(name, dir_fd=directory_fd)
+        else:
+            raise ValueError("publication staging contains an unsupported special file")
 
 
 def _list_legacy_keys(client, plan: ScalePlan, bucket: str) -> tuple[str, ...]:
@@ -1928,9 +1907,16 @@ def _stage_and_commit_candidate(
             inventory.manifest_digest = digest
 
             def publish_manifest() -> bool:
+                began = False
+
+                def mark_began() -> None:
+                    nonlocal began
+                    began = True
+                    inventory.manifest_outcome = "attempted-ambiguous"
+
                 tracking_client = _WriteTrackingClient(
                     client,
-                    lambda: setattr(inventory, "manifest_outcome", "attempted-ambiguous"),
+                    mark_began,
                 )
                 try:
                     manifest_reconciled = _put_manifest_exact(tracking_client, bucket, key, body)
@@ -1938,10 +1924,18 @@ def _stage_and_commit_candidate(
                     inventory.manifest_outcome = "possible"
                     raise
                 except ConditionalConflict:
-                    inventory.manifest_outcome = "conflict"
+                    if began:
+                        inventory.manifest_outcome = "conflict"
+                    raise
+                except Exception as error:
+                    if began and isinstance(error.__cause__, ConditionalConflict):
+                        inventory.manifest_outcome = "conflict"
+                    elif began:
+                        inventory.manifest_outcome = "possible"
                     raise
                 except BaseException:
-                    inventory.manifest_outcome = "possible"
+                    if began:
+                        inventory.manifest_outcome = "possible"
                     raise
                 inventory.manifest_outcome = "written-unreferenced"
                 reread = _read_manifest(client, plan, digest, bucket)

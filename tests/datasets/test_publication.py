@@ -986,6 +986,37 @@ def test_manifest_lost_response_exact_reconciles_and_competing_fails(tmp_path, m
         assert caught.value.result.pointer_outcome == "not-attempted"
 
 
+def test_manifest_helper_error_before_adapter_invocation_is_not_attempted(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        return _publication_lease(store, plan, publication_id, owner_nonce)
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+    monkeypatch.setattr(
+        "datasets.publication._put_manifest_exact",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(ConditionalConflict("local preflight")),
+    )
+
+    with pytest.raises(PublicationFailure) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (VerifiedFile(source, expected),),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert caught.value.result.manifest_outcome == "not-attempted"
+
+
 def _sha(payload: bytes) -> str:
     return hashlib.sha256(payload).hexdigest()
 
@@ -2139,7 +2170,7 @@ def test_owned_staging_cleans_owned_inode_after_path_is_moved(tmp_path) -> None:
             staging.rename(moved)
 
     assert moved.is_dir()
-    assert (moved / "owned.txt").read_bytes() == b"owned"
+    assert list(moved.iterdir()) == []
 
 
 def test_owned_staging_atomic_cleanup_restores_last_moment_foreign_swap(tmp_path, monkeypatch) -> None:
@@ -2148,25 +2179,25 @@ def test_owned_staging_atomic_cleanup_restores_last_moment_foreign_swap(tmp_path
     parent = tmp_path / "trusted"
     parent.mkdir(mode=0o700)
     moved = parent / "moved-owned"
-    original_exchange = publication_module._exchange_directory_names
+    original_cleanup = publication_module._clean_owned_tree_entries
     swapped = False
 
-    def swap_before_exchange(parent_fd, left, right):
+    def swap_before_cleanup(directory_fd):
         nonlocal swapped
         if not swapped:
             swapped = True
             staging.rename(moved)
             staging.mkdir(mode=0o700)
             (staging / "foreign.txt").write_bytes(b"foreign")
-        original_exchange(parent_fd, left, right)
+        original_cleanup(directory_fd)
 
-    monkeypatch.setattr(publication_module, "_exchange_directory_names", swap_before_exchange)
+    monkeypatch.setattr(publication_module, "_clean_owned_tree_entries", swap_before_cleanup)
     with pytest.raises(ValueError, match="foreign replacement preserved"):
         with publication_module._owned_staging(parent) as staging:
             (staging / "owned.txt").write_text("owned")
 
     assert (staging / "foreign.txt").read_bytes() == b"foreign"
-    assert (moved / "owned.txt").read_bytes() == b"owned"
+    assert list(moved.iterdir()) == []
 
 
 def test_owned_staging_cleanup_never_writes_or_chmods_staged_content(tmp_path, monkeypatch) -> None:
@@ -2181,7 +2212,21 @@ def test_owned_staging_cleanup_never_writes_or_chmods_staged_content(tmp_path, m
     with publication_module._owned_staging(parent, cleanup_notes=cleanup_notes) as staging:
         (staging / "owned.txt").write_text("owned")
 
-    assert cleanup_notes == []
+    assert cleanup_notes == ["owned publication staging residue retained after descriptor cleanup"]
+
+
+def test_owned_staging_cleanup_has_zero_pathname_removal_hooks(tmp_path, monkeypatch) -> None:
+    from datasets import publication as publication_module
+
+    parent = tmp_path / "trusted"
+    parent.mkdir(mode=0o700)
+    monkeypatch.setattr(publication_module.Path, "rmdir", lambda *_args: pytest.fail("path rmdir"))
+
+    cleanup_notes: list[str] = []
+    with publication_module._owned_staging(parent, cleanup_notes=cleanup_notes) as staging:
+        (staging / "owned.txt").write_text("owned")
+
+    assert cleanup_notes == ["owned publication staging residue retained after descriptor cleanup"]
 
 
 def test_owned_staging_cleans_fresh_roots_across_one_hundred_runs(tmp_path, monkeypatch) -> None:
@@ -2196,7 +2241,9 @@ def test_owned_staging_cleans_fresh_roots_across_one_hundred_runs(tmp_path, monk
         with publication_module._owned_staging() as staging:
             (staging / "owned.txt").write_text("owned")
 
-    assert list(platform_temp.iterdir()) == []
+    residues = list(platform_temp.glob("data-eng-lab-publication-*"))
+    assert len(residues) == 100
+    assert all(not list(residue.rglob("owned.txt")) for residue in residues)
 
 
 def test_owned_staging_cleanup_never_modifies_external_hardlink_target(tmp_path) -> None:
@@ -2566,10 +2613,19 @@ def test_manifest_conflict_reports_explicit_outcome_and_proven_object_orphans(tm
     monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
     monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
     monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
-    monkeypatch.setattr(
-        "datasets.publication._put_manifest_exact",
-        lambda *_: (_ for _ in ()).throw(ConditionalConflict("manifest conflict")),
-    )
+    original_put = store.put_object
+
+    def conflict_manifest(**request):
+        if str(request["Key"]).startswith("_data-eng-locks/manifests/sample/"):
+            from botocore.exceptions import ClientError
+
+            raise ClientError(
+                {"Error": {"Code": "PreconditionFailed"}, "ResponseMetadata": {"HTTPStatusCode": 412}},
+                "PutObject",
+            )
+        return original_put(**request)
+
+    monkeypatch.setattr(store, "put_object", conflict_manifest)
 
     with pytest.raises(PublicationFailure) as caught:
         publish_dataset(
@@ -2580,7 +2636,7 @@ def test_manifest_conflict_reports_explicit_outcome_and_proven_object_orphans(tm
             raw_registry_sha256=RAW_REGISTRY_SHA256,
         )
 
-    assert caught.value.result.manifest_outcome == "conflict"
+    assert caught.value.result.manifest_outcome == "possible"
     assert caught.value.result.proven_orphan_keys == caught.value.result.attempted_object_keys
 
 
