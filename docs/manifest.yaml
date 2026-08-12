@@ -62,6 +62,7 @@ sections:
       - {id: spark-apps-overview, number: '7.1', title: Overview, source: docs/spark-apps/index.md}
       - {id: spark-app-nyc-taxi-etl, number: '7.2', title: nyc-taxi-etl, source: docs/spark-apps/nyc-taxi-etl.md}
       - {id: spark-app-nyc-taxi-medallion, number: '7.3', title: nyc-taxi-medallion, source: docs/spark-apps/nyc-taxi-medallion.md}
+      - {id: spark-app-tpch-star-schema, number: '7.4', title: tpch-star-schema, source: docs/spark-apps/tpch-star-schema.md}
   - id: atlas-operations
     number: '8'
     title: Atlas Operations
