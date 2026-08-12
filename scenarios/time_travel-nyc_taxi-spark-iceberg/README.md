@@ -45,15 +45,12 @@ Both languages implement identical time travel logic with multiple write operati
 
 ## 5. Orchestration
 
-Airflow DAG: `time_travel_nyc_taxi` — a scheduled batch DAG.
+Classification: **intentionally notebook-only**. No Airflow DAG or schedule exists. Snapshot inspection and branch operations are operator-selected demonstrations restricted to the isolated `nyc_taxi_tt` table.
 
 ## 6. Usage
 
 1. Ensure the `silver` Iceberg namespace exists: `scripts/register_iceberg.py`
-2. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
-     ```bash
-     airflow dags trigger time_travel_nyc_taxi
-     ```
+2. Open either notebook on the Atlas stack.
 3. Verify:
      ```bash
      spark-sql -e "SELECT * FROM lakehouse.silver.time_travel_demo LIMIT 10"

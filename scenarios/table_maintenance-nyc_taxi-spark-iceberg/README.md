@@ -45,15 +45,12 @@ Both languages implement identical maintenance operations: seed data insertion, 
 
 ## 5. Orchestration
 
-Airflow DAG: `table_maintenance_nyc_taxi` — a scheduled batch DAG.
+Classification: **intentionally notebook-only**. No Airflow DAG or schedule exists. Compaction, snapshot expiry, and orphan removal remain operator-run demonstrations restricted to the isolated `nyc_taxi_tm` table.
 
 ## 6. Usage
 
 1. Ensure the `silver` and `gold` Iceberg namespaces exist: `scripts/register_iceberg.py`
-2. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
-     ```bash
-     airflow dags trigger table_maintenance_nyc_taxi
-     ```
+2. Open either notebook on the Atlas stack.
 3. Verify:
      ```bash
      spark-sql -e "SELECT COUNT(*) FROM lakehouse.silver.maintenance_demo"

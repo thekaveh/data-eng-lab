@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scaffold a conventional scenario folder (README + Zeppelin .zpln + Jupyter .ipynb + optional DAG)."""
+"""Scaffold a notebook-first scenario folder (README + Zeppelin + Jupyter)."""
 
 from __future__ import annotations
 
@@ -261,15 +261,7 @@ def jupyter_notebook(name: str) -> nbformat.NotebookNode:
     return nb
 
 
-def _dag_text(name: str) -> str:
-    return (
-        '"""Airflow DAG for the ' + name + ' scenario (Phase 2b)."""\n'
-        "from __future__ import annotations\n\n"
-        "# TODO (Phase 2b): define the DAG that orchestrates this scenario.\n"
-    )
-
-
-def scaffold(root: Path, name: str, with_dag: bool = True) -> Path:
+def scaffold(root: Path, name: str) -> Path:
     if not NAME_RE.fullmatch(name):
         raise ValueError(f"scenario name '{name}' must match {NAME_RE.pattern}")
     d = Path(root) / "scenarios" / name
@@ -281,18 +273,15 @@ def scaffold(root: Path, name: str, with_dag: bool = True) -> Path:
     zpln_text = json.dumps(zeppelin_notebook(name), indent=2) + "\n"
     (d / "zeppelin" / "notebook.zpln").write_text(zpln_text, encoding="utf-8")
     nbformat.write(jupyter_notebook(name), str(d / "jupyter" / "notebook.ipynb"))
-    if with_dag:
-        (d / "dag.py").write_text(_dag_text(name), encoding="utf-8")
     return d
 
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description="Scaffold a new scenario folder.")
     ap.add_argument("name", help="scenario name: <pattern>-<dataset>-<engine>-<format>")
-    ap.add_argument("--no-dag", action="store_true")
     ap.add_argument("--root", default=".")
     args = ap.parse_args(argv)
-    d = scaffold(Path(args.root), args.name, with_dag=not args.no_dag)
+    d = scaffold(Path(args.root), args.name)
     print(f"scaffolded {d}")
     return 0
 

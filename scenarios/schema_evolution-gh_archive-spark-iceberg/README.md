@@ -36,15 +36,12 @@ Both languages implement identical schema evolution logic with base data, evolve
 
 ## 5. Orchestration
 
-Airflow DAG: `schema_evolution_gh_archive` — a scheduled batch DAG.
+Classification: **intentionally notebook-only**. No Airflow DAG or schedule exists. ADD and RENAME are operator-selected teaching migrations against a disposable scenario table, so run either paired notebook only after reset.
 
 ## 6. Usage
 
 1. Ensure the `silver` Iceberg namespace exists: `scripts/register_iceberg.py`
-2. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
-     ```bash
-     airflow dags trigger schema_evolution_gh_archive
-     ```
+2. Open either notebook on the Atlas stack.
 3. Verify:
      ```bash
      spark-sql -e "DESCRIBE lakehouse.silver.gh_events_se"

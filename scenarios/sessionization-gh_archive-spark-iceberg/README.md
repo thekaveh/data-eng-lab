@@ -40,16 +40,13 @@ Both languages implement identical sessionization logic with gap detection, sess
 
 ## 5. Orchestration
 
-Airflow DAG: `sessionization_gh_archive` — a scheduled batch DAG.
+Classification: **approved new production DAG**. No production DAG exists yet. Child #109 owns this independently tested sessionization stage and enforces a successful matching flatten prerequisite; until it passes live acceptance, run the paired notebooks only.
 
 ## 6. Usage
 
 1. Ensure the `silver` Iceberg namespace exists: `scripts/register_iceberg.py`
 2. Publish the expected GitHub Archive tier with `make datasets SCALE=<tier>`.
-3. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
-      ```bash
-   airflow dags trigger sessionization_gh_archive
-      ```
+3. Open either notebook on the Atlas stack.
 4. Verify:
       ```bash
    spark-sql -e "SELECT actor_login, COUNT(DISTINCT session_id) AS num_sessions FROM lakehouse.silver.gh_sessions GROUP BY actor_login LIMIT 10"

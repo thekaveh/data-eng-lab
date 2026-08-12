@@ -30,6 +30,7 @@ sections:
       - {id: join_optimization-tpch-spark-iceberg, number: '5.18', title: join_optimization-tpch-spark-iceberg, source: docs/scenarios/join_optimization-tpch-spark-iceberg.md}
       - {id: json_flatten-gh_archive-spark-iceberg, number: '5.19', title: json_flatten-gh_archive-spark-iceberg, source: docs/scenarios/json_flatten-gh_archive-spark-iceberg.md}
       - {id: sessionization-gh_archive-spark-iceberg, number: '5.20', title: sessionization-gh_archive-spark-iceberg, source: docs/scenarios/sessionization-gh_archive-spark-iceberg.md}
+      - {id: scenario-execution-modes, number: '5.21', title: Execution Modes, source: docs/scenarios/execution-modes.md}
   - id: notebooks
     number: '6'
     title: Notebooks

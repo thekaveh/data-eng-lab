@@ -1,0 +1,278 @@
+version: 1
+scenarios:
+  - scenario_id: batch_ingest-nyc_taxi-spark-iceberg
+    classification: existing production DAG
+    justification: The reviewed NYC Taxi ETL application performs the same resolver-gated batch ingest and replaces the Bronze table; the former scenario-local DAG was a superseded no-op.
+    owner: Data Engineering
+    runtime: Atlas Airflow and Spark standalone via the nyc-taxi-etl JAR
+    schedule_policy: "@daily with manual trigger and explicit dataset_scale supported"
+    execution_entrypoint: spark-apps/nyc-taxi-etl/dag.py
+    dependencies:
+      - "#78 operator-owned Spark submission"
+      - "#81 verified dataset resolver"
+    acceptance_contract:
+      - The Airflow task resolves one expected-scale immutable NYC Taxi generation and passes only those URIs to Spark.
+      - The run replaces lakehouse.bronze.nyc_taxi_trips and ends with Airflow success plus Spark FINISHED and success=true.
+    child_issue: null
+  - scenario_id: bi_query-tpch-trino-iceberg
+    classification: approved new production DAG
+    justification: The notebook SQL creates and validates a reusable BI aggregate, but the Airflow runtime API and meaningful-result contract must be proven before scheduling it.
+    owner: Analytics Engineering
+    runtime: Atlas Trino through the execution surface selected by child issue #83
+    schedule_policy: No schedule until #83 passes live acceptance; proposed daily after the TPC-H star-schema dependency succeeds
+    execution_entrypoint: null
+    dependencies:
+      - "#82 execution-mode matrix"
+      - "#83 Trino Airflow execution contract"
+      - "#107 production TPC-H star schema"
+    acceptance_contract:
+      - Execute the reviewed SQL through a proven Airflow runtime client and reject empty or malformed results.
+      - Create and validate lakehouse.gold.bi_segment_revenue from matching fact and dimension inputs in a live run.
+    child_issue: 83
+  - scenario_id: cdc_streaming-online_retail-spark-iceberg
+    classification: intentionally unscheduled long-running streaming
+    justification: The notebook owns an unbounded Redpanda readStream and foreachBatch MERGE with durable checkpoint state; a periodic batch schedule would misrepresent its lifecycle.
+    owner: Streaming Data Engineering
+    runtime: Operator-started Atlas Zeppelin or Jupyter Spark Structured Streaming session
+    schedule_policy: Intentionally unscheduled; an operator starts, monitors, and stops the continuous query
+    execution_entrypoint: null
+    dependencies:
+      - Atlas Redpanda and Spark Kafka integration
+      - online_retail_cdc topic and checkpoint ownership policy #85
+    acceptance_contract:
+      - Apply ordered CDC micro-batches idempotently to lakehouse.silver.online_retail_cdc through foreachBatch MERGE.
+      - Preserve and monitor the owned checkpoint; fail rather than launch a second writer with ambiguous ownership.
+    child_issue: null
+  - scenario_id: data_quality-nyc_taxi-spark-iceberg
+    classification: approved new production DAG
+    justification: Quality enforcement is operational work, but the current notebooks lack durable quality facts, reviewed thresholds, and operator failure semantics.
+    owner: Data Quality Engineering
+    runtime: Production runtime and orchestration selected by child issue #91
+    schedule_policy: No schedule until #91 defines thresholds and passes live acceptance; proposed after the NYC Taxi Bronze load
+    execution_entrypoint: null
+    dependencies:
+      - "#82 execution-mode matrix"
+      - "#81 verified dataset provenance"
+      - "#91 durable quality monitoring"
+      - nyc_taxi_etl Bronze table
+    acceptance_contract:
+      - Persist versioned Bronze, Silver, and Gold quality facts with owners, thresholds, severity, and lineage.
+      - Prove pass, warn, fail, missing, stale, and recovery behavior plus operator response in a live run.
+    child_issue: 91
+  - scenario_id: feature_engineering-movielens-spark-iceberg
+    classification: approved new production DAG
+    justification: The notebook creates reusable user and movie feature tables from locked source data, which is a production-shaped data product once its feature contract and lineage are frozen.
+    owner: ML Data Engineering
+    runtime: Atlas Airflow and Spark standalone application delivered by child issue #108
+    schedule_policy: No schedule until #108 passes live acceptance; proposed daily with explicit dataset_scale
+    execution_entrypoint: null
+    dependencies:
+      - "#82 execution-mode matrix"
+      - "#81 verified MovieLens generations"
+      - "#108 feature pipeline implementation"
+    acceptance_contract:
+      - Deterministically replace documented user and movie feature tables from one verified MovieLens generation.
+      - Freeze feature names, types, aggregation semantics, null behavior, and source-version lineage with live Airflow and Spark success.
+    child_issue: 108
+  - scenario_id: federated_query-nyc_taxi-trino-iceberg
+    classification: approved new production DAG
+    justification: The notebook SQL produces a useful daily aggregate, but the actual Airflow Trino client and meaningful-result assertions must be proven inside the pinned runtime.
+    owner: Analytics Engineering
+    runtime: Atlas Trino through the execution surface selected by child issue #83
+    schedule_policy: No schedule until #83 passes live acceptance; proposed after nyc_taxi_etl completes
+    execution_entrypoint: null
+    dependencies:
+      - "#82 execution-mode matrix"
+      - "#83 Trino Airflow execution contract"
+      - nyc_taxi_etl Bronze table
+    acceptance_contract:
+      - Execute identical reviewed SQL through a proven Airflow runtime client with connection and result validation.
+      - Create and validate nonempty lakehouse.gold.nyc_taxi_daily_trino in a live Trino run.
+    child_issue: 83
+  - scenario_id: incremental_upsert-online_retail-spark-iceberg
+    classification: intentionally notebook-only
+    justification: The notebook intentionally seeds inline rows and demonstrates repeatable MERGE semantics; its synthetic changes are not a governed production feed.
+    owner: Data Engineering Education
+    runtime: Atlas Zeppelin or Jupyter interactive Spark session
+    schedule_policy: Unscheduled notebook demonstration; reset scenario-owned tables before a clean rerun
+    execution_entrypoint: null
+    dependencies:
+      - Atlas Spark and Iceberg runtime
+      - Paired notebook live-reproducibility gate
+    acceptance_contract:
+      - Demonstrate matched updates and unmatched inserts without duplicating the MERGE result.
+      - Keep Scala and PySpark outputs equivalent from the same clean scenario-local state.
+    child_issue: null
+  - scenario_id: join_optimization-tpch-spark-iceberg
+    classification: intentionally notebook-only
+    justification: Broadcast and adaptive-query behavior is an interactive experiment whose plan and timing depend on scale and cluster configuration, not a stable scheduled data product.
+    owner: Data Engineering Education
+    runtime: Atlas Zeppelin or Jupyter interactive Spark session
+    schedule_policy: Unscheduled performance experiment with operator-selected dataset_scale
+    execution_entrypoint: null
+    dependencies:
+      - "#81 verified TPC-H generation"
+      - Atlas Spark AQE runtime
+    acceptance_contract:
+      - Show the selected physical join plan and produce the same segment-revenue result in Scala and PySpark.
+      - Treat timing as observational evidence rather than a fixed pass threshold.
+    child_issue: null
+  - scenario_id: json_flatten-gh_archive-spark-iceberg
+    classification: approved new production DAG
+    justification: Typed flattening is the governed first stage of the approved GH Archive analytics pipeline and supplies the sessionization input contract.
+    owner: Data Engineering
+    runtime: Atlas Airflow and Spark standalone application delivered by child issue #109
+    schedule_policy: No schedule until #109 passes stage-specific live acceptance; proposed daily with explicit dataset_scale
+    execution_entrypoint: null
+    dependencies:
+      - "#82 execution-mode matrix"
+      - "#81 verified GH Archive generations"
+      - "#109 coupled flatten and sessionization pipeline"
+    acceptance_contract:
+      - Independently validate nested source records and deterministically replace lakehouse.silver.gh_events.
+      - Freeze the flat schema, timestamp behavior, malformed-record policy, and generation lineage before releasing the downstream stage.
+    child_issue: 109
+  - scenario_id: medallion-nyc_taxi-spark-iceberg
+    classification: existing production DAG
+    justification: The reviewed medallion application replaces Silver and Gold NYC Taxi tables from Bronze; the former scenario-local DAG was a superseded no-op with a misleading identifier.
+    owner: Data Engineering
+    runtime: Atlas Airflow and Spark standalone via the nyc-taxi-medallion JAR
+    schedule_policy: "@daily with manual trigger supported after the matching Bronze prerequisite exists"
+    execution_entrypoint: spark-apps/nyc-taxi-medallion/dag.py
+    dependencies:
+      - "#78 operator-owned Spark submission"
+      - "#81 resolver provenance gate"
+      - nyc_taxi_etl Bronze table
+    acceptance_contract:
+      - Gate the run on one expected-scale immutable NYC Taxi generation and the existing Bronze table.
+      - Replace the documented Silver and Gold tables and end with Airflow success plus Spark FINISHED and success=true.
+    child_issue: null
+  - scenario_id: scd2-online_retail-spark-iceberg
+    classification: intentionally notebook-only
+    justification: The notebook uses inline customer changes to teach close-and-insert SCD2 mechanics; it has no governed source history or dimension ownership contract.
+    owner: Analytics Engineering Education
+    runtime: Atlas Zeppelin or Jupyter interactive Spark session
+    schedule_policy: Unscheduled notebook demonstration; reset scenario-owned tables before a clean rerun
+    execution_entrypoint: null
+    dependencies:
+      - Atlas Spark and Iceberg runtime
+      - Paired notebook live-reproducibility gate
+    acceptance_contract:
+      - Preserve exactly one current version and closed history for the demonstrated customer transition.
+      - Keep Scala and PySpark table state equivalent from the same clean starting point.
+    child_issue: null
+  - scenario_id: schema_evolution-gh_archive-spark-iceberg
+    classification: intentionally notebook-only
+    justification: ADD and RENAME operations intentionally mutate a scenario-local schema for teaching; replaying them on a schedule is neither idempotent nor an owned migration process.
+    owner: Data Engineering Education
+    runtime: Atlas Zeppelin or Jupyter interactive Spark session
+    schedule_policy: Unscheduled operator-run notebook against a disposable scenario-owned table
+    execution_entrypoint: null
+    dependencies:
+      - Atlas Spark and Iceberg runtime
+      - Paired notebook live-reproducibility gate
+    acceptance_contract:
+      - Demonstrate additive and rename evolution with the expected historical null behavior.
+      - Run only against the scenario-owned table and preserve Scala/PySpark parity after reset.
+    child_issue: null
+  - scenario_id: sessionization-gh_archive-spark-iceberg
+    classification: approved new production DAG
+    justification: Sessionization is the independently reviewable second stage of the approved GH Archive pipeline and consumes the typed flat-event contract from the first stage.
+    owner: Analytics Data Engineering
+    runtime: Atlas Airflow and Spark standalone application delivered by child issue #109
+    schedule_policy: No schedule until #109 proves ordered stage orchestration; proposed daily after matching flatten success
+    execution_entrypoint: null
+    dependencies:
+      - "#82 execution-mode matrix"
+      - "#109 coupled flatten and sessionization pipeline"
+      - lakehouse.silver.gh_events from the matching flatten stage
+    acceptance_contract:
+      - Independently validate ordering, gap boundaries, null handling, and deterministic replacement of lakehouse.silver.gh_sessions.
+      - Refuse to run before a successful matching flatten stage and propagate either stage failure.
+    child_issue: 109
+  - scenario_id: star_schema-tpch-spark-iceberg
+    classification: approved new production DAG
+    justification: The notebook builds reusable fact and dimension data products required by the approved Trino BI workload, so it needs a production application and orchestration contract.
+    owner: Analytics Data Engineering
+    runtime: Atlas Airflow and Spark standalone application delivered by child issue #107
+    schedule_policy: No schedule until #107 passes live acceptance; proposed daily before dependent Trino BI work
+    execution_entrypoint: null
+    dependencies:
+      - "#82 execution-mode matrix"
+      - "#81 verified TPC-H generations"
+      - "#107 TPC-H star-schema implementation"
+    acceptance_contract:
+      - Deterministically replace lakehouse.gold.dim_customer and lakehouse.gold.fct_orders from one verified TPC-H generation.
+      - Freeze join, measure, schema, and idempotency contracts and prove live Airflow/Spark success before #83 consumes them.
+    child_issue: 107
+  - scenario_id: streaming_ingest-events-spark-iceberg
+    classification: intentionally unscheduled long-running streaming
+    justification: The notebook owns an unbounded Redpanda readStream and durable checkpoint; a periodic Airflow task cannot truthfully represent its start, supervision, and stop lifecycle.
+    owner: Streaming Data Engineering
+    runtime: Operator-started Atlas Zeppelin or Jupyter Spark Structured Streaming session
+    schedule_policy: Intentionally unscheduled; an operator starts, monitors, and stops the continuous query
+    execution_entrypoint: null
+    dependencies:
+      - Atlas Redpanda and Spark Kafka integration
+      - events producer and checkpoint ownership policy #85
+    acceptance_contract:
+      - Consume valid event records continuously into lakehouse.bronze.events with owned checkpoint recovery.
+      - Fail malformed input or ambiguous concurrent ownership and preserve equivalent bounded live-test results in both notebooks.
+    child_issue: null
+  - scenario_id: streaming_ingest-gh_archive-spark-iceberg
+    classification: intentionally notebook-only
+    justification: The notebook applies Structured Streaming mechanics to a finite resolver-locked file generation and then waits indefinitely; that is a teaching contrast, not a truthful daily workload.
+    owner: Streaming Data Engineering Education
+    runtime: Atlas Zeppelin or Jupyter interactive Spark Structured Streaming session
+    schedule_policy: Unscheduled notebook demonstration with an operator-bounded run and scenario-owned checkpoint
+    execution_entrypoint: null
+    dependencies:
+      - "#81 verified GH Archive generation"
+      - checkpoint ownership policy #85
+    acceptance_contract:
+      - Process the selected immutable file set once without mixing generations and demonstrate checkpointed file discovery.
+      - Bound the live-reproducibility run explicitly and preserve Scala/PySpark result parity.
+    child_issue: null
+  - scenario_id: streaming_windows-events-spark-iceberg
+    classification: intentionally unscheduled long-running streaming
+    justification: Watermarked windows close according to an unbounded event stream and durable checkpoint; a daily no-op task never represented this continuous lifecycle.
+    owner: Streaming Data Engineering
+    runtime: Operator-started Atlas Zeppelin or Jupyter Spark Structured Streaming session
+    schedule_policy: Intentionally unscheduled; an operator starts, monitors watermark progress, and stops the continuous query
+    execution_entrypoint: null
+    dependencies:
+      - streaming_ingest-events producer contract
+      - Atlas Redpanda and Spark Kafka integration
+      - checkpoint ownership policy #85
+    acceptance_contract:
+      - Emit only watermark-closed event windows into lakehouse.gold.event_windows with recoverable checkpoint state.
+      - Prove late-event and window semantics in bounded live tests without advertising a batch schedule.
+    child_issue: null
+  - scenario_id: table_maintenance-nyc_taxi-spark-iceberg
+    classification: intentionally notebook-only
+    justification: Compaction, snapshot expiry, and orphan removal are destructive operator demonstrations without the retention, authorization, concurrency, and recovery policy required for scheduling.
+    owner: Lakehouse Operations Education
+    runtime: Atlas Zeppelin or Jupyter interactive Spark session
+    schedule_policy: Unscheduled operator-run notebook against the isolated nyc_taxi_tm demonstration table
+    execution_entrypoint: null
+    dependencies:
+      - nyc_taxi_etl Bronze table
+      - Atlas Spark and Iceberg maintenance procedures
+    acceptance_contract:
+      - Limit destructive procedures to the scenario-owned nyc_taxi_tm table and preserve at least one valid snapshot.
+      - Show before/after snapshot and file evidence with equivalent notebook outcomes after reset.
+    child_issue: null
+  - scenario_id: time_travel-nyc_taxi-spark-iceberg
+    classification: intentionally notebook-only
+    justification: Snapshot inspection and branch operations are operator-selected educational actions, not a stable recurring data product or safe unconditional schedule.
+    owner: Lakehouse Operations Education
+    runtime: Atlas Zeppelin or Jupyter interactive Spark session
+    schedule_policy: Unscheduled operator-run notebook against the isolated nyc_taxi_tt demonstration table
+    execution_entrypoint: null
+    dependencies:
+      - nyc_taxi_etl Bronze table
+      - Atlas Spark and Iceberg runtime
+    acceptance_contract:
+      - Demonstrate snapshot history and the audit branch without altering shared production tables.
+      - Keep Scala and PySpark observations equivalent from the same reset scenario state.
+    child_issue: null

@@ -45,15 +45,12 @@ Both languages define identical quality-check functions (`check_null`, `check_ne
 
 ## 5. Orchestration
 
-Airflow DAG: `data_quality_nyc_taxi` — a scheduled batch DAG.
+Classification: **approved new production DAG**. No production DAG exists yet. Child #91 owns durable quality facts, thresholds, failure semantics, operator response, and live acceptance; until it passes, run the paired notebooks only.
 
 ## 6. Usage
 
 1. Ensure the `bronze` Iceberg namespace exists: `scripts/register_iceberg.py`
-2. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
-     ```bash
-     airflow dags trigger data_quality_nyc_taxi
-     ```
+2. Open either notebook on the Atlas stack.
 3. Verify:
      ```bash
      spark-sql -e "SELECT * FROM lakehouse.silver.nyc_taxi_quality"

@@ -46,16 +46,13 @@ Both languages implement identical silver enrichment and gold aggregation logic 
 
 ## 5. Orchestration
 
-Airflow DAG: `medallion_nyc_taxi` — a scheduled batch DAG.
+Classification: **existing production DAG**. The production entrypoint is `spark-apps/nyc-taxi-medallion/dag.py` (`nyc_taxi_medallion`), scheduled `@daily` with manual runs supported after the Bronze prerequisite exists. The paired notebooks remain the interactive teaching surface; the deleted scenario-local no-op is superseded.
 
 ## 6. Usage
 
 1. Ensure all three Iceberg namespaces exist: `scripts/register_iceberg.py`
-2. Populate the bronze layer (if not already done): `airflow dags trigger batch_ingest_nyc_taxi`
-3. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
-     ```bash
-     airflow dags trigger medallion_nyc_taxi
-     ```
+2. Populate the bronze layer (if not already done): `airflow dags trigger nyc_taxi_etl`
+3. Open either notebook on the Atlas stack.
 4. Verify:
      ```bash
      spark-sql -e "SELECT COUNT(*) FROM lakehouse.silver.nyc_taxi_trips"

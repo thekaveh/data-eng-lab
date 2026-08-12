@@ -31,7 +31,7 @@ Data flows from the bronze Iceberg table through Trino SQL aggregation into the 
 
 ## 5. Orchestration
 
-Airflow DAG: EmptyOperator placeholder (trigger via notebooks; TrinoOperator integration adds scheduling, Atlas #268).
+Classification: **approved new production DAG**. No production DAG exists yet. Child #83 owns the proven Airflow/Trino execution contract and meaningful-result validation; until it passes live acceptance, run the paired Trino notebooks only.
 
 ## 6. Usage
 
@@ -48,7 +48,7 @@ Airflow DAG: EmptyOperator placeholder (trigger via notebooks; TrinoOperator int
 
 ## 8. Known Issues & Caveats
 
-Live execution is gated on Atlas #268 (Trino coordinator integration). The `%trino` interpreter is seeded by Atlas pointing to the Trino coordinator. The `lakehouse.gold` namespace must exist in the Iceberg REST catalog before the Write cell runs.
+Atlas provides the Trino coordinator and both notebooks are live-gated; production orchestration remains owned by child #83. The `%trino` interpreter is seeded by Atlas pointing to the Trino coordinator. The `lakehouse.gold` namespace must exist in the Iceberg REST catalog before the Write cell runs.
 
 ## See Also
 

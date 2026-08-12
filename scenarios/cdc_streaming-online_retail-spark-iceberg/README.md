@@ -42,7 +42,7 @@ CDC events flow from the Redpanda `online_retail_cdc` topic through Spark Struct
 
 ## 5. Orchestration
 
-Streaming queries are long-running and not scheduled as batch DAGs. The Airflow DAG (`cdc_streaming_online_retail`) is an `EmptyOperator` placeholder.
+Classification: **intentionally unscheduled long-running streaming**. No Airflow DAG or batch schedule exists. An operator starts, monitors, and stops the continuous notebook query and owns its `online_retail_cdc` checkpoint.
 
 ## 6. Usage
 
@@ -62,7 +62,7 @@ Streaming queries are long-running and not scheduled as batch DAGs. The Airflow 
 
 ## 8. Known Issues & Caveats
 
-The `online_retail_cdc` topic is auto-created on first produce. Notebook execution and Scala/PySpark parity are live-gated on Atlas A9 (Redpanda). Produce CDC events to the topic before running. Checkpoints at `s3a://checkpoints/online_retail_cdc`. The `MERGE INTO` SQL is identical to the batch `incremental_upsert-online_retail` scenario — this is its streaming form. The DAG (`cdc_streaming_online_retail`) is an `EmptyOperator`.
+The `online_retail_cdc` topic is auto-created on first produce. Notebook execution and Scala/PySpark parity are live-gated on Atlas A9 (Redpanda). Produce CDC events to the topic before running. Checkpoints at `s3a://checkpoints/online_retail_cdc`. The `MERGE INTO` SQL is identical to the batch `incremental_upsert-online_retail` scenario — this is its streaming form.
 
 ## See Also
 

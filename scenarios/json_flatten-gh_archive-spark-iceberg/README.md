@@ -41,16 +41,13 @@ Both languages implement identical JSON flatten logic with source read, field ex
 
 ## 5. Orchestration
 
-Airflow DAG: `json_flatten_gh_archive` — a scheduled batch DAG.
+Classification: **approved new production DAG**. No production DAG exists yet. Child #109 owns this independently tested flatten stage and its ordered handoff to sessionization; until it passes live acceptance, run the paired notebooks only.
 
 ## 6. Usage
 
 1. Ensure the `silver` Iceberg namespace exists: `scripts/register_iceberg.py`
 2. Populate the landing zone: `make datasets`
-3. Open either notebook on the Atlas stack, or trigger the Airflow DAG:
-      ```bash
-   airflow dags trigger json_flatten_gh_archive
-      ```
+3. Open either notebook on the Atlas stack.
 4. Verify output:
       ```bash
    spark-sql -e "SELECT COUNT(*) FROM lakehouse.silver.gh_events"

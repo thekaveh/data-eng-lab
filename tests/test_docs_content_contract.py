@@ -905,7 +905,7 @@ def test_go_live_scenario_matrix_covers_manifest_and_matches_summary_counts():
         for section in iter_leaf_sections(manifest.sections)
         if section.source is not None
         and section.source.parent == Path("docs/scenarios")
-        and section.source.name != "index.md"
+        and section.source.name not in {"index.md", "execution-modes.md"}
     }
     text = (ROOT / "docs/go-live-results.md").read_text(encoding="utf-8")
     rows = _scenario_result_rows(text)

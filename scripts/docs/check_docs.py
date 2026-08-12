@@ -26,6 +26,7 @@ from scripts.docs.render_diagrams import (
     extract_svg,
     projection_fingerprint_path,
 )
+from scripts.scenario_execution import ExecutionModeError, check_projection
 
 _UNFINISHED_MARKERS = ("TO" + "DO", "TB" + "D", "FIX" + "ME", "X" + "XX")
 _H1 = re.compile(r"^ {0,3}(# [^\r\n]+)$", re.MULTILINE)
@@ -115,6 +116,21 @@ def check_completeness(repo_root: Path) -> tuple[Finding, ...]:
             ),
         )
     return _sorted(findings)
+
+
+def check_execution_modes(repo_root: Path) -> tuple[Finding, ...]:
+    """Reject drift between the canonical YAML matrix and public projection."""
+    root = repo_root.resolve()
+    matrix = root / "scenarios/execution-modes.yaml"
+    projection = root / "docs/scenarios/execution-modes.md"
+    if not matrix.exists():
+        if projection.exists():
+            return (_error("scenario execution-mode projection exists without its canonical matrix"),)
+        return ()
+    try:
+        return tuple(_error(message) for message in check_projection(root))
+    except ExecutionModeError as error:
+        return (_error(f"scenario execution-mode matrix invalid: {error}"),)
 
 
 def check_numbering(repo_root: Path) -> tuple[Finding, ...]:
@@ -387,6 +403,7 @@ def check(repo_root: Path) -> tuple[Finding, ...]:
 
     for probe in (
         check_completeness,
+        check_execution_modes,
         check_numbering,
         check_self_containment,
         check_placeholders,

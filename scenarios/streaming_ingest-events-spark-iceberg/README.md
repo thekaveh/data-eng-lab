@@ -41,7 +41,7 @@ Data flows from the Redpanda `events` topic through Spark Structured Streaming (
 
 ## 5. Orchestration
 
-Streaming queries are long-running and not scheduled as batch DAGs. The Airflow DAG (`streaming_ingest_events`) is an `EmptyOperator` placeholder.
+Classification: **intentionally unscheduled long-running streaming**. No Airflow DAG or batch schedule exists. An operator starts, monitors, and stops the continuous notebook query and owns its `events` checkpoint.
 
 ## 6. Usage
 

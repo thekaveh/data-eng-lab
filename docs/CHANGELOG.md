@@ -8,6 +8,12 @@ All notable changes to this project are documented here (Keep a Changelog format
   verifier skeleton, and infra-preflight Layer 1.
 
 ### Changed
+- All 19 scenarios now have one tested execution-mode contract. Only
+  `nyc_taxi_etl` and `nyc_taxi_medallion` are current production DAGs; seven
+  rows are approved behind child issues, seven remain intentionally
+  notebook-only, and three remain unscheduled continuous streams. The 19
+  scenario-local no-op DAGs were removed so Airflow and public
+  documentation cannot report successful no-op work.
 - The dataset catalog now uses registry version 2 with normalized source,
   raw/archive, landing-object, generator-output, and schema locks for every
   supported tier. The reviewed contract records authoritative provenance,

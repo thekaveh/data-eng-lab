@@ -49,7 +49,7 @@ Both notebooks run the same SQL queries to demonstrate cross-engine parity for a
 
 ## 5. Orchestration
 
-Airflow DAG: EmptyOperator placeholder (trigger via notebooks only until TrinoOperator integration is added, Atlas #268).
+Classification: **approved new production DAG**. No production DAG exists yet. Child #83 owns the proven Airflow/Trino execution contract and meaningful-result validation; until it passes live acceptance, run the paired Trino notebooks only.
 
 ## 6. Usage
 
@@ -69,7 +69,7 @@ Airflow DAG: EmptyOperator placeholder (trigger via notebooks only until TrinoOp
 
 ## 8. Known Issues & Caveats
 
-Live execution is gated on Atlas #268 (Trino coordinator integration). The `%trino` Zeppelin interpreter is seeded by Atlas pointing to the Trino coordinator. The `lakehouse.gold` namespace must exist before the Write query runs. Requires the upstream `star_schema-tpch-spark-iceberg` to run first.
+Atlas provides the Trino coordinator and both notebooks are live-gated; production orchestration remains owned by child #83. The `%trino` Zeppelin interpreter is seeded by Atlas pointing to the Trino coordinator. The `lakehouse.gold` namespace must exist before the Write query runs. Requires the upstream `star_schema-tpch-spark-iceberg` to run first.
 
 ## See Also
 
