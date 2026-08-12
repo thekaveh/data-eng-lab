@@ -10,6 +10,7 @@ from collections.abc import Mapping
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from types import MappingProxyType
 from typing import BinaryIO, cast
 
 from datasets.locking import canonical_json, validate_relative_path
@@ -22,7 +23,7 @@ from datasets.registry import (
     SchemaContract,
     resolve_scale,
 )
-from datasets.s3 import put_control_object, read_control_object, stream_verify_object
+from datasets.s3 import AmbiguousWrite, put_control_object, read_control_object, stream_verify_object
 from datasets.schema_inspection import verify_physical_schema
 from datasets.verification import ExpectedObject, LockMismatch, VerificationContext
 
@@ -31,13 +32,15 @@ _PUBLICATION_LAYOUT_VERSION = 1
 _CONTROL_FORMAT_VERSION = 1
 _SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 _UUID4_HEX_RE = re.compile(r"^[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}$")
-_DEFAULT_LOCK_POLICY: Mapping[str, object] = {
-    "algorithm": "sha256",
-    "object_drift": "fail",
-    "schema_fingerprint": "sha256-canonical-json",
-    "source_drift": "fail",
-    "update_policy": "reviewed-lock-update",
-}
+_DEFAULT_LOCK_POLICY: Mapping[str, object] = MappingProxyType(
+    {
+        "algorithm": "sha256",
+        "object_drift": "fail",
+        "schema_fingerprint": "sha256-canonical-json",
+        "source_drift": "fail",
+        "update_policy": "reviewed-lock-update",
+    }
+)
 
 
 def _require_sha256(value: object, label: str) -> str:
@@ -117,11 +120,7 @@ def _selected_outputs(plan: ScalePlan) -> tuple[LandingObject | GeneratorOutput,
     return tuple(output for artifact in plan.artifacts for output in artifact.outputs)
 
 
-def selected_plan_document(
-    plan: ScalePlan,
-    *,
-    lock_policy: Mapping[str, object] | None = None,
-) -> dict[str, object]:
+def selected_plan_document(plan: ScalePlan) -> dict[str, object]:
     """Return only the normalized selected scale contract used for correctness."""
     outputs = _selected_outputs(plan)
     source: dict[str, object]
@@ -178,7 +177,7 @@ def selected_plan_document(
             "license": plan.dataset.license,
             "provenance": _provenance_document(plan.dataset.provenance),
         },
-        "lock": _plain_mapping(lock_policy or _DEFAULT_LOCK_POLICY),
+        "lock": _plain_mapping(_DEFAULT_LOCK_POLICY),
         "objects": [_output_document(output, plan.dataset.schemas[output.schema_id]) for output in outputs],
         "publication_layout_version": _PUBLICATION_LAYOUT_VERSION,
         "registry_schema_version": 2,
@@ -188,14 +187,17 @@ def selected_plan_document(
     }
 
 
-def plan_id(plan: ScalePlan | Mapping[str, object]) -> str:
-    document = selected_plan_document(plan) if isinstance(plan, ScalePlan) else dict(plan)
-    return hashlib.sha256(canonical_json(document)).hexdigest()
+def plan_id(plan: ScalePlan) -> str:
+    if not isinstance(plan, ScalePlan):
+        raise TypeError("plan_id requires a ScalePlan")
+    return hashlib.sha256(canonical_json(selected_plan_document(plan))).hexdigest()
 
 
 def publication_prefix(plan: ScalePlan, publication_id: str) -> str:
     identifier = _require_uuid4_hex(publication_id)
     landing_prefix = _require_relative_key(plan.dataset.landing_prefix, "landing prefix")
+    if landing_prefix.split("/", 1)[0] == "_data-eng-locks":
+        raise ValueError("landing prefix must not enter the global control namespace")
     return f"{landing_prefix}/_generations/{plan_id(plan)}/{identifier}"
 
 
@@ -212,19 +214,25 @@ def immutable_manifest_key(dataset: str, digest: str) -> str:
 def _format_instant(value: datetime) -> str:
     if value.tzinfo is None or value.utcoffset() != timedelta(0):
         raise ValueError("publication timestamp must be timezone-aware UTC")
+    if value.microsecond:
+        raise ValueError("publication timestamp must use whole-second UTC")
     return value.astimezone(UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
 def _parse_instant(value: object) -> datetime:
-    if not isinstance(value, str) or not value.endswith("Z"):
-        raise ValueError("publication timestamp must use canonical UTC")
+    if (
+        not isinstance(value, str)
+        or re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z", value) is None
+    ):
+        raise ValueError("publication timestamp must use canonical whole-second UTC")
     try:
         parsed = datetime.fromisoformat(value[:-1] + "+00:00")
     except ValueError as error:
         raise ValueError("publication timestamp is invalid") from error
-    if parsed.microsecond or parsed.utcoffset() != timedelta(0):
-        raise ValueError("publication timestamp must use whole-second UTC")
-    return parsed.astimezone(UTC)
+    parsed = parsed.astimezone(UTC)
+    if _format_instant(parsed) != value:
+        raise ValueError("publication timestamp must use canonical whole-second UTC")
+    return parsed
 
 
 def _decode_canonical_mapping(body: bytes, label: str) -> dict[str, object]:
@@ -298,8 +306,12 @@ class ImmutableManifest:
             raise ValueError("selected plan sha256 must equal plan identifier")
         _require_uuid4_hex(self.publication_id)
         _require_relative_key(self.physical_prefix, "physical prefix")
+        if type(self.objects) is not tuple:
+            raise ValueError("manifest objects must be an immutable tuple")
         if not self.objects:
             raise ValueError("manifest must contain at least one object")
+        if not all(isinstance(item, ManifestObject) for item in self.objects):
+            raise ValueError("manifest objects must contain only ManifestObject values")
         names = tuple(item.object_name for item in self.objects)
         if len(set(names)) != len(names):
             raise ValueError("manifest object names must be unique")
@@ -421,9 +433,16 @@ class ResolvedDataset:
     objects: tuple[ResolvedObject, ...]
 
 
-def _mismatch(plan: ScalePlan, field: str, expected: object, actual: object) -> LockMismatch:
+def _mismatch(
+    plan: ScalePlan,
+    field: str,
+    expected: object,
+    actual: object,
+    *,
+    stage: str = "manifest",
+) -> LockMismatch:
     return LockMismatch(
-        VerificationContext(plan.dataset.name, plan.scale, "publication"),
+        VerificationContext(plan.dataset.name, plan.scale, stage),
         field,
         expected,
         actual,
@@ -467,14 +486,29 @@ class _CapturingBody:
     def __init__(self, stream: BinaryIO, destination: BinaryIO) -> None:
         self._stream = stream
         self._destination = destination
+        self._closed = False
 
     def read(self, size: int = -1) -> bytes:
-        chunk = self._stream.read(size)
-        self._destination.write(chunk)
+        try:
+            chunk = self._stream.read(size)
+        except AmbiguousWrite:
+            raise
+        except Exception as error:
+            raise AmbiguousWrite("S3 object body read failed during schema capture") from error
+        if not isinstance(chunk, bytes):
+            raise AmbiguousWrite("S3 object body returned non-bytes during schema capture")
+        try:
+            written = self._destination.write(chunk)
+        except Exception as error:
+            raise AmbiguousWrite("local schema capture write failed") from error
+        if isinstance(written, bool) or not isinstance(written, int) or written != len(chunk):
+            raise AmbiguousWrite("local schema capture write was incomplete")
         return chunk
 
     def close(self) -> None:
-        self._stream.close()
+        if not self._closed:
+            self._closed = True
+            self._stream.close()
 
 
 class _CapturingClient:
@@ -486,8 +520,18 @@ class _CapturingClient:
         response = self._client.get_object(**request)
         if not isinstance(response, Mapping) or "Body" not in response:
             return response
+        body = response["Body"]
+        read = getattr(body, "read", None)
+        close = getattr(body, "close", None)
+        if not callable(read) or not callable(close):
+            if callable(close):
+                try:
+                    close()
+                except Exception as error:
+                    raise AmbiguousWrite("malformed S3 object body could not be closed") from error
+            raise AmbiguousWrite("S3 object body lacks readable and closable binary capabilities")
         captured = dict(response)
-        captured["Body"] = _CapturingBody(cast(BinaryIO, response["Body"]), self._destination)
+        captured["Body"] = _CapturingBody(cast(BinaryIO, body), self._destination)
         return captured
 
 
@@ -499,19 +543,22 @@ def _verify_resolved_object(client, plan: ScalePlan, item: ManifestObject, bucke
         object_name=item.object_name,
     )
     expected = ExpectedObject(item.object_name, item.size_bytes, item.sha256, item.schema_id)
-    with tempfile.NamedTemporaryFile(
-        prefix="dataset-resolution-",
-        suffix=Path(item.object_name).suffix,
-    ) as temporary:
-        stream_verify_object(
-            _CapturingClient(client, temporary),
-            bucket,
-            item.key,
-            expected,
-            context,
-        )
-        temporary.flush()
-        verify_physical_schema(Path(temporary.name), plan.dataset.schemas[item.schema_id], context)
+    try:
+        with tempfile.NamedTemporaryFile(
+            prefix="dataset-resolution-",
+            suffix=Path(item.object_name).suffix,
+        ) as temporary:
+            stream_verify_object(
+                _CapturingClient(client, temporary),
+                bucket,
+                item.key,
+                expected,
+                context,
+            )
+            temporary.flush()
+            verify_physical_schema(Path(temporary.name), plan.dataset.schemas[item.schema_id], context)
+    except OSError as error:
+        raise AmbiguousWrite("local schema capture I/O failed") from error
     return ResolvedObject(
         object_name=item.object_name,
         uri=f"s3://{bucket}/{item.key}",
@@ -521,12 +568,21 @@ def _verify_resolved_object(client, plan: ScalePlan, item: ManifestObject, bucke
     )
 
 
-def _read_manifest(client, dataset: str, digest: str, bucket: str) -> ImmutableManifest:
-    key = immutable_manifest_key(dataset, digest)
+def _read_manifest(client, plan: ScalePlan, digest: str, bucket: str) -> ImmutableManifest:
+    key = immutable_manifest_key(plan.dataset.name, digest)
     snapshot = read_control_object(client, bucket, key)
-    if manifest_sha256(snapshot.body) != digest:
-        raise ValueError("immutable manifest digest does not match its content-addressed key")
-    return ImmutableManifest.from_bytes(snapshot.body)
+    try:
+        if manifest_sha256(snapshot.body) != digest:
+            raise ValueError("immutable manifest digest does not match its content-addressed key")
+        return ImmutableManifest.from_bytes(snapshot.body)
+    except (TypeError, ValueError) as error:
+        raise _mismatch(
+            plan,
+            "manifest",
+            "canonical manifest matching its content-addressed key",
+            type(error).__name__,
+            stage="manifest",
+        ) from error
 
 
 def _resolve_manifest(
@@ -536,7 +592,7 @@ def _resolve_manifest(
     *,
     bucket: str,
 ) -> ResolvedDataset:
-    manifest = _read_manifest(client, plan.dataset.name, digest, bucket)
+    manifest = _read_manifest(client, plan, digest, bucket)
     _validate_manifest_for_plan(manifest, plan)
     objects = tuple(_verify_resolved_object(client, plan, item, bucket) for item in manifest.objects)
     return ResolvedDataset(
@@ -560,9 +616,18 @@ def resolve_active_dataset(
     dataset = registry[dataset_id]
     plan = resolve_scale(dataset, expected_scale)
     pointer_snapshot = read_control_object(client, bucket, active_pointer_key(dataset_id))
-    pointer = ActivePointer.from_bytes(pointer_snapshot.body)
+    try:
+        pointer = ActivePointer.from_bytes(pointer_snapshot.body)
+    except (TypeError, ValueError) as error:
+        raise _mismatch(
+            plan,
+            "pointer",
+            "canonical active pointer",
+            type(error).__name__,
+            stage="pointer",
+        ) from error
     if pointer.dataset != dataset_id:
-        raise _mismatch(plan, "dataset", dataset_id, pointer.dataset)
+        raise _mismatch(plan, "dataset", dataset_id, pointer.dataset, stage="pointer")
     return _resolve_manifest(client, plan, pointer.manifest_sha256, bucket=bucket)
 
 

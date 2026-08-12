@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 import io
 import json
 from dataclasses import replace
@@ -35,7 +36,7 @@ from datasets.registry import (
     SourceVersion,
     resolve_scale,
 )
-from datasets.s3 import ConditionalConflict
+from datasets.s3 import AmbiguousWrite, ConditionalConflict
 from datasets.verification import LockMismatch
 
 PUBLICATION_ID = "123e4567e89b42d3a456426614174000"
@@ -110,7 +111,7 @@ def _dataset(*, description: str = "Selected dataset", payload: bytes = b"hello\
 def _manifest(plan, *, publication_id: str = PUBLICATION_ID) -> ImmutableManifest:
     selected_id = plan_id(plan)
     prefix = publication_prefix(plan, publication_id)
-    output = plan.artifacts[0].outputs[0]
+    outputs = tuple(output for artifact in plan.artifacts for output in artifact.outputs)
     return ImmutableManifest(
         format_version=1,
         dataset=plan.dataset.name,
@@ -120,7 +121,7 @@ def _manifest(plan, *, publication_id: str = PUBLICATION_ID) -> ImmutableManifes
         plan_id=selected_id,
         publication_id=publication_id,
         physical_prefix=prefix,
-        objects=(
+        objects=tuple(
             ManifestObject(
                 object_name=output.object_name,
                 key=f"{prefix}/{output.object_name}",
@@ -128,7 +129,8 @@ def _manifest(plan, *, publication_id: str = PUBLICATION_ID) -> ImmutableManifes
                 sha256=output.sha256,
                 schema_id=output.schema_id,
                 schema_fingerprint=plan.dataset.schemas[output.schema_id].fingerprint,
-            ),
+            )
+            for output in outputs
         ),
         published_at=datetime(2026, 8, 12, 12, tzinfo=UTC),
         previous_manifest_key=None,
@@ -146,6 +148,7 @@ class FakeS3:
         self.puts: list[dict[str, object]] = []
         self.gets: list[str] = []
         self.conflict = False
+        self.body_overrides: dict[str, object] = {}
 
     def seed(self, key: str, body: bytes, *, etag: str, metadata: dict[str, str] | None = None) -> None:
         self.objects[key] = (body, etag, metadata or {})
@@ -168,7 +171,7 @@ class FakeS3:
             )
         body, etag, metadata = self.objects[Key]
         return {
-            "Body": Body(body),
+            "Body": self.body_overrides.get(Key, Body(body)),
             "ETag": etag,
             "Metadata": metadata,
             "ResponseMetadata": {"HTTPHeaders": {"date": format_datetime(datetime.now(UTC), usegmt=True)}},
@@ -220,8 +223,30 @@ def _published_store(plan, manifest: ImmutableManifest | None = None) -> tuple[F
     store = FakeS3()
     store.seed(active_pointer_key(plan.dataset.name), pointer.to_bytes(), etag='"pointer"')
     store.seed(pointer.manifest_key, manifest_body, etag='"manifest"')
-    store.seed(manifest.objects[0].key, b"hello\n", etag='"object"')
+    payloads = {"readme.txt": b"hello\n", "alpha.txt": b"alpha\n", "beta.txt": b"beta\n"}
+    for item in manifest.objects:
+        store.seed(item.key, payloads[item.object_name], etag=f'"{item.object_name}"')
     return store, manifest
+
+
+def _multi_dataset() -> Dataset:
+    dataset = _dataset()
+    artifacts: dict[str, HttpArtifact] = {}
+    for index, (name, payload) in enumerate((("alpha.txt", b"alpha\n"), ("beta.txt", b"beta\n"))):
+        output = LandingObject(name, len(payload), _sha(payload), "readme", None, True)
+        artifact_id = f"release-{index}"
+        artifacts[artifact_id] = replace(
+            dataset.artifacts["release"],
+            id=artifact_id,
+            url=f"https://example.test/{name}",
+            raw=RawArtifact(name, len(payload), _sha(payload)),
+            outputs=(output,),
+        )
+    return replace(
+        dataset,
+        artifacts=MappingProxyType(artifacts),
+        scales=MappingProxyType({"small": tuple(artifacts), "medium": tuple(artifacts)}),
+    )
 
 
 def test_selected_plan_is_exact_canonical_json_and_full_sha256() -> None:
@@ -233,6 +258,20 @@ def test_selected_plan_is_exact_canonical_json_and_full_sha256() -> None:
     assert not encoded.endswith(b"\n")
     assert len(plan_id(plan)) == 64
     assert plan_id(plan) == _sha(encoded)
+
+
+def test_selected_plan_uses_one_fixed_global_lock_policy_api() -> None:
+    plan = resolve_scale(_dataset(), "small")
+    assert "lock_policy" not in inspect.signature(selected_plan_document).parameters
+    assert selected_plan_document(plan)["lock"] == {
+        "algorithm": "sha256",
+        "object_drift": "fail",
+        "schema_fingerprint": "sha256-canonical-json",
+        "source_drift": "fail",
+        "update_policy": "reviewed-lock-update",
+    }
+    with pytest.raises(TypeError, match="ScalePlan"):
+        plan_id({"lock": {"alternate": True}})
 
 
 def test_unrelated_or_volatile_registry_edit_does_not_change_selected_plan_id() -> None:
@@ -283,6 +322,16 @@ def test_publication_prefix_uses_safe_deterministic_generation_key() -> None:
         publication_prefix(replace(plan, dataset=replace(plan.dataset, landing_prefix="../bad")), PUBLICATION_ID)
 
 
+@pytest.mark.parametrize("landing_prefix", ["_data-eng-locks", "_data-eng-locks/nested"])
+def test_publication_prefix_rejects_global_control_namespace(landing_prefix: str) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    with pytest.raises(ValueError, match="control namespace"):
+        publication_prefix(
+            replace(plan, dataset=replace(plan.dataset, landing_prefix=landing_prefix)),
+            PUBLICATION_ID,
+        )
+
+
 def test_manifest_and_pointer_use_exact_canonical_minimal_models() -> None:
     plan = resolve_scale(_dataset(), "small")
     manifest = _manifest(plan)
@@ -299,6 +348,32 @@ def test_manifest_and_pointer_use_exact_canonical_minimal_models() -> None:
         "manifest_sha256",
     }
     assert ActivePointer.from_bytes(pointer.to_bytes()) == pointer
+
+
+def test_manifest_timestamp_round_trips_and_rejects_noncanonical_instants() -> None:
+    plan = resolve_scale(_dataset(), "small")
+    manifest = _manifest(plan)
+    assert ImmutableManifest.from_bytes(manifest.to_bytes()) == manifest
+    with pytest.raises(ValueError, match="whole-second"):
+        replace(manifest, published_at=datetime(2026, 8, 12, 12, 0, 0, 1, tzinfo=UTC))
+
+    for spelling in (
+        "2026-08-12 12:00:00Z",
+        "2026-08-12T12:00:00+00:00",
+        "2026-08-12T12:00:00.000000Z",
+    ):
+        document = json.loads(manifest.to_bytes())
+        document["published_at"] = spelling
+        with pytest.raises(ValueError, match="canonical"):
+            ImmutableManifest.from_bytes(canonical_json(document))
+
+
+def test_manifest_constructor_requires_deeply_immutable_typed_objects() -> None:
+    manifest = _manifest(resolve_scale(_dataset(), "small"))
+    with pytest.raises(ValueError, match="tuple"):
+        replace(manifest, objects=list(manifest.objects))
+    with pytest.raises(ValueError, match="ManifestObject"):
+        replace(manifest, objects=({"object_name": "mutable"},))
 
 
 @pytest.mark.parametrize("model", ["manifest", "pointer"])
@@ -384,8 +459,13 @@ def test_resolver_rejects_wrong_expected_scale_before_object_result() -> None:
         resolve_active_dataset(store, {"sample": small.dataset}, "sample", "medium")
 
 
-@pytest.mark.parametrize("corruption", ["pointer", "manifest", "missing-object"])
-def test_resolver_fails_closed_for_corrupt_or_incomplete_remote_state(monkeypatch, corruption: str) -> None:
+@pytest.mark.parametrize(
+    ("corruption", "expected_stage", "expected_field"),
+    [("pointer", "pointer", "pointer"), ("manifest", "manifest", "manifest")],
+)
+def test_resolver_contextualizes_corrupt_control_state(
+    monkeypatch, corruption: str, expected_stage: str, expected_field: str
+) -> None:
     plan = resolve_scale(_dataset(), "small")
     store, manifest = _published_store(plan)
     if corruption == "pointer":
@@ -394,11 +474,142 @@ def test_resolver_fails_closed_for_corrupt_or_incomplete_remote_state(monkeypatc
     elif corruption == "manifest":
         key = immutable_manifest_key("sample", manifest_sha256(manifest))
         store.objects[key] = (manifest.to_bytes() + b"\n", '"manifest"', {})
-    else:
-        del store.objects[manifest.objects[0].key]
     monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
-    with pytest.raises((LockMismatch, ValueError, RuntimeError)):
+    with pytest.raises(LockMismatch) as caught:
         resolve_active_dataset(store, {"sample": plan.dataset}, "sample", "small")
+    assert caught.value.context.dataset == "sample"
+    assert caught.value.context.scale == "small"
+    assert caught.value.context.stage == expected_stage
+    assert caught.value.field == expected_field
+
+
+@pytest.mark.parametrize("missing", ["pointer", "manifest", "object"])
+def test_resolver_reports_missing_remote_state_as_typed_storage_failure(monkeypatch, missing: str) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store, manifest = _published_store(plan)
+    keys = {
+        "pointer": active_pointer_key("sample"),
+        "manifest": immutable_manifest_key("sample", manifest_sha256(manifest)),
+        "object": manifest.objects[0].key,
+    }
+    del store.objects[keys[missing]]
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+    with pytest.raises(AmbiguousWrite):
+        resolve_active_dataset(store, {"sample": plan.dataset}, "sample", "small")
+
+
+def test_manifest_digest_corruption_has_manifest_context(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store, manifest = _published_store(plan)
+    key = immutable_manifest_key("sample", manifest_sha256(manifest))
+    changed = replace(manifest, raw_registry_sha256="b" * 64).to_bytes()
+    store.objects[key] = (changed, '"manifest"', {})
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+    with pytest.raises(LockMismatch) as caught:
+        resolve_active_dataset(store, {"sample": plan.dataset}, "sample", "small")
+    assert caught.value.context.stage == "manifest"
+    assert caught.value.field == "manifest"
+
+
+def test_multi_object_resolution_preserves_registry_order_and_rejects_reversal(monkeypatch) -> None:
+    plan = resolve_scale(_multi_dataset(), "small")
+    store, manifest = _published_store(plan)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+    resolved = resolve_active_dataset(store, {"sample": plan.dataset}, "sample", "small")
+    assert tuple(item.object_name for item in resolved.objects) == ("alpha.txt", "beta.txt")
+
+    reversed_manifest = replace(manifest, objects=tuple(reversed(manifest.objects)))
+    reversed_digest = manifest_sha256(reversed_manifest)
+    pointer = ActivePointer(1, "sample", immutable_manifest_key("sample", reversed_digest), reversed_digest)
+    store.seed(active_pointer_key("sample"), pointer.to_bytes(), etag='"reversed-pointer"')
+    store.seed(pointer.manifest_key, reversed_manifest.to_bytes(), etag='"reversed-manifest"')
+    with pytest.raises(LockMismatch) as caught:
+        resolve_active_dataset(store, {"sample": plan.dataset}, "sample", "small")
+    assert caught.value.field == "object_names"
+
+
+class TrackingMalformedBody:
+    def __init__(self) -> None:
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+
+
+class NonBinaryBody(TrackingMalformedBody):
+    def read(self, _size: int = -1) -> str:
+        return "not bytes"
+
+
+def test_malformed_remote_body_is_typed_and_closed_exactly_once(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store, manifest = _published_store(plan)
+    body = TrackingMalformedBody()
+    store.body_overrides[manifest.objects[0].key] = body
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+    with pytest.raises(AmbiguousWrite, match="body"):
+        resolve_active_dataset(store, {"sample": plan.dataset}, "sample", "small")
+    assert body.close_calls == 1
+
+
+def test_nonbinary_remote_body_is_typed_and_closed_exactly_once(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store, manifest = _published_store(plan)
+    body = NonBinaryBody()
+    store.body_overrides[manifest.objects[0].key] = body
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+    with pytest.raises(AmbiguousWrite, match="non-bytes"):
+        resolve_active_dataset(store, {"sample": plan.dataset}, "sample", "small")
+    assert body.close_calls == 1
+
+
+class FailingCapture:
+    name = "/owned/failing-capture"
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def write(self, _value) -> int:
+        raise OSError("disk full")
+
+    def flush(self) -> None:
+        pass
+
+
+def test_capture_io_failure_is_typed_closes_body_and_returns_no_partial(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store, manifest = _published_store(plan)
+    body = Body(b"hello\n")
+    close_calls = 0
+    original_close = body.close
+
+    def close_once() -> None:
+        nonlocal close_calls
+        close_calls += 1
+        original_close()
+
+    body.close = close_once  # type: ignore[method-assign]
+    store.body_overrides[manifest.objects[0].key] = body
+    monkeypatch.setattr("datasets.publication.tempfile.NamedTemporaryFile", lambda **_kwargs: FailingCapture())
+    with pytest.raises(AmbiguousWrite, match="capture"):
+        resolve_active_dataset(store, {"sample": plan.dataset}, "sample", "small")
+    assert close_calls == 1
+
+
+def test_capture_allocation_failure_is_typed_and_reads_no_object(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store, manifest = _published_store(plan)
+
+    def fail_allocation(**_kwargs):
+        raise OSError("no local storage")
+
+    monkeypatch.setattr("datasets.publication.tempfile.NamedTemporaryFile", fail_allocation)
+    with pytest.raises(AmbiguousWrite, match="capture"):
+        resolve_active_dataset(store, {"sample": plan.dataset}, "sample", "small")
+    assert manifest.objects[0].key not in store.gets
 
 
 def test_rollback_accepts_unrelated_registry_edit_and_cas_repoints(monkeypatch) -> None:
@@ -431,6 +642,57 @@ def test_rollback_accepts_unrelated_registry_edit_and_cas_repoints(monkeypatch) 
     assert store.puts[-1]["IfMatch"] == '"pointer"'
 
 
+def test_rollback_to_current_selected_plan_after_active_scale_changed(monkeypatch) -> None:
+    dataset = _multi_dataset()
+    small_plan = resolve_scale(dataset, "small")
+    target = _manifest(small_plan, publication_id=PREVIOUS_PUBLICATION_ID)
+    medium_plan = resolve_scale(dataset, "medium")
+    active = _manifest(medium_plan)
+    store, _ = _published_store(medium_plan, active)
+    store.seed(
+        immutable_manifest_key("sample", manifest_sha256(target)),
+        target.to_bytes(),
+        etag='"target"',
+    )
+    for item, payload in zip(target.objects, (b"alpha\n", b"beta\n"), strict=True):
+        store.seed(item.key, payload, etag=f'"{item.object_name}"')
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    result = rollback_manifest(
+        store,
+        {"sample": dataset},
+        "sample",
+        "small",
+        manifest_sha256(target),
+    )
+    assert result.scale == "small"
+    assert tuple(item.object_name for item in result.objects) == ("alpha.txt", "beta.txt")
+    assert store.puts[-1]["IfMatch"] == '"pointer"'
+
+
+def test_rollback_uses_etag_from_corrupt_current_pointer(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    target = _manifest(plan, publication_id=PREVIOUS_PUBLICATION_ID)
+    store, _ = _published_store(plan)
+    store.seed(active_pointer_key("sample"), b'{"corrupt":true}', etag='"corrupt-etag"')
+    store.seed(
+        immutable_manifest_key("sample", manifest_sha256(target)),
+        target.to_bytes(),
+        etag='"target"',
+    )
+    store.seed(target.objects[0].key, b"hello\n", etag='"target-object"')
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    rollback_manifest(
+        store,
+        {"sample": plan.dataset},
+        "sample",
+        "small",
+        manifest_sha256(target),
+    )
+    assert store.puts[-1]["IfMatch"] == '"corrupt-etag"'
+
+
 def test_rollback_rejects_scale_or_selected_plan_change_before_pointer_write(monkeypatch) -> None:
     plan = resolve_scale(_dataset(), "small")
     store, manifest = _published_store(plan)
@@ -446,7 +708,7 @@ def test_rollback_rejects_scale_or_selected_plan_change_before_pointer_write(mon
 
 
 def test_rollback_surfaces_concurrent_pointer_conflict(monkeypatch) -> None:
-    plan = resolve_scale(_dataset(), "small")
+    plan = resolve_scale(_multi_dataset(), "small")
     historical = _manifest(plan, publication_id=PREVIOUS_PUBLICATION_ID)
     store, _ = _published_store(plan)
     store.seed(
@@ -454,7 +716,8 @@ def test_rollback_surfaces_concurrent_pointer_conflict(monkeypatch) -> None:
         historical.to_bytes(),
         etag='"historical"',
     )
-    store.seed(historical.objects[0].key, b"hello\n", etag='"historical-object"')
+    for item, payload in zip(historical.objects, (b"alpha\n", b"beta\n"), strict=True):
+        store.seed(item.key, payload, etag=f'"{item.object_name}"')
     store.conflict = True
     monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
     with pytest.raises(ConditionalConflict):
