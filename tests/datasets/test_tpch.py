@@ -429,6 +429,57 @@ def test_publication_rechecks_staging_descriptor_trust_before_each_link(
     assert not list(tmp_path.glob(".dataset-tpch-*"))
 
 
+def test_publication_rechecks_staging_trust_after_staged_file_open(tmp_path, fake_runner, tpch_plan, monkeypatch):
+    destination = tmp_path / "staging-open-drift"
+    real_open = tpch.os.open
+    real_close = tpch.os.close
+    real_link = tpch.os.link
+    real_rename = tpch._renameat_noreplace
+    staged_descriptor = None
+    staging_root_descriptor = None
+    close_calls = 0
+    drifted = False
+
+    def track_staging_root(source, target, **kwargs):
+        nonlocal staging_root_descriptor
+        staging_root_descriptor = kwargs["src_dir_fd"]
+        return real_link(source, target, **kwargs)
+
+    def chmod_staging_inside_file_open(path, flags, *args, **kwargs):
+        nonlocal staged_descriptor, drifted
+        descriptor = real_open(path, flags, *args, **kwargs)
+        if str(path).startswith(".dataset-tpch-publish-") and not drifted:
+            drifted = True
+            staged_descriptor = descriptor
+            assert staging_root_descriptor is not None
+            os.fchmod(staging_root_descriptor, 0o777)
+        return descriptor
+
+    def track_close(descriptor):
+        nonlocal close_calls
+        if descriptor == staged_descriptor:
+            close_calls += 1
+        return real_close(descriptor)
+
+    def restore_staging_after_first_commit(directory_descriptor, source, target):
+        real_rename(directory_descriptor, source, target)
+        if target == "customer.parquet":
+            assert staging_root_descriptor is not None
+            os.fchmod(staging_root_descriptor, 0o700)
+
+    monkeypatch.setattr(tpch.os, "link", track_staging_root)
+    monkeypatch.setattr(tpch.os, "open", chmod_staging_inside_file_open)
+    monkeypatch.setattr(tpch.os, "close", track_close)
+    monkeypatch.setattr(tpch, "_renameat_noreplace", restore_staging_after_first_commit)
+
+    with pytest.raises(ValueError, match="transaction staging.*trusted directory"):
+        tpch.generate_tpch(tpch_plan, destination, runner=fake_runner)
+
+    assert close_calls == 1
+    assert not list(destination.glob("*.parquet"))
+    assert not list(tmp_path.glob(".dataset-tpch-*"))
+
+
 def test_publication_rollback_uses_bound_directory_after_destination_replacement(
     tmp_path, fake_runner, tpch_plan, monkeypatch
 ):

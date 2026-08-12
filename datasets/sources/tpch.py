@@ -1145,6 +1145,7 @@ def publish_verified_files(
             transaction.verify_staging_binding()
             staged_descriptor = os.open(staging_name, open_flags, dir_fd=destination_descriptor)
             try:
+                transaction.verify_staging_binding()
                 opened = os.fstat(staged_descriptor)
                 if (opened.st_dev, opened.st_ino) != staged_identity or not stat.S_ISREG(opened.st_mode):
                     raise ValueError("staged TPC-H output identity changed")
