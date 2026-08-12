@@ -52,7 +52,11 @@ def _load_registry_snapshot(path: Path) -> tuple[dict, str]:
     try:
         with os.fdopen(descriptor, "wb") as stream:
             stream.write(snapshot)
-        registry = load_registry(Path(temporary_name))
+        try:
+            registry = load_registry(Path(temporary_name))
+        except ValueError as error:
+            message = str(error).replace(temporary_name, "registry snapshot")
+            raise ValueError(message) from None
     finally:
         Path(temporary_name).unlink(missing_ok=True)
     return registry, digest

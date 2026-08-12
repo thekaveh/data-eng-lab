@@ -5,6 +5,7 @@ import inspect
 import io
 import json
 import threading
+import time
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from email.utils import format_datetime
@@ -233,6 +234,107 @@ def test_lease_renewal_failure_aborts_before_pointer_mutation(tmp_path, monkeypa
     assert active_pointer_key("sample") not in store.objects
 
 
+def test_keepalive_checkpoint_waits_for_renewed_capability(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    lease = _publication_lease(store, plan, PUBLICATION_ID, "a" * 32)
+    renewal_entered = threading.Event()
+    allow_renewal = threading.Event()
+    checked: list[str] = []
+
+    def renew(client, predecessor):
+        del client
+        renewal_entered.set()
+        assert allow_renewal.wait(2)
+        successor = replace(predecessor, etag='"successor"')
+        _seed_lease(store, successor)
+        return successor
+
+    monkeypatch.setattr("datasets.publication.renew_lease", renew)
+    monkeypatch.setattr(
+        "datasets.publication._assert_lease_current",
+        lambda client, current: checked.append(current.etag),
+    )
+    from datasets import publication as publication_module
+
+    keepalive = publication_module._LeaseKeepalive(store, lease)
+    renew_thread = threading.Thread(target=keepalive._renew_once)
+    renew_thread.start()
+    assert renewal_entered.wait(1)
+    checkpoint_thread = threading.Thread(target=keepalive.checkpoint)
+    checkpoint_thread.start()
+    time.sleep(0.05)
+    assert checked == []
+    allow_renewal.set()
+    renew_thread.join(1)
+    checkpoint_thread.join(1)
+    assert checked == ['"successor"']
+
+
+def test_keepalive_start_failure_releases_acquired_lease(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    acquired: list[Lease] = []
+    released: list[Lease] = []
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        lease = _publication_lease(store, plan, publication_id, owner_nonce)
+        acquired.append(lease)
+        return lease
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda client, lease: released.append(lease))
+    monkeypatch.setattr(
+        "datasets.publication._LeaseKeepalive.start",
+        lambda self: (_ for _ in ()).throw(RuntimeError("thread start failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="thread start"):
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: pytest.fail("source"),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert released == acquired
+
+
+@pytest.mark.parametrize("interrupt", [KeyboardInterrupt(), SystemExit(7)])
+def test_control_flow_interrupt_at_manifest_boundary_is_preserved(tmp_path, monkeypatch, interrupt) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        return _publication_lease(store, plan, publication_id, owner_nonce)
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+    monkeypatch.setattr(
+        "datasets.publication._put_manifest_exact",
+        lambda *args, **kwargs: (_ for _ in ()).throw(interrupt),
+    )
+
+    with pytest.raises(type(interrupt)) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (VerifiedFile(source, expected),),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert caught.value is interrupt
+    assert any("publication" in note for note in getattr(interrupt, "__notes__", ()))
+
+
 def test_verified_existing_race_keeps_result_when_release_fails(monkeypatch) -> None:
     plan = resolve_scale(_dataset(), "small")
     store = FakeS3()
@@ -375,9 +477,9 @@ def test_failure_after_immutable_upload_reports_orphan_candidate(tmp_path, monke
         )
 
     result = caught.value.result
-    assert result.status == "failed-orphaned"
+    assert result.status == "failed-candidate"
     assert result.publication_prefix is not None
-    assert result.orphan_keys == (f"{result.publication_prefix}/readme.txt",)
+    assert result.proven_orphan_keys == (f"{result.publication_prefix}/readme.txt",)
 
 
 def test_exact_legacy_set_migrates_without_source_request(tmp_path, monkeypatch) -> None:
@@ -1318,6 +1420,156 @@ def test_rollback_dry_run_requires_an_existing_valid_current_pointer(monkeypatch
         )
 
     assert store.puts == []
+
+
+def test_rollback_result_uses_pointer_state_observed_by_transaction(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    target = _manifest(plan, publication_id=PREVIOUS_PUBLICATION_ID)
+    first, current_manifest = _published_store(plan)
+    store = FakeS3()
+    store.objects.update(first.objects)
+    store.seed(
+        immutable_manifest_key("sample", manifest_sha256(target)),
+        target.to_bytes(),
+        etag='"target"',
+    )
+    store.seed(target.objects[0].key, b"hello\n", etag='"target-object"')
+    pointer_b = ActivePointer(
+        1,
+        "sample",
+        immutable_manifest_key("sample", manifest_sha256(current_manifest)),
+        manifest_sha256(current_manifest),
+    )
+    store.seed(active_pointer_key("sample"), pointer_b.to_bytes(), etag='"pointer-B"')
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.ROLLBACK,
+        client=store,
+        fetcher=lambda *_: pytest.fail("source"),
+        rollback_sha256=manifest_sha256(target),
+    )
+
+    assert store.puts[-1]["IfMatch"] == '"pointer-B"'
+    assert result.pointer_precondition == 'If-Match: "pointer-B"'
+    assert result.previous_manifest_sha256 == manifest_sha256(current_manifest)
+
+
+def test_common_prefix_listing_is_bounded_and_validated(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    from datasets import publication as publication_module
+
+    monkeypatch.setattr(publication_module, "_MAX_LEGACY_LIST_KEYS", 1)
+
+    class Excessive:
+        def list_objects_v2(self, **_request):
+            return {
+                "Contents": [],
+                "CommonPrefixes": [{"Prefix": "sample/a/"}, {"Prefix": "sample/b/"}],
+                "IsTruncated": False,
+            }
+
+    with pytest.raises(AmbiguousWrite, match="common prefix"):
+        publication_module._list_legacy_keys(Excessive(), plan, "landing")
+
+
+def test_owned_staging_foreign_replacement_is_not_deleted(tmp_path) -> None:
+    from datasets import publication as publication_module
+
+    parent = tmp_path / "trusted"
+    parent.mkdir(mode=0o700)
+    with pytest.raises(ValueError, match="identity"):
+        with publication_module._owned_staging(parent) as staging:
+            original = staging.with_name(staging.name + "-original")
+            staging.rename(original)
+            staging.mkdir()
+            (staging / "foreign.txt").write_text("foreign")
+    survivors = list(parent.rglob("foreign.txt"))
+    assert len(survivors) == 1
+    assert survivors[0].read_text() == "foreign"
+
+
+def test_pointer_commit_with_unavailable_reconciliation_is_explicitly_ambiguous(
+    tmp_path,
+    monkeypatch,
+) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        return _publication_lease(store, plan, publication_id, owner_nonce)
+
+    original_put = store.put_object
+
+    def commit_then_hide(**request):
+        response = original_put(**request)
+        if request["Key"] == active_pointer_key("sample"):
+            store.body_overrides[active_pointer_key("sample")] = NonBinaryBody()
+            from botocore.exceptions import ClientError
+
+            raise ClientError(
+                {"Error": {"Code": "InternalError"}, "ResponseMetadata": {"HTTPStatusCode": 500}},
+                "PutObject",
+            )
+        return response
+
+    monkeypatch.setattr(store, "put_object", commit_then_hide)
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    with pytest.raises(PublicationFailure) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (VerifiedFile(source, expected),),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert caught.value.result.status == "pointer-outcome-ambiguous"
+    assert caught.value.result.pointer_outcome == "ambiguous"
+    assert caught.value.result.proven_orphan_keys == ()
+    assert caught.value.result.manifest_outcome == "written-unreferenced"
+
+
+def test_renewal_loss_after_last_work_checkpoint_prevents_pointer_cas(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        return _publication_lease(store, plan, publication_id, owner_nonce)
+
+    def stop_and_lose(self):
+        self.stop()
+        raise ConditionalConflict("successor acquired immediately before CAS")
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication._LeaseKeepalive.stop_and_checkpoint", stop_and_lose)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    with pytest.raises(PublicationFailure) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (VerifiedFile(source, expected),),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert active_pointer_key("sample") not in store.objects
+    assert caught.value.result.pointer_outcome == "not-attempted"
+    assert caught.value.result.manifest_outcome == "written-unreferenced"
 
 
 def test_rollback_rejects_scale_or_selected_plan_change_before_pointer_write(monkeypatch) -> None:
