@@ -43,7 +43,9 @@ object FeatureTransforms {
 
   def validateFeatures(frame: DataFrame, expected: StructType, key: String, countColumn: String,
                        sourceRows: Long): Unit = {
-    require(frame.schema == expected, s"$key features have the wrong schema")
+    val actualSignature = frame.schema.fields.map(field => field.name -> field.dataType).toSeq
+    val expectedSignature = expected.fields.map(field => field.name -> field.dataType).toSeq
+    require(actualSignature == expectedSignature, s"$key features have the wrong schema")
     require(frame.limit(1).count() == 1, s"$key features must be nonempty")
     require(frame.where(frame.columns.map(name => F.col(name).isNull).reduce(_ || _)).limit(1).count() == 0,
       s"$key features must not contain nulls")

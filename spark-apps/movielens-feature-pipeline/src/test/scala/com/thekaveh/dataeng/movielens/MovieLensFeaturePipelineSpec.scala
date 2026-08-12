@@ -161,6 +161,28 @@ class MovieLensFeaturePipelineSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(forward == reverse)
   }
 
+  test("readback accepts catalog-nullable metadata while enforcing non-null feature rows") {
+    val catalogSchema = StructType(Seq(
+      StructField("userId", LongType, nullable = true),
+      StructField("avg_rating", DoubleType, nullable = true),
+      StructField("num_ratings", LongType, nullable = true)
+    ))
+    val valid = spark.createDataFrame(
+      spark.sparkContext.parallelize(Seq(Row(1L, 4.0, 1L))),
+      catalogSchema
+    )
+    FeatureTransforms.validateFeatures(
+      valid, FeatureTransforms.UserSchema, "userId", "num_ratings", sourceRows = 1L
+    )
+    val invalid = spark.createDataFrame(
+      spark.sparkContext.parallelize(Seq(Row(1L, null, 1L))),
+      catalogSchema
+    )
+    assertThrows[IllegalArgumentException](FeatureTransforms.validateFeatures(
+      invalid, FeatureTransforms.UserSchema, "userId", "num_ratings", sourceRows = 1L
+    ))
+  }
+
   test("writes user before movie verifies readback and converges after a partial failure") {
     val source = ratings(Seq((1L, 10L, 4.0, 100L), (2L, 10L, 2.0, 101L)))
     val resolved = MovieLensSources.parse(args())
