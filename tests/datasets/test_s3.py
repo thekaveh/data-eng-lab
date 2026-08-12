@@ -68,9 +68,10 @@ def _streaming_response(
 
 
 class TrackingBody:
-    def __init__(self, body: bytes, *, fail_read: bool = False):
+    def __init__(self, body: bytes, *, fail_read: bool = False, fail_close: bool = False):
         self._body = io.BytesIO(body)
         self.fail_read = fail_read
+        self.fail_close = fail_close
         self.close_calls = 0
 
     def read(self, size: int = -1) -> bytes:
@@ -80,6 +81,8 @@ class TrackingBody:
 
     def close(self) -> None:
         self.close_calls += 1
+        if self.fail_close:
+            raise OSError("close failed")
 
 
 class ResponseClient:
@@ -175,6 +178,19 @@ class FakeS3:
             "ETag": self.objects[identity].etag,
             "ResponseMetadata": _response_metadata(response_date if isinstance(response_date, datetime) else None),
         }
+        return response
+
+
+class ContentEtagS3(FakeS3):
+    """S3 fake whose ETag is derived only from stored bytes."""
+
+    def put_object(self, **request):
+        response = super().put_object(**request)
+        identity = (request["Bucket"], request["Key"])
+        stored = self.objects[identity]
+        etag = f'"{hashlib.md5(stored.body, usedforsecurity=False).hexdigest()}"'
+        self.objects[identity] = _StoredObject(stored.body, stored.metadata, etag)
+        response["ETag"] = etag
         return response
 
 
@@ -311,6 +327,38 @@ def test_stream_verify_closes_body_once_when_date_is_untrusted(monkeypatch: pyte
     assert body.close_calls == 1
 
 
+def test_stream_verify_close_failure_preserves_primary_hash_mismatch():
+    actual = b"wrong bytes"
+    body = TrackingBody(actual, fail_close=True)
+    response = _streaming_response(b"")
+    response["Body"] = body
+
+    with pytest.raises(LockMismatch, match="sha256") as caught:
+        s3mod.stream_verify_object(
+            ResponseClient(response),
+            "landing",
+            "object",
+            ExpectedObject("trips.parquet", len(actual), hashlib.sha256(b"expected").hexdigest(), "schema-v1"),
+            CONTEXT,
+        )
+
+    assert body.close_calls == 1
+    assert any("close failed" in note for note in caught.value.__notes__)
+
+
+def test_stream_verify_sole_close_failure_is_ambiguous():
+    content = b"verified bytes"
+    body = TrackingBody(content, fail_close=True)
+    response = _streaming_response(b"")
+    response["Body"] = body
+
+    with pytest.raises(s3mod.AmbiguousWrite, match="close") as caught:
+        s3mod.stream_verify_object(ResponseClient(response), "landing", "object", _expected(content), CONTEXT)
+
+    assert body.close_calls == 1
+    assert isinstance(caught.value.__cause__, OSError)
+
+
 def test_put_immutable_uses_if_none_match_and_get_verifies_bytes(tmp_path: Path):
     body = b"immutable bytes"
     path = tmp_path / "object.bin"
@@ -413,6 +461,28 @@ def test_immutable_5xx_write_reconciles_exact_value_without_retry(tmp_path: Path
 
     assert snapshot.sha256 == hashlib.sha256(body).hexdigest()
     assert len(client.put_calls) == 1
+
+
+def test_immutable_request_timeout_reconciles_exact_value(tmp_path: Path):
+    body = b"immutable bytes"
+    path = tmp_path / "object.bin"
+    path.write_bytes(body)
+    client = FakeS3()
+    client.seed("landing", "immutable/object", body, metadata={"lock": "exact"})
+
+    def request_timeout(**request):
+        client.put_calls.append({**request, "Body": client._bytes(request["Body"])})
+        raise _client_error("RequestTimeout", 400)
+
+    client.put_object = request_timeout
+
+    snapshot = s3mod.put_immutable_object(
+        client, "landing", "immutable/object", path, _expected(body), {"lock": "exact"}
+    )
+
+    assert snapshot.sha256 == hashlib.sha256(body).hexdigest()
+    assert len(client.put_calls) == 1
+    assert len(client.get_calls) == 1
 
 
 def test_immutable_post_success_transport_failure_is_ambiguous_and_redacted(tmp_path: Path):
@@ -550,6 +620,16 @@ def test_put_control_canonicalizes_unicode_json_with_shared_encoder():
     assert b"caf\xc3\xa9" in snapshot.body
 
 
+def test_put_control_rejects_oversized_canonical_body_before_put():
+    client = FakeS3()
+    oversized = canonical_json({"value": "x" * (1 << 20)})
+
+    with pytest.raises(ValueError, match="too large"):
+        s3mod.put_control_object(client, "landing", "active.json", oversized)
+
+    assert client.put_calls == []
+
+
 @pytest.mark.parametrize("status", [409, 412])
 def test_control_conditional_errors_reconcile_exact_self_write(status: int):
     body = canonical_json({"pointer": "intended"})
@@ -583,6 +663,24 @@ def test_control_5xx_write_reconciles_exact_value_without_retry():
 
     assert snapshot.body == body
     assert len(client.put_calls) == 1
+
+
+def test_control_request_timeout_reconciles_exact_value():
+    body = canonical_json({"pointer": "intended"})
+    client = FakeS3()
+    client.seed("landing", "active.json", body, etag='"successor"')
+
+    def request_timeout(**request):
+        client.put_calls.append({**request, "Body": client._bytes(request["Body"])})
+        raise _client_error("RequestTimeout", 400)
+
+    client.put_object = request_timeout
+
+    snapshot = s3mod.put_control_object(client, "landing", "active.json", body, if_match='"stale"')
+
+    assert snapshot.body == body
+    assert len(client.put_calls) == 1
+    assert len(client.get_calls) == 1
 
 
 def test_control_conflict_never_retries_stale_cas():
@@ -894,11 +992,36 @@ def test_acquire_restarts_after_five_second_proposal_window(
 ):
     client = FakeS3()
     _freeze_local_time(monkeypatch)
-    ticks = iter((0.0, 5.001, 10.0, 10.1))
+    ticks = iter((0.0, 5.001, 10.0, 10.1, 10.2))
     monkeypatch.setattr(s3mod, "_monotonic", lambda: next(ticks))
 
     s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_A, NONCE_A)
 
+    assert len(client.get_calls) == 3
+    assert len(client.put_calls) == 1
+
+
+def test_acquire_rechecks_proposal_window_after_serialization(monkeypatch: pytest.MonkeyPatch):
+    client = FakeS3()
+    _freeze_local_time(monkeypatch)
+    clock = [0.0]
+    serialization_calls = 0
+    original_lease_body = s3mod._lease_body
+
+    def delayed_first_serialization(lease):
+        nonlocal serialization_calls
+        serialization_calls += 1
+        body = original_lease_body(lease)
+        if serialization_calls == 1:
+            clock[0] = 5.1
+        return body
+
+    monkeypatch.setattr(s3mod, "_monotonic", lambda: clock[0])
+    monkeypatch.setattr(s3mod, "_lease_body", delayed_first_serialization)
+
+    s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_A, NONCE_A)
+
+    assert serialization_calls == 2
     assert len(client.get_calls) == 3
     assert len(client.put_calls) == 1
 
@@ -953,6 +1076,24 @@ def test_acquire_fails_closed_when_write_date_is_outside_proposal(
         s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_A, NONCE_A)
 
 
+def test_acquire_request_timeout_reconciles_exact_lease(monkeypatch: pytest.MonkeyPatch):
+    client = FakeS3()
+    _freeze_local_time(monkeypatch)
+    original_put = client.put_object
+
+    def timeout_after_commit(**request):
+        original_put(**request)
+        raise _client_error("RequestTimeout", 400)
+
+    client.put_object = timeout_after_commit
+
+    lease = s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_A, NONCE_A)
+
+    assert lease.owner_nonce == NONCE_A
+    assert len(client.put_calls) == 1
+    assert len(client.get_calls) == 2
+
+
 def test_renew_uses_latest_opaque_etag_and_returns_successor(
     monkeypatch: pytest.MonkeyPatch,
 ):
@@ -969,6 +1110,53 @@ def test_renew_uses_latest_opaque_etag_and_returns_successor(
     assert renewed.etag != first.etag
     assert renewed.owner_nonce == first.owner_nonce
     assert renewed.expires_at == client.now + timedelta(seconds=60)
+
+
+def test_renew_waits_for_changed_canonical_version_and_rejects_stale_handle(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    client = ContentEtagS3()
+    _freeze_local_time(monkeypatch)
+    first = s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_A, NONCE_A)
+    dates = iter(
+        (
+            NOW,
+            NOW + timedelta(seconds=1),
+            NOW + timedelta(seconds=1),
+            NOW + timedelta(seconds=1),
+        )
+    )
+    original_get = client.get_object
+
+    def advance_date(**request):
+        client.get_date = next(dates)
+        client.now = client.get_date
+        return original_get(**request)
+
+    client.get_object = advance_date
+    monkeypatch.setattr(s3mod, "_utc_now", lambda: client.get_date)
+
+    renewed = s3mod.renew_lease(client, first)
+
+    assert renewed.expires_at > first.expires_at
+    assert renewed.etag != first.etag
+    assert len(client.put_calls) == 2
+    with pytest.raises(s3mod.ConditionalConflict):
+        s3mod.release_lease(client, first)
+
+
+def test_renew_fails_closed_after_bounded_unchanged_observations(monkeypatch: pytest.MonkeyPatch):
+    client = ContentEtagS3()
+    _freeze_local_time(monkeypatch)
+    first = s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_A, NONCE_A)
+    get_count = len(client.get_calls)
+    put_count = len(client.put_calls)
+
+    with pytest.raises(s3mod.AmbiguousWrite, match="changed canonical version"):
+        s3mod.renew_lease(client, first)
+
+    assert len(client.get_calls) - get_count == 5
+    assert len(client.put_calls) == put_count
 
 
 def test_lost_lease_cannot_be_renewed(monkeypatch: pytest.MonkeyPatch):
@@ -1001,6 +1189,28 @@ def test_release_is_conditional_put(monkeypatch: pytest.MonkeyPatch):
     assert released.state == "released"
     assert released.created_at == NOW
     assert released.expires_at == client.now
+
+
+def test_release_succeeds_with_same_server_date(monkeypatch: pytest.MonkeyPatch):
+    client = FakeS3()
+    _freeze_local_time(monkeypatch)
+    lease = s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_A, NONCE_A)
+
+    released = s3mod.release_lease(client, lease)
+
+    assert released.state == "released"
+    assert released.created_at == NOW
+    assert released.expires_at == NOW
+
+
+def test_one_second_lease_release_succeeds_same_second(monkeypatch: pytest.MonkeyPatch):
+    client = FakeS3()
+    _freeze_local_time(monkeypatch)
+    lease = s3mod.acquire_lease(client, "nyc_taxi", PUBLICATION_A, NONCE_A, lease_seconds=1)
+
+    released = s3mod.release_lease(client, lease)
+
+    assert released.created_at == released.expires_at == NOW
 
 
 def test_release_rejects_expired_lease(monkeypatch: pytest.MonkeyPatch):
