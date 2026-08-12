@@ -6,6 +6,7 @@ import org.apache.spark.sql.SparkSession
 import org.apache.spark.sql.types._
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
+import scala.collection.mutable
 
 class TpchStarSchemaSpec extends AnyFunSuite with BeforeAndAfterAll {
   private var spark: SparkSession = _
@@ -72,5 +73,49 @@ class TpchStarSchemaSpec extends AnyFunSuite with BeforeAndAfterAll {
     val danglingLines = Seq((999L, 1L, BigDecimal("1.00"))).toDF("l_orderkey", "l_linenumber", "l_extendedprice")
       .withColumn("l_extendedprice", org.apache.spark.sql.functions.col("l_extendedprice").cast(DecimalType(15, 2)))
     assertThrows[IllegalArgumentException](StarSchemaTransforms.validateSources(customer, validOrders, danglingLines))
+  }
+
+  test("writes dimension before fact, verifies provenance, and converges after an injected partial failure") {
+    val s = spark; import s.implicits._
+    val customer = Seq((1L, "Alice", 10, "BUILDING")).toDF("c_custkey", "c_name", "c_nationkey", "c_mktsegment")
+    val orders = Seq((100L, 1L, Date.valueOf("2026-01-02"))).toDF("o_orderkey", "o_custkey", "o_orderdate")
+    val lines = Seq((100L, 1L, BigDecimal("1.00"))).toDF("l_orderkey", "l_linenumber", "l_extendedprice")
+      .withColumn("l_extendedprice", org.apache.spark.sql.functions.col("l_extendedprice").cast(DecimalType(15, 2)))
+    val sources = TpchSources.parse(args())
+
+    final class RecordingWriter(failFactOnce: Boolean) extends TableWriter {
+      val calls = mutable.ArrayBuffer.empty[String]
+      val properties = mutable.Map.empty[String, Map[String, String]]
+      private var fail = failFactOnce
+      def createNamespace(): Unit = calls += "namespace"
+      def replace(table: String, frame: org.apache.spark.sql.DataFrame, provenance: Provenance): Unit = {
+        calls += table
+        if (table.endsWith("fct_orders") && fail) { fail = false; throw new RuntimeException("injected") }
+        properties(table) = provenance.properties
+      }
+      def readProperties(table: String): Map[String, String] = properties.getOrElse(table, Map.empty)
+    }
+    val writer = new RecordingWriter(failFactOnce = true)
+    assertThrows[RuntimeException](TpchStarSchema.runResolved(sources, customer, orders, lines, writer))
+    assert(writer.calls == Seq("namespace", TpchStarSchema.DimensionTable, TpchStarSchema.FactTable))
+    assert(writer.properties.keySet == Set(TpchStarSchema.DimensionTable))
+    val result = TpchStarSchema.runResolved(sources, customer, orders, lines, writer)
+    assert(result == RunResult(1L, 1L, sources.provenance))
+    assert(writer.properties(TpchStarSchema.DimensionTable) == writer.properties(TpchStarSchema.FactTable))
+    assert(writer.properties.values.forall(_ == sources.provenance.properties))
+  }
+
+  test("fails after writes when table provenance readback does not match") {
+    val s = spark; import s.implicits._
+    val customer = Seq((1L, "Alice", 10, "BUILDING")).toDF("c_custkey", "c_name", "c_nationkey", "c_mktsegment")
+    val orders = Seq((100L, 1L, Date.valueOf("2026-01-02"))).toDF("o_orderkey", "o_custkey", "o_orderdate")
+    val lines = Seq((100L, 1L, BigDecimal("1.00"))).toDF("l_orderkey", "l_linenumber", "l_extendedprice")
+      .withColumn("l_extendedprice", org.apache.spark.sql.functions.col("l_extendedprice").cast(DecimalType(15, 2)))
+    val writer = new TableWriter {
+      def createNamespace(): Unit = ()
+      def replace(table: String, frame: org.apache.spark.sql.DataFrame, provenance: Provenance): Unit = ()
+      def readProperties(table: String): Map[String, String] = Map.empty
+    }
+    assertThrows[IllegalStateException](TpchStarSchema.runResolved(TpchSources.parse(args()), customer, orders, lines, writer))
   }
 }
