@@ -62,8 +62,13 @@ and are never printed or written into this report:
 ./scripts/start-all.sh
 mvn -q -B -f spark-apps/tpch-star-schema/pom.xml package
 uv run python scripts/resolve_dataset.py tpch --scale tiny
-# authenticated Airflow /api/v2 requests use admin:<redacted>
+# authenticated Airflow /api/v2 inventory requests use admin:<redacted>
 # exact reviewed JAR publication uses MinIO access key/secret: <redacted>
+# each paused manual execution uses the bounded command below with a unique whole-second date:
+docker exec data-eng-lab-airflow-scheduler bash -o pipefail -c \
+  'airflow dags test "$@" 2>&1 | tail -n 200' airflow-dags-test \
+  tpch_star_schema 2026-08-12T20:31:57+00:00 --use-executor \
+  --conf '{"dataset_scale":"tiny"}'
 # Spark terminal status is read in-network from spark-master:6066
 # Trino reads both Iceberg $properties tables and measures
 ./scripts/stop-all.sh
@@ -75,7 +80,12 @@ positive-size eight-object tiny publication; two explicit Airflow runs; distinct
 join; equality of exactly the five `data_eng_lab.dataset*` provenance properties; deterministic
 row/schema/checksum/provenance equality after rerun; serialized run timestamps; final DAG pause; and
 volume-preserving teardown. A later subsection records the identifiers from the latest successful
-replay without replacing those runtime assertions.
+replay without replacing those runtime assertions. If the tiny publication is absent, the same
+one-command gate performs only the supported bounded
+`download_datasets.py --scale tiny --only tpch --refresh` operation, then always runs
+`--verify-only`; it never deletes legacy objects, volumes, or publication history. If any project
+container was already running, the gate refuses before mutation instead of stopping an
+operator-owned stack.
 
 ## Review-fix replay result
 
@@ -100,3 +110,37 @@ latest table snapshots had exact schemas, nonempty rows and measures, equal dete
 between runs, and the same exact five properties bound to the resolver result. It paused the DAG and
 completed `scripts/stop-all.sh`; zero `data-eng-lab` containers remained while the named MinIO volume
 remained present.
+
+## Paused-schedule and exclusive-ownership replay
+
+Final review found that Airflow 3 API-created manual runs remain queued while an `@daily` DAG is
+paused. The first isolated probe demonstrated that behavior; its sole test-owned queued run
+(`issue107_first_3e6c1f4107394146926409ba451f50b2`) was marked failed through the Airflow API before
+the canonical replay. No operator run or persisted volume was removed. A second probe proved that
+`airflow dags test --use-executor` creates a real API-visible terminal DagRun, executes the actual
+`AtlasSparkSubmitOperator`, and submits a REST-confirmed Spark driver while the production DAG stays
+paused. The executable gate therefore uses that supported test command and never unpauses the DAG
+during controlled acceptance.
+
+The first full replay of this correction failed before build, publication, or DAG execution because
+an older terminal probe had a future logical date and no `start_date`. The gate now snapshots exact
+pre-acceptance API run IDs, treats the set difference as authoritative, rejects any queued/running
+baseline run, and ignores terminal history regardless of logical-date skew. That regression is
+covered offline. Cleanup completed and left zero containers before the retry.
+
+The corrected canonical command passed on 2026-08-12 in 211.86 seconds. The project had zero running
+containers before entry, so the gate held exclusive stack ownership and stopped only the stack it
+started. It captured an initially unpaused DAG, paused it before the acceptance window, left it
+paused through both runs, and restored the initial state on exit. Exact final identifiers were:
+
+| Whole-second logical date | API-visible Airflow run | Spark driver | Result |
+|---|---|---|---|
+| `2026-08-12T20:31:57+00:00` | `manual__2026-08-12T20:32:17.725089+00:00` | `driver-20260812203222-0000` | Airflow success; Spark `FINISHED`, `success=true` |
+| `2026-08-12T20:32:52+00:00` | `manual__2026-08-12T20:32:54.338988+00:00` | `driver-20260812203256-0001` | Airflow success; Spark `FINISHED`, `success=true` |
+
+Before and after each command, the gate enumerated `/api/v2` DagRuns and the Spark master driver set.
+Each difference contained exactly one new owned run and one new driver. The final API snapshot
+contained exactly those two owned successful runs in the acceptance window, no third run, and no
+unexpected queued/running run. The second start followed the first terminal end, and the post-run
+schemas, rows, measures, five provenance properties, and deterministic snapshots matched. Standard
+teardown preserved volumes and the verified TPC-H pointer; zero project containers remained.
