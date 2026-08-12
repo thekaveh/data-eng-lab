@@ -203,6 +203,8 @@ class DeniedSocket:
 socket.socket = DeniedSocket
 socket.getaddrinfo = denied
 socket.create_connection = denied
+for helper in ("gethostbyname", "gethostbyname_ex", "gethostbyaddr", "getnameinfo"):
+    if hasattr(socket, helper): setattr(socket, helper, denied)
 boto3.client = denied
 boto3.resource = denied
 boto3.Session = denied
@@ -244,6 +246,20 @@ spec.loader.exec_module(module)
     for path in paths:
         completed = subprocess.run([sys.executable, "-c", guard, str(path)], cwd=ROOT, capture_output=True, text=True)
         assert completed.returncode == 0, f"{path.relative_to(ROOT)}: {completed.stderr}"
+
+
+@pytest.mark.parametrize("helper", ["getaddrinfo", "gethostbyname", "gethostbyname_ex", "gethostbyaddr", "getnameinfo"])
+def test_isolated_import_dns_negative_control_denies_every_helper(helper):
+    guard = r"""
+import socket, sys
+def denied(*args, **kwargs): raise AssertionError("DNS denied")
+for helper in ("getaddrinfo", "gethostbyname", "gethostbyname_ex", "gethostbyaddr", "getnameinfo"):
+    if hasattr(socket, helper): setattr(socket, helper, denied)
+getattr(socket, sys.argv[1])("example.invalid")
+"""
+    completed = subprocess.run([sys.executable, "-c", guard, helper], cwd=ROOT, capture_output=True, text=True)
+    assert completed.returncode != 0
+    assert "DNS denied" in completed.stderr
 
 
 def test_pin_bump_runbook_describes_automatic_target_rebuild():

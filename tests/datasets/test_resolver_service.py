@@ -85,6 +85,16 @@ def _raw_request(port: int, request: bytes) -> tuple[int, bytes]:
     return status, response.partition(b"\r\n\r\n")[2]
 
 
+def _raw_response(port: int, request: bytes) -> bytes:
+    with socket.create_connection(("127.0.0.1", port), timeout=2) as connection:
+        connection.sendall(request)
+        connection.shutdown(socket.SHUT_WR)
+        response = b""
+        while chunk := connection.recv(4096):
+            response += chunk
+    return response
+
+
 def test_resolve_request_returns_exact_canonical_frozen_result(resolver_module, monkeypatch):
     monkeypatch.setattr(resolver_module, "resolve_active_dataset", lambda *_args: RESULT)
     body = resolver_module.resolve_request(
@@ -270,6 +280,41 @@ def test_every_unsupported_method_is_canonical_json(service, method):
         assert body == b""
     else:
         assert body == b'{"error":"method not allowed"}'
+
+
+@pytest.mark.parametrize(
+    ("path", "allow"),
+    [("/v1/resolve", "POST"), ("/healthz", "GET"), ("/unknown", "GET, POST")],
+)
+def test_arbitrary_valid_method_is_canonical_405_with_route_allow(service, path, allow):
+    base, _calls = service
+    port = int(base.rsplit(":", 1)[1])
+    response = _raw_response(port, f"FOO {path} HTTP/1.1\r\nHost: resolver\r\n\r\n".encode())
+    head, body = response.split(b"\r\n\r\n", 1)
+    assert head.startswith(b"HTTP/1.1 405 ")
+    assert f"Allow: {allow}\r\n".encode() in head + b"\r\n"
+    assert b"Content-Type: application/json" in head
+    assert b"Connection: close" in head
+    assert body == b'{"error":"method not allowed"}'
+
+
+@pytest.mark.parametrize(
+    ("raw_request", "status", "body"),
+    [
+        (b"GET /healthz HTTP/2.0\r\nHost: resolver\r\n\r\n", 505, b'{"error":"HTTP version is not supported"}'),
+        (b"GET /healthz BOGUS\r\nHost: resolver\r\n\r\n", 400, b'{"error":"bad request"}'),
+        (b"NOT A VALID REQUEST LINE\r\n\r\n", 400, b'{"error":"bad request"}'),
+    ],
+)
+def test_parser_errors_are_complete_http11_canonical_json(service, raw_request, status, body):
+    base, _calls = service
+    response = _raw_response(int(base.rsplit(":", 1)[1]), raw_request)
+    head, actual_body = response.split(b"\r\n\r\n", 1)
+    assert head.startswith(f"HTTP/1.1 {status} ".encode())
+    assert b"Content-Type: application/json" in head
+    assert f"Content-Length: {len(body)}".encode() in head
+    assert b"Connection: close" in head
+    assert actual_body == body
 
 
 def test_parser_failures_are_canonical_bounded_json(service):

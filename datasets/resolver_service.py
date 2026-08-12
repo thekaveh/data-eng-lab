@@ -175,6 +175,7 @@ def _handler() -> type[BaseHTTPRequestHandler]:
     class ResolverHandler(BaseHTTPRequestHandler):
         server_version = "dataset-resolver"
         sys_version = ""
+        protocol_version = "HTTP/1.1"
 
         def setup(self) -> None:
             super().setup()
@@ -205,14 +206,18 @@ def _handler() -> type[BaseHTTPRequestHandler]:
 
         def send_error(self, code: int, message: str | None = None, explain: str | None = None) -> None:
             del message, explain
+            self.request_version = "HTTP/1.1"
             original_status = HTTPStatus(code) if code in HTTPStatus._value2member_map_ else HTTPStatus.BAD_REQUEST
             safe_messages = {
                 HTTPStatus.REQUEST_URI_TOO_LONG: "request URI is too long",
                 HTTPStatus.REQUEST_HEADER_FIELDS_TOO_LARGE: "request headers are too large",
+                HTTPStatus.HTTP_VERSION_NOT_SUPPORTED: "HTTP version is not supported",
                 HTTPStatus.NOT_IMPLEMENTED: "method not allowed",
             }
-            status = HTTPStatus.METHOD_NOT_ALLOWED if original_status is HTTPStatus.NOT_IMPLEMENTED else original_status
-            self._error(status, safe_messages.get(original_status, "bad request"))
+            if original_status is HTTPStatus.NOT_IMPLEMENTED:
+                self._unsupported_method()
+                return
+            self._error(original_status, safe_messages.get(original_status, "bad request"))
 
         def do_GET(self) -> None:  # noqa: N802
             if self.path == "/healthz":
@@ -313,12 +318,8 @@ def _handler() -> type[BaseHTTPRequestHandler]:
             self._unsupported_method()
 
         def _unsupported_method(self) -> None:
-            if self.path == "/healthz":
-                self._error(HTTPStatus.METHOD_NOT_ALLOWED, "method not allowed", allow="GET")
-            elif self.path == "/v1/resolve":
-                self._error(HTTPStatus.METHOD_NOT_ALLOWED, "method not allowed", allow="POST")
-            else:
-                self._error(HTTPStatus.NOT_FOUND, "not found")
+            allow = "GET" if self.path == "/healthz" else "POST" if self.path == "/v1/resolve" else "GET, POST"
+            self._error(HTTPStatus.METHOD_NOT_ALLOWED, "method not allowed", allow=allow)
 
     return ResolverHandler
 
