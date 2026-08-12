@@ -764,6 +764,7 @@ def download_bounded(
     staging_path: Path | None = None
     target: BinaryIO | None = None
     downloaded_file: DownloadedFile | None = None
+    owned_identity: tuple[int, int] | None = None
     published = False
     try:
         try:
@@ -873,6 +874,12 @@ def download_bounded(
             ),
         )
         try:
+            staging_is_owned = _path_matches_identity(staging_path, owned_identity, directory=False)
+        except OSError as error:
+            raise ValueError("download staging path changed") from error
+        if not staging_is_owned:
+            raise ValueError("download staging path changed")
+        try:
             _publish_path_exclusive(staging_path, destination)
         except (FileExistsError, ValueError):
             raise ValueError("destination changed during download") from None
@@ -888,9 +895,10 @@ def download_bounded(
                 pass
         if downloaded_file is not None and not published:
             _unbind_download(downloaded_file)
-        if staging_path is not None and not published:
+        if staging_path is not None and owned_identity is not None and not published:
             try:
-                os.unlink(staging_path)
+                if _path_matches_identity(staging_path, owned_identity, directory=False):
+                    os.unlink(staging_path)
             except FileNotFoundError:
                 pass
             except OSError as error:
@@ -972,7 +980,7 @@ def _zip64_metadata(stream: BinaryIO, eocd_offset: int, limits: ZipLimits) -> tu
     if disk != 0 or central_directory_disk != 0 or entries_on_disk != entries:
         raise ValueError("multi-disk ZIP archives are not supported")
     _bounded_zip_metadata(entries, central_directory_size, limits)
-    if zip64_offset != central_directory_offset + central_directory_size:
+    if zip64_offset != record_offset or zip64_offset != central_directory_offset + central_directory_size:
         raise ValueError("ZIP64 record layout is inconsistent")
     return entries, central_directory_size, record_offset
 
@@ -1379,6 +1387,15 @@ def _publish_path_exclusive(source: Path, destination: Path) -> None:
         raise OSError(error_number, os.strerror(error_number), destination)
 
 
+def _path_matches_identity(path: Path, identity: tuple[int, int], *, directory: bool) -> bool:
+    try:
+        current = path.lstat()
+    except FileNotFoundError:
+        return False
+    expected_type = stat.S_ISDIR if directory else stat.S_ISREG
+    return expected_type(current.st_mode) and (current.st_dev, current.st_ino) == identity
+
+
 def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) -> list[Path]:
     """Extract into an atomic private staging directory under a trusted parent."""
     path = Path(path)
@@ -1402,8 +1419,13 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
     canonical_entries = _canonical_archive_entries(entries)
 
     archive_stream, current_snapshot = _stable_archive(path)
+    staging_identity: tuple[int, int] | None = None
     try:
         staging_root = Path(tempfile.mkdtemp(prefix=".dataset-extract-", dir=destination.parent))
+        staging_status = staging_root.lstat()
+        if not stat.S_ISDIR(staging_status.st_mode):
+            raise OSError("private extraction staging path is not a directory")
+        staging_identity = (staging_status.st_dev, staging_status.st_ino)
     except OSError as error:
         archive_stream.close()
         raise ValueError("extraction parent is unavailable") from error
@@ -1413,16 +1435,33 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
         | getattr(os, "O_DIRECTORY", 0)
         | getattr(os, "O_NOFOLLOW", 0)
     )
+    destination_descriptor: int | None = None
     try:
-        destination_descriptor: int | None = os.open(staging_root, directory_flags)
+        destination_descriptor = os.open(staging_root, directory_flags)
+        opened_staging = os.fstat(destination_descriptor)
+        if not stat.S_ISDIR(opened_staging.st_mode) or (
+            opened_staging.st_dev,
+            opened_staging.st_ino,
+        ) != staging_identity:
+            raise OSError("private extraction staging path changed while opening")
     except OSError as error:
         cleanup_failed = False
+        if destination_descriptor is not None:
+            try:
+                os.close(destination_descriptor)
+            except OSError:
+                cleanup_failed = True
         try:
             archive_stream.close()
         except OSError:
             cleanup_failed = True
         try:
-            shutil.rmtree(staging_root)
+            if staging_identity is not None and _path_matches_identity(
+                staging_root,
+                staging_identity,
+                directory=True,
+            ):
+                shutil.rmtree(staging_root)
         except OSError:
             cleanup_failed = True
         if cleanup_failed:
@@ -1453,7 +1492,12 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
         except OSError as error:
             cleanup_error = cleanup_error or error
         try:
-            shutil.rmtree(staging_root)
+            if staging_identity is not None and _path_matches_identity(
+                staging_root,
+                staging_identity,
+                directory=True,
+            ):
+                shutil.rmtree(staging_root)
         except OSError as error:
             cleanup_error = cleanup_error or error
         if cleanup_error is not None:
@@ -1545,6 +1589,16 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
         error = ValueError("extracted output capability is unavailable")
         cleanup(error)
         raise error
+    try:
+        staging_is_owned = _path_matches_identity(staging_root, staging_identity, directory=True)
+    except OSError as error:
+        changed = ValueError("extraction staging path changed")
+        cleanup(changed)
+        raise changed from error
+    if not staging_is_owned:
+        changed = ValueError("extraction staging path changed")
+        cleanup(changed)
+        raise changed
     try:
         _publish_path_exclusive(staging_root, destination)
     except ValueError as error:

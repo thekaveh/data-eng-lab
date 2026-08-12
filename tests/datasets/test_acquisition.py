@@ -820,6 +820,61 @@ def test_download_private_cleanup_failure_prevents_publication(tmp_path: Path, m
     assert not destination.exists()
 
 
+def test_download_rejects_staging_path_swap_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _public_dns(monkeypatch, "192.0.0.9")
+    real_bind = acquisition._bind_download
+    moved_staging = tmp_path / "moved-download"
+    replacement: list[Path] = []
+
+    def swap_after_binding(downloaded: object, binding: object) -> None:
+        real_bind(downloaded, binding)  # type: ignore[arg-type]
+        staging = next(tmp_path.glob(".dataset-download-*"))
+        staging.replace(moved_staging)
+        staging.write_bytes(b"foreign replacement")
+        replacement.append(staging)
+
+    monkeypatch.setattr(acquisition, "_bind_download", swap_after_binding)
+    destination = tmp_path / "target"
+
+    with pytest.raises(ValueError, match="download staging path changed"):
+        download_bounded("https://example.test/file", destination, 10, transport=FakeTransport())
+
+    assert not destination.exists()
+    assert replacement[0].read_bytes() == b"foreign replacement"
+
+
+def test_download_cleanup_preserves_swapped_staging_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _public_dns(monkeypatch, "192.0.0.9")
+    moved_staging = tmp_path / "moved-download"
+    replacement: list[Path] = []
+
+    class SwappingCloseResponse(FakeResponse):
+        def close(self) -> None:
+            staging = next(tmp_path.glob(".dataset-download-*"))
+            staging.replace(moved_staging)
+            staging.write_bytes(b"foreign replacement")
+            replacement.append(staging)
+            raise OSError("response close failed")
+
+    destination = tmp_path / "target"
+    with pytest.raises(ValueError, match="response close failed"):
+        download_bounded(
+            "https://example.test/file",
+            destination,
+            10,
+            transport=FakeTransport([SwappingCloseResponse()]),
+        )
+
+    assert not destination.exists()
+    assert replacement[0].read_bytes() == b"foreign replacement"
+
+
 def test_download_publication_disappearance_is_normalized_without_binding_leak(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1092,6 +1147,62 @@ def test_extract_failure_does_not_delete_foreign_destination_replacement(
         extract_members(archive, entries, destination)
 
     assert (destination / "foreign").read_bytes() == b"attacker owned"
+
+
+def test_extract_rejects_staging_directory_swap_before_publication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    entries = validated_zip_members(archive, ZipLimits())
+    real_paths = acquisition._ExtractedPaths
+    moved_staging = tmp_path / "moved-extraction"
+    replacement: list[Path] = []
+
+    def swap_after_capability(paths: list[Path], bindings: list[object]):
+        capability = real_paths(paths, bindings)
+        staging = next(tmp_path.glob(".dataset-extract-*"))
+        staging.replace(moved_staging)
+        staging.mkdir()
+        (staging / "foreign").write_bytes(b"foreign replacement")
+        replacement.append(staging)
+        return capability
+
+    monkeypatch.setattr(acquisition, "_ExtractedPaths", swap_after_capability)
+    destination = tmp_path / "members"
+
+    with pytest.raises(ValueError, match="extraction staging path changed"):
+        extract_members(archive, entries, destination)
+
+    assert not destination.exists()
+    assert (replacement[0] / "foreign").read_bytes() == b"foreign replacement"
+
+
+def test_extract_cleanup_preserves_swapped_staging_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    archive = _zip(tmp_path / "data.zip", {"a.csv": b"a", "b.csv": b"b"})
+    entries = validated_zip_members(archive, ZipLimits())[:1]
+    real_validated_members = acquisition._validated_members
+    moved_staging = tmp_path / "moved-extraction"
+    replacement: list[Path] = []
+
+    def swap_before_mismatch(*args: object, **kwargs: object):
+        current = real_validated_members(*args, **kwargs)
+        staging = next(tmp_path.glob(".dataset-extract-*"))
+        staging.replace(moved_staging)
+        staging.mkdir()
+        (staging / "foreign").write_bytes(b"foreign replacement")
+        replacement.append(staging)
+        return current
+
+    monkeypatch.setattr(acquisition, "_validated_members", swap_before_mismatch)
+
+    with pytest.raises(ValueError, match="members changed after validation"):
+        extract_members(archive, entries, tmp_path / "members")
+
+    assert (replacement[0] / "foreign").read_bytes() == b"foreign replacement"
 
 
 def test_archive_entry_public_constructor_remains_three_fields():
@@ -1645,3 +1756,58 @@ def test_archive_snapshot_rejects_same_size_mutation_and_restore_during_copy(
 
     with pytest.raises(ValueError, match="archive changed while taking stable snapshot"):
         acquisition.preflight_zip(archive, ZipLimits())
+
+
+def test_zip64_locator_must_point_to_adjacent_record_before_zipfile_construction(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    payload = archive.read_bytes()
+    eocd_offset = payload.rindex(b"PK\x05\x06")
+    (
+        _signature,
+        _disk,
+        _central_directory_disk,
+        _entries_on_disk,
+        entries,
+        central_directory_size,
+        central_directory_offset,
+        _comment_size,
+    ) = struct.unpack_from("<4s4H2LH", payload, eocd_offset)
+    record_offset = eocd_offset
+    contradictory_offset = record_offset - 1
+    zip64_record = struct.pack(
+        "<4sQ2H2L4Q",
+        b"PK\x06\x06",
+        44,
+        45,
+        45,
+        0,
+        0,
+        entries,
+        entries,
+        central_directory_size,
+        central_directory_offset - 1,
+    )
+    locator = struct.pack("<4sLQL", b"PK\x06\x07", 0, contradictory_offset, 1)
+    sentinel_eocd = struct.pack(
+        "<4s4H2LH",
+        b"PK\x05\x06",
+        0,
+        0,
+        0xFFFF,
+        0xFFFF,
+        0xFFFFFFFF,
+        0xFFFFFFFF,
+        0,
+    )
+    archive.write_bytes(payload[:eocd_offset] + zip64_record + locator + sentinel_eocd)
+    monkeypatch.setattr(
+        acquisition.zipfile,
+        "ZipFile",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("ZipFile constructed")),
+    )
+
+    with pytest.raises(ValueError, match="ZIP64 record layout is inconsistent"):
+        validated_zip_members(archive, ZipLimits())
