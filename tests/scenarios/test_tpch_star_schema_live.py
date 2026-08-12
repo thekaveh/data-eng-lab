@@ -26,6 +26,9 @@ PROVENANCE_KEYS = (
     "data_eng_lab.dataset.manifest_sha256",
 )
 _AIRFLOW_TOKEN = ""
+_RUN_PAGE_LIMIT = 100
+_MAX_RUN_INVENTORY = 1000
+_MAX_RUN_REQUESTS = 10
 
 pytestmark = pytest.mark.infra
 
@@ -149,8 +152,54 @@ def _run_timestamp(value: str) -> datetime:
 
 
 def _list_runs(api) -> list[dict]:
-    document = api("GET", f"/dags/{DAG_ID}/dagRuns?limit=100&order_by=start_date")
-    return document.get("dag_runs", [])
+    found: list[dict] = []
+    run_ids: set[str] = set()
+    expected_total = None
+    offset = 0
+    for _request_number in range(_MAX_RUN_REQUESTS):
+        document = api(
+            "GET",
+            f"/dags/{DAG_ID}/dagRuns?limit={_RUN_PAGE_LIMIT}&offset={offset}&order_by=start_date",
+        )
+        if not isinstance(document, dict):
+            raise AssertionError("Airflow DagRun inventory response must be an object")
+        total = document.get("total_entries")
+        if isinstance(total, bool) or not isinstance(total, int) or total < 0:
+            raise AssertionError("Airflow DagRun inventory total_entries must be a nonnegative integer")
+        if total > _MAX_RUN_INVENTORY:
+            raise AssertionError(
+                f"Airflow DagRun inventory exceeds safe maximum {_MAX_RUN_INVENTORY}"
+            )
+        if expected_total is None:
+            expected_total = total
+        elif total != expected_total:
+            raise AssertionError("Airflow DagRun inventory total_entries changed during pagination")
+
+        page = document.get("dag_runs")
+        if not isinstance(page, list):
+            raise AssertionError("Airflow DagRun inventory dag_runs must be a list")
+        if len(page) > _RUN_PAGE_LIMIT:
+            raise AssertionError("Airflow DagRun inventory page exceeds requested limit")
+        if not page and len(found) < expected_total:
+            raise AssertionError("Airflow DagRun inventory pagination made no progress")
+        for run in page:
+            if not isinstance(run, dict):
+                raise AssertionError("Airflow DagRun inventory entries must be objects")
+            run_id = run.get("dag_run_id")
+            if not isinstance(run_id, str) or not run_id:
+                raise AssertionError("Airflow DagRun inventory entry has invalid dag_run_id")
+            if run_id in run_ids:
+                raise AssertionError(f"Airflow DagRun inventory contains duplicate run ID {run_id}")
+            run_ids.add(run_id)
+            found.append(run)
+        if len(found) > expected_total:
+            raise AssertionError("Airflow DagRun inventory contains more entries than total_entries")
+        if len(found) == expected_total:
+            return found
+        offset += len(page)
+    raise AssertionError(
+        f"Airflow DagRun inventory exceeded safe request count {_MAX_RUN_REQUESTS}"
+    )
 
 
 def _acceptance_timestamp(run: dict) -> datetime | None:
