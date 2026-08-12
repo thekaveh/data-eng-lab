@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import hashlib
 import http.client
 import ipaddress
+import multiprocessing
+import os
 import socket
 import ssl
 import stat
 import struct
+import tempfile
 import time
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Mapping, Protocol
+from typing import BinaryIO, Mapping, Protocol
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 from . import schema as dataset_schema
@@ -48,6 +52,8 @@ class ArchiveEntry:
     member_path: str
     object_name: str
     size_bytes: int
+    _snapshot: _ArchiveSnapshot | None = field(default=None, init=False, repr=False, compare=False)
+    _limits: ZipLimits | None = field(default=None, init=False, repr=False, compare=False)
 
 
 @dataclass(frozen=True)
@@ -57,6 +63,14 @@ class ZipLimits:
     max_total_expanded_bytes: int = 8 * 1024 * 1024 * 1024
     max_compression_ratio: int = 200
     max_member_bytes: int = 2 * 1024 * 1024 * 1024
+
+
+@dataclass(frozen=True)
+class _ArchiveSnapshot:
+    device: int
+    inode: int
+    size_bytes: int
+    sha256: str
 
 
 class _Response(Protocol):
@@ -178,11 +192,42 @@ def _remaining(deadline: float) -> float:
     return remaining
 
 
-def _resolved_public_addresses(host: str, url: str) -> list[str]:
+def _resolve_worker(connection: object, host: str) -> None:
     try:
         answers = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
-    except OSError as error:
-        raise ValueError(f"could not resolve {_redacted_url(url)}") from error
+        connection.send((True, answers))  # type: ignore[attr-defined]
+    except BaseException:
+        connection.send((False, None))  # type: ignore[attr-defined]
+    finally:
+        connection.close()  # type: ignore[attr-defined]
+
+
+def _bounded_dns_answers(host: str, deadline: float, url: str) -> list[tuple[object, ...]]:
+    context = multiprocessing.get_context("fork")
+    receive, send = context.Pipe(duplex=False)
+    process = context.Process(target=_resolve_worker, args=(send, host), daemon=True)
+    try:
+        process.start()
+        send.close()
+        if not receive.poll(_remaining(deadline)):
+            raise ValueError("download deadline exceeded")
+        succeeded, answers = receive.recv()
+        if not succeeded or answers is None:
+            raise ValueError(f"could not resolve {_redacted_url(url)}")
+        return list(answers)
+    finally:
+        receive.close()
+        send.close()
+        if process.is_alive():
+            process.terminate()
+        process.join(timeout=0.1)
+        if process.is_alive():
+            process.kill()
+            process.join()
+
+
+def _resolved_public_addresses(host: str, url: str, deadline: float) -> list[str]:
+    answers = _bounded_dns_answers(host, deadline, url)
     addresses: list[str] = []
     for _family, _socket_type, _protocol, _canonical_name, socket_address in answers:
         raw_address = str(socket_address[0]).split("%", 1)[0]
@@ -237,10 +282,11 @@ def download_bounded(
         raise ValueError("HTTP transport must not inherit proxy configuration")
     destination = Path(destination)
     deadline = time.monotonic() + deadline_seconds
-    owned = False
+    owned_identity: tuple[int, int] | None = None
     try:
         with destination.open("xb") as target:
-            owned = True
+            opened_stat = os.fstat(target.fileno())
+            owned_identity = (opened_stat.st_dev, opened_stat.st_ino)
             current_url = url
             redirects = 0
             while True:
@@ -250,18 +296,19 @@ def download_bounded(
                 if host is None:
                     raise ValueError("url: must be an authoritative HTTPS URL")
                 host = host.rstrip(".").lower()
-                addresses = _resolved_public_addresses(host, current_url)
+                addresses = _resolved_public_addresses(host, current_url, deadline)
                 pinned_address = addresses[0]
                 response: _Response | None = None
+                request_timeout = _remaining(deadline)
                 try:
                     try:
                         response = active_transport.request(
-                        url=current_url,
-                        address=pinned_address,
-                        server_hostname=host,
-                        host_header=parsed.netloc,
+                            url=current_url,
+                            address=pinned_address,
+                            server_hostname=host,
+                            host_header=parsed.netloc,
                             headers={"Accept-Encoding": "identity"},
-                            timeout=_remaining(deadline),
+                            timeout=request_timeout,
                         )
                     except Exception:
                         raise ValueError(f"HTTP request failed for {_redacted_url(current_url)}") from None
@@ -305,8 +352,14 @@ def download_bounded(
                     if response is not None:
                         response.close()
     except BaseException:
-        if owned:
-            destination.unlink(missing_ok=True)
+        if owned_identity is not None:
+            try:
+                current_stat = destination.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                if (current_stat.st_dev, current_stat.st_ino) == owned_identity:
+                    destination.unlink(missing_ok=True)
         raise
 
 
@@ -317,12 +370,11 @@ def _bounded_zip_metadata(entries: int, central_directory_size: int, limits: Zip
         raise ValueError(f"archive central directory exceeds {limits.max_central_directory_bytes} bytes")
 
 
-def _selected_eocd(path: Path) -> tuple[bytes, int]:
-    file_size = path.stat().st_size
+def _selected_eocd(stream: BinaryIO) -> tuple[bytes, int]:
+    file_size = os.fstat(stream.fileno()).st_size
     tail_start = max(file_size - (1 << 16) - _EOCD_SIZE, 0)
-    with path.open("rb") as stream:
-        stream.seek(tail_start)
-        tail = stream.read()
+    stream.seek(tail_start)
+    tail = stream.read()
 
     selected = -1
     if len(tail) >= _EOCD_SIZE and tail[-_EOCD_SIZE : -_EOCD_SIZE + 4] == _EOCD_SIGNATURE and tail[-2:] == b"\0\0":
@@ -349,25 +401,24 @@ def _selected_eocd(path: Path) -> tuple[bytes, int]:
     return record, tail_start + selected
 
 
-def _zip64_metadata(path: Path, eocd_offset: int, limits: ZipLimits) -> tuple[int, int, int] | None:
+def _zip64_metadata(stream: BinaryIO, eocd_offset: int, limits: ZipLimits) -> tuple[int, int, int] | None:
     locator_offset = eocd_offset - _ZIP64_LOCATOR_SIZE
     if locator_offset < 0:
         return None
-    with path.open("rb") as stream:
-        stream.seek(locator_offset)
-        locator = stream.read(_ZIP64_LOCATOR_SIZE)
-        if len(locator) != _ZIP64_LOCATOR_SIZE:
-            return None
-        signature, disk, zip64_offset, disk_count = struct.unpack("<4sLQL", locator)
-        if signature != _ZIP64_LOCATOR_SIGNATURE:
-            return None
-        if disk != 0 or disk_count != 1:
-            raise ValueError("multi-disk ZIP archives are not supported")
-        record_offset = locator_offset - _ZIP64_EOCD_SIZE
-        if record_offset < 0:
-            raise ValueError("ZIP64 record layout is inconsistent")
-        stream.seek(record_offset)
-        record = stream.read(_ZIP64_EOCD_SIZE)
+    stream.seek(locator_offset)
+    locator = stream.read(_ZIP64_LOCATOR_SIZE)
+    if len(locator) != _ZIP64_LOCATOR_SIZE:
+        return None
+    signature, disk, zip64_offset, disk_count = struct.unpack("<4sLQL", locator)
+    if signature != _ZIP64_LOCATOR_SIGNATURE:
+        return None
+    if disk != 0 or disk_count != 1:
+        raise ValueError("multi-disk ZIP archives are not supported")
+    record_offset = locator_offset - _ZIP64_EOCD_SIZE
+    if record_offset < 0:
+        raise ValueError("ZIP64 record layout is inconsistent")
+    stream.seek(record_offset)
+    record = stream.read(_ZIP64_EOCD_SIZE)
     if len(record) != _ZIP64_EOCD_SIZE:
         raise ValueError("ZIP64 record layout is inconsistent")
     (
@@ -393,7 +444,7 @@ def _zip64_metadata(path: Path, eocd_offset: int, limits: ZipLimits) -> tuple[in
 
 
 def _stream_validate_central_directory(
-    path: Path,
+    stream: BinaryIO,
     start: int,
     size: int,
     declared_entries: int,
@@ -403,38 +454,35 @@ def _stream_validate_central_directory(
         raise ValueError("artifact has an invalid central-directory offset")
     remaining = size
     actual_entries = 0
-    with path.open("rb") as stream:
-        stream.seek(start)
-        while remaining:
-            if remaining < _CENTRAL_DIRECTORY_HEADER_SIZE:
-                raise ValueError("central directory has a truncated fixed header")
-            header = stream.read(_CENTRAL_DIRECTORY_HEADER_SIZE)
-            if len(header) != _CENTRAL_DIRECTORY_HEADER_SIZE:
-                raise ValueError("central directory has a truncated fixed header")
-            if header[:4] != _CENTRAL_DIRECTORY_SIGNATURE:
-                raise ValueError("central directory has an invalid file-header signature")
-            filename_size, extra_size, comment_size = struct.unpack_from("<3H", header, 28)
-            variable_size = filename_size + extra_size + comment_size
-            record_size = _CENTRAL_DIRECTORY_HEADER_SIZE + variable_size
-            if record_size > remaining:
+    stream.seek(start)
+    while remaining:
+        if remaining < _CENTRAL_DIRECTORY_HEADER_SIZE:
+            raise ValueError("central directory has a truncated fixed header")
+        header = stream.read(_CENTRAL_DIRECTORY_HEADER_SIZE)
+        if len(header) != _CENTRAL_DIRECTORY_HEADER_SIZE:
+            raise ValueError("central directory has a truncated fixed header")
+        if header[:4] != _CENTRAL_DIRECTORY_SIGNATURE:
+            raise ValueError("central directory has an invalid file-header signature")
+        filename_size, extra_size, comment_size = struct.unpack_from("<3H", header, 28)
+        variable_size = filename_size + extra_size + comment_size
+        record_size = _CENTRAL_DIRECTORY_HEADER_SIZE + variable_size
+        if record_size > remaining:
+            raise ValueError("central directory record exceeds declared region")
+        while variable_size:
+            chunk = stream.read(min(variable_size, 1 << 20))
+            if not chunk:
                 raise ValueError("central directory record exceeds declared region")
-            while variable_size:
-                chunk = stream.read(min(variable_size, 1 << 20))
-                if not chunk:
-                    raise ValueError("central directory record exceeds declared region")
-                variable_size -= len(chunk)
-            remaining -= record_size
-            actual_entries += 1
-            if actual_entries > limits.max_entries:
-                raise ValueError(f"archive contains more than {limits.max_entries} members")
+            variable_size -= len(chunk)
+        remaining -= record_size
+        actual_entries += 1
+        if actual_entries > limits.max_entries:
+            raise ValueError(f"archive contains more than {limits.max_entries} members")
     if actual_entries != declared_entries:
         raise ValueError(f"central directory contains {actual_entries} records but declares {declared_entries}")
 
 
-def preflight_zip(path: Path, limits: ZipLimits) -> None:
-    """Validate bounded EOCD, ZIP64, and central-directory metadata."""
-    path = Path(path)
-    eocd, eocd_offset = _selected_eocd(path)
+def _preflight_zip_stream(stream: BinaryIO, limits: ZipLimits) -> None:
+    eocd, eocd_offset = _selected_eocd(stream)
     (
         _signature,
         disk,
@@ -451,7 +499,7 @@ def preflight_zip(path: Path, limits: ZipLimits) -> None:
         or central_directory_size == 0xFFFFFFFF
         or _central_directory_offset == 0xFFFFFFFF
     )
-    zip64_metadata = _zip64_metadata(path, eocd_offset, limits)
+    zip64_metadata = _zip64_metadata(stream, eocd_offset, limits)
     if zip64_metadata is not None:
         entries, central_directory_size, central_directory_end = zip64_metadata
     else:
@@ -462,12 +510,61 @@ def preflight_zip(path: Path, limits: ZipLimits) -> None:
         _bounded_zip_metadata(entries, central_directory_size, limits)
         central_directory_end = eocd_offset
     _stream_validate_central_directory(
-        path,
+        stream,
         central_directory_end - central_directory_size,
         central_directory_size,
         entries,
         limits,
     )
+
+
+def _open_archive(path: Path) -> tuple[BinaryIO, os.stat_result]:
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptor = os.open(path, flags)
+    try:
+        opened_stat = os.fstat(descriptor)
+        current_stat = path.lstat()
+        if not stat.S_ISREG(opened_stat.st_mode) or (
+            opened_stat.st_dev,
+            opened_stat.st_ino,
+        ) != (current_stat.st_dev, current_stat.st_ino):
+            raise ValueError("archive path changed while opening")
+        return os.fdopen(descriptor, "rb"), opened_stat
+    except BaseException:
+        os.close(descriptor)
+        raise
+
+
+def _stable_archive(path: Path) -> tuple[BinaryIO, _ArchiveSnapshot]:
+    source, opened_stat = _open_archive(path)
+    snapshot_stream = tempfile.TemporaryFile()
+    digest = hashlib.sha256()
+    try:
+        with source:
+            for chunk in iter(lambda: source.read(1 << 20), b""):
+                snapshot_stream.write(chunk)
+                digest.update(chunk)
+            final_stat = os.fstat(source.fileno())
+        current_stat = path.lstat()
+        identity = (opened_stat.st_dev, opened_stat.st_ino)
+        if (
+            (final_stat.st_dev, final_stat.st_ino) != identity
+            or final_stat.st_size != opened_stat.st_size
+            or (current_stat.st_dev, current_stat.st_ino) != identity
+        ):
+            raise ValueError("archive changed while taking stable snapshot")
+        snapshot_stream.seek(0)
+        return snapshot_stream, _ArchiveSnapshot(*identity, opened_stat.st_size, digest.hexdigest())
+    except BaseException:
+        snapshot_stream.close()
+        raise
+
+
+def preflight_zip(path: Path, limits: ZipLimits) -> None:
+    """Validate bounded EOCD, ZIP64, and central-directory metadata."""
+    stream, _archive_snapshot = _stable_archive(Path(path))
+    with stream:
+        _preflight_zip_stream(stream, limits)
 
 
 def _unix_file_type(member: zipfile.ZipInfo) -> int:
@@ -511,7 +608,11 @@ def _validate_directory_member(member: zipfile.ZipInfo) -> str:
     return directory_path
 
 
-def _validated_members(members: list[zipfile.ZipInfo], limits: ZipLimits) -> list[ArchiveEntry]:
+def _validated_members(
+    members: list[zipfile.ZipInfo],
+    limits: ZipLimits,
+    snapshot: _ArchiveSnapshot,
+) -> list[ArchiveEntry]:
     if len(members) > limits.max_entries:
         raise ValueError(f"archive contains more than {limits.max_entries} members")
     total_size = 0
@@ -560,7 +661,10 @@ def _validated_members(members: list[zipfile.ZipInfo], limits: ZipLimits) -> lis
             raise ValueError(
                 f"archive member {member.filename} exceeds compression ratio {limits.max_compression_ratio}"
             )
-        entries.append(ArchiveEntry(member.filename, object_name, member.file_size))
+        entry = ArchiveEntry(member.filename, object_name, member.file_size)
+        object.__setattr__(entry, "_snapshot", snapshot)
+        object.__setattr__(entry, "_limits", limits)
+        entries.append(entry)
     if ambiguous_paths := directory_paths & file_paths:
         ambiguous_path = sorted(ambiguous_paths)[0]
         raise ValueError(f"archive path {ambiguous_path!r} is both a directory and a file")
@@ -581,10 +685,13 @@ def _validated_members(members: list[zipfile.ZipInfo], limits: ZipLimits) -> lis
 def validated_zip_members(path: Path, limits: ZipLimits) -> list[ArchiveEntry]:
     """Preflight and return the safe regular-file namespace of a ZIP archive."""
     path = Path(path)
-    preflight_zip(path, limits)
+    stream, archive_snapshot = _stable_archive(path)
     try:
-        with zipfile.ZipFile(path) as archive:
-            return _validated_members(archive.infolist(), limits)
+        with stream:
+            _preflight_zip_stream(stream, limits)
+            stream.seek(0)
+            with zipfile.ZipFile(stream) as archive:
+                return _validated_members(archive.infolist(), limits, archive_snapshot)
     except zipfile.BadZipFile as error:
         raise ValueError("artifact is not a valid ZIP archive") from error
 
@@ -593,38 +700,129 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
     """Extract validated members into a newly and exclusively owned directory."""
     path = Path(path)
     destination = Path(destination)
-    destination.mkdir(mode=0o700)
+    if not entries:
+        raise ValueError("archive must contain at least one regular file")
+    expected_snapshot = entries[0]._snapshot
+    limits = entries[0]._limits
+    if expected_snapshot is None or limits is None or any(
+        entry._snapshot != expected_snapshot or entry._limits != limits for entry in entries
+    ):
+        raise ValueError("archive entries are not bound to one validated snapshot")
+
+    archive_stream, current_snapshot = _stable_archive(path)
+    parent_flags = (
+        os.O_RDONLY
+        | getattr(os, "O_CLOEXEC", 0)
+        | getattr(os, "O_DIRECTORY", 0)
+        | getattr(os, "O_NOFOLLOW", 0)
+    )
+    parent_descriptor = os.open(destination.parent, parent_flags)
+    destination_descriptor: int | None = None
+    destination_identity: tuple[int, int] | None = None
+    owned_outputs: list[tuple[str, tuple[int, int]]] = []
     outputs: list[Path] = []
+
+    def cleanup() -> None:
+        if destination_descriptor is not None:
+            for name, identity in reversed(owned_outputs):
+                try:
+                    current = os.stat(name, dir_fd=destination_descriptor, follow_symlinks=False)
+                except FileNotFoundError:
+                    continue
+                if (current.st_dev, current.st_ino) == identity:
+                    os.unlink(name, dir_fd=destination_descriptor)
+        if destination_identity is not None:
+            try:
+                current_destination = os.stat(
+                    destination.name,
+                    dir_fd=parent_descriptor,
+                    follow_symlinks=False,
+                )
+            except FileNotFoundError:
+                return
+            if (current_destination.st_dev, current_destination.st_ino) == destination_identity:
+                try:
+                    os.rmdir(destination.name, dir_fd=parent_descriptor)
+                except OSError:
+                    pass
+
     try:
-        with zipfile.ZipFile(path) as archive:
-            infos = {info.filename: info for info in archive.infolist()}
-            total_extracted = 0
-            for entry in entries:
-                if validate_relative_path(entry.member_path, "archive member"):
-                    raise ValueError("archive member: must be a safe relative POSIX path")
-                unsafe_object_name = validate_relative_path(entry.object_name, "object name")
-                if unsafe_object_name or PurePosixPath(entry.object_name).name != entry.object_name:
-                    raise ValueError("object name: must be a safe relative POSIX path")
-                member = infos.get(entry.member_path)
-                if member is None or member.is_dir() or member.file_size != entry.size_bytes:
-                    raise ValueError(f"archive member {entry.member_path!r} changed after validation")
-                output = destination / entry.object_name
-                member_size = 0
-                with archive.open(member) as source, output.open("xb") as target:
-                    for chunk in iter(lambda: source.read(1 << 20), b""):
-                        member_size += len(chunk)
-                        total_extracted += len(chunk)
-                        if member_size > entry.size_bytes:
-                            raise ValueError(f"archive member {entry.member_path!r} changed after validation")
-                        target.write(chunk)
-                if member_size != entry.size_bytes:
-                    raise ValueError(f"archive member {entry.member_path!r} changed after validation")
-                outputs.append(output)
+        os.mkdir(destination.name, mode=0o700, dir_fd=parent_descriptor)
+        created_stat = os.stat(destination.name, dir_fd=parent_descriptor, follow_symlinks=False)
+        destination_identity = (created_stat.st_dev, created_stat.st_ino)
+        directory_flags = parent_flags | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            destination_descriptor = os.open(destination.name, directory_flags, dir_fd=parent_descriptor)
+        except OSError:
+            raise ValueError("destination changed during extraction") from None
+        destination_stat = os.fstat(destination_descriptor)
+        if (destination_stat.st_dev, destination_stat.st_ino) != destination_identity:
+            raise ValueError("destination changed during extraction")
+
+        with archive_stream:
+            if current_snapshot != expected_snapshot:
+                raise ValueError("archive changed after validation")
+            _preflight_zip_stream(archive_stream, limits)
+            archive_stream.seek(0)
+            with zipfile.ZipFile(archive_stream) as archive:
+                current_entries = _validated_members(archive.infolist(), limits, current_snapshot)
+                if current_entries != entries:
+                    raise ValueError("archive members changed after validation")
+                infos = {info.filename: info for info in archive.infolist()}
+                for entry in entries:
+                    if validate_relative_path(entry.member_path, "archive member"):
+                        raise ValueError("archive member: must be a safe relative POSIX path")
+                    unsafe_object_name = validate_relative_path(entry.object_name, "object name")
+                    if unsafe_object_name or PurePosixPath(entry.object_name).name != entry.object_name:
+                        raise ValueError("object name: must be a safe relative POSIX path")
+                    member = infos.get(entry.member_path)
+                    if member is None or member.is_dir() or member.file_size != entry.size_bytes:
+                        raise ValueError(f"archive member {entry.member_path!r} changed after validation")
+                    output = destination / entry.object_name
+                    member_size = 0
+                    output_flags = (
+                        os.O_WRONLY
+                        | os.O_CREAT
+                        | os.O_EXCL
+                        | getattr(os, "O_CLOEXEC", 0)
+                        | getattr(os, "O_NOFOLLOW", 0)
+                    )
+                    output_descriptor = os.open(
+                        entry.object_name,
+                        output_flags,
+                        0o600,
+                        dir_fd=destination_descriptor,
+                    )
+                    output_stat = os.fstat(output_descriptor)
+                    owned_outputs.append((entry.object_name, (output_stat.st_dev, output_stat.st_ino)))
+                    with os.fdopen(output_descriptor, "wb") as target, archive.open(member) as source:
+                        for chunk in iter(lambda: source.read(1 << 20), b""):
+                            member_size += len(chunk)
+                            if member_size > entry.size_bytes:
+                                raise ValueError(f"archive member {entry.member_path!r} changed after validation")
+                            target.write(chunk)
+                    if member_size != entry.size_bytes:
+                        raise ValueError(f"archive member {entry.member_path!r} changed after validation")
+                    current_output = os.stat(
+                        entry.object_name,
+                        dir_fd=destination_descriptor,
+                        follow_symlinks=False,
+                    )
+                    if (current_output.st_dev, current_output.st_ino) != owned_outputs[-1][1]:
+                        raise ValueError("archive output changed during extraction")
+                    outputs.append(output)
+        current_destination = os.stat(destination.name, dir_fd=parent_descriptor, follow_symlinks=False)
+        if (current_destination.st_dev, current_destination.st_ino) != destination_identity:
+            raise ValueError("destination changed during extraction")
+    except zipfile.BadZipFile as error:
+        cleanup()
+        raise ValueError("artifact is not a valid ZIP archive") from error
     except BaseException:
-        for output in outputs:
-            output.unlink(missing_ok=True)
-        for candidate in destination.iterdir():
-            candidate.unlink(missing_ok=True)
-        destination.rmdir()
+        cleanup()
         raise
+    finally:
+        archive_stream.close()
+        if destination_descriptor is not None:
+            os.close(destination_descriptor)
+        os.close(parent_descriptor)
     return outputs

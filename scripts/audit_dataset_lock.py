@@ -25,7 +25,6 @@ from datasets.locking import file_metadata, validate_relative_path  # noqa: E402
 
 REGISTRY_PATH = ROOT / "datasets" / "registry.yaml"
 DOWNLOAD_TIMEOUT_SECONDS = 120
-MAX_REDIRECTS = 5
 MAX_DOWNLOAD_BYTES = 2 * 1024**3
 MAX_ARCHIVE_MEMBERS = 10_000
 MAX_MEMBER_BYTES = 2 * 1024**3
@@ -47,6 +46,11 @@ def _metadata(path: Path) -> tuple[int, str]:
     if size == 0:
         raise ValueError("artifact must not be empty")
     return size, sha256
+
+
+def _identity(path: Path) -> tuple[int, int]:
+    status = path.lstat()
+    return status.st_dev, status.st_ino
 
 
 def _zip_limits() -> ZipLimits:
@@ -91,10 +95,15 @@ def audit_http(url: str, *, archive: bool) -> dict[str, object]:
             transport=DOWNLOAD_TRANSPORT,
         )
 
+        raw_identity = _identity(raw_path)
         raw_size, raw_sha256 = _metadata(raw_path)
+        if _identity(raw_path) != raw_identity:
+            raise ValueError("archive changed during audit")
         raw = {"name": raw_name, "size_bytes": raw_size, "sha256": raw_sha256}
         if archive:
             outputs = _archive_outputs(raw_path, temporary_root)
+            if _identity(raw_path) != raw_identity or _metadata(raw_path) != (raw_size, raw_sha256):
+                raise ValueError("archive changed during audit")
         else:
             outputs = [
                 {

@@ -1114,6 +1114,44 @@ def test_audit_zip_converts_corrupt_content_to_value_error():
 
 
 @responses.activate
+def test_audit_zip_converts_crc_corruption_to_value_error():
+    source = "https://source.invalid/data.zip"
+    payload = bytearray(zip_bytes({"data.csv": b"locked"}))
+    local_header = payload.index(b"PK\x03\x04")
+    filename_size, extra_size = struct.unpack_from("<2H", payload, local_header + 26)
+    payload[local_header + 30 + filename_size + extra_size] ^= 0xFF
+    responses.add(responses.GET, source, body=bytes(payload), status=200)
+
+    with pytest.raises(ValueError, match="artifact is not a valid ZIP archive"):
+        audit.audit_http(source, archive=True)
+
+
+def test_audit_rejects_raw_archive_replacement_before_publishing_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+):
+    original = zip_bytes({"data.csv": b"first!"})
+    replacement = zip_bytes({"data.csv": b"second"})
+
+    def fake_download(url: str, destination: Path, *args: object, **kwargs: object):
+        destination.write_bytes(original)
+        return acquisition.DownloadedFile(destination, acquisition.ResponseEvidence())
+
+    real_archive_outputs = audit._archive_outputs
+
+    def replacing_archive_outputs(raw_path: Path, temporary_root: Path):
+        outputs = real_archive_outputs(raw_path, temporary_root)
+        raw_path.write_bytes(replacement)
+        return outputs
+
+    monkeypatch.setattr(audit, "download_bounded", fake_download)
+    monkeypatch.setattr(audit, "_archive_outputs", replacing_archive_outputs)
+
+    with pytest.raises(ValueError, match="archive changed during audit"):
+        audit.audit_http("https://source.invalid/data.zip", archive=True)
+
+
+@responses.activate
 def test_audit_http_omits_blank_response_evidence():
     source = "https://source.invalid/data.csv"
     responses.add(
