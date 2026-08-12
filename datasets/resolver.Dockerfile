@@ -17,8 +17,21 @@ COPY pyproject.toml uv.lock /workspace/
 RUN echo "a376ce1b5bd5621290aaded68c22572690395419876da41814e28469bb4186b1  /workspace/uv.lock" | sha256sum -c - && \
     uv sync --frozen --only-group dev --no-install-project && \
     rm -rf /tmp/uv-cache
-COPY datasets /workspace/datasets
-COPY lakehouse /workspace/lakehouse
+COPY datasets/__init__.py \
+    datasets/acquisition.py \
+    datasets/locking.py \
+    datasets/publication.py \
+    datasets/registry.py \
+    datasets/registry.yaml \
+    datasets/resolver_service.py \
+    datasets/s3.py \
+    datasets/schema.py \
+    datasets/schema_inspection.py \
+    datasets/verification.py \
+    /workspace/datasets/
+COPY lakehouse/__init__.py lakehouse/atlas_endpoints.py /workspace/lakehouse/
+RUN find /opt/venv /workspace -type f -name '*.pyc' -delete && \
+    find /opt/venv /workspace -type d -name '__pycache__' -empty -delete
 
 LABEL org.data-eng-lab.uv-lock-sha256="a376ce1b5bd5621290aaded68c22572690395419876da41814e28469bb4186b1"
 USER 65532:65532

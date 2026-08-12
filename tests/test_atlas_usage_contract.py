@@ -8,16 +8,15 @@ smuggle a fixed host endpoint into a scenario, launcher, or CI helper.
 
 from __future__ import annotations
 
-import importlib.util
+import json
+import os
 import re
-import socket
+import subprocess
 import sys
-import types
-import uuid
 from collections.abc import Iterable
 from pathlib import Path
 
-import boto3
+import pytest
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -135,12 +134,55 @@ def test_dataset_resolver_is_consumer_owned_internal_and_health_wired():
     }
     assert resolver["platform"] == "linux/amd64"
     assert resolver["environment"]["MINIO_ENDPOINT"] == "http://minio:9000"
+    assert resolver["networks"] == ["backend-network"]
     assert "ports" not in resolver and "expose" not in resolver
     assert resolver["depends_on"]["minio"]["condition"] == "service_healthy"
     for name in ("airflow-scheduler", "jupyterhub", "zeppelin"):
         service = services[name]
         assert service["environment"]["DATASET_RESOLVER_URI"] == "http://dataset-resolver:8080"
+        assert service["environment"]["DATASET_SCALE"] == "${DATASET_SCALE:-small}"
         assert service["depends_on"]["dataset-resolver"]["condition"] == "service_healthy"
+
+
+def _assembled_compose(scale: str | None = None) -> dict:
+    environment = os.environ.copy()
+    if scale is None:
+        environment.pop("DATASET_SCALE", None)
+    else:
+        environment["DATASET_SCALE"] = scale
+    completed = subprocess.run(
+        [
+            "docker",
+            "compose",
+            "--env-file",
+            str(ROOT / "infra" / ".env"),
+            "-f",
+            str(ROOT / "infra" / "docker-compose.yml"),
+            "-f",
+            str(ROOT / "compose" / "data-eng-lab.yml"),
+            "config",
+            "--format",
+            "json",
+        ],
+        cwd=ROOT,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(completed.stdout)
+
+
+@pytest.mark.parametrize(("environment_scale", "expected"), [(None, "small"), ("medium", "medium")])
+def test_assembled_resolver_network_overlap_and_scale_precedence(environment_scale, expected):
+    services = _assembled_compose(environment_scale)["services"]
+    participants = ("minio", "dataset-resolver", "airflow-scheduler", "jupyterhub", "zeppelin")
+    assert all("backend-network" in services[name]["networks"] for name in participants)
+    resolver = services["dataset-resolver"]
+    assert "default" not in resolver["networks"] and "ports" not in resolver and "expose" not in resolver
+    for name in ("airflow-scheduler", "jupyterhub", "zeppelin"):
+        assert services[name]["environment"]["DATASET_RESOLVER_URI"] == "http://dataset-resolver:8080"
+        assert services[name]["environment"]["DATASET_SCALE"] == expected
 
 
 def test_consumer_manifest_declares_resolver_configuration_only_in_overlay():
@@ -150,59 +192,58 @@ def test_consumer_manifest_declares_resolver_configuration_only_in_overlay():
     assert "dataset-resolver" not in manifest
 
 
-def test_airflow_dag_import_performs_no_resolver_or_s3_access(monkeypatch):
-    def fail_on_call(*_args, **_kwargs):
-        raise AssertionError("DAG import attempted network or S3 access")
-
-    class FakeOperator:
-        def __init__(self, *args, **kwargs):
-            pass
-
-    class FakeDag(FakeOperator):
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            return False
-
-    airflow = types.ModuleType("airflow")
-    airflow.DAG = FakeDag
-    airflow_operators = types.ModuleType("airflow.operators")
-    airflow_empty = types.ModuleType("airflow.operators.empty")
-    airflow_empty.EmptyOperator = FakeOperator
-    airflow_providers = types.ModuleType("airflow.providers")
-    airflow_apache = types.ModuleType("airflow.providers.apache")
-    airflow_spark = types.ModuleType("airflow.providers.apache.spark")
-    airflow_spark_operators = types.ModuleType("airflow.providers.apache.spark.operators")
-    airflow_spark_submit = types.ModuleType("airflow.providers.apache.spark.operators.spark_submit")
-    airflow_spark_submit.SparkSubmitOperator = FakeOperator
-    pendulum = types.ModuleType("pendulum")
-    pendulum.datetime = lambda *_args, **_kwargs: object()
-    atlas_utils = types.ModuleType("atlas_spark_utils")
-    atlas_utils.RestConfirmingSparkHook = FakeOperator
-    for name, module in {
-        "airflow": airflow,
-        "airflow.operators": airflow_operators,
-        "airflow.operators.empty": airflow_empty,
-        "airflow.providers": airflow_providers,
-        "airflow.providers.apache": airflow_apache,
-        "airflow.providers.apache.spark": airflow_spark,
-        "airflow.providers.apache.spark.operators": airflow_spark_operators,
-        "airflow.providers.apache.spark.operators.spark_submit": airflow_spark_submit,
-        "pendulum": pendulum,
-        "atlas_spark_utils": atlas_utils,
-    }.items():
-        monkeypatch.setitem(sys.modules, name, module)
-    monkeypatch.setattr(socket, "create_connection", fail_on_call)
-    monkeypatch.setattr(boto3, "client", fail_on_call)
-
+def test_airflow_dag_import_performs_no_resolver_or_s3_access():
+    guard = r"""
+import importlib.util, socket, sys, types
+import boto3, requests, urllib.request, urllib3
+def denied(*args, **kwargs):
+    raise AssertionError("DAG import attempted resolver, DNS, HTTP, or S3 access")
+class DeniedSocket:
+    def __init__(self, *args, **kwargs): denied()
+socket.socket = DeniedSocket
+socket.getaddrinfo = denied
+socket.create_connection = denied
+boto3.client = denied
+boto3.resource = denied
+boto3.Session = denied
+boto3.session.Session = denied
+requests.request = denied
+requests.get = denied
+requests.post = denied
+urllib.request.urlopen = denied
+urllib3.request = denied
+urllib3.PoolManager.request = denied
+class FakeOperator:
+    def __init__(self, *args, **kwargs): pass
+class FakeDag(FakeOperator):
+    def __enter__(self): return self
+    def __exit__(self, *args): return False
+airflow=types.ModuleType("airflow"); airflow.DAG=FakeDag
+empty=types.ModuleType("airflow.operators.empty"); empty.EmptyOperator=FakeOperator
+spark_submit=types.ModuleType("airflow.providers.apache.spark.operators.spark_submit")
+spark_submit.SparkSubmitOperator=FakeOperator
+pendulum=types.ModuleType("pendulum"); pendulum.datetime=lambda *args, **kwargs: object()
+atlas=types.ModuleType("atlas_spark_utils"); atlas.RestConfirmingSparkHook=FakeOperator
+resolver=types.ModuleType("datasets.resolver_service"); resolver.resolve_request=denied
+host_cli=types.ModuleType("scripts.resolve_dataset"); host_cli.run=denied
+for name, module in {
+ "airflow":airflow, "airflow.operators":types.ModuleType("airflow.operators"), "airflow.operators.empty":empty,
+ "airflow.providers":types.ModuleType("airflow.providers"),
+ "airflow.providers.apache":types.ModuleType("airflow.providers.apache"),
+ "airflow.providers.apache.spark":types.ModuleType("airflow.providers.apache.spark"),
+ "airflow.providers.apache.spark.operators":types.ModuleType("airflow.providers.apache.spark.operators"),
+ "airflow.providers.apache.spark.operators.spark_submit":spark_submit, "pendulum":pendulum,
+ "atlas_spark_utils":atlas, "datasets.resolver_service":resolver, "scripts.resolve_dataset":host_cli,
+}.items(): sys.modules[name]=module
+path=sys.argv[1]
+spec=importlib.util.spec_from_file_location("isolated_dag", path)
+module=importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+"""
     paths = sorted((ROOT / "scenarios").rglob("dag.py")) + sorted((ROOT / "spark-apps").rglob("dag.py"))
     for path in paths:
-        module_name = f"dataset_import_guard_{uuid.uuid4().hex}"
-        spec = importlib.util.spec_from_file_location(module_name, path)
-        assert spec is not None and spec.loader is not None
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
+        completed = subprocess.run([sys.executable, "-c", guard, str(path)], cwd=ROOT, capture_output=True, text=True)
+        assert completed.returncode == 0, f"{path.relative_to(ROOT)}: {completed.stderr}"
 
 
 def test_pin_bump_runbook_describes_automatic_target_rebuild():

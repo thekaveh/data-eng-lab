@@ -1,7 +1,8 @@
 # data-eng-lab overlay — appended to Atlas's compose invocation via the
 # compose_overlays: entry in atlas.consumer.yml (no legacy user-service symlink).
 # Relative host paths resolve against the compose project dir (infra/), so
-# ../scenarios == <repo>/scenarios. Patches existing Atlas services only.
+# ../scenarios == <repo>/scenarios. Adds one consumer-owned internal service
+# and patches existing Atlas consumers; Atlas source remains unchanged.
 services:
   dataset-resolver:
     build:
@@ -15,6 +16,8 @@ services:
     depends_on:
       minio:
         condition: service_healthy
+    networks:
+      - backend-network
     healthcheck:
       test:
         - CMD
@@ -30,6 +33,7 @@ services:
   airflow-scheduler:
     environment:
       DATASET_RESOLVER_URI: http://dataset-resolver:8080
+      DATASET_SCALE: ${DATASET_SCALE:-small}
     depends_on:
       dataset-resolver:
         condition: service_healthy
@@ -47,6 +51,7 @@ services:
   jupyterhub:
     environment:
       DATASET_RESOLVER_URI: http://dataset-resolver:8080
+      DATASET_SCALE: ${DATASET_SCALE:-small}
     depends_on:
       dataset-resolver:
         condition: service_healthy
@@ -57,6 +62,7 @@ services:
   zeppelin:
     environment:
       DATASET_RESOLVER_URI: http://dataset-resolver:8080
+      DATASET_SCALE: ${DATASET_SCALE:-small}
     depends_on:
       dataset-resolver:
         condition: service_healthy

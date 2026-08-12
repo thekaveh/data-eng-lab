@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import json
+import socket
 import threading
+import time
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from unittest.mock import ANY
 
 import pytest
 
@@ -48,7 +52,7 @@ def service(resolver_module, monkeypatch):
         return RESULT
 
     monkeypatch.setattr(resolver_module, "resolve_active_dataset", fake_resolver)
-    server = resolver_module.create_server(_Services(object(), object()), host="127.0.0.1", port=0)
+    server = resolver_module.create_server(_Services(object(), {"movielens": object()}), host="127.0.0.1", port=0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -70,11 +74,22 @@ def _request(base: str, path: str, *, method: str = "GET", body: bytes | None = 
         return response.status, response.headers, response.read()
 
 
+def _raw_request(port: int, request: bytes) -> tuple[int, bytes]:
+    with socket.create_connection(("127.0.0.1", port), timeout=2) as connection:
+        connection.sendall(request)
+        connection.shutdown(socket.SHUT_WR)
+        response = b""
+        while chunk := connection.recv(4096):
+            response += chunk
+    status = int(response.split(b" ", 2)[1])
+    return status, response.partition(b"\r\n\r\n")[2]
+
+
 def test_resolve_request_returns_exact_canonical_frozen_result(resolver_module, monkeypatch):
     monkeypatch.setattr(resolver_module, "resolve_active_dataset", lambda *_args: RESULT)
     body = resolver_module.resolve_request(
         {"dataset": "movielens", "expected_scale": "small"},
-        _Services(object(), object()),
+        _Services(object(), {"movielens": object()}),
     )
     assert body == canonical_json(
         {
@@ -118,7 +133,29 @@ def test_resolve_request_returns_exact_canonical_frozen_result(resolver_module, 
 )
 def test_resolve_request_rejects_invalid_exact_fields(resolver_module, document, message):
     with pytest.raises(resolver_module.RequestError, match=f"^{message}$"):
-        resolver_module.resolve_request(document, _Services(object(), object()))
+        resolver_module.resolve_request(document, _Services(object(), {"movielens": object()}))
+
+
+@pytest.mark.parametrize("dataset", ["nyc_taxi", "gh_archive", "movielens", "online_retail", "tpch"])
+def test_every_production_dataset_identifier_is_accepted(resolver_module, monkeypatch, dataset):
+    registry = {name: object() for name in ("nyc_taxi", "gh_archive", "movielens", "online_retail", "tpch")}
+    monkeypatch.setattr(resolver_module, "resolve_active_dataset", lambda *_args: RESULT)
+    assert resolver_module.resolve_request(
+        {"dataset": dataset, "expected_scale": "small"}, _Services(object(), registry)
+    )
+
+
+def test_unknown_well_formed_dataset_fails_before_resolver_access(resolver_module, monkeypatch):
+    monkeypatch.setattr(
+        resolver_module,
+        "resolve_active_dataset",
+        lambda *_args: (_ for _ in ()).throw(AssertionError("resolver must not run")),
+    )
+    with pytest.raises(resolver_module.RequestError, match="^unknown dataset$"):
+        resolver_module.resolve_request(
+            {"dataset": "unknown_dataset", "expected_scale": "small"},
+            _Services(object(), {"movielens": object()}),
+        )
 
 
 def test_http_resolve_success_has_exact_json_and_security_headers(service):
@@ -171,6 +208,78 @@ def test_resolve_endpoint_rejects_malformed_or_duplicate_json(service, body, exp
     assert calls == []
 
 
+def test_resolve_endpoint_rejects_deep_or_trailing_json(service):
+    base, calls = service
+    for body in (
+        b"[" * 1500 + b"]" * 1500,
+        b'{"dataset":"movielens","expected_scale":"small"} trailing',
+    ):
+        status, _, response_body = _request(
+            base, "/v1/resolve", method="POST", body=body, content_type="application/json"
+        )
+        assert status == 400
+        assert response_body == b'{"error":"request body must be valid JSON"}'
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("headers", "status", "message"),
+    [
+        (
+            b"Content-Length: 2\r\nContent-Length: 2\r\nContent-Type: application/json",
+            400,
+            "content length must be unique",
+        ),
+        (
+            b"Content-Length: 2\r\nContent-Type: application/json\r\nContent-Type: application/json",
+            400,
+            "content type must be unique",
+        ),
+        (b"Transfer-Encoding: chunked\r\nContent-Type: application/json", 400, "transfer encoding is not supported"),
+        (
+            b"Transfer-Encoding: chunked\r\nContent-Length: 2\r\nContent-Type: application/json",
+            400,
+            "transfer encoding is not supported",
+        ),
+        (b"Content-Length: -1\r\nContent-Type: application/json", 400, "content length is invalid"),
+        (b"Content-Length: +2\r\nContent-Type: application/json", 400, "content length is invalid"),
+        (b"Content-Length: 02\r\nContent-Type: application/json", 400, "content length is invalid"),
+        (b"Content-Length: 999999999999999999999\r\nContent-Type: application/json", 413, "request body is too large"),
+    ],
+)
+def test_raw_http_framing_is_strict(service, headers, status, message):
+    base, calls = service
+    port = int(base.rsplit(":", 1)[1])
+    actual, body = _raw_request(
+        port,
+        b"POST /v1/resolve HTTP/1.1\r\nHost: resolver\r\n" + headers + b"\r\n\r\n{}",
+    )
+    assert (actual, body) == (status, canonical_json({"error": message}))
+    assert calls == []
+
+
+@pytest.mark.parametrize("method", ["PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT"])
+def test_every_unsupported_method_is_canonical_json(service, method):
+    base, _calls = service
+    port = int(base.rsplit(":", 1)[1])
+    status, body = _raw_request(
+        port, f"{method} /v1/resolve HTTP/1.1\r\nHost: resolver\r\nContent-Length: 0\r\n\r\n".encode()
+    )
+    assert status == 405
+    if method == "HEAD":
+        assert body == b""
+    else:
+        assert body == b'{"error":"method not allowed"}'
+
+
+def test_parser_failures_are_canonical_bounded_json(service):
+    base, _calls = service
+    port = int(base.rsplit(":", 1)[1])
+    status, body = _raw_request(port, b"GET /" + b"x" * 70000 + b" HTTP/1.1\r\n\r\n")
+    assert status == 414
+    assert body == b'{"error":"request URI is too long"}'
+
+
 def test_http_contract_bounds_type_method_and_paths(service):
     base, calls = service
     status, _, body = _request(base, "/v1/resolve", method="POST", body=b"{}", content_type="text/plain")
@@ -201,6 +310,73 @@ def test_health_is_constant_and_never_resolves(service):
     assert calls == []
 
 
+def test_health_remains_responsive_while_resolution_is_busy(resolver_module, monkeypatch):
+    entered = threading.Event()
+    release = threading.Event()
+
+    def slow(*_args):
+        entered.set()
+        assert release.wait(2)
+        return RESULT
+
+    monkeypatch.setattr(resolver_module, "resolve_active_dataset", slow)
+    services = _Services(object(), {"movielens": object()})
+    server = resolver_module.create_server(services, host="127.0.0.1", port=0, max_resolver_work=1, max_connections=4)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_port}"
+    request_args = dict(
+        method="POST",
+        body=b'{"dataset":"movielens","expected_scale":"small"}',
+        content_type="application/json",
+    )
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            busy = pool.submit(_request, base, "/v1/resolve", **request_args)
+            assert entered.wait(1)
+            started = time.monotonic()
+            assert _request(base, "/healthz")[0] == 200
+            assert time.monotonic() - started < 0.5
+            assert _request(base, "/v1/resolve", **request_args) == (
+                503,
+                ANY,
+                b'{"error":"resolver is busy"}',
+            )
+            release.set()
+            assert busy.result(timeout=2)[0] == 200
+    finally:
+        release.set()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_partial_body_times_out_without_blocking_health(resolver_module):
+    server = resolver_module.create_server(
+        _Services(object(), {"movielens": object()}),
+        host="127.0.0.1",
+        port=0,
+        request_timeout=0.15,
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    connection = socket.create_connection(("127.0.0.1", server.server_port), timeout=1)
+    try:
+        connection.sendall(
+            b"POST /v1/resolve HTTP/1.1\r\nHost: resolver\r\nContent-Type: application/json\r\n"
+            b"Content-Length: 100\r\n\r\n{"
+        )
+        assert _request(f"http://127.0.0.1:{server.server_port}", "/healthz")[0] == 200
+        time.sleep(0.25)
+        response = connection.recv(4096)
+        assert b" 408 " in response and response.endswith(b'{"error":"request body timed out"}')
+    finally:
+        connection.close()
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
 def test_resolution_failure_returns_no_partial_result_or_sensitive_details(resolver_module, monkeypatch, capsys):
     secret = "http://minio:9000/?token=top-secret"
 
@@ -208,7 +384,7 @@ def test_resolution_failure_returns_no_partial_result_or_sensitive_details(resol
         raise RuntimeError(secret)
 
     monkeypatch.setattr(resolver_module, "resolve_active_dataset", fail)
-    server = resolver_module.create_server(_Services(object(), object()), host="127.0.0.1", port=0)
+    server = resolver_module.create_server(_Services(object(), {"movielens": object()}), host="127.0.0.1", port=0)
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -242,6 +418,26 @@ def test_container_service_environment_uses_only_container_endpoint(resolver_mod
     assert captured["aws_access_key_id"] == "generated-user"
     assert captured["aws_secret_access_key"] == "generated-password"
     assert captured["config"].retries["total_max_attempts"] == 1
+    assert captured["config"].connect_timeout == 3
+    assert captured["config"].read_timeout == 30
+
+
+def test_server_close_quiesces_requests_before_closing_client(resolver_module):
+    closed = []
+
+    class Client:
+        def close(self):
+            closed.append("client")
+
+    services = resolver_module.ResolverServices(Client(), {"movielens": object()})
+    server = resolver_module.create_server(services, host="127.0.0.1", port=0)
+    thread = threading.Thread(target=server.serve_forever)
+    thread.start()
+    server.shutdown()
+    server.server_close()
+    thread.join(timeout=2)
+    assert not thread.is_alive()
+    assert closed == ["client"]
 
 
 def test_resolver_dockerfile_is_pinned_locked_internal_and_non_root():
@@ -256,8 +452,36 @@ def test_resolver_dockerfile_is_pinned_locked_internal_and_non_root():
     )
     assert "USER 65532:65532" in text
     assert 'ENTRYPOINT ["/opt/venv/bin/python", "-m", "datasets.resolver_service"]' in text
-    assert "COPY lakehouse /workspace/lakehouse" in text
+    assert "COPY lakehouse/__init__.py lakehouse/atlas_endpoints.py /workspace/lakehouse/" in text
+    assert "datasets/tpch_lock_export.py" not in text
+    assert "find /opt/venv /workspace" in text and "*.pyc" in text
     assert "HEALTHCHECK" in text and "/healthz" in text
     assert "EXPOSE" not in text
     assert "COPY ." not in text
     assert "pip install" not in text
+
+
+def test_dockerignore_is_deny_by_default_and_allows_only_build_inputs():
+    lines = Path(".dockerignore").read_text(encoding="utf-8").splitlines()
+    assert lines[0] == "**"
+    assert set(lines[1:]) == {
+        "!pyproject.toml",
+        "!uv.lock",
+        "!datasets/",
+        "!datasets/__init__.py",
+        "!datasets/acquisition.py",
+        "!datasets/locking.py",
+        "!datasets/publication.py",
+        "!datasets/registry.py",
+        "!datasets/registry.yaml",
+        "!datasets/resolver_service.py",
+        "!datasets/s3.py",
+        "!datasets/schema.py",
+        "!datasets/schema_inspection.py",
+        "!datasets/tpch-lock-requirements.txt",
+        "!datasets/tpch_lock_export.py",
+        "!datasets/verification.py",
+        "!lakehouse/",
+        "!lakehouse/__init__.py",
+        "!lakehouse/atlas_endpoints.py",
+    }

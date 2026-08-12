@@ -98,6 +98,19 @@ def test_cli_rejects_invalid_environment_scale(cli_module, monkeypatch, capsys):
     assert "DATASET_SCALE must be one of: tiny, small, medium" in capsys.readouterr().err
 
 
+def test_explicit_scale_does_not_inspect_lower_priority_environment(cli_module, monkeypatch, capsysbinary):
+    monkeypatch.setenv("DATASET_SCALE", "intentionally-invalid")
+    calls = []
+    monkeypatch.setattr(
+        cli_module,
+        "run",
+        lambda dataset, scale, *_args: calls.append((dataset, scale)) or b'{"ok":true}',
+    )
+    assert cli_module.main(["tpch", "--scale", "tiny"]) == 0
+    assert calls == [("tpch", "tiny")]
+    assert capsysbinary.readouterr().out == b'{"ok":true}'
+
+
 def test_cli_failure_is_nonzero_redacted_and_stdout_empty(cli_module, monkeypatch, capsysbinary):
     secret = "http://localhost:61234/?secret=value"
     monkeypatch.setattr(cli_module, "run", lambda *_args: (_ for _ in ()).throw(RuntimeError(secret)))
@@ -106,6 +119,17 @@ def test_cli_failure_is_nonzero_redacted_and_stdout_empty(cli_module, monkeypatc
     assert captured.out == b""
     assert captured.err == b"dataset resolution failed\n"
     assert secret.encode() not in captured.err
+
+
+@pytest.mark.parametrize("error", [BrokenPipeError("closed"), OSError("secret-output-path")])
+def test_cli_stdout_write_failure_exits_cleanly_without_traceback(cli_module, monkeypatch, capsysbinary, error):
+    monkeypatch.setattr(cli_module, "run", lambda *_args: b'{"ok":true}')
+    monkeypatch.setattr(cli_module.sys.stdout.buffer, "write", lambda _body: (_ for _ in ()).throw(error))
+    assert cli_module.main(["tpch"]) == 1
+    captured = capsysbinary.readouterr()
+    assert captured.out == b""
+    assert b"Traceback" not in captured.err
+    assert b"secret-output-path" not in captured.err
 
 
 def test_cli_defaults_are_repository_registry_and_infra(cli_module):

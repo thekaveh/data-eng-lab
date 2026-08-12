@@ -40,16 +40,22 @@ def _parser() -> argparse.ArgumentParser:
 def main(argv=None) -> int:
     parser = _parser()
     args = parser.parse_args(argv)
-    environment_scale = os.environ.get("DATASET_SCALE")
-    if environment_scale is not None and environment_scale not in _SCALES:
-        parser.error("DATASET_SCALE must be one of: tiny, small, medium")
-    effective_scale = args.scale or environment_scale or "small"
+    if args.scale is not None:
+        effective_scale = args.scale
+    else:
+        environment_scale = os.environ.get("DATASET_SCALE")
+        if environment_scale is not None and environment_scale not in _SCALES:
+            parser.error("DATASET_SCALE must be one of: tiny, small, medium")
+        effective_scale = environment_scale or "small"
     try:
         body = run(args.dataset, effective_scale, Path(args.registry), Path(args.infra_dir))
     except Exception:
         print("dataset resolution failed", file=sys.stderr)
         return 1
-    sys.stdout.buffer.write(body)
+    try:
+        sys.stdout.buffer.write(body)
+    except (BrokenPipeError, OSError):
+        return 1
     return 0
 
 
