@@ -21,6 +21,13 @@ from scripts import audit_dataset_lock as audit
 ROOT = Path(__file__).resolve().parents[2]
 
 
+def test_bound_metadata_helpers_are_internal_only():
+    assert not hasattr(acquisition, "bound_download_metadata")
+    assert not hasattr(acquisition, "bound_extracted_metadata")
+    assert callable(acquisition._bound_download_metadata)
+    assert callable(acquisition._bound_extracted_metadata)
+
+
 @pytest.fixture(autouse=True)
 def shared_download_transport(monkeypatch: pytest.MonkeyPatch):
     def process_factory(context: object, send: object, host: str):
@@ -104,7 +111,7 @@ def test_audit_and_production_share_the_same_zip_policy(monkeypatch: pytest.Monk
 
     monkeypatch.setattr(audit, "validated_zip_members", sentinel_policy)
     monkeypatch.setattr(audit, "extract_members", lambda *args: [tmp_path / "extracted"])
-    monkeypatch.setattr(audit, "bound_extracted_metadata", lambda *args: [(6, hashlib.sha256(b"locked").hexdigest())])
+    monkeypatch.setattr(audit, "_bound_extracted_metadata", lambda *args: [(6, hashlib.sha256(b"locked").hexdigest())])
     (tmp_path / "extracted").write_bytes(b"locked")
 
     audit._archive_outputs(archive, tmp_path)
@@ -1179,7 +1186,7 @@ def test_audit_rejects_early_extracted_output_replacement_before_success(
         body=zip_bytes({"a.csv": b"a", "b.csv": b"b"}),
         status=200,
     )
-    real_bound_metadata = audit.bound_extracted_metadata
+    real_bound_metadata = audit._bound_extracted_metadata
 
     def replacing_metadata(paths: list[Path]):
         first = paths[0]
@@ -1187,7 +1194,7 @@ def test_audit_rejects_early_extracted_output_replacement_before_success(
         first.write_bytes(b"foreign")
         return real_bound_metadata(paths)
 
-    monkeypatch.setattr(audit, "bound_extracted_metadata", replacing_metadata)
+    monkeypatch.setattr(audit, "_bound_extracted_metadata", replacing_metadata)
 
     with pytest.raises(ValueError, match="extracted output changed"):
         audit.audit_http(source, archive=True)

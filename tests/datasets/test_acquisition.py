@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import copy
 import dataclasses
+import errno
+import gc
 import os
 import pickle
 import socket
@@ -23,7 +25,12 @@ def _stalled_dns_worker(connection: object) -> None:
 
 
 def _static_dns_worker(connection: object) -> None:
-    connection.send((True, [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.0.9", 443))]))  # type: ignore[attr-defined]
+    connection.send_bytes(  # type: ignore[attr-defined]
+        acquisition._encode_dns_result(
+            True,
+            [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.0.9", 443))],
+        )
+    )
     connection.close()  # type: ignore[attr-defined]
 
 
@@ -266,7 +273,12 @@ def test_dns_resolver_uses_spawn_context_and_closes_process_handle(monkeypatch: 
 
     def process_factory(context: object, send: object, host: str):
         observed["method"] = context.get_start_method()  # type: ignore[attr-defined]
-        send.send((True, [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.0.9", 443))]))
+        send.send_bytes(  # type: ignore[attr-defined]
+            acquisition._encode_dns_result(
+                True,
+                [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("192.0.0.9", 443))],
+            )
+        )
         return FinishedProcess()
 
     monkeypatch.setattr(acquisition, "_make_resolver_process", process_factory)
@@ -274,7 +286,11 @@ def test_dns_resolver_uses_spawn_context_and_closes_process_handle(monkeypatch: 
     answers = acquisition._bounded_dns_answers("example.test", time.monotonic() + 1, "https://example.test")
 
     assert answers[0][-1] == ("192.0.0.9", 443)
-    assert observed == {"method": "spawn", "started": True, "joins": [0], "closed": True}
+    assert observed["method"] == "spawn"
+    assert observed["started"] is True
+    assert len(observed["joins"]) == 2  # type: ignore[arg-type]
+    assert observed["joins"][-1] == 0  # type: ignore[index]
+    assert observed["closed"] is True
 
 
 def test_dns_resolver_start_failure_does_not_join_unstarted_process(monkeypatch: pytest.MonkeyPatch):
@@ -305,6 +321,86 @@ def test_dns_resolver_start_failure_does_not_join_unstarted_process(monkeypatch:
     assert calls == ["start", "close"]
 
 
+def test_dns_resolver_factory_failure_closes_both_pipe_endpoints(monkeypatch: pytest.MonkeyPatch):
+    closed: list[str] = []
+
+    class Endpoint:
+        def close(self) -> None:
+            closed.append(self.name)
+
+        def __init__(self, name: str) -> None:
+            self.name = name
+
+    class Context:
+        def Pipe(self, *, duplex: bool):
+            assert duplex is False
+            return Endpoint("receive"), Endpoint("send")
+
+    monkeypatch.setattr(acquisition.multiprocessing, "get_context", lambda method: Context())
+    monkeypatch.setattr(
+        acquisition,
+        "_make_resolver_process",
+        lambda *args: (_ for _ in ()).throw(RuntimeError("factory failed")),
+    )
+
+    with pytest.raises(ValueError, match="could not create DNS resolver") as error:
+        acquisition._bounded_dns_answers("example.test", time.monotonic() + 1, "https://example.test")
+
+    assert isinstance(error.value.__cause__, RuntimeError)
+    assert closed == ["receive", "send"]
+
+
+def test_dns_resolver_stuck_child_cleanup_is_deadline_bounded(monkeypatch: pytest.MonkeyPatch):
+    calls: list[object] = []
+
+    class Receive:
+        def poll(self, timeout: float) -> bool:
+            calls.append(("poll", timeout))
+            return False
+
+        def close(self) -> None:
+            calls.append("receive.close")
+
+    class Send:
+        def close(self) -> None:
+            calls.append("send.close")
+
+    class StuckProcess:
+        def start(self) -> None:
+            calls.append("start")
+
+        def is_alive(self) -> bool:
+            calls.append("is_alive")
+            return True
+
+        def terminate(self) -> None:
+            calls.append("terminate")
+
+        def kill(self) -> None:
+            calls.append("kill")
+
+        def join(self, timeout: float = 0) -> None:
+            calls.append(("join", timeout))
+
+        def close(self) -> None:
+            raise AssertionError("a live process handle cannot be closed")
+
+    class Context:
+        def Pipe(self, *, duplex: bool):
+            return Receive(), Send()
+
+    monkeypatch.setattr(acquisition.multiprocessing, "get_context", lambda method: Context())
+    monkeypatch.setattr(acquisition, "_make_resolver_process", lambda *args: StuckProcess())
+    started = time.monotonic()
+
+    with pytest.raises(ValueError, match="could not be reaped before deadline"):
+        acquisition._bounded_dns_answers("example.test", time.monotonic() + 0.02, "https://example.test")
+
+    assert time.monotonic() - started < 0.5
+    assert "terminate" in calls and "kill" in calls
+    assert all(item[1] <= 0.02 for item in calls if isinstance(item, tuple) and item[0] == "join")
+
+
 def test_dns_resolver_spawn_process_completes_without_handle_leak(monkeypatch: pytest.MonkeyPatch):
     before = {process.pid for process in acquisition.multiprocessing.active_children()}
 
@@ -317,6 +413,32 @@ def test_dns_resolver_spawn_process_completes_without_handle_leak(monkeypatch: p
 
     assert answers[0][-1] == ("192.0.0.9", 443)
     assert {process.pid for process in acquisition.multiprocessing.active_children()} == before
+
+
+@pytest.mark.parametrize("payload", [b"", b"not-json", b'{"ok":true'])
+def test_dns_resolver_rejects_eof_or_partial_invalid_payload(monkeypatch: pytest.MonkeyPatch, payload: bytes):
+    class PayloadProcess:
+        def __init__(self, send: object) -> None:
+            self.send = send
+
+        def start(self) -> None:
+            if payload:
+                self.send.send_bytes(payload)  # type: ignore[attr-defined]
+            self.send.close()  # type: ignore[attr-defined]
+
+        def is_alive(self) -> bool:
+            return False
+
+        def join(self, timeout: float = 0) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(acquisition, "_make_resolver_process", lambda context, send, host: PayloadProcess(send))
+
+    with pytest.raises(ValueError, match="DNS resolver returned an invalid result"):
+        acquisition._bounded_dns_answers("example.test", time.monotonic() + 1, "https://example.test")
 
 
 def test_download_rejects_path_replacement_before_success(
@@ -361,12 +483,167 @@ def test_bound_download_metadata_rejects_replacement_and_same_inode_mutation(
     destination.write_bytes(b"mutate")
 
     with pytest.raises(ValueError, match="download destination changed"):
-        acquisition.bound_download_metadata(downloaded)
+        acquisition._bound_download_metadata(downloaded)
 
     destination.unlink()
     destination.write_bytes(b"locked")
     with pytest.raises(ValueError, match="download destination changed"):
-        acquisition.bound_download_metadata(downloaded)
+        acquisition._bound_download_metadata(downloaded)
+
+
+def test_download_publishes_mode_0600_independent_of_umask(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    _public_dns(monkeypatch, "192.0.0.9")
+    previous_umask = os.umask(0)
+    try:
+        result = download_bounded(
+            "https://example.test/file",
+            tmp_path / "target",
+            10,
+            transport=FakeTransport(),
+        )
+    finally:
+        os.umask(previous_umask)
+
+    assert stat.S_IMODE(result.path.stat().st_mode) == 0o600
+
+
+def test_download_response_close_failure_prevents_publication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    _public_dns(monkeypatch, "192.0.0.9")
+
+    class CloseFailureResponse(FakeResponse):
+        def close(self) -> None:
+            raise OSError("response close failed")
+
+    destination = tmp_path / "target"
+    with pytest.raises(ValueError, match="response close failed"):
+        download_bounded(
+            "https://example.test/file",
+            destination,
+            10,
+            transport=FakeTransport([CloseFailureResponse()]),
+        )
+
+    assert not destination.exists()
+
+
+def test_download_target_close_failure_prevents_publication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    _public_dns(monkeypatch, "192.0.0.9")
+    real_fdopen = acquisition.os.fdopen
+
+    class CloseFailure:
+        def __init__(self, stream: object) -> None:
+            self.stream = stream
+
+        def __getattr__(self, name: str):
+            return getattr(self.stream, name)
+
+        def close(self) -> None:
+            self.stream.close()  # type: ignore[attr-defined]
+            raise OSError("target close failed")
+
+    def failing_fdopen(descriptor: int, mode: str):
+        stream = real_fdopen(descriptor, mode)
+        return CloseFailure(stream) if mode == "wb" else stream
+
+    monkeypatch.setattr(acquisition.os, "fdopen", failing_fdopen)
+    destination = tmp_path / "target"
+
+    with pytest.raises(ValueError, match="target close failed"):
+        download_bounded("https://example.test/file", destination, 10, transport=FakeTransport())
+
+    assert not destination.exists()
+
+
+def test_download_private_cleanup_failure_prevents_publication(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    _public_dns(monkeypatch, "192.0.0.9")
+
+    class CloseFailureResponse(FakeResponse):
+        def close(self) -> None:
+            raise OSError("response close failed")
+
+    real_unlink = acquisition.os.unlink
+
+    def fail_cleanup(path: object, *args: object, **kwargs: object) -> None:
+        if Path(path).name.startswith(".dataset-download-"):
+            raise OSError("cleanup failed")
+        real_unlink(path, *args, **kwargs)
+
+    monkeypatch.setattr(acquisition.os, "unlink", fail_cleanup)
+    destination = tmp_path / "target"
+
+    with pytest.raises(ValueError, match="private download cleanup failed"):
+        download_bounded(
+            "https://example.test/file",
+            destination,
+            10,
+            transport=FakeTransport([CloseFailureResponse()]),
+        )
+
+    assert not destination.exists()
+
+
+def test_download_publication_disappearance_is_normalized_without_binding_leak(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _public_dns(monkeypatch, "192.0.0.9")
+    real_publish = acquisition._publish_path_exclusive
+    destination = tmp_path / "target"
+    before = len(acquisition._DOWNLOAD_BINDINGS)
+
+    def disappearing_publish(source: Path, target: Path):
+        real_publish(source, target)
+        destination.unlink()
+        raise OSError(errno.ENOENT, "publication disappeared")
+
+    monkeypatch.setattr(acquisition, "_publish_path_exclusive", disappearing_publish)
+
+    with pytest.raises(ValueError, match="destination disappeared during publication"):
+        download_bounded("https://example.test/file", destination, 10, transport=FakeTransport())
+
+    assert len(acquisition._DOWNLOAD_BINDINGS) == before
+
+
+
+def test_stale_download_descriptor_is_normalized(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    _public_dns(monkeypatch, "192.0.0.9")
+    downloaded = download_bounded(
+        "https://example.test/file",
+        tmp_path / "target",
+        10,
+        transport=FakeTransport(),
+    )
+    os.close(acquisition._download_binding(downloaded).descriptor)
+
+    with pytest.raises(ValueError, match="download binding is unavailable"):
+        acquisition._bound_download_metadata(downloaded)
+
+
+def test_stale_download_binding_finalizer_never_closes_reused_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    _public_dns(monkeypatch, "192.0.0.9")
+    downloaded = download_bounded(
+        "https://example.test/file",
+        tmp_path / "target",
+        10,
+        transport=FakeTransport(),
+    )
+    stale = acquisition._download_binding(downloaded).descriptor
+    os.close(stale)
+    source = os.open(tmp_path / "foreign", os.O_RDWR | os.O_CREAT, 0o600)
+    foreign = os.dup2(source, stale)
+    if source != foreign:
+        os.close(source)
+
+    with pytest.raises(ValueError, match="download binding is unavailable"):
+        acquisition._bound_download_metadata(downloaded)
+    del downloaded
+    gc.collect()
+
+    os.fstat(foreign)
+    os.close(foreign)
 
 
 def test_download_revalidates_redirect_dns_and_redacts_query_from_error(
@@ -523,13 +800,13 @@ def test_extract_members_does_not_follow_replaced_destination_directory(
     destination = tmp_path / "members"
     attacker = tmp_path / "attacker"
     attacker.mkdir()
-    real_publish = acquisition._publish_directory_exclusive
+    real_publish = acquisition._publish_path_exclusive
 
     def replacing_publish(source: Path, target: Path):
         destination.symlink_to(attacker, target_is_directory=True)
         return real_publish(source, target)
 
-    monkeypatch.setattr(acquisition, "_publish_directory_exclusive", replacing_publish)
+    monkeypatch.setattr(acquisition, "_publish_path_exclusive", replacing_publish)
 
     with pytest.raises(ValueError, match="destination changed during extraction"):
         extract_members(archive, entries, destination)
@@ -644,6 +921,25 @@ def test_secure_extraction_has_explicit_supported_platform_guard(
     assert not (tmp_path / "members").exists()
 
 
+def test_secure_extraction_preflights_atomic_publish_before_archive_work(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    entries = validated_zip_members(archive, ZipLimits())
+    monkeypatch.setattr(acquisition, "_atomic_publish_supported", lambda: False)
+    monkeypatch.setattr(
+        acquisition,
+        "_stable_archive",
+        lambda path: (_ for _ in ()).throw(AssertionError("archive work began")),
+    )
+
+    with pytest.raises(RuntimeError, match="secure extraction is not supported"):
+        extract_members(archive, entries, tmp_path / "members")
+
+    assert not (tmp_path / "members").exists()
+
+
 def test_download_requires_owned_non_writable_trusted_parent(tmp_path: Path):
     untrusted = tmp_path / "untrusted"
     untrusted.mkdir(mode=0o777)
@@ -671,3 +967,94 @@ def test_shared_zip_policy_rejects_duplicate_exact_member_path(tmp_path: Path):
 
     with pytest.raises(ValueError, match="duplicate member path"):
         validated_zip_members(archive, ZipLimits())
+
+
+def test_validated_entries_reject_copy_deepcopy_and_pickle(tmp_path: Path):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    entries = validated_zip_members(archive, ZipLimits())
+
+    for operation in (copy.copy, copy.deepcopy, pickle.dumps):
+        with pytest.raises(TypeError, match="capability-bearing"):
+            operation(entries)
+
+
+def test_extracted_paths_reject_copy_deepcopy_pickle_and_binding_mutation(tmp_path: Path):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    paths = extract_members(archive, validated_zip_members(archive, ZipLimits()), tmp_path / "members")
+
+    for operation in (copy.copy, copy.deepcopy, pickle.dumps):
+        with pytest.raises(TypeError, match="capability-bearing"):
+            operation(paths)
+    with pytest.raises(AttributeError):
+        paths.bindings = ()
+    with pytest.raises(TypeError):
+        paths._bindings[0] = paths._bindings[0]
+
+
+def test_stale_extracted_descriptor_is_normalized(tmp_path: Path):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    paths = extract_members(archive, validated_zip_members(archive, ZipLimits()), tmp_path / "members")
+    os.close(paths._bindings[0].descriptor)
+
+    with pytest.raises(ValueError, match="extracted output binding is unavailable"):
+        acquisition._bound_extracted_metadata(paths)
+
+
+def test_stale_extracted_binding_finalizer_never_closes_reused_descriptor(tmp_path: Path):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    paths = extract_members(archive, validated_zip_members(archive, ZipLimits()), tmp_path / "members")
+    stale = paths._bindings[0].descriptor
+    os.close(stale)
+    source = os.open(tmp_path / "foreign", os.O_RDWR | os.O_CREAT, 0o600)
+    foreign = os.dup2(source, stale)
+    if source != foreign:
+        os.close(source)
+
+    with pytest.raises(ValueError, match="extracted output binding is unavailable"):
+        acquisition._bound_extracted_metadata(paths)
+    del paths
+    gc.collect()
+
+    os.fstat(foreign)
+    os.close(foreign)
+
+
+def test_archive_snapshot_rejects_same_size_mutation_and_restore_during_copy(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    archive = _zip(tmp_path / "data.zip", {"data.csv": b"locked"})
+    original = archive.read_bytes()
+    real_open_archive = acquisition._open_archive
+
+    class MutatingStream:
+        def __init__(self, stream: object) -> None:
+            self.stream = stream
+            self.mutated = False
+
+        def __getattr__(self, name: str):
+            return getattr(self.stream, name)
+
+        def __enter__(self):
+            self.stream.__enter__()
+            return self
+
+        def __exit__(self, *args: object):
+            return self.stream.__exit__(*args)
+
+        def read(self, amount: int = -1) -> bytes:
+            chunk = self.stream.read(amount)
+            if chunk and not self.mutated:
+                self.mutated = True
+                archive.write_bytes(bytes([original[0] ^ 0xFF]) + original[1:])
+                archive.write_bytes(original)
+            return chunk
+
+    def mutating_open(path: Path):
+        stream, status = real_open_archive(path)
+        return MutatingStream(stream), status
+
+    monkeypatch.setattr(acquisition, "_open_archive", mutating_open)
+
+    with pytest.raises(ValueError, match="archive changed while taking stable snapshot"):
+        acquisition.preflight_zip(archive, ZipLimits())

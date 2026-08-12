@@ -1,7 +1,9 @@
 """Hardened HTTP download and ZIP extraction boundary for dataset artifacts.
 
-Secure extraction requires the POSIX directory-descriptor and no-follow APIs.
-Unsupported platforms fail before creating an extraction destination.
+Secure extraction requires POSIX directory-descriptor/no-follow APIs plus an
+atomically probed no-replace rename (Darwin ``renamex_np`` or Linux
+``renameat2``, including its syscall fallback). Unsupported platforms fail
+before download/extraction staging begins.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ import errno
 import hashlib
 import http.client
 import ipaddress
+import json
 import multiprocessing
 import os
 import shutil
@@ -44,6 +47,7 @@ _ZIP64_EOCD_SIZE = 56
 _ZIP64_LOCATOR_SIZE = 20
 _CENTRAL_DIRECTORY_HEADER_SIZE = 46
 _MAX_ARCHIVE_SNAPSHOT_BYTES = 2 * 1024 * 1024 * 1024
+_MAX_DNS_RESULT_BYTES = 64 * 1024
 _SECURE_EXTRACTION_SUPPORTED = sys.platform in {"darwin", "linux"} and all(
     function in os.supports_dir_fd for function in (os.mkdir, os.open, os.link, os.stat, os.unlink, os.rmdir)
 )
@@ -82,6 +86,8 @@ class _ArchiveSnapshot:
     device: int
     inode: int
     size_bytes: int
+    mtime_ns: int
+    ctime_ns: int
     sha256: str
 
 
@@ -95,37 +101,115 @@ class _FileBinding:
 
 
 class _ValidatedEntries(list[ArchiveEntry]):
-    __slots__ = ("limits", "snapshot")
+    __slots__ = ("__limits", "__snapshot")
 
     def __init__(self, entries: list[ArchiveEntry], snapshot: _ArchiveSnapshot, limits: ZipLimits) -> None:
         super().__init__(entries)
-        self.snapshot = snapshot
-        self.limits = limits
+        object.__setattr__(self, "_ValidatedEntries__snapshot", snapshot)
+        object.__setattr__(self, "_ValidatedEntries__limits", limits)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("validated archive capability is immutable")
+
+    def _capability(self) -> tuple[_ArchiveSnapshot, ZipLimits]:
+        return self.__snapshot, self.__limits
 
     def __getitem__(self, index: object) -> ArchiveEntry | _ValidatedEntries:
         selected = super().__getitem__(index)  # type: ignore[index]
         if isinstance(index, slice):
-            return _ValidatedEntries(selected, self.snapshot, self.limits)
+            return _ValidatedEntries(selected, self.__snapshot, self.__limits)
         return selected
+
+    def copy(self) -> None:
+        raise TypeError("capability-bearing validated entries cannot be copied")
+
+    def __copy__(self) -> None:
+        raise TypeError("capability-bearing validated entries cannot be copied")
+
+    def __deepcopy__(self, memo: object) -> None:
+        raise TypeError("capability-bearing validated entries cannot be copied")
+
+    def __reduce_ex__(self, protocol: int) -> None:
+        raise TypeError("capability-bearing validated entries cannot be pickled")
+
+
+class _BindingOwner:
+    __slots__ = ("_active_descriptors", "_bindings", "_closed", "_lock")
+
+    def __init__(self, bindings: list[_FileBinding]) -> None:
+        self._bindings = tuple(bindings)
+        self._active_descriptors = {binding.descriptor for binding in bindings}
+        self._closed = False
+        self._lock = threading.Lock()
+
+    @property
+    def bindings(self) -> tuple[_FileBinding, ...]:
+        return self._bindings
+
+    def close(self) -> None:
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            descriptors = tuple(self._active_descriptors)
+            self._active_descriptors.clear()
+        _close_descriptors(descriptors)
+
+    def abandon(self, descriptor: int) -> None:
+        with self._lock:
+            self._active_descriptors.discard(descriptor)
 
 
 class _ExtractedPaths(list[Path]):
-    __slots__ = ("__weakref__", "bindings")
+    __slots__ = ("__weakref__", "__owner", "__finalizer")
 
     def __init__(self, paths: list[Path], bindings: list[_FileBinding]) -> None:
         super().__init__(paths)
-        self.bindings = bindings
-        weakref.finalize(self, _close_bindings, bindings)
+        owner = _BindingOwner(bindings)
+        object.__setattr__(self, "_ExtractedPaths__owner", owner)
+        object.__setattr__(self, "_ExtractedPaths__finalizer", weakref.finalize(self, owner.close))
+
+    def __setattr__(self, name: str, value: object) -> None:
+        raise AttributeError("extracted output capability is immutable")
+
+    @property
+    def _bindings(self) -> tuple[_FileBinding, ...]:
+        return self.__owner.bindings
+
+    def _binding_owner(self) -> _BindingOwner:
+        return self.__owner
+
+    def __getitem__(self, index: object) -> Path:
+        if isinstance(index, slice):
+            raise TypeError("capability-bearing extracted paths cannot be sliced")
+        return super().__getitem__(index)  # type: ignore[index]
+
+    def copy(self) -> None:
+        raise TypeError("capability-bearing extracted paths cannot be copied")
+
+    def __copy__(self) -> None:
+        raise TypeError("capability-bearing extracted paths cannot be copied")
+
+    def __deepcopy__(self, memo: object) -> None:
+        raise TypeError("capability-bearing extracted paths cannot be copied")
+
+    def __reduce_ex__(self, protocol: int) -> None:
+        raise TypeError("capability-bearing extracted paths cannot be pickled")
 
 
 _DOWNLOAD_BINDINGS: dict[int, tuple[weakref.ReferenceType[DownloadedFile], _FileBinding]] = {}
 _DOWNLOAD_BINDINGS_LOCK = threading.Lock()
 
 
-def _close_bindings(bindings: list[_FileBinding]) -> None:
-    for binding in bindings:
+def _close_bindings(bindings: object) -> None:
+    for binding in bindings:  # type: ignore[union-attr]
+        _close_descriptors((binding.descriptor,))
+
+
+def _close_descriptors(descriptors: tuple[int, ...]) -> None:
+    for descriptor in descriptors:
         try:
-            os.close(binding.descriptor)
+            os.close(descriptor)
         except OSError:
             pass
 
@@ -156,45 +240,78 @@ def _download_binding(downloaded: DownloadedFile) -> _FileBinding:
     return current[1]
 
 
-def bound_download_metadata(downloaded: DownloadedFile) -> tuple[int, str]:
+def _unbind_download(downloaded: DownloadedFile) -> None:
+    with _DOWNLOAD_BINDINGS_LOCK:
+        current = _DOWNLOAD_BINDINGS.get(id(downloaded))
+        if current is None or current[0]() is not downloaded:
+            return
+        _DOWNLOAD_BINDINGS.pop(id(downloaded), None)
+    _close_bindings((current[1],))
+
+
+def _abandon_download(downloaded: DownloadedFile) -> None:
+    with _DOWNLOAD_BINDINGS_LOCK:
+        current = _DOWNLOAD_BINDINGS.get(id(downloaded))
+        if current is not None and current[0]() is downloaded:
+            _DOWNLOAD_BINDINGS.pop(id(downloaded), None)
+
+
+def _bound_download_metadata(downloaded: DownloadedFile) -> tuple[int, str]:
     """Return trusted metadata established from the owned download descriptor."""
     binding = _download_binding(downloaded)
-    current = downloaded.path.lstat()
-    if (current.st_dev, current.st_ino) != (binding.device, binding.inode):
-        raise ValueError("download destination changed")
-    if _metadata_descriptor(binding.descriptor) != (binding.size_bytes, binding.sha256):
-        raise ValueError("download destination changed")
+    try:
+        opened = os.fstat(binding.descriptor)
+        if (opened.st_dev, opened.st_ino) != (binding.device, binding.inode):
+            _abandon_download(downloaded)
+            raise ValueError("download binding is unavailable")
+        current = downloaded.path.lstat()
+        if (current.st_dev, current.st_ino) != (binding.device, binding.inode):
+            raise ValueError("download destination changed")
+        if _metadata_descriptor(binding.descriptor) != (binding.size_bytes, binding.sha256):
+            raise ValueError("download destination changed")
+    except OSError as error:
+        if error.errno == errno.EBADF:
+            _abandon_download(downloaded)
+        raise ValueError("download binding is unavailable") from error
     return binding.size_bytes, binding.sha256
 
 
-def bound_extracted_metadata(paths: list[Path]) -> list[tuple[int, str]]:
+def _bound_extracted_metadata(paths: list[Path]) -> list[tuple[int, str]]:
     """Verify and return metadata for extraction-owned outputs."""
     if not isinstance(paths, _ExtractedPaths):
         raise ValueError("extracted outputs are not bound to owned files")
     metadata: list[tuple[int, str]] = []
-    for path, binding in zip(paths, paths.bindings, strict=True):
-        current = path.lstat()
-        if (current.st_dev, current.st_ino) != (binding.device, binding.inode):
-            raise ValueError("extracted output changed before metadata verification")
-        opened = os.fstat(binding.descriptor)
-        if (opened.st_dev, opened.st_ino) != (binding.device, binding.inode):
-            raise ValueError("extracted output changed before metadata verification")
-        if _metadata_descriptor(binding.descriptor) != (binding.size_bytes, binding.sha256):
-            raise ValueError("extracted output changed before metadata verification")
-        final = path.lstat()
-        if (final.st_dev, final.st_ino) != (binding.device, binding.inode):
-            raise ValueError("extracted output changed before metadata verification")
+    owner = paths._binding_owner()
+    for path, binding in zip(paths, paths._bindings, strict=True):
+        try:
+            opened = os.fstat(binding.descriptor)
+            if (opened.st_dev, opened.st_ino) != (binding.device, binding.inode):
+                owner.abandon(binding.descriptor)
+                raise ValueError("extracted output binding is unavailable")
+            current = path.lstat()
+            if (current.st_dev, current.st_ino) != (binding.device, binding.inode):
+                raise ValueError("extracted output changed before metadata verification")
+            if _metadata_descriptor(binding.descriptor) != (binding.size_bytes, binding.sha256):
+                raise ValueError("extracted output changed before metadata verification")
+            final = path.lstat()
+            if (final.st_dev, final.st_ino) != (binding.device, binding.inode):
+                raise ValueError("extracted output changed before metadata verification")
+        except OSError as error:
+            if error.errno == errno.EBADF:
+                owner.abandon(binding.descriptor)
+            raise ValueError("extracted output binding is unavailable") from error
         metadata.append((binding.size_bytes, binding.sha256))
     return metadata
 
 
 def _metadata_descriptor(descriptor: int) -> tuple[int, str]:
-    status = os.fstat(descriptor)
-    digest = hashlib.sha256()
-    offset = 0
-    while chunk := os.pread(descriptor, 1 << 20, offset):
-        digest.update(chunk)
-        offset += len(chunk)
+    duplicate = os.dup(descriptor)
+    with os.fdopen(duplicate, "rb") as stream:
+        status = os.fstat(stream.fileno())
+        stream.seek(0)
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(chunk)
     return status.st_size, digest.hexdigest()
 
 
@@ -203,7 +320,7 @@ def _require_trusted_parent(path: Path) -> None:
         status = path.lstat()
     except OSError as error:
         raise ValueError("destination parent is unavailable") from error
-    if path.is_symlink() or not stat.S_ISDIR(status.st_mode):
+    if stat.S_ISLNK(status.st_mode) or not stat.S_ISDIR(status.st_mode):
         raise ValueError("destination parent must be a trusted directory")
     if hasattr(os, "geteuid") and (status.st_uid != os.geteuid() or status.st_mode & 0o022):
         raise ValueError("destination parent must be owned by the current user and not group/world writable")
@@ -328,12 +445,27 @@ def _remaining(deadline: float) -> float:
     return remaining
 
 
+def _encode_dns_result(succeeded: bool, answers: object) -> bytes:
+    payload = json.dumps(
+        {"ok": succeeded, "answers": answers},
+        ensure_ascii=True,
+        separators=(",", ":"),
+    ).encode("ascii")
+    if len(payload) > _MAX_DNS_RESULT_BYTES:
+        raise ValueError("DNS resolver result exceeds private framing limit")
+    return payload
+
+
 def _resolve_worker(connection: object, host: str) -> None:
     try:
         answers = socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)
-        connection.send((True, answers))  # type: ignore[attr-defined]
+        payload = _encode_dns_result(True, answers)
     except BaseException:
-        connection.send((False, None))  # type: ignore[attr-defined]
+        payload = _encode_dns_result(False, None)
+    try:
+        connection.send_bytes(payload)  # type: ignore[attr-defined]
+    except (EOFError, OSError):
+        pass
     finally:
         connection.close()  # type: ignore[attr-defined]
 
@@ -346,12 +478,63 @@ def _make_resolver_process(context: object, send: object, host: str) -> object:
     )
 
 
+def _decode_dns_result(payload: bytes, url: str) -> list[tuple[object, ...]]:
+    try:
+        decoded = json.loads(payload.decode("ascii"))
+        if not isinstance(decoded, dict) or set(decoded) != {"ok", "answers"}:
+            raise TypeError
+        if decoded["ok"] is False and decoded["answers"] is None:
+            raise ValueError(f"could not resolve {_redacted_url(url)}")
+        if decoded["ok"] is not True or not isinstance(decoded["answers"], list):
+            raise TypeError
+        answers: list[tuple[object, ...]] = []
+        for answer in decoded["answers"]:
+            if not isinstance(answer, list) or len(answer) != 5 or not isinstance(answer[4], list):
+                raise TypeError
+            answers.append((*answer[:4], tuple(answer[4])))
+        return answers
+    except ValueError as error:
+        if str(error).startswith("could not resolve "):
+            raise
+        raise ValueError("DNS resolver returned an invalid result") from error
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError) as error:
+        raise ValueError("DNS resolver returned an invalid result") from error
+
+
+def _cleanup_resolver_process(process: object, deadline: float) -> None:
+    try:
+        alive = bool(process.is_alive())  # type: ignore[attr-defined]
+        if alive:
+            process.terminate()  # type: ignore[attr-defined]
+            process.join(timeout=max(deadline - time.monotonic(), 0))  # type: ignore[attr-defined]
+            alive = bool(process.is_alive())  # type: ignore[attr-defined]
+        if alive:
+            process.kill()  # type: ignore[attr-defined]
+            process.join(timeout=max(deadline - time.monotonic(), 0))  # type: ignore[attr-defined]
+            alive = bool(process.is_alive())  # type: ignore[attr-defined]
+        if alive:
+            raise ValueError("DNS resolver process could not be reaped before deadline")
+        process.join(timeout=0)  # type: ignore[attr-defined]
+        process.close()  # type: ignore[attr-defined]
+    except ValueError:
+        raise
+    except Exception as error:
+        raise ValueError("DNS resolver process cleanup failed") from error
+
+
 def _bounded_dns_answers(host: str, deadline: float, url: str) -> list[tuple[object, ...]]:
-    context = multiprocessing.get_context("spawn")
-    receive, send = context.Pipe(duplex=False)
-    process = _make_resolver_process(context, send, host)
+    try:
+        context = multiprocessing.get_context("spawn")
+        receive, send = context.Pipe(duplex=False)
+    except Exception as error:
+        raise ValueError(f"could not create DNS resolver for {_redacted_url(url)}") from error
+    process: object | None = None
     started = False
     try:
+        try:
+            process = _make_resolver_process(context, send, host)
+        except Exception as error:
+            raise ValueError(f"could not create DNS resolver for {_redacted_url(url)}") from error
         try:
             process.start()  # type: ignore[attr-defined]
             started = True
@@ -366,27 +549,22 @@ def _bounded_dns_answers(host: str, deadline: float, url: str) -> list[tuple[obj
         cleanup_budget = min(0.2, remaining / 5)
         if not receive.poll(max(remaining - cleanup_budget, 0)):
             raise ValueError("download deadline exceeded")
-        succeeded, answers = receive.recv()
-        if not succeeded or answers is None:
-            raise ValueError(f"could not resolve {_redacted_url(url)}")
-        return list(answers)
+        process.join(timeout=max(deadline - time.monotonic(), 0))  # type: ignore[attr-defined]
+        if process.is_alive():  # type: ignore[attr-defined]
+            raise ValueError("download deadline exceeded")
+        try:
+            payload = receive.recv_bytes(_MAX_DNS_RESULT_BYTES)
+        except (EOFError, OSError) as error:
+            raise ValueError("DNS resolver returned an invalid result") from error
+        return _decode_dns_result(payload, url)
     finally:
-        receive.close()
-        send.close()
-        if started:
-            cleanup_remaining = max(deadline - time.monotonic(), 0)
-            alive = process.is_alive()  # type: ignore[attr-defined]
-            if alive:
-                process.terminate()  # type: ignore[attr-defined]
-                process.join(timeout=cleanup_remaining / 2)  # type: ignore[attr-defined]
-                alive = process.is_alive()  # type: ignore[attr-defined]
-            if alive:
-                process.kill()  # type: ignore[attr-defined]
-                process.join(timeout=max(deadline - time.monotonic(), 0))  # type: ignore[attr-defined]
-                alive = process.is_alive()  # type: ignore[attr-defined]
-            if not alive:
-                process.join(timeout=0)  # type: ignore[attr-defined]
-                process.close()  # type: ignore[attr-defined]
+        for endpoint in (receive, send):
+            try:
+                endpoint.close()
+            except Exception:
+                pass
+        if started and process is not None:
+            _cleanup_resolver_process(process, deadline)
 
 
 def _resolved_public_addresses(host: str, url: str, deadline: float) -> list[str]:
@@ -447,104 +625,145 @@ def download_bounded(
     _require_trusted_parent(destination.parent)
     if destination.exists() or destination.is_symlink():
         raise FileExistsError(destination)
+    if not _atomic_publish_supported():
+        raise RuntimeError("secure publication is not supported on this platform")
     deadline = time.monotonic() + deadline_seconds
     downloaded_size = 0
     downloaded_digest = hashlib.sha256()
-    staging_root = Path(tempfile.mkdtemp(prefix=".dataset-download-", dir=destination.parent))
-    staging_path = staging_root / "content"
+    staging_path: Path | None = None
+    target: BinaryIO | None = None
+    downloaded_file: DownloadedFile | None = None
+    published = False
     try:
-        with staging_path.open("xb") as target:
-            opened_stat = os.fstat(target.fileno())
-            owned_identity = (opened_stat.st_dev, opened_stat.st_ino)
-            current_url = url
-            redirects = 0
-            while True:
-                _validate_url(current_url)
-                parsed = urlsplit(current_url)
-                host = parsed.hostname
-                if host is None:
-                    raise ValueError("url: must be an authoritative HTTPS URL")
-                host = host.rstrip(".").lower()
-                addresses = _resolved_public_addresses(host, current_url, deadline)
-                pinned_address = addresses[0]
-                response: _Response | None = None
-                request_timeout = _remaining(deadline)
+        try:
+            descriptor, raw_staging_path = tempfile.mkstemp(
+                prefix=".dataset-download-",
+                dir=destination.parent,
+            )
+            staging_path = Path(raw_staging_path)
+            os.fchmod(descriptor, 0o600)
+            target = os.fdopen(descriptor, "wb")
+        except OSError as error:
+            if "descriptor" in locals():
                 try:
-                    try:
-                        response = active_transport.request(
-                            url=current_url,
-                            address=pinned_address,
-                            server_hostname=host,
-                            host_header=parsed.netloc,
-                            headers={"Accept-Encoding": "identity"},
-                            timeout=request_timeout,
-                        )
-                    except Exception:
-                        raise ValueError(f"HTTP request failed for {_redacted_url(current_url)}") from None
-                    try:
-                        peer = ipaddress.ip_address(response.peer_address.split("%", 1)[0])
-                        pinned_peer = ipaddress.ip_address(pinned_address)
-                    except ValueError as error:
-                        raise ValueError(f"connected peer for {_redacted_url(current_url)} is invalid") from error
-                    if peer != pinned_peer:
-                        raise ValueError(f"connected peer for {_redacted_url(current_url)} did not match pinned DNS")
+                    os.close(descriptor)
+                except OSError:
+                    pass
+            raise ValueError("could not create private download staging file") from error
 
-                    if response.status in _REDIRECT_STATUSES:
-                        location = _header(response.headers, "Location")
-                        if not location or not location.strip():
-                            raise ValueError("redirect response is missing Location")
-                        if redirects >= _MAX_REDIRECTS:
-                            raise ValueError(f"too many redirects (maximum {_MAX_REDIRECTS})")
-                        current_url = urljoin(current_url, location.strip())
-                        _validate_url(current_url)
-                        redirects += 1
-                        continue
-                    if not 200 <= response.status < 300:
-                        raise ValueError(
-                            f"HTTP request for {_redacted_url(current_url)} returned status {response.status}"
-                        )
+        opened_stat = os.fstat(target.fileno())
+        owned_identity = (opened_stat.st_dev, opened_stat.st_ino)
+        current_url = url
+        redirects = 0
+        evidence = ResponseEvidence()
+        while True:
+            _validate_url(current_url)
+            parsed = urlsplit(current_url)
+            host = parsed.hostname
+            if host is None:
+                raise ValueError("url: must be an authoritative HTTPS URL")
+            host = host.rstrip(".").lower()
+            addresses = _resolved_public_addresses(host, current_url, deadline)
+            pinned_address = addresses[0]
+            response: _Response | None = None
+            request_timeout = _remaining(deadline)
+            try:
+                try:
+                    response = active_transport.request(
+                        url=current_url,
+                        address=pinned_address,
+                        server_hostname=host,
+                        host_header=parsed.netloc,
+                        headers={"Accept-Encoding": "identity"},
+                        timeout=request_timeout,
+                    )
+                except Exception:
+                    raise ValueError(f"HTTP request failed for {_redacted_url(current_url)}") from None
+                try:
+                    peer = ipaddress.ip_address(response.peer_address.split("%", 1)[0])
+                    pinned_peer = ipaddress.ip_address(pinned_address)
+                except ValueError as error:
+                    raise ValueError(f"connected peer for {_redacted_url(current_url)} is invalid") from error
+                if peer != pinned_peer:
+                    raise ValueError(f"connected peer for {_redacted_url(current_url)} did not match pinned DNS")
 
-                    while True:
-                        response.settimeout(_remaining(deadline))
-                        chunk = response.read1(1 << 20, decode_content=False)
-                        _remaining(deadline)
-                        if not chunk:
-                            break
-                        downloaded_size += len(chunk)
-                        if downloaded_size > max_bytes:
-                            raise ValueError(f"download exceeds {max_bytes} bytes")
-                        target.write(chunk)
-                        downloaded_digest.update(chunk)
-                    target.flush()
-                    binding_descriptor = os.open(
-                        staging_path,
-                        os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
-                    )
+                if response.status in _REDIRECT_STATUSES:
+                    location = _header(response.headers, "Location")
+                    if not location or not location.strip():
+                        raise ValueError("redirect response is missing Location")
+                    if redirects >= _MAX_REDIRECTS:
+                        raise ValueError(f"too many redirects (maximum {_MAX_REDIRECTS})")
+                    current_url = urljoin(current_url, location.strip())
+                    _validate_url(current_url)
+                    redirects += 1
+                    continue
+                if not 200 <= response.status < 300:
+                    raise ValueError(f"HTTP request for {_redacted_url(current_url)} returned status {response.status}")
+
+                while True:
+                    response.settimeout(_remaining(deadline))
+                    chunk = response.read1(1 << 20, decode_content=False)
+                    _remaining(deadline)
+                    if not chunk:
+                        break
+                    downloaded_size += len(chunk)
+                    if downloaded_size > max_bytes:
+                        raise ValueError(f"download exceeds {max_bytes} bytes")
+                    target.write(chunk)
+                    downloaded_digest.update(chunk)
+                target.flush()
+                evidence = _response_evidence(response.headers)
+                break
+            finally:
+                if response is not None:
                     try:
-                        os.link(staging_path, destination, follow_symlinks=False)
-                    except FileExistsError:
-                        os.close(binding_descriptor)
-                        raise ValueError("destination changed during download") from None
-                    current = destination.lstat()
-                    if (current.st_dev, current.st_ino) != owned_identity:
-                        os.close(binding_descriptor)
-                        raise ValueError("destination changed during download")
-                    downloaded_file = DownloadedFile(destination, _response_evidence(response.headers))
-                    _bind_download(
-                        downloaded_file,
-                        _FileBinding(
-                            *owned_identity,
-                            downloaded_size,
-                            downloaded_digest.hexdigest(),
-                            binding_descriptor,
-                        ),
-                    )
-                    return downloaded_file
-                finally:
-                    if response is not None:
                         response.close()
+                    except OSError as error:
+                        raise ValueError("response close failed") from error
+
+        try:
+            target.close()
+            target = None
+        except OSError as error:
+            raise ValueError("target close failed") from error
+
+        binding_descriptor = os.open(
+            staging_path,
+            os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
+        )
+        downloaded_file = DownloadedFile(destination, evidence)
+        _bind_download(
+            downloaded_file,
+            _FileBinding(
+                *owned_identity,
+                downloaded_size,
+                downloaded_digest.hexdigest(),
+                binding_descriptor,
+            ),
+        )
+        try:
+            _publish_path_exclusive(staging_path, destination)
+        except (FileExistsError, ValueError):
+            raise ValueError("destination changed during download") from None
+        except OSError as error:
+            raise ValueError("destination disappeared during publication") from error
+        published = True
+        return downloaded_file
     finally:
-        shutil.rmtree(staging_root)
+        if target is not None:
+            try:
+                target.close()
+            except OSError:
+                pass
+        if downloaded_file is not None and not published:
+            _unbind_download(downloaded_file)
+        if staging_path is not None and not published:
+            try:
+                os.unlink(staging_path)
+            except FileNotFoundError:
+                pass
+            except OSError as error:
+                raise ValueError("private download cleanup failed") from error
 
 
 def _bounded_zip_metadata(entries: int, central_directory_size: int, limits: ZipLimits) -> None:
@@ -730,7 +949,11 @@ def _open_archive(path: Path) -> tuple[BinaryIO, os.stat_result]:
 
 def _stable_archive(path: Path) -> tuple[BinaryIO, _ArchiveSnapshot]:
     source, opened_stat = _open_archive(path)
-    snapshot_stream = tempfile.TemporaryFile()
+    try:
+        snapshot_stream = tempfile.TemporaryFile()
+    except OSError as error:
+        source.close()
+        raise ValueError("archive snapshot storage is unavailable") from error
     digest = hashlib.sha256()
     try:
         if opened_stat.st_size > _MAX_ARCHIVE_SNAPSHOT_BYTES:
@@ -746,6 +969,17 @@ def _stable_archive(path: Path) -> tuple[BinaryIO, _ArchiveSnapshot]:
                 remaining -= len(chunk)
             if source.read(1):
                 raise ValueError("archive changed while taking stable snapshot")
+            source.seek(0)
+            source_digest = hashlib.sha256()
+            remaining = opened_stat.st_size
+            while remaining:
+                chunk = source.read(min(remaining, 1 << 20))
+                if not chunk:
+                    raise ValueError("archive changed while taking stable snapshot")
+                source_digest.update(chunk)
+                remaining -= len(chunk)
+            if source.read(1) or source_digest.digest() != digest.digest():
+                raise ValueError("archive changed while taking stable snapshot")
             try:
                 final_stat = os.fstat(source.fileno())
             except OSError as error:
@@ -755,14 +989,40 @@ def _stable_archive(path: Path) -> tuple[BinaryIO, _ArchiveSnapshot]:
         except OSError as error:
             raise ValueError("archive is unavailable") from error
         identity = (opened_stat.st_dev, opened_stat.st_ino)
+        initial_state = (
+            opened_stat.st_dev,
+            opened_stat.st_ino,
+            opened_stat.st_size,
+            opened_stat.st_mtime_ns,
+            opened_stat.st_ctime_ns,
+        )
         if (
-            (final_stat.st_dev, final_stat.st_ino) != identity
-            or final_stat.st_size != opened_stat.st_size
-            or (current_stat.st_dev, current_stat.st_ino) != identity
+            (
+                final_stat.st_dev,
+                final_stat.st_ino,
+                final_stat.st_size,
+                final_stat.st_mtime_ns,
+                final_stat.st_ctime_ns,
+            )
+            != initial_state
+            or (
+                current_stat.st_dev,
+                current_stat.st_ino,
+                current_stat.st_size,
+                current_stat.st_mtime_ns,
+                current_stat.st_ctime_ns,
+            )
+            != initial_state
         ):
             raise ValueError("archive changed while taking stable snapshot")
         snapshot_stream.seek(0)
-        return snapshot_stream, _ArchiveSnapshot(*identity, opened_stat.st_size, digest.hexdigest())
+        return snapshot_stream, _ArchiveSnapshot(
+            *identity,
+            opened_stat.st_size,
+            opened_stat.st_mtime_ns,
+            opened_stat.st_ctime_ns,
+            digest.hexdigest(),
+        )
     except BaseException:
         snapshot_stream.close()
         raise
@@ -901,32 +1161,67 @@ def validated_zip_members(path: Path, limits: ZipLimits) -> list[ArchiveEntry]:
         raise ValueError("artifact is not a valid ZIP archive") from error
 
 
-def _publish_directory_exclusive(source: Path, destination: Path) -> None:
+def _linux_renameat2_number() -> int | None:
+    machine = os.uname().machine.lower() if hasattr(os, "uname") else ""
+    return {
+        "x86_64": 316,
+        "amd64": 316,
+        "aarch64": 276,
+        "arm64": 276,
+        "i386": 353,
+        "i686": 353,
+        "ppc64": 357,
+        "ppc64le": 357,
+        "s390x": 347,
+    }.get(machine)
+
+
+def _atomic_publish_supported() -> bool:
+    try:
+        result, error_number = _rename_noreplace(b"", b"")
+    except RuntimeError:
+        return False
+    return result == 0 or error_number not in {errno.ENOSYS, errno.EINVAL, getattr(errno, "ENOTSUP", errno.EINVAL)}
+
+
+def _rename_noreplace(source_bytes: bytes, destination_bytes: bytes) -> tuple[int, int]:
     libc = ctypes.CDLL(None, use_errno=True)
-    source_bytes = os.fsencode(source)
-    destination_bytes = os.fsencode(destination)
+    ctypes.set_errno(0)
     if sys.platform == "darwin":
+        if not hasattr(libc, "renamex_np"):
+            raise RuntimeError("secure publication is not supported on this platform")
         rename = libc.renamex_np
         rename.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
         rename.restype = ctypes.c_int
         result = rename(source_bytes, destination_bytes, 0x00000004)
-    elif sys.platform == "linux" and hasattr(libc, "renameat2"):
-        rename = libc.renameat2
-        rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
-        rename.restype = ctypes.c_int
-        result = rename(-100, source_bytes, -100, destination_bytes, 1)
+    elif sys.platform == "linux":
+        if hasattr(libc, "renameat2"):
+            rename = libc.renameat2
+            rename.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+            rename.restype = ctypes.c_int
+            result = rename(-100, source_bytes, -100, destination_bytes, 1)
+        elif (syscall_number := _linux_renameat2_number()) is not None and hasattr(libc, "syscall"):
+            syscall = libc.syscall
+            syscall.restype = ctypes.c_long
+            result = syscall(syscall_number, -100, source_bytes, -100, destination_bytes, 1)
+        else:
+            raise RuntimeError("secure publication is not supported on this platform")
     else:
-        raise RuntimeError("secure extraction is not supported on this platform")
+        raise RuntimeError("secure publication is not supported on this platform")
+    return result, ctypes.get_errno()
+
+
+def _publish_path_exclusive(source: Path, destination: Path) -> None:
+    result, error_number = _rename_noreplace(os.fsencode(source), os.fsencode(destination))
     if result != 0:
-        error_number = ctypes.get_errno()
         if error_number in {errno.EEXIST, errno.ENOTDIR}:
-            raise ValueError("destination changed during extraction")
+            raise ValueError("destination changed during publication")
         raise OSError(error_number, os.strerror(error_number), destination)
 
 
 def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) -> list[Path]:
     """Extract into an atomic private staging directory under a trusted parent."""
-    if not _SECURE_EXTRACTION_SUPPORTED:
+    if not _SECURE_EXTRACTION_SUPPORTED or not _atomic_publish_supported():
         raise RuntimeError("secure extraction is not supported on this platform")
     path = Path(path)
     destination = Path(destination)
@@ -936,15 +1231,14 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
     if not entries:
         raise ValueError("archive must contain at least one regular file")
     if not isinstance(entries, _ValidatedEntries):
-        inherited_snapshot = getattr(entries, "snapshot", None)
-        inherited_limits = getattr(entries, "limits", None)
+        inherited_snapshot = getattr(entries, "_snapshot", None)
+        inherited_limits = getattr(entries, "_limits", None)
         if inherited_snapshot is None or inherited_limits is None:
             raise ValueError("archive entries are not bound to one validated snapshot")
         entries = _ValidatedEntries(list(entries), inherited_snapshot, inherited_limits)
     if not isinstance(entries, _ValidatedEntries):
         raise ValueError("archive entries are not bound to one validated snapshot")
-    expected_snapshot = entries.snapshot
-    limits = entries.limits
+    expected_snapshot, limits = entries._capability()
 
     archive_stream, current_snapshot = _stable_archive(path)
     try:
@@ -1045,7 +1339,10 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
             current_output = os.stat(output.name, dir_fd=destination_descriptor, follow_symlinks=False)
             if (current_output.st_dev, current_output.st_ino) != (binding.device, binding.inode):
                 raise ValueError("extracted output changed before success")
-        _publish_directory_exclusive(staging_root, destination)
+        try:
+            _publish_path_exclusive(staging_root, destination)
+        except ValueError:
+            raise ValueError("destination changed during extraction") from None
         published = True
     except zipfile.BadZipFile as error:
         cleanup()
