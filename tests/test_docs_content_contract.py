@@ -477,6 +477,37 @@ def test_public_consumer_docs_do_not_teach_flat_dataset_reads():
         assert "immutable" in text
 
 
+def test_published_dataset_diagram_masters_show_verified_resolution_boundary():
+    names = (
+        "batch_ingest-nyc_taxi-spark-iceberg",
+        "streaming_ingest-gh_archive-spark-iceberg",
+        "join_optimization-tpch-spark-iceberg",
+        "star_schema-tpch-spark-iceberg",
+        "nyc-taxi-etl",
+    )
+    flat_path = re.compile(r"s3a://landing/(?:nyc_taxi|gh_archive|tpch)(?!/_generations/)")
+
+    for name in names:
+        path = ROOT / f"docs/diagrams/{name}.html"
+        text = path.read_text(encoding="utf-8")
+        assert "expected scale" in text, path
+        assert "active pointer + immutable manifest" in text, path
+        assert "ordered immutable objects" in text, path
+        assert "s3a projection only after verification" in text, path
+        assert flat_path.search(text) is None, path
+        assert "<script" not in text.casefold(), path
+
+    streaming = (ROOT / "docs/diagrams/streaming_ingest-gh_archive-spark-iceberg.html").read_text()
+    assert "file source · one stream per immutable URI" in streaming
+    assert "directory scan" not in streaming
+    assert "checkpoint key: scale / publication / manifest" in streaming
+    assert "checkpoint: s3a://checkpoints/gh_events_file ·" not in streaming
+
+    etl = (ROOT / "docs/diagrams/nyc-taxi-etl.html").read_text()
+    assert "Airflow task execution calls dataset-resolver" in etl
+    assert "--table" in etl
+
+
 def test_dataset_design_and_plan_define_effective_stability_and_safe_provenance_text():
     paths = (
         ROOT / "docs/superpowers/specs/2026-08-10-dataset-provenance-lock-design.md",
