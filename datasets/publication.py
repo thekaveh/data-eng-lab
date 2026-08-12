@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import ctypes
 import hashlib
 import json
 import os
 import re
 import secrets
+import shutil
 import stat
+import sys
 import tempfile
 import threading
 import uuid
@@ -64,9 +67,6 @@ _MAX_LEGACY_LIST_PAGES = 10_000
 _MAX_LEGACY_LIST_KEYS = 100_000
 _MAX_HISTORY_DEPTH = 1_000
 _MAX_GENERATION_PREFIXES = 100_000
-_STAGING_POOL_SIZE = 8
-_STAGING_POOL_CONDITION = threading.Condition()
-_STAGING_POOLS: dict[Path, dict[str, object]] = {}
 _DEFAULT_LOCK_POLICY: Mapping[str, object] = MappingProxyType(
     {
         "algorithm": "sha256",
@@ -872,14 +872,17 @@ class _PointerState:
 class _WriteTrackingClient:
     """Expose when the S3 adapter had to reconcile an uncertain write response."""
 
-    def __init__(self, client) -> None:
+    def __init__(self, client, on_put: Callable[[], None] | None = None) -> None:
         self._client = client
         self.write_failed = False
+        self._on_put = on_put
 
     def __getattr__(self, name: str):
         return getattr(self._client, name)
 
     def put_object(self, **request):
+        if self._on_put is not None:
+            self._on_put()
         try:
             return self._client.put_object(**request)
         except (BotoCoreError, ClientError):
@@ -972,19 +975,23 @@ class _LeaseKeepalive:
         with self._lock:
             return self._lease
 
-    def stop_and_checkpoint(self) -> Lease:
+    def renew_if_needed_and_checkpoint(self) -> Lease:
         with self._lock:
             remaining = (self._lease.expires_at - datetime.now(UTC)).total_seconds()
         if remaining <= 5.0 and not self._renew_once():
             with self._lock:
                 error = self._error
             raise ConditionalConflict("dataset lease renewal was lost") from error
-        self.stop()
         with self._lock:
             if self._error is not None:
                 raise ConditionalConflict("dataset lease renewal was lost") from self._error
             _assert_lease_current(self._client, self._lease)
             return self._lease
+
+    def stop_and_checkpoint(self) -> Lease:
+        lease = self.renew_if_needed_and_checkpoint()
+        self.stop()
+        return lease
 
 
 def _is_missing(error: ClientError) -> bool:
@@ -1420,29 +1427,13 @@ def _owned_staging(
     cleanup_notes: list[str] | None = None,
 ) -> Iterator[Path]:
     owns_parent = parent is None
-    pool_state: dict[str, object] | None = None
-    pool_index: int | None = None
     if parent is None:
         platform_parent = Path(tempfile.gettempdir())
         status = platform_parent.lstat()
         if not stat.S_ISDIR(status.st_mode) or stat.S_ISLNK(status.st_mode):
             raise ValueError("platform temporary root must be a directory")
-        with _STAGING_POOL_CONDITION:
-            pool_state = _STAGING_POOLS.get(platform_parent)
-            if pool_state is None:
-                pool_root = Path(tempfile.mkdtemp(prefix="data-eng-lab-publication-pool-", dir=platform_parent))
-                pool_root.chmod(0o700)
-                pool_state = {"root": pool_root, "available": [], "created": 0}
-                _STAGING_POOLS[platform_parent] = pool_state
-            available = cast(list[int], pool_state["available"])
-            while not available and cast(int, pool_state["created"]) >= _STAGING_POOL_SIZE:
-                _STAGING_POOL_CONDITION.wait()
-            if available:
-                pool_index = available.pop()
-            else:
-                pool_index = cast(int, pool_state["created"])
-                pool_state["created"] = pool_index + 1
-            private_parent = cast(Path, pool_state["root"])
+        private_parent = Path(tempfile.mkdtemp(prefix="data-eng-lab-publication-", dir=platform_parent))
+        private_parent.chmod(0o700)
     else:
         private_parent = Path(parent)
         acquisition._require_trusted_parent(private_parent)
@@ -1452,26 +1443,22 @@ def _owned_staging(
     root: Path | None = None
     root_fd: int | None = None
     try:
-        if pool_index is None:
-            root = Path(tempfile.mkdtemp(prefix="candidate-", dir=private_parent))
-        else:
-            root = private_parent / f"slot-{pool_index}"
-            if not root.exists():
-                root.mkdir(mode=0o700)
+        root = Path(tempfile.mkdtemp(prefix="candidate-", dir=private_parent))
         root_fd = os.open(root.name, open_flags | nofollow, dir_fd=parent_fd)
         status = os.fstat(root_fd)
         identity = (status.st_dev, status.st_ino)
     except BaseException:
-        if root is not None and pool_state is None:
+        if root is not None:
             try:
                 os.rmdir(root.name, dir_fd=parent_fd)
             except OSError:
                 pass
         os.close(parent_fd)
-        if pool_state is not None and pool_index is not None:
-            with _STAGING_POOL_CONDITION:
-                cast(list[int], pool_state["available"]).append(pool_index)
-                _STAGING_POOL_CONDITION.notify()
+        if owns_parent:
+            try:
+                private_parent.rmdir()
+            except OSError:
+                pass
         raise
     primary: BaseException | None = None
     try:
@@ -1484,10 +1471,7 @@ def _owned_staging(
         cleanup_error: BaseException | None = None
         try:
             assert root_fd is not None and root is not None
-            _remove_owned_directory_contents(root_fd)
-            _remove_owned_root_atomically(private_parent, parent_fd, root.name, identity)
-            if cleanup_notes is not None:
-                cleanup_notes.append("owned staging residue retained after descriptor-safe cleanup")
+            _quarantine_and_remove_owned_root(private_parent, parent_fd, root.name, identity)
         except BaseException as error:
             cleanup_error = error
         finally:
@@ -1498,63 +1482,60 @@ def _owned_staging(
             if primary is None:
                 raise cleanup_error
             primary.add_note(f"owned publication staging cleanup failed: {type(cleanup_error).__name__}")
-        if owns_parent and primary is not None:
-            primary.add_note("private publication staging parent retained for descriptor-safe cleanup")
-        if pool_state is not None and pool_index is not None:
-            with _STAGING_POOL_CONDITION:
-                cast(list[int], pool_state["available"]).append(pool_index)
-                _STAGING_POOL_CONDITION.notify()
-
-
-def _remove_owned_directory_contents(directory_fd: int) -> None:
-    """Empty owned content through descriptors without unlinking mutable names."""
-    for name in os.listdir(directory_fd):
-        status = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-        if stat.S_ISDIR(status.st_mode):
-            child_fd = os.open(
-                name,
-                os.O_RDONLY
-                | getattr(os, "O_DIRECTORY", 0)
-                | getattr(os, "O_CLOEXEC", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
-                dir_fd=directory_fd,
-            )
+        if owns_parent:
             try:
-                opened = os.fstat(child_fd)
-                if (opened.st_dev, opened.st_ino) != (status.st_dev, status.st_ino):
-                    raise ValueError("publication staging child identity changed")
-                _remove_owned_directory_contents(child_fd)
-            finally:
-                os.close(child_fd)
-        elif stat.S_ISREG(status.st_mode):
-            file_fd = os.open(
-                name,
-                os.O_WRONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
-                dir_fd=directory_fd,
-            )
-            try:
-                opened = os.fstat(file_fd)
-                if (opened.st_dev, opened.st_ino) != (status.st_dev, status.st_ino):
-                    raise ValueError("publication staging file identity changed")
-                os.ftruncate(file_fd, 0)
-            finally:
-                os.close(file_fd)
+                private_parent.rmdir()
+            except OSError:
+                note = "private publication staging residue retained after cleanup"
+                if cleanup_notes is not None:
+                    cleanup_notes.append(note)
+                if primary is not None:
+                    primary.add_note(note)
 
 
-def _remove_owned_root_atomically(
+def _exchange_directory_names(parent_fd: int, left: str, right: str) -> None:
+    libc = ctypes.CDLL(None, use_errno=True)
+    exchange = libc.renameat2 if sys.platform == "linux" else libc.renameatx_np
+    exchange.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+    exchange.restype = ctypes.c_int
+    if exchange(parent_fd, os.fsencode(left), parent_fd, os.fsencode(right), 2) != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number))
+
+
+def _quarantine_and_remove_owned_root(
     parent: Path,
     parent_fd: int,
     root_name: str,
     root_identity: tuple[int, int],
 ) -> None:
-    """Verify the retained root capability without any pathname mutation."""
-    del parent
+    """Atomically identify the owned root, then unlink its tree without writing content."""
+    cleanup = Path(tempfile.mkdtemp(prefix="cleanup-", dir=parent))
+    cleanup_identity = cleanup.stat().st_dev, cleanup.stat().st_ino
+    exchanged = False
     try:
-        current = os.stat(root_name, dir_fd=parent_fd, follow_symlinks=False)
-        if (current.st_dev, current.st_ino) != root_identity:
+        _exchange_directory_names(parent_fd, root_name, cleanup.name)
+        exchanged = True
+        quarantined = os.stat(cleanup.name, dir_fd=parent_fd, follow_symlinks=False)
+        if (quarantined.st_dev, quarantined.st_ino) != root_identity:
+            _exchange_directory_names(parent_fd, root_name, cleanup.name)
+            exchanged = False
             raise ValueError("publication staging identity changed; foreign replacement preserved")
+        placeholder = os.stat(root_name, dir_fd=parent_fd, follow_symlinks=False)
+        if (placeholder.st_dev, placeholder.st_ino) != cleanup_identity:
+            raise ValueError("publication cleanup placeholder identity changed")
+        shutil.rmtree(cleanup)
+        root_path = parent / root_name
+        current = root_path.lstat()
+        if (current.st_dev, current.st_ino) == cleanup_identity:
+            root_path.rmdir()
     except FileNotFoundError as error:
         raise ValueError("publication staging identity changed; owned directory was displaced") from error
+    finally:
+        if not exchanged and cleanup.exists():
+            current = cleanup.lstat()
+            if (current.st_dev, current.st_ino) == cleanup_identity:
+                cleanup.rmdir()
 
 
 def _list_legacy_keys(client, plan: ScalePlan, bucket: str) -> tuple[str, ...]:
@@ -1900,8 +1881,10 @@ def _stage_and_commit_candidate(
                 metadata = _object_metadata(plan, publication_id, file.expected)
 
                 def upload_object() -> bool:
-                    inventory.attempted_object_keys.append(key)
-                    tracking_client = _WriteTrackingClient(client)
+                    tracking_client = _WriteTrackingClient(
+                        client,
+                        lambda: inventory.attempted_object_keys.append(key),
+                    )
                     try:
                         put_immutable_object(
                             tracking_client,
@@ -1945,9 +1928,12 @@ def _stage_and_commit_candidate(
             inventory.manifest_digest = digest
 
             def publish_manifest() -> bool:
-                inventory.manifest_outcome = "attempted-ambiguous"
+                tracking_client = _WriteTrackingClient(
+                    client,
+                    lambda: setattr(inventory, "manifest_outcome", "attempted-ambiguous"),
+                )
                 try:
-                    manifest_reconciled = _put_manifest_exact(client, bucket, key, body)
+                    manifest_reconciled = _put_manifest_exact(tracking_client, bucket, key, body)
                 except AmbiguousWrite:
                     inventory.manifest_outcome = "possible"
                     raise
@@ -1964,7 +1950,7 @@ def _stage_and_commit_candidate(
 
             reconciled = cast(bool, keepalive.run_while_renewing(publish_manifest)) or reconciled
             keepalive.checkpoint()
-        keepalive.stop_and_checkpoint()
+        keepalive.renew_if_needed_and_checkpoint()
         pointer = ActivePointer(
             format_version=_CONTROL_FORMAT_VERSION,
             dataset=plan.dataset.name,
@@ -1973,12 +1959,17 @@ def _stage_and_commit_candidate(
         )
         inventory.pointer_outcome = "attempted-ambiguous"
         try:
-            pointer_reconciled = _put_pointer_exact(
-                client,
-                bucket,
-                active_pointer_key(plan.dataset.name),
-                pointer.to_bytes(),
-                active,
+            pointer_reconciled = cast(
+                bool,
+                keepalive.run_while_renewing(
+                    lambda: _put_pointer_exact(
+                        client,
+                        bucket,
+                        active_pointer_key(plan.dataset.name),
+                        pointer.to_bytes(),
+                        active,
+                    )
+                ),
             )
         except ConditionalConflict:
             inventory.pointer_outcome = "conflict"
@@ -2050,6 +2041,9 @@ def _stage_and_commit_candidate(
             manifest_key=inventory.manifest_key,
             manifest_outcome=manifest_outcome,
             pointer_outcome="ambiguous" if pointer_ambiguous else inventory.pointer_outcome,
+            cleanup_warning=(
+                "; ".join(note for note in getattr(error, "__notes__", ()) if "staging cleanup" in note) or None
+            ),
         )
         diagnostic = canonical_json(failure.to_document()).decode("utf-8")
         if not isinstance(error, Exception):
