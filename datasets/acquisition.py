@@ -795,18 +795,20 @@ def download_bounded(
             retained_stat = os.fstat(binding_descriptor)
         except OSError as error:
             if binding_descriptor is not None:
+                descriptor_to_close = binding_descriptor
+                binding_descriptor = None
                 try:
-                    os.close(binding_descriptor)
+                    os.close(descriptor_to_close)
                 except OSError:
                     pass
-                binding_descriptor = None
             raise ValueError("download staging binding is unavailable") from error
         if not stat.S_ISREG(retained_stat.st_mode) or (
             retained_stat.st_dev,
             retained_stat.st_ino,
         ) != owned_identity:
-            os.close(binding_descriptor)
+            descriptor_to_close = binding_descriptor
             binding_descriptor = None
+            os.close(descriptor_to_close)
             raise ValueError("download staging binding is unavailable")
         current_url = url
         redirects = 0
@@ -877,8 +879,9 @@ def download_bounded(
                         raise ValueError("response close failed") from error
 
         try:
-            target.close()
+            target_to_close = target
             target = None
+            target_to_close.close()
         except OSError as error:
             raise ValueError("target close failed") from error
 
@@ -1351,10 +1354,12 @@ def _probe_atomic_publish(parent: Path) -> bool:
         source_path = Path(source_name)
         destination_descriptor, destination_name = tempfile.mkstemp(prefix=".dataset-rename-target-", dir=parent)
         destination_path = Path(destination_name)
-        os.close(source_descriptor)
+        descriptor_to_close = source_descriptor
         source_descriptor = None
-        os.close(destination_descriptor)
+        os.close(descriptor_to_close)
+        descriptor_to_close = destination_descriptor
         destination_descriptor = None
+        os.close(descriptor_to_close)
         result, error_number = _rename_noreplace(os.fsencode(source_path), os.fsencode(destination_path))
         supported = result != 0 and error_number == errno.EEXIST
     except (OSError, RuntimeError):
@@ -1722,8 +1727,9 @@ def extract_members(path: Path, entries: list[ArchiveEntry], destination: Path) 
         changed = ValueError("extraction publication identity changed")
         cleanup(changed)
         raise changed
-    _close_after_commit(destination_descriptor)
+    descriptor_to_close = destination_descriptor
     destination_descriptor = None
+    _close_after_commit(descriptor_to_close)
     return capability
 
 

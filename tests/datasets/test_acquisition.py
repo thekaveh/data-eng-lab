@@ -1711,6 +1711,33 @@ def test_atomic_publish_probe_uses_private_names_on_destination_filesystem(tmp_p
     assert set(tmp_path.iterdir()) == before
 
 
+def test_atomic_publish_probe_never_retries_reused_descriptor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    foreign_path = tmp_path / "foreign"
+    foreign: list[int] = []
+    closes: list[int] = []
+    reused_at: list[int] = []
+    real_close = acquisition.os.close
+
+    def reuse_then_raise(descriptor: int) -> None:
+        closes.append(descriptor)
+        if not foreign:
+            real_close(descriptor)
+            foreign.append(_reuse_descriptor(descriptor, foreign_path))
+            reused_at.append(len(closes))
+            raise OSError("close status unavailable")
+        real_close(descriptor)
+
+    monkeypatch.setattr(acquisition.os, "close", reuse_then_raise)
+
+    assert acquisition._probe_atomic_publish(tmp_path) is False
+    os.fstat(foreign[0])
+    assert foreign[0] not in closes[reused_at[0] :]
+    real_close(foreign[0])
+
+
 def test_extract_constructs_capability_and_closes_nonretained_fds_before_publish(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
