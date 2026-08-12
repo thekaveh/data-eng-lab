@@ -138,6 +138,14 @@ def test_ci_contract_jobs_initialize_atlas_and_scope_validation_only_credentials
     assert all("env" not in step for step in static_job["steps"])
 
 
+def test_static_ci_does_not_run_obsolete_host_tpch_network_install():
+    static_job = _load_workflow()["jobs"]["static-and-unit"]
+    commands = _run_commands(static_job)
+    assert 'uv run pytest -m "not infra and not network" -q' in commands
+    assert "INSTALL tpch" not in commands
+    assert 'pytest -m "network"' not in commands
+
+
 def test_ci_covers_main_and_develop_pushes_and_pull_requests():
     workflow = _load_workflow()
 
