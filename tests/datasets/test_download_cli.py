@@ -1,8 +1,12 @@
+from __future__ import annotations
+
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
-import boto3
-from moto import mock_aws
+import pytest
+
+from datasets.publication import PublishMode, PublishResult
 
 ROOT = Path(__file__).resolve().parents[2]
 _spec = importlib.util.spec_from_file_location("download_datasets", ROOT / "scripts" / "download_datasets.py")
@@ -12,49 +16,86 @@ _spec.loader.exec_module(cli)
 REG = ROOT / "datasets" / "registry.yaml"
 
 
-def test_dry_run_plans_selected_datasets():
+def test_dry_run_plans_selected_datasets() -> None:
     pairs = cli.plan_uploads(cli.load_registry(REG), "tiny", only=["nyc_taxi"])
     assert pairs == [("nyc_taxi", "tiny")]
 
 
-@mock_aws
-def test_run_uploads_http_dataset(tmp_path: Path, monkeypatch):
-    client = boto3.client("s3", region_name="us-east-1")
-    client.create_bucket(Bucket="landing")
+def test_fetch_files_uses_current_typed_tpch_signature(tmp_path: Path, monkeypatch) -> None:
+    plan = SimpleNamespace(dataset=SimpleNamespace(kind="tpch"), sf=0.001)
+    calls: list[tuple[object, Path]] = []
+    monkeypatch.setattr(cli, "generate_tpch", lambda selected, dest: calls.append((selected, dest)) or ())
 
-    # stub the http fetcher to avoid the network: land two fake files
-    def fake_fetch(plan, dest):
-        dest.mkdir(parents=True, exist_ok=True)
-        a = dest / "part-0.parquet"
-        a.write_bytes(b"X")
-        return [a]
-
-    monkeypatch.setattr(cli, "fetch_http", fake_fetch)
-
-    n = cli.run(REG, infra_dir=tmp_path, scale="tiny", only=["nyc_taxi"], force=False, dry_run=False, client=client)
-    assert n == 1
-    assert cli.object_exists(client, "landing", "nyc_taxi/part-0.parquet")
-
-    # idempotent: second run skips the existing object
-    n2 = cli.run(REG, infra_dir=tmp_path, scale="tiny", only=["nyc_taxi"], force=False, dry_run=False, client=client)
-    assert n2 == 0
+    assert cli._fetch_files(plan, tmp_path) == ()
+    assert calls == [(plan, tmp_path)]
 
 
-@mock_aws
-def test_run_skips_fetch_when_objects_present(tmp_path, monkeypatch):
-    from urllib.parse import urlparse
+def test_run_dispatches_publish_mode_and_preserves_registry_order(tmp_path: Path, monkeypatch) -> None:
+    seen: list[tuple[str, PublishMode, bool]] = []
 
-    client = boto3.client("s3", region_name="us-east-1")
-    client.create_bucket(Bucket="landing")
-    ds = cli.load_registry(REG)["nyc_taxi"]
-    plan = cli.resolve_scale(ds, "tiny")
-    for url in plan.urls:
-        key = f"{ds.landing_prefix}/{Path(urlparse(url).path).name}"
-        client.put_object(Bucket="landing", Key=key, Body=b"x")
+    def fake_publish(plan, *, mode, client, fetcher, rollback_sha256, dry_run, raw_registry_sha256):
+        del client, fetcher, rollback_sha256, raw_registry_sha256
+        seen.append((plan.dataset.name, mode, dry_run))
+        return PublishResult(plan.dataset.name, plan.scale, "dry-run-refresh", None, None, 1)
 
-    def boom(*a, **k):
-        raise AssertionError("fetch_http must not run when all objects already exist")
+    monkeypatch.setattr(cli, "publish_dataset", fake_publish)
+    code = cli.run(
+        REG,
+        infra_dir=tmp_path,
+        scale="tiny",
+        only=["nyc_taxi", "movielens"],
+        force=False,
+        dry_run=True,
+        refresh=True,
+        client=object(),
+    )
 
-    monkeypatch.setattr(cli, "fetch_http", boom)
-    n = cli.run(REG, infra_dir=tmp_path, scale="tiny", only=["nyc_taxi"], force=False, dry_run=False, client=client)
-    assert n == 0
+    assert code == 0
+    assert seen == [
+        ("nyc_taxi", PublishMode.REFRESH, True),
+        ("movielens", PublishMode.REFRESH, True),
+    ]
+
+
+def test_run_reports_partial_failure_and_continues(tmp_path: Path, monkeypatch, capsys) -> None:
+    seen: list[str] = []
+
+    def fake_publish(plan, **_kwargs):
+        seen.append(plan.dataset.name)
+        if plan.dataset.name == "nyc_taxi":
+            raise RuntimeError("source drift")
+        return PublishResult(plan.dataset.name, plan.scale, "verified-existing", "a" * 64, "1" * 32, 1)
+
+    monkeypatch.setattr(cli, "publish_dataset", fake_publish)
+    code = cli.run(
+        REG,
+        infra_dir=tmp_path,
+        scale="tiny",
+        only=["nyc_taxi", "movielens"],
+        force=False,
+        dry_run=False,
+        client=object(),
+    )
+
+    assert code == 1
+    assert seen == ["nyc_taxi", "movielens"]
+    output = capsys.readouterr()
+    assert "nyc_taxi" in output.err
+    assert "movielens" in output.out
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--verify-only", "--refresh"],
+        ["--force", "--refresh"],
+        ["--verify-only", "--dry-run"],
+        ["--rollback-manifest", "a" * 64],
+        ["--rollback-manifest", "a" * 64, "--only", "movielens", "--scale", "tiny", "--only", "tpch"],
+        ["--rollback-manifest", "not-a-digest", "--only", "movielens", "--scale", "tiny"],
+    ],
+)
+def test_main_rejects_invalid_action_contracts(argv: list[str]) -> None:
+    with pytest.raises(SystemExit) as caught:
+        cli.main(argv)
+    assert caught.value.code == 2

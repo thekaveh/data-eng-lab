@@ -17,11 +17,13 @@ from datasets.publication import (
     ActivePointer,
     ImmutableManifest,
     ManifestObject,
+    PublishMode,
     active_pointer_key,
     immutable_manifest_key,
     manifest_sha256,
     plan_id,
     publication_prefix,
+    publish_dataset,
     resolve_active_dataset,
     rollback_manifest,
     selected_plan_document,
@@ -36,12 +38,235 @@ from datasets.registry import (
     SourceVersion,
     resolve_scale,
 )
-from datasets.s3 import AmbiguousWrite, ConditionalConflict
-from datasets.verification import LockMismatch
+from datasets.s3 import AmbiguousWrite, ConditionalConflict, Lease
+from datasets.verification import ExpectedObject, LockMismatch, VerifiedFile
 
 PUBLICATION_ID = "123e4567e89b42d3a456426614174000"
 PREVIOUS_PUBLICATION_ID = "123e4567e89b42d3a456426614174001"
 RAW_REGISTRY_SHA256 = "a" * 64
+
+
+def test_publish_mode_exposes_the_four_transaction_actions() -> None:
+    assert tuple(mode.value for mode in PublishMode) == (
+        "default",
+        "verify-only",
+        "refresh",
+        "rollback",
+    )
+
+
+def test_publish_dataset_requires_a_verified_existing_pointer_without_mutation() -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store, manifest = _published_store(plan)
+
+    result = publish_dataset(plan, mode=PublishMode.DEFAULT, client=store, fetcher=lambda *_: ())
+
+    assert result.status == "verified-existing"
+    assert result.manifest_sha256 == manifest_sha256(manifest)
+    assert store.puts == []
+
+
+def _publication_lease(store: FakeS3, plan, publication_id: str, owner_nonce: str) -> Lease:
+    now = datetime.now(UTC).replace(microsecond=0)
+    key = f"_data-eng-locks/leases/{plan.dataset.name}.json"
+    lease = Lease(
+        dataset=plan.dataset.name,
+        publication_id=publication_id,
+        owner_nonce=owner_nonce,
+        state="active",
+        created_at=now,
+        expires_at=now.replace(year=now.year + 1),
+        etag='"lease"',
+        bucket="landing",
+        key=key,
+    )
+    store.seed(
+        key,
+        canonical_json(
+            {
+                "created_at": lease.created_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
+                "dataset": lease.dataset,
+                "expires_at": lease.expires_at.isoformat(timespec="seconds").replace("+00:00", "Z"),
+                "owner_nonce": lease.owner_nonce,
+                "publication_id": lease.publication_id,
+                "state": "active",
+            }
+        ),
+        etag=lease.etag,
+    )
+    return lease
+
+
+def test_first_publication_uploads_generation_manifest_then_pointer(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    payload = b"hello\n"
+    source = tmp_path / "readme.txt"
+    source.write_bytes(payload)
+    expected = ExpectedObject("readme.txt", len(payload), _sha(payload), "readme")
+    release_calls: list[Lease] = []
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        return _publication_lease(store, plan, publication_id, owner_nonce)
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda client, lease: release_calls.append(lease))
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.DEFAULT,
+        client=store,
+        fetcher=lambda *_: (VerifiedFile(source, expected),),
+        raw_registry_sha256=RAW_REGISTRY_SHA256,
+    )
+
+    assert result.status == "published"
+    mutation_keys = [str(request["Key"]) for request in store.puts]
+    assert "/_generations/" in mutation_keys[0]
+    assert mutation_keys[-2].startswith("_data-eng-locks/manifests/sample/")
+    assert mutation_keys[-1] == active_pointer_key("sample")
+    assert store.puts[-1]["IfNoneMatch"] == "*"
+    assert release_calls
+
+
+def test_refresh_of_corrupt_pointer_preserves_observed_etag(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    store.seed(active_pointer_key("sample"), b'{"corrupt":true}', etag='"corrupt-etag"')
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        return _publication_lease(store, plan, publication_id, owner_nonce)
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.REFRESH,
+        client=store,
+        fetcher=lambda *_: (VerifiedFile(source, expected),),
+        raw_registry_sha256=RAW_REGISTRY_SHA256,
+    )
+
+    assert result.status == "published"
+    assert store.puts[-1]["Key"] == active_pointer_key("sample")
+    assert store.puts[-1]["IfMatch"] == '"corrupt-etag"'
+
+
+def test_dry_run_missing_pointer_performs_no_lease_source_or_write(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    monkeypatch.setattr("datasets.publication.acquire_lease", lambda *args, **kwargs: pytest.fail("lease"))
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.DEFAULT,
+        client=store,
+        fetcher=lambda *_: pytest.fail("source"),
+        dry_run=True,
+    )
+
+    assert result.status == "dry-run-initial"
+    assert store.puts == []
+
+
+def test_exact_legacy_set_migrates_without_source_request(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    store.seed("sample/readme.txt", b"hello\n", etag='"legacy"')
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        return _publication_lease(store, plan, publication_id, owner_nonce)
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.DEFAULT,
+        client=store,
+        fetcher=lambda *_: pytest.fail("exact legacy migration must not fetch upstream"),
+        raw_registry_sha256=RAW_REGISTRY_SHA256,
+    )
+
+    assert result.status == "published"
+    assert store.objects["sample/readme.txt"][0] == b"hello\n"
+    assert store.puts[-1]["Key"] == active_pointer_key("sample")
+
+
+def test_lost_pointer_response_reconciles_exact_self_commit(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        return _publication_lease(store, plan, publication_id, owner_nonce)
+
+    from datasets import publication as publication_module
+
+    original_put = publication_module.put_control_object
+
+    def lost_response(client, bucket, key, body, **conditions):
+        snapshot = original_put(client, bucket, key, body, **conditions)
+        if key == active_pointer_key("sample"):
+            raise AmbiguousWrite("response lost after pointer commit")
+        return snapshot
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.put_control_object", lost_response)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.DEFAULT,
+        client=store,
+        fetcher=lambda *_: (VerifiedFile(source, expected),),
+        raw_registry_sha256=RAW_REGISTRY_SHA256,
+    )
+
+    assert result.status == "published-reconciled"
+    pointer = ActivePointer.from_bytes(store.objects[active_pointer_key("sample")][0])
+    assert pointer.manifest_sha256 == result.manifest_sha256
+
+
+def test_lost_generation_object_response_is_reported_as_reconciled(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    store.lose_response_suffix = "/readme.txt"
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        return _publication_lease(store, plan, publication_id, owner_nonce)
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.DEFAULT,
+        client=store,
+        fetcher=lambda *_: (VerifiedFile(source, expected),),
+        raw_registry_sha256=RAW_REGISTRY_SHA256,
+    )
+
+    assert result.status == "published-reconciled"
 
 
 def _sha(payload: bytes) -> str:
@@ -149,6 +374,14 @@ class FakeS3:
         self.gets: list[str] = []
         self.conflict = False
         self.body_overrides: dict[str, object] = {}
+        self.lose_response_suffix: str | None = None
+
+    def list_objects_v2(self, *, Bucket: str, Prefix: str, ContinuationToken: str | None = None):
+        del Bucket, ContinuationToken
+        return {
+            "Contents": [{"Key": key} for key in sorted(self.objects) if key.startswith(Prefix)],
+            "IsTruncated": False,
+        }
 
     def seed(self, key: str, body: bytes, *, etag: str, metadata: dict[str, str] | None = None) -> None:
         self.objects[key] = (body, etag, metadata or {})
@@ -181,6 +414,8 @@ class FakeS3:
         self.puts.append(request)
         key = str(request["Key"])
         body = request["Body"]
+        if hasattr(body, "read"):
+            body = body.read()
         assert isinstance(body, bytes)
         if self.conflict:
             from botocore.exceptions import ClientError
@@ -203,9 +438,32 @@ class FakeS3:
                 },
                 "PutObject",
             )
-        self.objects[key] = (body, '"new-pointer"', {})
+        if request.get("IfNoneMatch") == "*" and current is not None:
+            from botocore.exceptions import ClientError
+
+            raise ClientError(
+                {
+                    "Error": {"Code": "PreconditionFailed"},
+                    "ResponseMetadata": {"HTTPStatusCode": 412},
+                },
+                "PutObject",
+            )
+        metadata = dict(request.get("Metadata", {}))
+        etag = f'"new-{len(self.puts)}"'
+        self.objects[key] = (body, etag, metadata)
+        if self.lose_response_suffix is not None and key.endswith(self.lose_response_suffix):
+            from botocore.exceptions import ClientError
+
+            self.lose_response_suffix = None
+            raise ClientError(
+                {
+                    "Error": {"Code": "InternalError"},
+                    "ResponseMetadata": {"HTTPStatusCode": 500},
+                },
+                "PutObject",
+            )
         return {
-            "ETag": '"new-pointer"',
+            "ETag": etag,
             "ResponseMetadata": {"HTTPHeaders": {"date": format_datetime(datetime.now(UTC), usegmt=True)}},
         }
 
