@@ -76,3 +76,27 @@ join; equality of exactly the five `data_eng_lab.dataset*` provenance properties
 row/schema/checksum/provenance equality after rerun; serialized run timestamps; final DAG pause; and
 volume-preserving teardown. A later subsection records the identifiers from the latest successful
 replay without replacing those runtime assertions.
+
+## Review-fix replay result
+
+The first executable replay failed before DAG lookup because Airflow 3 `/api/v2` rejects Basic auth;
+the supported `/auth/token` JWT exchange was added under a named RED/GREEN regression. The second
+replay reached trigger creation and failed with HTTP 422 because Airflow 3 requires
+`logical_date: null`; that request contract also received a named RED/GREEN regression. Both attempts
+ran standard volume-preserving teardown, and neither failure reached Spark.
+
+The final command above passed on 2026-08-12 in 208.05 seconds. Runtime identifiers were:
+
+| Airflow run | Spark driver | Result |
+|---|---|---|
+| `issue107_first_ae61b0f99d3d4a189e2f79335403adfd` | `driver-20260812195542-0000` | Airflow success; Spark `FINISHED`, `success=true` |
+| `issue107_rerun_50644f26735047d9950ff81019f170ea` | `driver-20260812195616-0001` | Airflow success; Spark `FINISHED`, `success=true` |
+
+The first run ended at `2026-08-12T19:56:08.647176Z`; the rerun started at
+`2026-08-12T19:56:13.754642Z`, proving the controlled execution did not overlap. The built and
+published JAR SHA-256 was
+`b15b5ca04415336aafba6d25c77b6bbff877eeea32679176f6a772073e33135d`. The gate verified both
+latest table snapshots had exact schemas, nonempty rows and measures, equal deterministic checksums
+between runs, and the same exact five properties bound to the resolver result. It paused the DAG and
+completed `scripts/stop-all.sh`; zero `data-eng-lab` containers remained while the named MinIO volume
+remained present.
