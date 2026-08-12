@@ -12,7 +12,6 @@ import secrets
 import stat
 import subprocess
 import sys
-import tempfile
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -92,6 +91,11 @@ class _Publication:
     staged_links: list[tuple[str, tuple[int, int]]]
     destination_descriptor: int
     rollback_descriptor: int
+    parent_descriptor: int
+    parent_path: Path
+    parent_identity: tuple[int, int]
+    destination_name: str
+    destination_identity: tuple[int, int]
     active: bool = True
 
     def rollback(self, primary: BaseException) -> None:
@@ -103,29 +107,46 @@ class _Publication:
                 _remove_owned_entry(self.rollback_descriptor, name, identity)
             except BaseException as cleanup_error:
                 primary.add_note(f"TPC-H publication rollback failed for {name}: {cleanup_error}")
-        self.close(primary)
+        self._close_after_rollback(primary)
 
-    def close(self, primary: BaseException | None = None) -> None:
-        descriptors = (self.destination_descriptor, self.rollback_descriptor)
+    def _close_after_rollback(self, primary: BaseException) -> None:
+        descriptors = (
+            self.destination_descriptor,
+            self.parent_descriptor,
+            self.rollback_descriptor,
+        )
         self.destination_descriptor = -1
+        self.parent_descriptor = -1
         self.rollback_descriptor = -1
-        first_error: OSError | None = None
         for descriptor in descriptors:
             if descriptor < 0:
                 continue
             try:
                 os.close(descriptor)
             except OSError as error:
-                first_error = first_error or error
-        if first_error is None:
-            return
-        if primary is None:
-            raise first_error
-        primary.add_note(f"TPC-H destination capability release failed: {first_error}")
+                primary.add_note(f"TPC-H destination capability release failed: {error}")
 
     def commit(self) -> None:
-        self.close()
+        first_error: OSError | None = None
+        for field in ("destination_descriptor", "parent_descriptor"):
+            descriptor = getattr(self, field)
+            setattr(self, field, -1)
+            if descriptor < 0:
+                continue
+            try:
+                os.close(descriptor)
+            except OSError as error:
+                first_error = first_error or error
+        if first_error is not None:
+            raise first_error
         self.active = False
+        descriptor = self.rollback_descriptor
+        self.rollback_descriptor = -1
+        if descriptor >= 0:
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
     def verify_final_identities(self) -> None:
         for name, identity in self.owned_links:
@@ -133,13 +154,50 @@ class _Publication:
             if status is None or not stat.S_ISREG(status.st_mode) or (status.st_dev, status.st_ino) != identity:
                 raise ValueError(f"published TPC-H output identity changed: {name}")
 
+    def verify_destination_binding(self) -> None:
+        _verify_destination_binding(
+            self.parent_path,
+            self.parent_descriptor,
+            self.parent_identity,
+            self.destination_name,
+            self.destination_identity,
+        )
+
 
 @dataclass(frozen=True)
 class _OwnedDirectory:
     root: Path
     root_name: str
     root_identity: tuple[int, int]
+    root_descriptor: int
+    parent_path: Path
+    parent_identity: tuple[int, int]
+    parent_descriptor: int
+    destination_name: str
+    destination_identity: tuple[int, int]
     destination_descriptor: int
+
+    def verify_bindings(self) -> None:
+        _verify_parent_binding(self.parent_path, self.parent_descriptor, self.parent_identity)
+        _verify_destination_binding(
+            self.parent_path,
+            self.parent_descriptor,
+            self.parent_identity,
+            self.destination_name,
+            self.destination_identity,
+        )
+        status = os.stat(self.root_name, dir_fd=self.parent_descriptor, follow_symlinks=False)
+        opened = os.fstat(self.root_descriptor)
+        if (
+            not stat.S_ISDIR(status.st_mode)
+            or not stat.S_ISDIR(opened.st_mode)
+            or (status.st_dev, status.st_ino) != self.root_identity
+            or (opened.st_dev, opened.st_ino) != self.root_identity
+        ):
+            raise ValueError("TPC-H transaction staging changed")
+        path_status = self.root.lstat()
+        if (path_status.st_dev, path_status.st_ino) != self.root_identity or not stat.S_ISDIR(path_status.st_mode):
+            raise ValueError("TPC-H transaction staging path changed")
 
 
 class ContainerRunner(Protocol):
@@ -201,6 +259,57 @@ def _entry_status(directory_descriptor: int, name: str) -> os.stat_result | None
         return os.stat(name, dir_fd=directory_descriptor, follow_symlinks=False)
     except FileNotFoundError:
         return None
+
+
+def _directory_flags() -> int:
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
+    return flags | getattr(os, "O_NOFOLLOW", 0)
+
+
+def _verify_parent_binding(
+    parent_path: Path,
+    parent_descriptor: int,
+    parent_identity: tuple[int, int],
+) -> None:
+    try:
+        current = parent_path.lstat()
+        opened = os.fstat(parent_descriptor)
+    except OSError as error:
+        raise ValueError("TPC-H destination parent changed") from error
+    if (
+        not stat.S_ISDIR(current.st_mode)
+        or not stat.S_ISDIR(opened.st_mode)
+        or (current.st_dev, current.st_ino) != parent_identity
+        or (opened.st_dev, opened.st_ino) != parent_identity
+    ):
+        raise ValueError("TPC-H destination parent changed")
+
+
+def _verify_destination_binding(
+    parent_path: Path,
+    parent_descriptor: int,
+    parent_identity: tuple[int, int],
+    destination_name: str,
+    destination_identity: tuple[int, int],
+) -> None:
+    _verify_parent_binding(parent_path, parent_descriptor, parent_identity)
+    descriptor = -1
+    try:
+        current = os.stat(destination_name, dir_fd=parent_descriptor, follow_symlinks=False)
+        descriptor = os.open(destination_name, _directory_flags(), dir_fd=parent_descriptor)
+        opened = os.fstat(descriptor)
+    except OSError as error:
+        raise ValueError("TPC-H destination directory changed") from error
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+    if (
+        not stat.S_ISDIR(current.st_mode)
+        or not stat.S_ISDIR(opened.st_mode)
+        or (current.st_dev, current.st_ino) != destination_identity
+        or (opened.st_dev, opened.st_ino) != destination_identity
+    ):
+        raise ValueError("TPC-H destination directory changed")
 
 
 def _remove_owned_entry(
@@ -703,33 +812,79 @@ def verify_image_evidence(
 
 @contextmanager
 def owned_directory(destination: Path) -> Iterator[_OwnedDirectory]:
+    destination = destination.absolute()
     destination.mkdir(parents=True, exist_ok=True)
     acquisition._require_trusted_parent(destination)
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0)
-    destination_descriptor = os.open(destination, flags)
-    root = Path(tempfile.mkdtemp(prefix=".dataset-tpch-", dir=destination))
-    status = root.lstat()
-    identity = (status.st_dev, status.st_ino)
+    parent_path = destination.parent
+    acquisition._require_trusted_parent(parent_path)
+    parent_descriptor = os.open(parent_path, _directory_flags())
+    parent_status = os.fstat(parent_descriptor)
+    parent_identity = (parent_status.st_dev, parent_status.st_ino)
+    destination_descriptor = -1
+    root_descriptor = -1
+    root_name: str | None = None
+    root_identity: tuple[int, int] | None = None
     primary: BaseException | None = None
     try:
-        yield _OwnedDirectory(root, root.name, identity, destination_descriptor)
+        _verify_parent_binding(parent_path, parent_descriptor, parent_identity)
+        destination_descriptor = os.open(
+            destination.name,
+            _directory_flags(),
+            dir_fd=parent_descriptor,
+        )
+        destination_status = os.fstat(destination_descriptor)
+        destination_identity = (destination_status.st_dev, destination_status.st_ino)
+        for _ in range(100):
+            candidate = f".dataset-tpch-{secrets.token_hex(16)}"
+            try:
+                os.mkdir(candidate, 0o700, dir_fd=parent_descriptor)
+            except FileExistsError:
+                continue
+            root_name = candidate
+            break
+        if root_name is None:
+            raise RuntimeError("could not allocate canonical TPC-H transaction staging")
+        root_status = os.stat(root_name, dir_fd=parent_descriptor, follow_symlinks=False)
+        root_identity = (root_status.st_dev, root_status.st_ino)
+        root_descriptor = os.open(root_name, _directory_flags(), dir_fd=parent_descriptor)
+        transaction = _OwnedDirectory(
+            parent_path / root_name,
+            root_name,
+            root_identity,
+            root_descriptor,
+            parent_path,
+            parent_identity,
+            parent_descriptor,
+            destination.name,
+            destination_identity,
+            destination_descriptor,
+        )
+        transaction.verify_bindings()
+        yield transaction
     except BaseException as error:
         primary = error
         raise
     finally:
-        try:
-            _remove_tree_at(destination_descriptor, root.name, identity)
-        except BaseException as cleanup_error:
-            if primary is None:
-                raise
-            primary.add_note(f"TPC-H transaction cleanup failed: {cleanup_error}")
-        try:
-            os.close(destination_descriptor)
-        except BaseException as cleanup_error:
-            if primary is None:
-                raise
-            primary.add_note(f"TPC-H transaction capability release failed: {cleanup_error}")
+        if root_name is not None and root_identity is not None:
+            try:
+                _remove_tree_at(parent_descriptor, root_name, root_identity)
+            except BaseException as cleanup_error:
+                if primary is None:
+                    primary = cleanup_error
+                else:
+                    primary.add_note(f"TPC-H transaction cleanup failed: {cleanup_error}")
+        for descriptor in (root_descriptor, destination_descriptor, parent_descriptor):
+            if descriptor < 0:
+                continue
+            try:
+                os.close(descriptor)
+            except BaseException as cleanup_error:
+                if primary is None:
+                    primary = cleanup_error
+                else:
+                    primary.add_note(f"TPC-H transaction capability release failed: {cleanup_error}")
+        if primary is not None and sys.exc_info()[0] is None:
+            raise primary
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
@@ -873,7 +1028,13 @@ def _verify_staged_output(
     opened = os.fstat(descriptor)
     if not stat.S_ISREG(opened.st_mode):
         raise ValueError("staged TPC-H output must be a regular file")
-    with os.fdopen(os.dup(descriptor), "rb") as stream:
+    stream_descriptor = os.dup(descriptor)
+    try:
+        stream = os.fdopen(stream_descriptor, "rb")
+    except BaseException:
+        os.close(stream_descriptor)
+        raise
+    with stream:
         verify_stream(stream, item.expected.size_bytes, item.expected.sha256, context)
     os.lseek(descriptor, 0, os.SEEK_SET)
     staged = VerifiedFile(Path(f"/dev/fd/{descriptor}"), item.expected)
@@ -886,27 +1047,45 @@ def publish_verified_files(
     destination: Path,
     schemas: Mapping[str, object],
 ) -> _Publication:
-    source_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
-    source_flags |= getattr(os, "O_NOFOLLOW", 0)
-    source_descriptor = os.open(
-        transaction.root_name,
-        source_flags,
-        dir_fd=transaction.destination_descriptor,
-    )
-    destination_descriptor = os.dup(transaction.destination_descriptor)
-    rollback_descriptor = os.dup(transaction.destination_descriptor)
-    publication = _Publication((), [], [], destination_descriptor, rollback_descriptor)
+    del destination
+    destination_descriptor = -1
+    rollback_descriptor = -1
+    parent_descriptor = -1
     try:
-        source_status = os.fstat(source_descriptor)
+        destination_descriptor = os.dup(transaction.destination_descriptor)
+        rollback_descriptor = os.dup(transaction.destination_descriptor)
+        parent_descriptor = os.dup(transaction.parent_descriptor)
+    except BaseException as error:
+        for descriptor in (destination_descriptor, rollback_descriptor, parent_descriptor):
+            if descriptor < 0:
+                continue
+            try:
+                os.close(descriptor)
+            except OSError as close_error:
+                error.add_note(f"TPC-H publication capability release failed: {close_error}")
+        raise
+    publication = _Publication(
+        (),
+        [],
+        [],
+        destination_descriptor,
+        rollback_descriptor,
+        parent_descriptor,
+        transaction.parent_path,
+        transaction.parent_identity,
+        transaction.destination_name,
+        transaction.destination_identity,
+    )
+    try:
+        source_status = os.fstat(transaction.root_descriptor)
         if (source_status.st_dev, source_status.st_ino) != transaction.root_identity:
             raise ValueError("TPC-H transaction directory identity changed")
-        published: list[VerifiedFile] = []
         for item in files:
             staging_name = f".dataset-tpch-publish-{secrets.token_hex(16)}"
             os.link(
                 item.expected.object_name,
                 staging_name,
-                src_dir_fd=source_descriptor,
+                src_dir_fd=transaction.root_descriptor,
                 dst_dir_fd=destination_descriptor,
                 follow_symlinks=False,
             )
@@ -937,14 +1116,10 @@ def publish_verified_files(
             _renameat_noreplace(destination_descriptor, staging_name, item.expected.object_name)
             publication.staged_links.remove((staging_name, staged_identity))
             publication.owned_links.append((item.expected.object_name, staged_identity))
-            published.append(VerifiedFile(destination / item.expected.object_name, item.expected))
-        publication.files = tuple(published)
         return publication
     except BaseException as error:
         publication.rollback(error)
         raise
-    finally:
-        os.close(source_descriptor)
 
 
 def generate_tpch(
@@ -959,12 +1134,14 @@ def generate_tpch(
     image_context = VerificationContext(plan.dataset.name, plan.scale, "image")
     evidence = active_runner.ensure_image(contract)
     verify_image_evidence(evidence, contract, image_context)
-    destination = Path(dest)
+    destination = Path(dest).absolute()
     publication: _Publication | None = None
     try:
         with owned_directory(destination) as transaction:
+            transaction.verify_bindings()
             metadata_path = transaction.root / "metadata.json"
             active_runner.run(contract, scale, transaction.root, metadata_path)
+            transaction.verify_bindings()
             verified = verify_tpch_outputs(plan, transaction.root, metadata_path)
             publication = publish_verified_files(
                 verified,
@@ -973,6 +1150,11 @@ def generate_tpch(
                 plan.dataset.schemas,
             )
         publication.verify_final_identities()
+        publication.verify_destination_binding()
+        publication.files = tuple(
+            VerifiedFile(destination / item.expected.object_name, item.expected) for item in verified
+        )
+        publication.verify_destination_binding()
         publication.commit()
     except BaseException as error:
         if publication is not None:

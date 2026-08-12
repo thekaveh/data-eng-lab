@@ -432,6 +432,61 @@ def test_publication_rollback_uses_bound_directory_after_destination_replacement
     assert list(destination.iterdir()) == []
 
 
+def test_transaction_staging_is_sibling_and_rejects_destination_rebind_during_creation(
+    tmp_path, fake_runner, tpch_plan, monkeypatch
+):
+    destination = tmp_path / "destination"
+    displaced = tmp_path / "displaced"
+    replacement_marker = destination / "foreign"
+    real_mkdir = tpch.os.mkdir
+    replaced = False
+
+    def rebind_before_staging(path, mode=0o777, *, dir_fd=None):
+        nonlocal replaced
+        name = os.fsdecode(path)
+        if Path(name).name.startswith(".dataset-tpch-") and not replaced:
+            replaced = True
+            destination.rename(displaced)
+            destination.mkdir()
+            replacement_marker.write_bytes(b"foreign")
+        return real_mkdir(path, mode, dir_fd=dir_fd)
+
+    monkeypatch.setattr(tpch.os, "mkdir", rebind_before_staging)
+
+    with pytest.raises(ValueError, match="destination directory changed"):
+        tpch.generate_tpch(tpch_plan, destination, runner=fake_runner)
+
+    assert replacement_marker.read_bytes() == b"foreign"
+    assert list(displaced.iterdir()) == []
+    assert not list(tmp_path.glob(".dataset-tpch-*"))
+
+
+def test_destination_rebind_after_final_rename_rolls_back_bound_outputs(tmp_path, fake_runner, tpch_plan, monkeypatch):
+    destination = tmp_path / "destination"
+    displaced = tmp_path / "displaced"
+    replacement_marker = destination / "foreign"
+    real_rename = tpch._renameat_noreplace
+    rebound = False
+
+    def rebind_after_final(directory_descriptor, source, target):
+        nonlocal rebound
+        real_rename(directory_descriptor, source, target)
+        if target == "supplier.parquet" and not rebound:
+            rebound = True
+            destination.rename(displaced)
+            destination.mkdir()
+            replacement_marker.write_bytes(b"foreign")
+
+    monkeypatch.setattr(tpch, "_renameat_noreplace", rebind_after_final)
+
+    with pytest.raises(ValueError, match="destination directory changed"):
+        tpch.generate_tpch(tpch_plan, destination, runner=fake_runner)
+
+    assert replacement_marker.read_bytes() == b"foreign"
+    assert list(displaced.iterdir()) == []
+    assert not list(tmp_path.glob(".dataset-tpch-*"))
+
+
 def test_publication_reverifies_staged_bytes_and_schema(tmp_path, fake_runner, tpch_plan, accept_test_parquet_schemas):
     tpch.generate_tpch(tpch_plan, tmp_path, runner=fake_runner)
 
@@ -440,23 +495,57 @@ def test_publication_reverifies_staged_bytes_and_schema(tmp_path, fake_runner, t
     assert all(str(call[0].path).startswith("/dev/fd/") for call in staged)
 
 
-def test_publication_commit_close_failure_rolls_back_outputs(tmp_path, fake_runner, tpch_plan, monkeypatch):
+def test_publication_actual_primary_close_failure_rolls_back_outputs(tmp_path, fake_runner, tpch_plan, monkeypatch):
     destination = tmp_path / "commit-close"
+    real_dup = tpch.os.dup
+    real_close = tpch.os.close
+    duplicated = []
+    target_close_calls = 0
     failed = False
 
-    def close_then_fail(publication, primary=None):
-        nonlocal failed
-        if primary is None and not failed:
-            failed = True
-            raise OSError("simulated close failure")
-        return real_close(publication, primary)
+    def track_dup(descriptor):
+        duplicated_descriptor = real_dup(descriptor)
+        duplicated.append(duplicated_descriptor)
+        return duplicated_descriptor
 
-    real_close = tpch._Publication.close
-    monkeypatch.setattr(tpch._Publication, "close", close_then_fail)
+    def close_then_fail(descriptor):
+        nonlocal failed, target_close_calls
+        if len(duplicated) >= 2 and descriptor == duplicated[0]:
+            target_close_calls += 1
+        if len(duplicated) >= 2 and descriptor == duplicated[0] and not failed:
+            failed = True
+            real_close(descriptor)
+            raise OSError("simulated close failure")
+        return real_close(descriptor)
+
+    monkeypatch.setattr(tpch.os, "dup", track_dup)
+    monkeypatch.setattr(tpch.os, "close", close_then_fail)
     with pytest.raises(OSError, match="close failure"):
         tpch.generate_tpch(tpch_plan, destination, runner=fake_runner)
 
     assert list(destination.iterdir()) == []
+    assert target_close_calls == 1
+
+
+def test_publication_partial_dup_failure_closes_acquired_descriptor(tmp_path, fake_runner, tpch_plan, monkeypatch):
+    real_dup = tpch.os.dup
+    duplicated = []
+
+    def fail_second_dup(descriptor):
+        if duplicated:
+            raise OSError("simulated rollback capability failure")
+        result = real_dup(descriptor)
+        duplicated.append(result)
+        return result
+
+    monkeypatch.setattr(tpch.os, "dup", fail_second_dup)
+    with pytest.raises(OSError, match="rollback capability failure"):
+        tpch.generate_tpch(tpch_plan, tmp_path, runner=fake_runner)
+
+    assert duplicated
+    with pytest.raises(OSError):
+        os.fstat(duplicated[0])
+    assert list(tmp_path.iterdir()) == []
 
 
 def test_publication_rollback_attempts_all_cleanup_and_notes_failures(tmp_path, fake_runner, tpch_plan, monkeypatch):
