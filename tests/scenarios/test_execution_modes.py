@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import dataclasses
+import html
+import json
 import re
 from pathlib import Path
 
@@ -355,6 +357,89 @@ def test_notebook_only_maintenance_claims_match_executable_cells():
         assert "VACUUM" not in readme and "VACUUM" not in canonical
         assert "partition overwrite" not in readme and "partition overwrite" not in canonical
         assert "fast-forward" not in readme and "fast-forward" not in canonical
+    for path in (
+        ROOT / "scenarios/table_maintenance-nyc_taxi-spark-iceberg/README.md",
+        ROOT / "docs/scenarios/table_maintenance-nyc_taxi-spark-iceberg.md",
+    ):
+        assert "`silver` and `gold`" not in path.read_text(encoding="utf-8")
+    for path in (
+        ROOT / "scenarios/time_travel-nyc_taxi-spark-iceberg/README.md",
+        ROOT / "docs/scenarios/time_travel-nyc_taxi-spark-iceberg.md",
+    ):
+        assert "Also demonstrates time travel" not in path.read_text(encoding="utf-8")
+
+
+def test_notebook_only_pages_never_claim_an_unrelated_spark_app_productionizes_them():
+    modes = load_execution_modes(MATRIX, ROOT)
+    for mode in modes:
+        if mode.classification != NOTEBOOK_ONLY:
+            continue
+        for path in (
+            ROOT / "scenarios" / mode.scenario_id / "README.md",
+            ROOT / "docs/scenarios" / f"{mode.scenario_id}.md",
+        ):
+            text = path.read_text(encoding="utf-8").casefold()
+            assert "productionizes this scenario for airflow" not in text, path
+            assert "production spark app: nyc-taxi-medallion" not in text, path
+
+
+def _notebook_executable_text(scenario_id: str) -> tuple[str, str]:
+    root = ROOT / "scenarios" / scenario_id
+    jupyter = json.loads((root / "jupyter/notebook.ipynb").read_text(encoding="utf-8"))
+    jupyter_code = "\n".join(
+        "".join(cell.get("source", []))
+        if isinstance(cell.get("source", []), list)
+        else cell.get("source", "")
+        for cell in jupyter["cells"]
+        if cell.get("cell_type") == "code"
+    )
+    zeppelin = json.loads((root / "zeppelin/notebook.zpln").read_text(encoding="utf-8"))
+    zeppelin_code = "\n".join(
+        paragraph.get("text", "")
+        for paragraph in zeppelin["paragraphs"]
+        if paragraph.get("text", "").startswith("%spark")
+    )
+    return jupyter_code, zeppelin_code
+
+
+def test_data_quality_docs_match_both_executable_notebooks_exactly():
+    jupyter, zeppelin = _notebook_executable_text("data_quality-nyc_taxi-spark-iceberg")
+    exact_contract = {
+        'spark.table("lakehouse.bronze.nyc_taxi_trips")',
+        'fare_amount > 0 AND passenger_count BETWEEN 1 AND 6',
+        'lakehouse.silver.nyc_taxi_clean',
+        'lakehouse.silver.nyc_taxi_quarantine',
+        'createOrReplace()',
+    }
+    assert all(value in jupyter and value in zeppelin for value in exact_contract)
+    forbidden = (
+        "nyc_taxi_quality",
+        "custom spark sql function",
+        "no downstream sink",
+        "csv seed",
+        "30-minute",
+        "1800 seconds",
+    )
+    for path in (
+        ROOT / "scenarios/data_quality-nyc_taxi-spark-iceberg/README.md",
+        ROOT / "docs/scenarios/data_quality-nyc_taxi-spark-iceberg.md",
+    ):
+        text = path.read_text(encoding="utf-8")
+        assert all(value in text for value in exact_contract - {'createOrReplace()'})
+        assert "createOrReplace" in text
+        assert all(value not in text.casefold() for value in forbidden), path
+        assert "Current notebook behavior" in text
+        assert "Future production scope (#91)" in text
+
+
+def test_all_scenario_diagram_visible_text_is_ascii_for_portable_png_rendering():
+    for scenario_id in EXPECTED:
+        path = ROOT / "docs/diagrams" / f"{scenario_id}.html"
+        visible = " ".join(
+            html.unescape(re.sub(r"<[^>]+>", "", value))
+            for value in re.findall(r"<text\b[^>]*>(.*?)</text>", path.read_text(encoding="utf-8"), re.S)
+        )
+        assert visible.isascii(), (path, sorted({character for character in visible if not character.isascii()}))
 
 
 def test_acceptance_renderer_uses_clean_list_punctuation():

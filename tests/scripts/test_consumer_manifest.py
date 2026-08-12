@@ -63,6 +63,7 @@ def test_overlay_patches_required_services_without_legacy_user_service():
     services = yaml.safe_load(overlay_text)["services"]
     assert {"airflow-scheduler", "airflow-dag-processor", "jupyterhub"} <= services.keys()
     assert "services/_user" not in overlay_text
+    assert "../scenarios ==" not in overlay_text
     for service in ("airflow-scheduler", "airflow-dag-processor"):
         volumes = services[service]["volumes"]
         assert "../spark-apps:/opt/airflow/dags/data_eng_lab_spark_apps:ro" in volumes

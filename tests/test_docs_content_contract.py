@@ -498,10 +498,10 @@ def test_published_dataset_diagram_masters_show_verified_resolution_boundary():
         assert "<script" not in text.casefold(), path
 
     streaming = (ROOT / "docs/diagrams/streaming_ingest-gh_archive-spark-iceberg.html").read_text()
-    assert "file source · one stream per immutable URI" in streaming
+    assert "file source | one stream per immutable URI" in streaming
     assert "directory scan" not in streaming
     assert "checkpoint key: scale / publication / manifest" in streaming
-    assert "checkpoint: s3a://checkpoints/gh_events_file ·" not in streaming
+    assert "checkpoint: s3a://checkpoints/gh_events_file |" not in streaming
 
     etl = (ROOT / "docs/diagrams/nyc-taxi-etl.html").read_text()
     assert "Airflow task execution calls dataset-resolver" in etl

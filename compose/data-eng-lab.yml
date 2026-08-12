@@ -1,8 +1,8 @@
 # data-eng-lab overlay — appended to Atlas's compose invocation via the
 # compose_overlays: entry in atlas.consumer.yml (no legacy user-service symlink).
-# Relative host paths resolve against the compose project dir (infra/), so
-# ../scenarios == <repo>/scenarios. Adds one consumer-owned internal service
-# and patches existing Atlas consumers; Atlas source remains unchanged.
+# Relative host paths resolve against the compose project directory (`infra/`).
+# This overlay adds one consumer-owned internal service and patches existing
+# Atlas consumers; Atlas source remains unchanged.
 services:
   dataset-resolver:
     build:
