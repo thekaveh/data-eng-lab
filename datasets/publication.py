@@ -7,6 +7,7 @@ import json
 import os
 import re
 import secrets
+import shutil
 import stat
 import tempfile
 import threading
@@ -843,6 +844,9 @@ class PublicationFailure(RuntimeError):
         self.result = result
         super().__init__(f"dataset publication failed after immutable staging: {type(cause).__name__}")
         self.__cause__ = cause
+        for note in getattr(cause, "__notes__", ()):
+            if "cleanup" in note.casefold():
+                self.add_note(note)
 
 
 Fetcher = Callable[[ScalePlan, Path], tuple[VerifiedFile, ...]]
@@ -887,6 +891,13 @@ class _WriteTrackingClient:
             raise
 
 
+@dataclass(frozen=True)
+class _ForegroundOutcome:
+    result: object | None = None
+    worker_error: BaseException | None = None
+    renewal_error: BaseException | None = None
+
+
 class _LeaseKeepalive:
     """Renew synchronously; no background thread is ever capable of S3 mutation."""
 
@@ -913,8 +924,8 @@ class _LeaseKeepalive:
                 return False
             return True
 
-    def run_while_renewing(self, operation: Callable[[], object]) -> object:
-        """Run bounded acquisition work off-thread while this thread owns renewal."""
+    def run_while_renewing(self, operation: Callable[[], object]) -> _ForegroundOutcome:
+        """Return the joined worker and renewal outcomes without conflating them."""
         completed = threading.Event()
         outcome: list[object] = []
         errors: list[BaseException] = []
@@ -948,12 +959,22 @@ class _LeaseKeepalive:
             worker.join()
         if interrupted is not None:
             raise interrupted
-        if errors:
-            raise errors[0]
         with self._lock:
-            if self._error is not None:
-                raise ConditionalConflict("dataset lease renewal was lost") from self._error
-        return outcome[0]
+            renewal_error = self._error
+        return _ForegroundOutcome(
+            result=outcome[0] if outcome else None,
+            worker_error=errors[0] if errors else None,
+            renewal_error=renewal_error,
+        )
+
+    @staticmethod
+    def require_success(outcome: _ForegroundOutcome) -> object:
+        """Return an ordinary phase result, failing before CAS on renewal loss."""
+        if outcome.worker_error is not None:
+            raise outcome.worker_error
+        if outcome.renewal_error is not None:
+            raise ConditionalConflict("dataset lease renewal was lost") from outcome.renewal_error
+        return outcome.result
 
     def checkpoint(self) -> Lease:
         with self._lock:
@@ -1217,7 +1238,7 @@ def _attach_verified_history(
         candidate_generation_prefixes=inactive,
         unreferenced_manifest_keys=tuple(unreferenced),
         ambiguous_manifest_keys=tuple(ambiguous),
-        inventory_state="complete",
+        inventory_state="partial-ambiguous" if ambiguous else "complete",
     )
 
 
@@ -1436,21 +1457,26 @@ def _owned_staging(
         acquisition._require_trusted_parent(private_parent)
     open_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0)
     nofollow = getattr(os, "O_NOFOLLOW", 0)
-    parent_fd = os.open(private_parent, open_flags | nofollow)
+    parent_fd: int | None = None
     root: Path | None = None
     root_fd: int | None = None
     try:
+        parent_fd = os.open(private_parent, open_flags | nofollow)
         root = Path(tempfile.mkdtemp(prefix="candidate-", dir=private_parent))
         root_fd = os.open(root.name, open_flags | nofollow, dir_fd=parent_fd)
         status = os.fstat(root_fd)
         identity = (status.st_dev, status.st_ino)
     except BaseException:
+        if root_fd is not None:
+            os.close(root_fd)
         if root is not None:
             try:
-                os.rmdir(root.name, dir_fd=parent_fd)
+                # The root has not been exposed to a producer yet and is known empty.
+                root.rmdir()
             except OSError:
                 pass
-        os.close(parent_fd)
+        if parent_fd is not None:
+            os.close(parent_fd)
         if owns_parent:
             try:
                 private_parent.rmdir()
@@ -1467,54 +1493,36 @@ def _owned_staging(
     finally:
         cleanup_error: BaseException | None = None
         try:
-            assert root_fd is not None and root is not None
-            _clean_owned_tree_entries(root_fd)
+            assert root_fd is not None and root is not None and parent_fd is not None
+            # Design §7.3 trusts the publisher's OS identity. All compliant workers
+            # are quiescent here, and the mode-0700 parent excludes other identities;
+            # this deliberately does not claim same-UID adversarial TOCTOU safety.
+            opened = os.fstat(root_fd)
             try:
                 current = os.stat(root.name, dir_fd=parent_fd, follow_symlinks=False)
             except FileNotFoundError as error:
                 raise ValueError("publication staging identity changed; owned directory was displaced") from error
-            if (current.st_dev, current.st_ino) != identity:
+            if (opened.st_dev, opened.st_ino) != identity or (current.st_dev, current.st_ino) != identity:
                 raise ValueError("publication staging identity changed; foreign replacement preserved")
-            if cleanup_notes is not None:
-                cleanup_notes.append("owned publication staging residue retained after descriptor cleanup")
+            os.close(root_fd)
+            root_fd = None
+            shutil.rmtree(root)
+            if owns_parent:
+                private_parent.rmdir()
         except BaseException as error:
             cleanup_error = error
         finally:
             if root_fd is not None:
                 os.close(root_fd)
-            os.close(parent_fd)
+            if parent_fd is not None:
+                os.close(parent_fd)
         if cleanup_error is not None:
             if primary is None:
                 raise cleanup_error
-            primary.add_note(f"owned publication staging cleanup failed: {type(cleanup_error).__name__}")
-        if owns_parent and primary is not None:
-            primary.add_note("private publication staging residue retained after cleanup")
-
-
-def _clean_owned_tree_entries(directory_fd: int) -> None:
-    """Unlink safe entries through retained descriptors; never mutate file content."""
-    for name in os.listdir(directory_fd):
-        status = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
-        if stat.S_ISDIR(status.st_mode):
-            child_fd = os.open(
-                name,
-                os.O_RDONLY
-                | getattr(os, "O_DIRECTORY", 0)
-                | getattr(os, "O_CLOEXEC", 0)
-                | getattr(os, "O_NOFOLLOW", 0),
-                dir_fd=directory_fd,
-            )
-            try:
-                opened = os.fstat(child_fd)
-                if (opened.st_dev, opened.st_ino) != (status.st_dev, status.st_ino):
-                    raise ValueError("publication staging child identity changed")
-                _clean_owned_tree_entries(child_fd)
-            finally:
-                os.close(child_fd)
-        elif stat.S_ISREG(status.st_mode) or stat.S_ISLNK(status.st_mode):
-            os.unlink(name, dir_fd=directory_fd)
-        else:
-            raise ValueError("publication staging contains an unsupported special file")
+            message = f"owned publication staging cleanup failed: {type(cleanup_error).__name__}"
+            if cleanup_notes is not None:
+                cleanup_notes.append(message)
+            primary.add_note(message)
 
 
 def _list_legacy_keys(client, plan: ScalePlan, bucket: str) -> tuple[str, ...]:
@@ -1804,19 +1812,23 @@ def _publish_candidate(
                         f"dataset publication committed before lease release interruption: {diagnostic}"
                     )
                     raise
+                warning = f"dataset lease release failed: {type(cleanup_error).__name__}"
                 result = PublishResult(
                     **{
                         **asdict(result),
-                        "cleanup_warning": f"dataset lease release failed: {type(cleanup_error).__name__}",
+                        "cleanup_warning": (
+                            f"{result.cleanup_warning}; {warning}" if result.cleanup_warning else warning
+                        ),
                     }
                 )
             else:
                 raise
         if primary is None and stop_error is not None:
             if completed and result is not None:
+                warning = f"dataset keepalive stop/release outcome unknown: {type(stop_error).__name__}"
                 result = replace(
                     result,
-                    cleanup_warning=f"dataset keepalive stop/release outcome unknown: {type(stop_error).__name__}",
+                    cleanup_warning=(f"{result.cleanup_warning}; {warning}" if result.cleanup_warning else warning),
                 )
             else:
                 raise stop_error
@@ -1848,10 +1860,13 @@ def _stage_and_commit_candidate(
                 files = _legacy_candidates(client, plan, root, bucket) if allow_legacy else None
                 return tuple(fetcher(plan, root)) if files is None else files
 
-            files = cast(tuple[VerifiedFile, ...], keepalive.run_while_renewing(acquire_files))
             files = cast(
                 tuple[VerifiedFile, ...],
-                keepalive.run_while_renewing(lambda: _verify_candidate_files(plan, files)),
+                keepalive.require_success(keepalive.run_while_renewing(acquire_files)),
+            )
+            files = cast(
+                tuple[VerifiedFile, ...],
+                keepalive.require_success(keepalive.run_while_renewing(lambda: _verify_candidate_files(plan, files))),
             )
             staged: list[tuple[VerifiedFile, str, dict[str, str]]] = []
             for file in files:
@@ -1884,18 +1899,28 @@ def _stage_and_commit_candidate(
                         inventory.proven_object_keys.append(key)
                         return True
                     except ConditionalConflict:
+                        if tracking_client.write_failed:
+                            inventory.possible_object_keys.append(key)
                         raise
                     except BaseException:
                         inventory.possible_object_keys.append(key)
                         raise
 
-                reconciled = cast(bool, keepalive.run_while_renewing(upload_object)) or reconciled
+                reconciled = (
+                    cast(
+                        bool,
+                        keepalive.require_success(keepalive.run_while_renewing(upload_object)),
+                    )
+                    or reconciled
+                )
                 staged.append((file, key, metadata))
             for file, key, metadata in staged:
                 keepalive.checkpoint()
-                keepalive.run_while_renewing(
-                    lambda file=file, key=key, metadata=metadata: _verify_exact_immutable(
-                        client, plan, bucket, key, file.expected, metadata
+                keepalive.require_success(
+                    keepalive.run_while_renewing(
+                        lambda file=file, key=key, metadata=metadata: _verify_exact_immutable(
+                            client, plan, bucket, key, file.expected, metadata
+                        )
                     )
                 )
             keepalive.checkpoint()
@@ -1942,7 +1967,13 @@ def _stage_and_commit_candidate(
                 _validate_manifest_for_plan(reread, plan)
                 return manifest_reconciled
 
-            reconciled = cast(bool, keepalive.run_while_renewing(publish_manifest)) or reconciled
+            reconciled = (
+                cast(
+                    bool,
+                    keepalive.require_success(keepalive.run_while_renewing(publish_manifest)),
+                )
+                or reconciled
+            )
             keepalive.checkpoint()
         keepalive.renew_if_needed_and_checkpoint()
         pointer = ActivePointer(
@@ -1952,19 +1983,24 @@ def _stage_and_commit_candidate(
             manifest_sha256=digest,
         )
         inventory.pointer_outcome = "attempted-ambiguous"
+        pointer_renewal_warning: str | None = None
         try:
-            pointer_reconciled = cast(
-                bool,
-                keepalive.run_while_renewing(
-                    lambda: _put_pointer_exact(
-                        client,
-                        bucket,
-                        active_pointer_key(plan.dataset.name),
-                        pointer.to_bytes(),
-                        active,
-                    )
-                ),
+            pointer_run = keepalive.run_while_renewing(
+                lambda: _put_pointer_exact(
+                    client,
+                    bucket,
+                    active_pointer_key(plan.dataset.name),
+                    pointer.to_bytes(),
+                    active,
+                )
             )
+            if pointer_run.worker_error is not None:
+                raise pointer_run.worker_error
+            pointer_reconciled = cast(bool, pointer_run.result)
+            if pointer_run.renewal_error is not None:
+                pointer_renewal_warning = (
+                    f"dataset lease renewal was lost after pointer commit: {type(pointer_run.renewal_error).__name__}"
+                )
         except ConditionalConflict:
             inventory.pointer_outcome = "conflict"
             raise
@@ -1992,7 +2028,10 @@ def _stage_and_commit_candidate(
             manifest_outcome="referenced",
             pointer_outcome="committed",
             retained_manifest_keys=(active.pointer.manifest_key,) if active.pointer is not None else (),
-            cleanup_warning="; ".join(staging_cleanup_notes) or None,
+            cleanup_warning="; ".join(
+                (*staging_cleanup_notes, *((pointer_renewal_warning,) if pointer_renewal_warning else ()))
+            )
+            or None,
         )
     except BaseException as error:
         pointer_ambiguous = inventory.pointer_outcome in {"ambiguous", "attempted-ambiguous"}
@@ -2036,7 +2075,7 @@ def _stage_and_commit_candidate(
             manifest_outcome=manifest_outcome,
             pointer_outcome="ambiguous" if pointer_ambiguous else inventory.pointer_outcome,
             cleanup_warning=(
-                "; ".join(note for note in getattr(error, "__notes__", ()) if "staging cleanup" in note) or None
+                "; ".join(note for note in getattr(error, "__notes__", ()) if "cleanup" in note.casefold()) or None
             ),
         )
         diagnostic = canonical_json(failure.to_document()).decode("utf-8")

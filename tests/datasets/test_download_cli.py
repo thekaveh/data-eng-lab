@@ -30,6 +30,15 @@ def test_fetch_files_uses_current_typed_tpch_signature(tmp_path: Path, monkeypat
     assert calls == [(plan, tmp_path)]
 
 
+def test_fetch_files_uses_current_typed_http_signature(tmp_path: Path, monkeypatch) -> None:
+    plan = SimpleNamespace(dataset=SimpleNamespace(kind="http"))
+    calls: list[tuple[object, Path]] = []
+    monkeypatch.setattr(cli, "fetch_http", lambda selected, dest: calls.append((selected, dest)) or ())
+
+    assert cli._fetch_files(plan, tmp_path) == ()
+    assert calls == [(plan, tmp_path)]
+
+
 def test_run_dispatches_publish_mode_and_preserves_registry_order(tmp_path: Path, monkeypatch) -> None:
     seen: list[tuple[str, PublishMode, bool]] = []
 
@@ -177,9 +186,16 @@ def test_invalid_dataset_scale_environment_fails_before_run(monkeypatch) -> None
 
 
 def test_force_emits_deprecation_warning(monkeypatch, capsys) -> None:
-    monkeypatch.setattr(cli, "run", lambda *args, **kwargs: 0)
+    calls: list[tuple[bool, bool]] = []
+    monkeypatch.setattr(
+        cli,
+        "run",
+        lambda *args, **kwargs: calls.append((args[4], kwargs["refresh"])) or 0,
+    )
     assert cli.main(["--force"]) == 0
     assert "deprecated" in capsys.readouterr().err
+    assert calls == [(True, False)]
+    assert cli._publish_mode(force=True, refresh=False, verify_only=False, rollback=None) is PublishMode.REFRESH
 
 
 def test_registry_snapshot_reads_original_bytes_once(monkeypatch) -> None:

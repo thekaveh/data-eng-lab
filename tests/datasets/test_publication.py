@@ -4,6 +4,7 @@ import hashlib
 import inspect
 import io
 import json
+import os
 import stat
 import threading
 import time
@@ -332,6 +333,70 @@ def test_slow_pointer_cas_renews_lease_and_releases_latest(tmp_path, monkeypatch
     assert result.pointer_outcome == "committed"
     assert len(renewals) >= 2
     assert released[-1].etag == renewals[-1].etag
+
+
+def test_slow_pointer_commit_wins_over_renewal_loss_after_cas_started(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+    renewals = 0
+    released: list[Lease] = []
+    pointer_started = threading.Event()
+
+    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
+        del client, dataset, bucket
+        lease = _publication_lease(store, plan, publication_id, owner_nonce)
+        now = datetime.now(UTC)
+        short = replace(lease, created_at=now, expires_at=now + timedelta(seconds=1))
+        _seed_lease(store, short)
+        return short
+
+    def renew(client, predecessor):
+        nonlocal renewals
+        del client
+        renewals += 1
+        if pointer_started.is_set():
+            raise ConditionalConflict("successor acquired lease during pointer transport")
+        now = datetime.now(UTC)
+        successor = replace(
+            predecessor,
+            created_at=now,
+            expires_at=now + timedelta(seconds=1),
+            etag=f'"renewed-{renewals}"',
+        )
+        _seed_lease(store, successor)
+        return successor
+
+    from datasets import publication as publication_module
+
+    pointer_put = publication_module._put_pointer_exact
+
+    def slow_committing_pointer(*args, **kwargs):
+        pointer_started.set()
+        time.sleep(1.3)
+        return pointer_put(*args, **kwargs)
+
+    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
+    monkeypatch.setattr("datasets.publication.renew_lease", renew)
+    monkeypatch.setattr("datasets.publication.release_lease", lambda client, lease: released.append(lease))
+    monkeypatch.setattr("datasets.publication._put_pointer_exact", slow_committing_pointer)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.DEFAULT,
+        client=store,
+        fetcher=lambda *_: (VerifiedFile(source, expected),),
+        raw_registry_sha256=RAW_REGISTRY_SHA256,
+    )
+
+    assert result.pointer_outcome == "committed"
+    assert result.cleanup_warning is not None
+    assert "renewal" in result.cleanup_warning
+    assert active_pointer_key("sample") in store.objects
+    assert released[-1].etag == '"renewed-1"'
 
 
 def test_lease_renewal_failure_aborts_before_pointer_mutation(tmp_path, monkeypatch) -> None:
@@ -718,6 +783,28 @@ def test_missing_pointer_dry_run_ambiguous_manifest_reports_partial_inventory(mo
     assert result.ambiguous_manifest_keys == (immutable_manifest_key("sample", digest),)
 
 
+def test_active_dataset_with_ambiguous_unreferenced_manifest_reports_partial_inventory(monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    original, _manifest_value = _published_store(plan)
+    store = InventoryS3()
+    store.objects.update(original.objects)
+    digest = "b" * 64
+    corrupt_key = immutable_manifest_key("sample", digest)
+    store.seed(corrupt_key, b'{"corrupt":true}', etag='"corrupt"')
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    result = publish_dataset(
+        plan,
+        mode=PublishMode.REFRESH,
+        client=store,
+        fetcher=lambda *_: pytest.fail("source"),
+        dry_run=True,
+    )
+
+    assert result.inventory_state == "partial-ambiguous"
+    assert result.ambiguous_manifest_keys == (corrupt_key,)
+
+
 def test_failure_after_immutable_upload_reports_orphan_candidate(tmp_path, monkeypatch) -> None:
     plan = resolve_scale(_dataset(), "small")
     store = FakeS3()
@@ -932,6 +1019,101 @@ def test_lost_generation_object_response_is_reported_as_reconciled(tmp_path, mon
     )
 
     assert result.status == "published-reconciled"
+
+
+def test_lost_generation_object_response_with_competing_value_is_possible_not_proven(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+    original_put = store.put_object
+
+    def competing_lost_response(**request):
+        response = original_put(**request)
+        key = str(request["Key"])
+        if "/_generations/" in key:
+            store.objects[key] = (b"competing\n", '"competing"', {})
+            from botocore.exceptions import ClientError
+
+            raise ClientError(
+                {"Error": {"Code": "InternalError"}, "ResponseMetadata": {"HTTPStatusCode": 500}},
+                "PutObject",
+            )
+        return response
+
+    monkeypatch.setattr(store, "put_object", competing_lost_response)
+    monkeypatch.setattr(
+        "datasets.publication.acquire_lease",
+        lambda client, dataset, publication_id, owner_nonce, *, bucket: _publication_lease(
+            store, plan, publication_id, owner_nonce
+        ),
+    )
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    with pytest.raises(PublicationFailure) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (VerifiedFile(source, expected),),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    result = caught.value.result
+    assert result.pointer_outcome == "not-attempted"
+    assert result.proven_orphan_keys == ()
+    assert result.possible_object_keys == result.attempted_object_keys
+
+
+def test_multi_object_partial_upload_reports_only_proven_and_possible_candidates(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_multi_dataset(), "small")
+    store = FakeS3()
+    alpha = tmp_path / "alpha.txt"
+    beta = tmp_path / "beta.txt"
+    alpha.write_bytes(b"alpha\n")
+    beta.write_bytes(b"beta\n")
+    files = (
+        VerifiedFile(alpha, ExpectedObject("alpha.txt", 6, _sha(b"alpha\n"), "readme")),
+        VerifiedFile(beta, ExpectedObject("beta.txt", 5, _sha(b"beta\n"), "readme")),
+    )
+    original_put = store.put_object
+
+    def fail_second_object(**request):
+        if str(request["Key"]).endswith("/beta.txt"):
+            from botocore.exceptions import ClientError
+
+            raise ClientError(
+                {"Error": {"Code": "InternalError"}, "ResponseMetadata": {"HTTPStatusCode": 500}},
+                "PutObject",
+            )
+        return original_put(**request)
+
+    monkeypatch.setattr(store, "put_object", fail_second_object)
+    monkeypatch.setattr(
+        "datasets.publication.acquire_lease",
+        lambda client, dataset, publication_id, owner_nonce, *, bucket: _publication_lease(
+            store, plan, publication_id, owner_nonce
+        ),
+    )
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+
+    with pytest.raises(PublicationFailure) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: files,
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    result = caught.value.result
+    assert len(result.attempted_object_keys) == 2
+    assert result.proven_orphan_keys == (result.attempted_object_keys[0],)
+    assert result.possible_object_keys == (result.attempted_object_keys[1],)
+    assert active_pointer_key("sample") not in store.objects
 
 
 @pytest.mark.parametrize("outcome", ["exact", "competing"])
@@ -2125,7 +2307,7 @@ def test_common_prefix_listing_is_bounded_and_validated(monkeypatch) -> None:
         publication_module._list_legacy_keys(Excessive(), plan, "landing")
 
 
-def test_owned_staging_foreign_replacement_is_not_deleted(tmp_path) -> None:
+def test_owned_staging_rejects_top_level_identity_drift(tmp_path) -> None:
     from datasets import publication as publication_module
 
     parent = tmp_path / "trusted"
@@ -2158,48 +2340,6 @@ def test_owned_staging_supports_sticky_world_writable_platform_temp(tmp_path, mo
     assert list(platform_temp.rglob("owned.txt")) == []
 
 
-def test_owned_staging_cleans_owned_inode_after_path_is_moved(tmp_path) -> None:
-    from datasets import publication as publication_module
-
-    parent = tmp_path / "trusted"
-    parent.mkdir(mode=0o700)
-    moved = parent / "moved-owned"
-    with pytest.raises(ValueError, match="displaced"):
-        with publication_module._owned_staging(parent) as staging:
-            (staging / "owned.txt").write_text("owned")
-            staging.rename(moved)
-
-    assert moved.is_dir()
-    assert list(moved.iterdir()) == []
-
-
-def test_owned_staging_atomic_cleanup_restores_last_moment_foreign_swap(tmp_path, monkeypatch) -> None:
-    from datasets import publication as publication_module
-
-    parent = tmp_path / "trusted"
-    parent.mkdir(mode=0o700)
-    moved = parent / "moved-owned"
-    original_cleanup = publication_module._clean_owned_tree_entries
-    swapped = False
-
-    def swap_before_cleanup(directory_fd):
-        nonlocal swapped
-        if not swapped:
-            swapped = True
-            staging.rename(moved)
-            staging.mkdir(mode=0o700)
-            (staging / "foreign.txt").write_bytes(b"foreign")
-        original_cleanup(directory_fd)
-
-    monkeypatch.setattr(publication_module, "_clean_owned_tree_entries", swap_before_cleanup)
-    with pytest.raises(ValueError, match="foreign replacement preserved"):
-        with publication_module._owned_staging(parent) as staging:
-            (staging / "owned.txt").write_text("owned")
-
-    assert (staging / "foreign.txt").read_bytes() == b"foreign"
-    assert list(moved.iterdir()) == []
-
-
 def test_owned_staging_cleanup_never_writes_or_chmods_staged_content(tmp_path, monkeypatch) -> None:
     from datasets import publication as publication_module
 
@@ -2212,21 +2352,7 @@ def test_owned_staging_cleanup_never_writes_or_chmods_staged_content(tmp_path, m
     with publication_module._owned_staging(parent, cleanup_notes=cleanup_notes) as staging:
         (staging / "owned.txt").write_text("owned")
 
-    assert cleanup_notes == ["owned publication staging residue retained after descriptor cleanup"]
-
-
-def test_owned_staging_cleanup_has_zero_pathname_removal_hooks(tmp_path, monkeypatch) -> None:
-    from datasets import publication as publication_module
-
-    parent = tmp_path / "trusted"
-    parent.mkdir(mode=0o700)
-    monkeypatch.setattr(publication_module.Path, "rmdir", lambda *_args: pytest.fail("path rmdir"))
-
-    cleanup_notes: list[str] = []
-    with publication_module._owned_staging(parent, cleanup_notes=cleanup_notes) as staging:
-        (staging / "owned.txt").write_text("owned")
-
-    assert cleanup_notes == ["owned publication staging residue retained after descriptor cleanup"]
+    assert cleanup_notes == []
 
 
 def test_owned_staging_cleans_fresh_roots_across_one_hundred_runs(tmp_path, monkeypatch) -> None:
@@ -2241,9 +2367,51 @@ def test_owned_staging_cleans_fresh_roots_across_one_hundred_runs(tmp_path, monk
         with publication_module._owned_staging() as staging:
             (staging / "owned.txt").write_text("owned")
 
-    residues = list(platform_temp.glob("data-eng-lab-publication-*"))
-    assert len(residues) == 100
-    assert all(not list(residue.rglob("owned.txt")) for residue in residues)
+    assert list(platform_temp.iterdir()) == []
+
+
+@pytest.mark.parametrize("failure_phase", ["root-open", "root-fstat"])
+def test_owned_staging_setup_failure_closes_fds_and_leaves_no_private_path(
+    tmp_path, monkeypatch, failure_phase
+) -> None:
+    from datasets import publication as publication_module
+
+    platform_temp = tmp_path / "platform-temp"
+    platform_temp.mkdir(mode=0o1777)
+    platform_temp.chmod(0o1777)
+    monkeypatch.setattr(publication_module.tempfile, "gettempdir", lambda: str(platform_temp))
+    real_open = publication_module.os.open
+    real_close = publication_module.os.close
+    real_fstat = publication_module.os.fstat
+    opened: list[int] = []
+    closed: list[int] = []
+
+    def tracked_open(*args, **kwargs):
+        if failure_phase == "root-open" and opened:
+            raise OSError("injected root open failure")
+        descriptor = real_open(*args, **kwargs)
+        opened.append(descriptor)
+        return descriptor
+
+    def tracked_close(descriptor):
+        closed.append(descriptor)
+        real_close(descriptor)
+
+    def fail_root_fstat(descriptor):
+        if failure_phase == "root-fstat" and len(opened) == 2 and descriptor == opened[-1]:
+            raise OSError("injected root fstat failure")
+        return real_fstat(descriptor)
+
+    monkeypatch.setattr(publication_module.os, "open", tracked_open)
+    monkeypatch.setattr(publication_module.os, "close", tracked_close)
+    monkeypatch.setattr(publication_module.os, "fstat", fail_root_fstat)
+
+    with pytest.raises(OSError, match="injected"):
+        with publication_module._owned_staging():
+            pytest.fail("setup unexpectedly completed")
+
+    assert sorted(closed) == sorted(opened)
+    assert list(platform_temp.iterdir()) == []
 
 
 def test_owned_staging_cleanup_never_modifies_external_hardlink_target(tmp_path) -> None:
@@ -2264,6 +2432,21 @@ def test_owned_staging_cleanup_never_modifies_external_hardlink_target(tmp_path)
     assert stat.S_IMODE(after.st_mode) == stat.S_IMODE(before.st_mode)
 
 
+def test_owned_staging_unlinks_symlink_and_fifo_without_touching_external_target(tmp_path) -> None:
+    from datasets import publication as publication_module
+
+    parent = tmp_path / "trusted"
+    parent.mkdir(mode=0o700)
+    external = tmp_path / "external.txt"
+    external.write_bytes(b"external-bytes")
+    with publication_module._owned_staging(parent) as staging:
+        (staging / "external-link").symlink_to(external)
+        os.mkfifo(staging / "pipe")
+
+    assert external.read_bytes() == b"external-bytes"
+    assert list(parent.iterdir()) == []
+
+
 def test_owned_staging_is_fresh_nonexistent_path_for_repeated_real_producers(tmp_path) -> None:
     from datasets import publication as publication_module
 
@@ -2276,6 +2459,48 @@ def test_owned_staging_is_fresh_nonexistent_path_for_repeated_real_producers(tmp
             seen.add(staging)
             assert list(staging.iterdir()) == []
             (staging / "producer.txt").write_bytes(b"fresh")
+
+
+def test_failed_publication_propagates_generic_staging_cleanup_note(tmp_path, monkeypatch) -> None:
+    plan = resolve_scale(_dataset(), "small")
+    store = FakeS3()
+    source = tmp_path / "readme.txt"
+    source.write_bytes(b"hello\n")
+    expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
+    from datasets import publication as publication_module
+
+    original_rmtree = publication_module.shutil.rmtree
+
+    def remove_then_report(path):
+        original_rmtree(path)
+        raise OSError("injected cleanup report")
+
+    monkeypatch.setattr(publication_module.shutil, "rmtree", remove_then_report)
+    monkeypatch.setattr(
+        "datasets.publication.acquire_lease",
+        lambda client, dataset, publication_id, owner_nonce, *, bucket: _publication_lease(
+            store, plan, publication_id, owner_nonce
+        ),
+    )
+    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
+    monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
+    monkeypatch.setattr(
+        "datasets.publication._put_manifest_exact",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("manifest preflight")),
+    )
+
+    with pytest.raises(PublicationFailure) as caught:
+        publish_dataset(
+            plan,
+            mode=PublishMode.DEFAULT,
+            client=store,
+            fetcher=lambda *_: (VerifiedFile(source, expected),),
+            raw_registry_sha256=RAW_REGISTRY_SHA256,
+        )
+
+    assert caught.value.result.cleanup_warning is not None
+    assert "cleanup failed" in caught.value.result.cleanup_warning
+    assert any("cleanup failed" in note for note in getattr(caught.value, "__notes__", ()))
 
 
 def test_stop_failure_does_not_mask_primary_and_release_is_attempted(tmp_path, monkeypatch) -> None:
@@ -2511,22 +2736,26 @@ def test_pointer_conflict_reports_proven_unreferenced_candidate(tmp_path, monkey
 
 def test_two_real_concurrent_publishers_and_reader_observe_only_complete_generations(tmp_path, monkeypatch) -> None:
     plan = resolve_scale(_dataset(), "small")
-    store, _old_manifest = _published_store(plan)
+    store, old_manifest = _published_store(plan)
     source = tmp_path / "readme.txt"
     source.write_bytes(b"hello\n")
     expected = ExpectedObject("readme.txt", 6, _sha(b"hello\n"), "readme")
-    barrier = threading.Barrier(2)
-    original_pointer_put = __import__("datasets.publication", fromlist=["_put_pointer_exact"])._put_pointer_exact
-    results = []
+    generation_started = threading.Event()
+    allow_generation = threading.Event()
+    stop_reader = threading.Event()
+    original_store_put = store.put_object
+    blocked_once = False
+    results: list[object] = []
     errors: list[BaseException] = []
+    observed: list[str] = []
 
-    def acquire(client, dataset, publication_id, owner_nonce, *, bucket):
-        del client, dataset, bucket
-        return _publication_lease(store, plan, publication_id, owner_nonce)
-
-    def race_pointer(*args, **kwargs):
-        barrier.wait(timeout=3)
-        return original_pointer_put(*args, **kwargs)
+    def block_first_generation(**request):
+        nonlocal blocked_once
+        if "/_generations/" in str(request["Key"]) and not blocked_once:
+            blocked_once = True
+            generation_started.set()
+            assert allow_generation.wait(3)
+        return original_store_put(**request)
 
     def publish() -> None:
         try:
@@ -2542,22 +2771,36 @@ def test_two_real_concurrent_publishers_and_reader_observe_only_complete_generat
         except BaseException as error:
             errors.append(error)
 
-    monkeypatch.setattr("datasets.publication.acquire_lease", acquire)
-    monkeypatch.setattr("datasets.publication.release_lease", lambda *_: None)
-    monkeypatch.setattr("datasets.publication._assert_lease_current", lambda *_: None)
-    monkeypatch.setattr("datasets.publication._put_pointer_exact", race_pointer)
+    def read_while_publishing() -> None:
+        while not stop_reader.is_set():
+            resolved = resolve_active_dataset(store, {"sample": plan.dataset}, "sample", "small")
+            observed.append(resolved.manifest_sha256)
+            time.sleep(0.002)
+
+    monkeypatch.setattr(store, "put_object", block_first_generation)
     monkeypatch.setattr("datasets.publication.verify_physical_schema", lambda *args: None)
-    writers = [threading.Thread(target=publish) for _ in range(2)]
-    for writer in writers:
-        writer.start()
+    first = threading.Thread(target=publish)
+    second = threading.Thread(target=publish)
+    reader = threading.Thread(target=read_while_publishing)
+    first.start()
+    assert generation_started.wait(3)
+    reader.start()
+    second.start()
+    time.sleep(0.03)
+    allow_generation.set()
+    writers = [first, second]
     for writer in writers:
         writer.join(5)
+    stop_reader.set()
+    reader.join(2)
 
     assert len(results) == 1
     assert len(errors) == 1
     resolved = resolve_active_dataset(store, {"sample": plan.dataset}, "sample", "small")
     assert resolved.manifest_sha256 == results[0].manifest_sha256
     assert len(resolved.objects) == 1
+    assert observed
+    assert set(observed) <= {manifest_sha256(old_manifest), results[0].manifest_sha256}
 
 
 def test_object_control_flow_attempt_is_reported_possible_without_wrapping(tmp_path, monkeypatch) -> None:
