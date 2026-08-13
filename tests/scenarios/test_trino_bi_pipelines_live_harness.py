@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -382,6 +383,45 @@ def test_task_log_reader_is_bounded_and_uses_exact_owned_task_path():
     command, kwargs = calls[0]
     assert command[-3:] == ("tpch_bi_query", "owned-run", live.TASK_ID)
     assert kwargs["timeout"] <= 30
+
+
+def test_task_log_bounded_reader_streams_multiple_attempts_without_unbounded_read():
+    with tempfile.TemporaryDirectory() as temp:
+        paths = []
+        total = 0
+        for index, size in enumerate((17, 31, 43)):
+            path = Path(temp) / f"attempt={index + 1}.log"
+            path.write_bytes(bytes([65 + index]) * size)
+            paths.append(path)
+            total += size
+        assert live._read_bounded_logs(paths, limit=total) == b"A" * 17 + b"B" * 31 + b"C" * 43
+
+
+def test_task_log_bounded_reader_rejects_single_huge_and_too_many_attempts_early():
+    class GuardedBody:
+        def __init__(self, chunks):
+            self.chunks = list(chunks)
+            self.requests = []
+            self.closed = False
+
+        def read(self, size=-1):
+            assert size >= 0, "unbounded read is forbidden"
+            self.requests.append(size)
+            return self.chunks.pop(0) if self.chunks else b""
+
+        def close(self):
+            self.closed = True
+
+    huge = GuardedBody([b"x" * 65, b""])
+    with pytest.raises(AssertionError, match="byte bound"):
+        live._read_bounded_log_streams([huge], limit=64)
+    assert huge.requests and max(huge.requests) <= 65
+    assert huge.closed is True
+
+    streams = [GuardedBody([b"x", b""]) for _ in range(live._MAX_TASK_LOG_ATTEMPTS + 1)]
+    with pytest.raises(AssertionError, match="attempt bound"):
+        live._read_bounded_log_streams(streams, limit=64)
+    assert all(not stream.requests for stream in streams)
 
 
 def test_fixed_live_source_contains_no_refresh_or_arbitrary_sql_inputs():

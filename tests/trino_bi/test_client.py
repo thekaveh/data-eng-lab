@@ -8,6 +8,7 @@ from collections.abc import Iterable
 from pathlib import Path
 
 import pytest
+import requests
 
 ROOT = Path(__file__).resolve().parents[2]
 AIRFLOW_DAGS = ROOT / "airflow-dags"
@@ -209,6 +210,36 @@ def test_pagination_rejects_origin_or_path_escape_without_contacting_invalid_uri
         ("POST", "http://trino:8080/v1/statement"),
         ("GET", valid_cancel),
     ]
+
+
+@pytest.mark.parametrize(
+    "next_uri",
+    [
+        "http://trino:8080/v1/statement/../../v1/info",
+        "http://trino:8080/v1/statement/%2e%2e/%2e%2e/v1/info",
+        "http://trino:8080/v1/statement/%252e%252e/%252e%252e/v1/info",
+        "http://trino:8080/v1/statement/..%2f..%2fv1/info",
+        "http://trino:8080/v1/statement/..\\..\\v1\\info",
+        "http://trino:8080/v1/statement//q/1",
+        "http://trino:8080/v1/statement/q/%00",
+    ],
+)
+def test_next_uri_rejects_raw_encoded_or_requests_normalized_path_escape(next_uri: str) -> None:
+    module = _load_client()
+    prepared = requests.Request("GET", next_uri).prepare().url
+    with pytest.raises(module.TrinoProtocolError, match="origin or path"):
+        module._validate_next_uri(next_uri)
+    assert prepared is not None
+
+    response = _doc(
+        next_uri=next_uri,
+        columns=(("source_count", "bigint"),),
+        state="RUNNING",
+    )
+    _, _, session, _, _, execute = _run([response])
+    with pytest.raises(module.TrinoProtocolError, match="origin or path"):
+        execute()
+    assert [call[0] for call in session.calls] == ["POST"]
     assert session.closed is True
 
 
@@ -376,6 +407,35 @@ def test_current_valid_next_uri_is_cancellation_target_before_page_validation() 
     with pytest.raises(module.TrinoProtocolError, match="columns"):
         execute()
     assert session.calls[-1][0:2] == ("DELETE", next_uri)
+
+
+def test_deadline_expiry_still_uses_separate_bounded_cleanup_delete() -> None:
+    module = _load_client()
+    next_uri = "http://trino:8080/v1/statement/q/current"
+    now = [0.0]
+
+    response = FakeResponse(
+        _doc(
+            next_uri=next_uri,
+            columns=(("source_count", "bigint"),),
+            state="RUNNING",
+        )
+    )
+    _, client, session, _, _, execute = _run([response], clock=lambda: now[0])
+    decode = client._decode_document
+
+    def expire_after_decode(payload):
+        document = decode(payload)
+        now[0] = module.QUERY_DEADLINE_SECONDS + 1
+        return document
+
+    client._decode_document = expire_after_decode
+    with pytest.raises(module.TrinoProtocolError, match="deadline"):
+        execute()
+    method, uri, kwargs = session.calls[-1]
+    assert (method, uri) == ("DELETE", next_uri)
+    assert 0 < kwargs["timeout"] <= module.CANCEL_TIMEOUT_SECONDS <= 2
+    assert kwargs["allow_redirects"] is False and kwargs["stream"] is True
 
 
 @pytest.mark.parametrize("boundary", ["factory", "get_conn", "request", "stream", "session_close"])

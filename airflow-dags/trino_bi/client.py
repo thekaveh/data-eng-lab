@@ -9,12 +9,13 @@ import sys
 import time
 from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 from .contracts import QUERIES, QueryName, QuerySpec
 
 REQUEST_TIMEOUT_SECONDS = 30
 QUERY_DEADLINE_SECONDS = 120
+CANCEL_TIMEOUT_SECONDS = 2
 MAX_RESPONSE_BYTES = 256 * 1024
 MAX_TOTAL_BYTES = 1024 * 1024
 MAX_PAGES = 32
@@ -97,13 +98,27 @@ def _validate_next_uri(value: Any) -> str:
     if not isinstance(value, str):
         raise TrinoProtocolError("Trino next page URI is invalid")
     parsed = urlparse(value)
+    decoded_path = parsed.path
+    for _ in range(3):
+        next_decoded = unquote(decoded_path)
+        if next_decoded == decoded_path:
+            break
+        decoded_path = next_decoded
+    segments = decoded_path.split("/")
+    canonical_path = (
+        decoded_path.startswith("/v1/statement/")
+        and "" not in segments[1:]
+        and all(segment not in {".", ".."} for segment in segments)
+        and "\\" not in decoded_path
+        and all(ord(character) >= 32 and ord(character) != 127 for character in decoded_path)
+    )
     if (
         parsed.scheme != "http"
         or parsed.hostname != "trino"
         or parsed.port != 8080
         or parsed.username is not None
         or parsed.password is not None
-        or not parsed.path.startswith("/v1/statement/")
+        or not canonical_path
         or parsed.params
         or parsed.query
         or parsed.fragment
@@ -233,12 +248,12 @@ class TrinoHttpClient:
                 self._check_deadline(started)
                 page_count += 1
                 document = self._decode_document(bytes(payload))
-                self._check_deadline(started)
                 # The prior request is complete. Only a newly validated current URI may be cancelled.
                 cancel_uri = None
                 raw_next = document.get("nextUri")
                 next_uri = _validate_next_uri(raw_next) if raw_next is not None else None
                 cancel_uri = next_uri
+                self._check_deadline(started)
                 current_query_id = document.get("id")
                 if not isinstance(current_query_id, str) or not _QUERY_ID.fullmatch(current_query_id):
                     raise TrinoProtocolError("Trino response has an invalid query ID")
@@ -370,14 +385,11 @@ class TrinoHttpClient:
     def _cancel(self, session: Any, uri: str, started: float) -> None:
         response = None
         try:
-            remaining = self._remaining(started)
-            if remaining <= 0:
-                return
             response = session.delete(
                 uri,
                 allow_redirects=False,
                 stream=True,
-                timeout=min(float(REQUEST_TIMEOUT_SECONDS), remaining),
+                timeout=float(CANCEL_TIMEOUT_SECONDS),
             )
         except BaseException:
             return

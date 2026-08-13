@@ -30,6 +30,7 @@ _MAX_RUN_REQUESTS = 10
 _MAX_XCOM_BYTES = 256 * 1024
 _MAX_POINTER_BYTES = 1024 * 1024
 _MAX_TASK_LOG_BYTES = 1024 * 1024
+_MAX_TASK_LOG_ATTEMPTS = 4
 _AIRFLOW_TOKEN = ""
 
 pytestmark = pytest.mark.infra
@@ -454,10 +455,19 @@ root = root / ('dag_id=' + sys.argv[1]) / ('run_id=' + sys.argv[2]) / ('task_id=
 files = sorted(root.glob('attempt=*.log'))
 if not files:
     raise SystemExit('owned task log is missing')
-data = b''.join(path.read_bytes() for path in files)
-if len(data) > 1048576:
-    raise SystemExit('owned task log exceeds byte bound')
-sys.stdout.buffer.write(data)
+if len(files) > 4:
+    raise SystemExit('owned task log exceeds attempt bound')
+remaining = 1048576
+for path in files:
+    with path.open('rb') as stream:
+        while True:
+            chunk = stream.read(min(16384, remaining + 1))
+            if not chunk:
+                break
+            if len(chunk) > remaining:
+                raise SystemExit('owned task log exceeds byte bound')
+            sys.stdout.buffer.write(chunk)
+            remaining -= len(chunk)
 """.strip()
     return execute(
         "docker",
@@ -471,6 +481,41 @@ sys.stdout.buffer.write(data)
         TASK_ID,
         timeout=30,
     ).stdout
+
+
+def _read_bounded_log_streams(streams, *, limit: int) -> bytes:
+    if len(streams) > _MAX_TASK_LOG_ATTEMPTS:
+        raise AssertionError("task log exceeds attempt bound")
+    remaining = limit
+    chunks: list[bytes] = []
+    for stream in streams:
+        try:
+            while True:
+                chunk = stream.read(min(16 * 1024, remaining + 1))
+                if not isinstance(chunk, bytes):
+                    raise AssertionError("task log stream returned invalid bytes")
+                if not chunk:
+                    break
+                if len(chunk) > remaining:
+                    raise AssertionError("task log exceeds byte bound")
+                chunks.append(chunk)
+                remaining -= len(chunk)
+        finally:
+            stream.close()
+    return b"".join(chunks)
+
+
+def _read_bounded_logs(paths: list[Path], *, limit: int) -> bytes:
+    if len(paths) > _MAX_TASK_LOG_ATTEMPTS:
+        raise AssertionError("task log exceeds attempt bound")
+    streams = [path.open("rb") for path in paths]
+    try:
+        return _read_bounded_log_streams(streams, limit=limit)
+    except BaseException:
+        for stream in streams:
+            if not stream.closed:
+                stream.close()
+        raise
 
 
 def _assert_task_log_clean(value: str) -> None:
