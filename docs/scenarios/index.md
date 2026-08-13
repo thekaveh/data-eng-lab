@@ -1,6 +1,6 @@
 # 5.1. Catalog
 
-This page catalogs all 19 scenarios in the `data-eng-lab` lakehouse, organized by functional category. Each scenario is a self-contained folder with paired Zeppelin and Jupyter implementations. The [execution-mode matrix](execution-modes.md) distinguishes the four production DAGs, approved production work, notebook-only demonstrations, and intentionally unscheduled streams. Seventeen Spark scenarios form Scala/PySpark parity pairs; the two Trino scenarios instead pair `%trino` Zeppelin SQL with a Jupyter client. Architecture diagrams are linked from each scenario's README.
+This page catalogs all 19 scenarios in the `data-eng-lab` lakehouse, organized by functional category. Each scenario is a self-contained folder with paired Zeppelin and Jupyter implementations. The [execution-mode matrix](execution-modes.md) distinguishes the five production DAGs, approved production work, notebook-only demonstrations, and intentionally unscheduled streams. Seventeen Spark scenarios form Scala/PySpark parity pairs; the two Trino scenarios instead pair `%trino` Zeppelin SQL with a Jupyter client. Architecture diagrams are linked from each scenario's README.
 
 ## 1. Categories
 
@@ -80,13 +80,13 @@ Nested JSON semi-structured data from the GitHub Archive flattened into typed re
 
 ### Session Analysis
 
-Window-based sessionization on timestamped events. Gap-based session boundary detection (>30s gap = new session) with cumsum-assigned session IDs.
+Window-based sessionization on timestamped events. Per-actor gap-based session boundary detection (>30-minute gap = new session) uses deterministic `(created_at, id)` ordering and cumulative session IDs.
 
 - [sessionization-gh_archive-spark-iceberg](sessionization-gh_archive-spark-iceberg.md)
 
 ## 2. Running Scenarios
 
-Each scenario follows a dual-notebook pattern across Zeppelin and JupyterHub. The 17 Spark pairs must produce equivalent output, validated by `tests/scenarios/parity.py`; the two Trino pairs are execution-gated but excluded from Scala/PySpark parity. Airflow currently runs only the production `nyc_taxi_etl` and `nyc_taxi_medallion` DAGs. Approved child issues do not become runnable entrypoints until their implementation and live acceptance pass.
+Each scenario follows a dual-notebook pattern across Zeppelin and JupyterHub. The 17 Spark pairs must produce equivalent output, validated by `tests/scenarios/parity.py`; the two Trino pairs are execution-gated but excluded from Scala/PySpark parity. Airflow runs five production DAGs: `nyc_taxi_etl`, `nyc_taxi_medallion`, `tpch_star_schema`, `movielens_feature_pipeline`, and `gh_archive_flatten_sessionization`. Approved child issues do not become runnable entrypoints until their implementation and live acceptance pass.
 
 The three broker-backed scenarios require Redpanda and their Kafka topics (created through `REDPANDA_DEMO_TOPICS` or a scenario producer). The GH Archive streaming-ingest scenario instead requests one resolver-verified immutable file set. All four store checkpoint state in MinIO's `checkpoints` bucket, so a rerun resumes from the last processed offset or file unless its checkpoint is intentionally reset.
 

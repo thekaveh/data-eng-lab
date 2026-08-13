@@ -14,7 +14,7 @@ Source: compressed GitHub Archive JSON objects from one resolver-verified immuta
 
 | Column | Type | Source |
 |---|---|---|
-| `id` | long | JSON: `id` |
+| `id` | string | JSON: `id`; required but not a primary key |
 | `type` | string | JSON: `type` |
 | `actor_login` | string | JSON: `actor.login` |
 | `repo_name` | string | JSON: `repo.name` |
@@ -30,7 +30,8 @@ Source: compressed GitHub Archive JSON objects from one resolver-verified immuta
 
 ![Architecture](../../docs/diagrams/img/json_flatten-gh_archive-spark-iceberg.png)
 
-Data flows from compressed JSON files in S3 through Spark batch processing. Nested fields are extracted using dot notation (`col("actor.login")`), timestamps are cast to proper types, and the flattened result is written to an Iceberg silver table.
+Exact duplicate flattened records remain distinct. Conflicting records sharing an `id` fail the
+production stage before replacement.
 
 ## 4. Notebooks
 
@@ -41,13 +42,16 @@ Both languages implement identical JSON flatten logic with source read, field ex
 
 ## 5. Orchestration
 
-Classification: **approved new production DAG**. No production DAG exists yet. Child #109 owns this independently tested flatten stage and its ordered handoff to sessionization; until it passes live acceptance, run the paired notebooks only.
+Classification: **existing production DAG**. `spark-apps/gh-archive-pipeline/dag.py` schedules
+`gh_archive_flatten_sessionization` `@daily`, accepts an explicit manual `dataset_scale`, and uses
+`max_active_runs=1`. The flatten task is the first of two independently REST-confirmed Spark stages.
 
 ## 6. Usage
 
 1. Ensure the `silver` Iceberg namespace exists: `scripts/register_iceberg.py`
 2. Populate the landing zone: `make datasets`
-3. Open either notebook on the Atlas stack.
+3. Trigger `gh_archive_flatten_sessionization` for production output, or open a notebook for an
+   isolated educational run.
 4. Verify output:
       ```bash
    spark-sql -e "SELECT COUNT(*) FROM lakehouse.silver.gh_events"
@@ -61,7 +65,11 @@ Classification: **approved new production DAG**. No production DAG exists yet. C
 
 ## 8. Known Issues & Caveats
 
-Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The `silver` namespace must exist; run `scripts/register_iceberg.py` first. `make datasets` is required to populate the GitHub Archive landing zone before the notebook can read data.
+Notebook execution and Scala/PySpark parity are live-gated on Atlas A1-A4. The notebooks directly
+replace the same table but do not validate or write the production five-key provenance and are not
+serialized with sessionization. Running them can invalidate production consumers; use the DAG/app
+for production writes and isolate educational runs. The `silver` namespace and a verified dataset
+publication must exist.
 
 ## See Also
 

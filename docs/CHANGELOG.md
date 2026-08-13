@@ -4,6 +4,12 @@ All notable changes to this project are documented here (Keep a Changelog format
 
 ## 1. [Unreleased]
 ### Added
+- The GH Archive flatten and sessionization scenarios now share a serialized daily production DAG
+  and Jenkins-published Scala application. Two live tiny-scale Airflow runs preserved all 101,917
+  source rows through `gh_events` and `gh_sessions`, including one exact duplicate, with four
+  REST-confirmed Spark drivers, stable logical checksums, advancing snapshots, and equal five-key
+  provenance on both tables. The paired notebooks remain educational writers without production
+  provenance or serialization.
 - Phase 0: repository foundation, Atlas submodule, launch harness, base tooling,
   verifier skeleton, and infra-preflight Layer 1.
 
@@ -18,9 +24,10 @@ All notable changes to this project are documented here (Keep a Changelog format
   sizes, gives downstream #83 an exact five-property fail-closed preflight, warns that notebooks are
   not production writers, and replaces report-string acceptance with an executable live lifecycle.
 - The TPC-H star-schema scenario now has a daily operator-owned production DAG and Jenkins-published Scala application. Two live tiny-scale Airflow runs ended in success with Spark `FINISHED` and `success=true`; `dim_customer` and `fct_orders` reproduced identical logical checksums and carry matching scale, plan, publication, and manifest properties for downstream Trino generation checks.
-- All 19 scenarios now have one tested execution-mode contract. Only
-  `nyc_taxi_etl`, `nyc_taxi_medallion`, `tpch_star_schema`, and `movielens_feature_pipeline` are current production DAGs; five
-  rows are approved behind child issues, seven remain intentionally
+- All 19 scenarios now have one tested execution-mode contract. The five current production DAGs
+  are `nyc_taxi_etl`, `nyc_taxi_medallion`, `tpch_star_schema`,
+  `movielens_feature_pipeline`, and `gh_archive_flatten_sessionization`; three rows are approved
+  behind child issues, seven remain intentionally
   notebook-only, and three remain unscheduled continuous streams. The 19
   scenario-local no-op DAGs were removed so Airflow and public
   documentation cannot report successful no-op work.

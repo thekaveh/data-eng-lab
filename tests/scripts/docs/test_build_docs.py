@@ -123,9 +123,9 @@ def test_repository_manifest_projects_all_public_pages_and_assets(tmp_path):
         for path in (repo_root / "docs").rglob("*.md")
         if "superpowers" not in path.parts
     }
-    assert len(tuple(iter_leaf_sections(manifest.sections))) == 58
+    assert len(tuple(iter_leaf_sections(manifest.sections))) == 59
     assert {path.relative_to(site) for path in site.rglob("*.md")} == public_sources
-    assert len(tuple(wiki.glob("*.md"))) == 60
+    assert len(tuple(wiki.glob("*.md"))) == 61
     assert len(tuple((site / "assets/img").glob("*.svg"))) == len(manifest.diagrams)
     assert len(tuple((wiki / "img").glob("*.png"))) == len(manifest.diagrams)
     assert "data-eng-lab-hero" in {diagram.id for diagram in manifest.diagrams}

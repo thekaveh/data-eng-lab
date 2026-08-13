@@ -4,7 +4,12 @@ Each scenario ships paired Zeppelin and Jupyter notebooks with equivalent intent
 The manifest-owned walkthroughs below are canonical. Spark pages show side-by-side language parity, while Trino pages document query/result equivalence without calling SQL “Scala” or the Python client “PySpark.”
 
 The [execution-mode matrix](../scenarios/execution-modes.md) records which notebook scenarios also have production orchestration. A paired notebook is always an executable teaching surface; it does not imply that a production DAG exists.
-The TPC-H star-schema and MovieLens feature-engineering walkthroughs document notebook-equivalent transforms behind the production `tpch_star_schema` and `movielens_feature_pipeline` applications. Their notebooks are educational parity surfaces, not supported production write paths, because they can directly replace the same tables without production provenance and validation.
+The TPC-H star-schema, MovieLens feature-engineering, and GH Archive
+`json_flatten-gh_archive-spark-iceberg` / `sessionization-gh_archive-spark-iceberg` walkthroughs
+document notebook-equivalent transforms behind the production `tpch_star_schema`,
+`movielens_feature_pipeline`, and `gh_archive_flatten_sessionization` applications. Their notebooks
+are educational parity surfaces, not supported production write paths, because they can directly
+replace the same tables without production provenance, validation, or serialization.
 
 Update a walkthrough alongside its source notebooks, then run `make docs-check`. The aggregate gate verifies that every paired scenario has exactly one manifest-owned walkthrough and projects it to the site and wiki.
 
