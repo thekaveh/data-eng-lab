@@ -1,9 +1,6 @@
 SELECT
     quality_run_id,
-    format_datetime(
-        with_timezone(logical_date, 'UTC'),
-        'yyyy-MM-dd''T''HH:mm:ss''Z'''
-    ) AS logical_date_utc,
+    format_datetime(logical_date, 'yyyy-MM-dd''T''HH:mm:ss''Z''') AS logical_date_utc,
     source_snapshot_id,
     layer,
     rule_id,

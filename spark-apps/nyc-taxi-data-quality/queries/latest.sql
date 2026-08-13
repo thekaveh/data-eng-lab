@@ -16,10 +16,7 @@ latest_run AS (
 )
 SELECT
     f.quality_run_id,
-    format_datetime(
-        with_timezone(f.logical_date, 'UTC'),
-        'yyyy-MM-dd''T''HH:mm:ss''Z'''
-    ) AS logical_date_utc,
+    format_datetime(f.logical_date, 'yyyy-MM-dd''T''HH:mm:ss''Z''') AS logical_date_utc,
     f.source_snapshot_id,
     f.layer,
     f.rule_id,

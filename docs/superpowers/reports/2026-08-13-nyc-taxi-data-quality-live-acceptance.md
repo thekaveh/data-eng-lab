@@ -154,3 +154,22 @@ state before invoking the retry. It then requires the API transition to remove e
 run and add exactly one successful same-date replacement, with no unrelated or active run delta,
 and preserves both bounded sensor/driver proofs. Unique-date executions retain the additive
 inventory contract.
+
+## Sixth replay and Trino timestamp dialect diagnosis
+
+The corrected same-date inventory contract passed in the real stack, as did both ETL runs, all
+three quality executions, Silver conservation/provenance, two complete governed fact sets, and the
+clean-membership check. The first fixed dashboard query then failed read-only. Exact Trino stderr
+reported that `with_timezone(timestamp(6) with time zone, varchar)` is invalid because the function
+accepts an unzoned timestamp. `DESCRIBE lakehouse.gold.nyc_taxi_quality_facts` confirmed that
+`logical_date`, `data_interval_end`, and `source_snapshot_committed_at` are already
+`timestamp(6) with time zone`, matching the UTC-instant Iceberg contract.
+
+Direct `format_datetime(logical_date, 'yyyy-MM-dd''T''HH:mm:ss''Z''')` returned the intended
+whole-second UTC string, while removing only the redundant wrapper made all three reviewed queries
+execute: latest returned eight rows, trend returned the complete accepted run history, and operator
+attention returned its bounded empty result. The minimal correction applies that direct formatting
+to all three immutable query files. The live Trino helper now also preserves only a bounded,
+endpoint- and secret-redacted diagnostic tail without exposing the fixed SQL body. The accepted
+partial state remained three deterministic run IDs with exactly eight rows and eight distinct rule
+keys each; no data mutation was needed for this read-only query correction.

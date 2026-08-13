@@ -86,3 +86,13 @@ def test_operator_attention_is_exact_and_status_ordered():
         in sql
     )
     assert "order by logical_date desc" in sql and "layer, rule_id" in sql
+
+
+@pytest.mark.parametrize("name", QUERY_NAMES)
+def test_timestamp_with_time_zone_is_formatted_directly_as_canonical_utc(name):
+    sql = _compact(_sql(name))
+    assert "with_timezone(" not in sql
+    assert re.search(
+        r"format_datetime\(\s*(?:f\.)?logical_date, 'yyyy-mm-dd''t''hh:mm:ss''z'''\)",
+        sql,
+    )

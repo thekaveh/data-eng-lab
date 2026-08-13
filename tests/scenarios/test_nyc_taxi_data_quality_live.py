@@ -5,6 +5,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import time
 import urllib.error
@@ -34,6 +35,7 @@ _MAX_REQUESTS = 10
 _MAX_POINTER_BYTES = 1 << 20
 _MAX_TASK_LOG_BYTES = 1 << 20
 _MAX_TASK_LOG_ATTEMPTS = 4
+_MAX_TRINO_ERROR_BYTES = 4096
 BRONZE_SCHEMA = sorted(
     (
         "VendorID:long",
@@ -634,17 +636,35 @@ def _execute_same_date_replacement(
     return replacement["dag_run_id"], driver_id, evidence
 
 
-def _trino(sql: str) -> list[dict]:
-    result = _run(
-        "docker",
-        "exec",
-        f"{_env('PROJECT_NAME', 'data-eng-lab')}-trino",
-        "trino",
-        "--output-format",
-        "JSON",
-        "--execute",
-        sql,
-    )
+def _trino(sql: str, runner=None) -> list[dict]:
+    execute = runner or _run
+    try:
+        result = execute(
+            "docker",
+            "exec",
+            f"{_env('PROJECT_NAME', 'data-eng-lab')}-trino",
+            "trino",
+            "--output-format",
+            "JSON",
+            "--execute",
+            sql,
+        )
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        raw = getattr(error, "stderr", None) or getattr(error, "stdout", None) or "Trino command failed"
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", errors="replace")
+        bounded = str(raw).encode("utf-8", errors="replace")[-_MAX_TRINO_ERROR_BYTES:].decode(
+            "utf-8", errors="replace"
+        )
+        for secret in (
+            _env("AIRFLOW_ADMIN_PASSWORD"),
+            _env("MINIO_ROOT_PASSWORD"),
+            _env("MINIO_ICEBERG_SECRET_KEY"),
+        ):
+            if secret:
+                bounded = bounded.replace(secret, "<redacted>")
+        bounded = re.sub(r"https?://[^\s]+", "<redacted-endpoint>", bounded)
+        raise AssertionError(f"fixed Trino query failed: {bounded}") from None
     return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
 
 
@@ -1138,6 +1158,31 @@ def test_retry_task_log_reader_is_attempt_and_byte_bounded():
 
     with pytest.raises(AssertionError, match="byte bound"):
         _task_log("owned", "submit_nyc_taxi_data_quality", oversized)
+
+
+def test_trino_failure_preserves_only_bounded_sanitized_diagnostics(monkeypatch):
+    secret = "super-secret-token"
+    monkeypatch.setenv("MINIO_ICEBERG_SECRET_KEY", secret)
+    sql = "SELECT 'must-not-leak-sql-body'"
+
+    def runner(*command, **_kwargs):
+        raise subprocess.CalledProcessError(
+            1,
+            command,
+            stderr=(
+                "x" * (_MAX_TRINO_ERROR_BYTES * 2)
+                + f" endpoint=http://trino:8080/v1/statement token={secret} useful=dialect-error"
+            ),
+        )
+
+    with pytest.raises(AssertionError) as failure:
+        _trino(sql, runner=runner)
+    rendered = str(failure.value)
+    assert "dialect-error" in rendered
+    assert secret not in rendered
+    assert "http://trino:8080" not in rendered
+    assert "must-not-leak-sql-body" not in rendered
+    assert len(rendered.encode("utf-8")) <= _MAX_TRINO_ERROR_BYTES + 128
 
 
 def test_live_catalog_contract_requires_exact_ntz_producer_schema():
