@@ -214,11 +214,18 @@ def _normalize_physical_parquet_type(row: object) -> str:
         adjusted_to_utc, *units = annotation_match.groups()
         if sum(unit != "<null>" for unit in units) != 1:
             raise ValueError("unsupported Parquet timestamp unit")
+        logical_unit = (
+            "TIMESTAMP_MILLIS"
+            if units[0] != "<null>"
+            else "TIMESTAMP_MICROS"
+            if units[1] != "<null>"
+            else "TIMESTAMP_NANOS"
+        )
+        if converted and converted != logical_unit:
+            raise ValueError("inconsistent Parquet timestamp unit annotations")
         if adjusted_to_utc == "1":
             physical_logical = "timestamp-tz"
         else:
-            if converted in {"TIMESTAMP_MILLIS", "TIMESTAMP_MICROS"}:
-                raise ValueError("inconsistent Parquet timestamp UTC annotation")
             physical_logical = "timestamp"
         if converted not in {"", "TIMESTAMP_MILLIS", "TIMESTAMP_MICROS"}:
             raise ValueError("unsupported Parquet timestamp annotation")
@@ -234,7 +241,13 @@ def _normalize_physical_parquet_type(row: object) -> str:
             annotation_logical = f"{'int' if signed else 'uint'}{width}"
         elif logical_annotation:
             raise ValueError("unsupported Parquet integer annotation")
-        physical_logical = converted_logical or annotation_logical or ""
+        if converted and converted_logical is None:
+            raise ValueError("unsupported Parquet integer annotation")
+        unannotated_logical = {
+            ("INT32", "INTEGER"): "int32",
+            ("INT64", "BIGINT"): "int64",
+        }.get((physical, duckdb_type))
+        physical_logical = converted_logical or annotation_logical or unannotated_logical or ""
         if not physical_logical:
             raise ValueError("ambiguous Parquet integer is missing its width annotation")
         if converted_logical and annotation_logical and converted_logical != annotation_logical:
