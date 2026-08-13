@@ -2,7 +2,7 @@
 
 - **Date:** 2026-08-12 America/New_York / 2026-08-13 UTC
 - **Branch:** `codex/83-trino-bi-pipelines`
-- **Result:** `1 passed in 168.85s`
+- **Result:** `1 passed in 155.00s`
 - **Harness:** `tests/scenarios/test_trino_bi_pipelines_live.py`
 
 ## Replay contract
@@ -60,25 +60,32 @@ terminal-success DagRuns per DAG and no third or unexpected active run.
 
 | DAG | First run | Second run | Result checksum |
 |---|---|---|---|
-| `tpch_bi_query` | `manual__2026-08-13T03:57:06.273601+00:00` | `manual__2026-08-13T03:57:21.708990+00:00` | `8eda339e07012ba2a7bea164d2152d845d5abd3440725b749e8a4c6110fb97d9` |
-| `nyc_taxi_trino_daily` | `manual__2026-08-13T03:57:16.164227+00:00` | `manual__2026-08-13T03:57:27.184079+00:00` | `d500d6e3954bddbc6febb109004b4889de60dfbbb4c2009e884c2d0e49610969` |
+| `tpch_bi_query` | `manual__2026-08-13T04:37:47.297138+00:00` | `manual__2026-08-13T04:38:01.482442+00:00` | `8eda339e07012ba2a7bea164d2152d845d5abd3440725b749e8a4c6110fb97d9` |
+| `nyc_taxi_trino_daily` | `manual__2026-08-13T04:37:55.971774+00:00` | `manual__2026-08-13T04:38:07.190679+00:00` | `d500d6e3954bddbc6febb109004b4889de60dfbbb4c2009e884c2d0e49610969` |
 
 The exact Trino query IDs were:
 
-- TPC-H first: `20260813_035709_00003_dd37g`, `20260813_035709_00004_dd37g`,
-  `20260813_035709_00005_dd37g`, `20260813_035709_00006_dd37g`,
-  `20260813_035710_00007_dd37g`, `20260813_035710_00008_dd37g`,
-  `20260813_035710_00009_dd37g`.
-- TPC-H second: `20260813_035722_00015_dd37g`, `20260813_035722_00016_dd37g`,
-  `20260813_035722_00017_dd37g`, `20260813_035722_00018_dd37g`,
-  `20260813_035722_00019_dd37g`, `20260813_035722_00020_dd37g`,
-  `20260813_035722_00021_dd37g`.
-- NYC first: `20260813_035716_00010_dd37g`, `20260813_035716_00011_dd37g`,
-  `20260813_035716_00012_dd37g`, `20260813_035716_00013_dd37g`,
-  `20260813_035717_00014_dd37g`.
-- NYC second: `20260813_035727_00022_dd37g`, `20260813_035727_00023_dd37g`,
-  `20260813_035727_00024_dd37g`, `20260813_035727_00025_dd37g`,
-  `20260813_035727_00026_dd37g`.
+- TPC-H first: `20260813_043749_00004_3jrjt`, `20260813_043749_00005_3jrjt`,
+  `20260813_043749_00006_3jrjt`, `20260813_043749_00007_3jrjt`,
+  `20260813_043750_00008_3jrjt`, `20260813_043751_00009_3jrjt`,
+  `20260813_043751_00010_3jrjt`.
+- TPC-H second: `20260813_043801_00018_3jrjt`, `20260813_043802_00019_3jrjt`,
+  `20260813_043802_00020_3jrjt`, `20260813_043802_00021_3jrjt`,
+  `20260813_043802_00022_3jrjt`, `20260813_043802_00023_3jrjt`,
+  `20260813_043802_00024_3jrjt`.
+- NYC first: `20260813_043756_00012_3jrjt`, `20260813_043756_00013_3jrjt`,
+  `20260813_043756_00014_3jrjt`, `20260813_043756_00015_3jrjt`,
+  `20260813_043756_00016_3jrjt`.
+- NYC second: `20260813_043807_00026_3jrjt`, `20260813_043807_00027_3jrjt`,
+  `20260813_043807_00028_3jrjt`, `20260813_043807_00029_3jrjt`,
+  `20260813_043807_00030_3jrjt`.
+
+The scheduler runtime imported the HTTP provider hook and `requests` while confirming that neither
+the Python Trino client nor an Airflow Trino provider was installed. After each task, a fixed
+`system.runtime.queries` inventory proved the cumulative exact owned query-ID set above: every row
+was `FINISHED` with null `error_type` and `error_code`, and no unexpected active query owned by
+`X-Trino-Source: data-eng-lab-airflow` appeared. Each bounded owned-task log contained no endpoint,
+Trino user/source header, fixed SQL body, configured secret, or traceback.
 
 Each task returned a typed, bounded metadata-DB XCom only after all pre/post checks. The reruns had
 different query IDs but byte-identical canonical `columns`/`rows` payloads and equal checksums.
@@ -95,8 +102,9 @@ Before and after state was exactly equal:
 | `lakehouse.gold.fct_orders` | `3291191197297397256` |
 | `lakehouse.bronze.nyc_taxi_trips` | `6090932775096319165` |
 
-TPC-H table properties and both raw pointer controls were unchanged. The Spark master driver set had
-an exact empty delta, proving the Airflow tasks used Trino rather than Spark. Standard
+TPC-H table properties and both raw pointer controls were unchanged. Mandatory and optional pointer
+bodies were read with a 1 MiB hard bound and their response streams were closed. The Spark master
+driver set had an exact empty delta, proving the Airflow tasks used Trino rather than Spark. Standard
 `scripts/stop-all.sh` cleanup preserved volumes, and the final all-state Docker query returned zero
 `data-eng-lab` project containers.
 
