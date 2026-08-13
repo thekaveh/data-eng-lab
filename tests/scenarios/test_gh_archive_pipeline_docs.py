@@ -78,11 +78,11 @@ def test_notebook_index_names_both_gh_archive_production_prototypes():
 def test_public_counts_and_diagrams_describe_current_production_dags():
     for path in (ROOT / "README.md", ROOT / "docs/index.md", ROOT / "docs/scenarios/index.md"):
         text = path.read_text(encoding="utf-8")
-        assert "seven production dags" in text.lower()
+        assert "eight production dags" in text.lower()
         assert "four production dags" not in text.lower()
     projection = (ROOT / "docs/scenarios/execution-modes.md").read_text(encoding="utf-8")
     assert "`gh_archive_flatten_sessionization`" in projection
-    assert "seven production DAGs today" in projection
+    assert "eight production DAGs today" in projection
     for scenario in SCENARIOS:
         diagram = (ROOT / f"docs/diagrams/{scenario}.html").read_text(encoding="utf-8")
         assert "existing production DAG" in diagram

@@ -2,7 +2,7 @@
   "paragraphs": [
     {
       "title": "1. Overview",
-      "text": "%md\n## 1. Overview",
+      "text": "%md\n## 1. Overview\n\n> **Production warning:** These educational cells directly replace the production Silver tables without production provenance, bypass Airflow serialization, and do not persist governed quality facts. They can invalidate production monitoring. Production writes must use the `nyc_taxi_data_quality` DAG and reviewed Spark application.",
       "config": {},
       "settings": {
         "params": {},
@@ -38,7 +38,7 @@
     },
     {
       "title": "3. Read (code)",
-      "text": "%spark\nval df = spark.table(\"lakehouse.bronze.nyc_taxi_trips\")",
+      "text": "%spark\nval columns = Seq(\n  \"VendorID\", \"tpep_pickup_datetime\", \"tpep_dropoff_datetime\",\n  \"passenger_count\", \"trip_distance\", \"RatecodeID\", \"store_and_fwd_flag\",\n  \"PULocationID\", \"DOLocationID\", \"payment_type\", \"fare_amount\", \"extra\",\n  \"mta_tax\", \"tip_amount\", \"tolls_amount\", \"improvement_surcharge\",\n  \"total_amount\", \"congestion_surcharge\", \"airport_fee\", \"trip_date\"\n)\nval df = spark.table(\"lakehouse.bronze.nyc_taxi_trips\").select(columns.map(col): _*)",
       "config": {},
       "settings": {
         "params": {},
@@ -56,7 +56,7 @@
     },
     {
       "title": "4. Transform (code)",
-      "text": "%spark\nval rule = \"fare_amount > 0 AND passenger_count BETWEEN 1 AND 6\"\nval valid = df.where(rule)\nval quarantine = df.where(s\"NOT ($rule) OR fare_amount IS NULL\")",
+      "text": "%spark\nval rule = \"fare_amount > 0 AND passenger_count BETWEEN 1 AND 6\"\nval isValid = coalesce(expr(rule), lit(false))\nval valid = df.where(isValid)\nval quarantine = df.where(not(isValid))\nval source_count = df.count()\nval valid_count = valid.count()\nval quarantine_count = quarantine.count()\nassert(valid_count + quarantine_count == source_count)",
       "config": {},
       "settings": {
         "params": {},
@@ -92,7 +92,7 @@
     },
     {
       "title": "6. Verify (code)",
-      "text": "%spark\nspark.sql(\"SELECT (SELECT count(*) FROM lakehouse.silver.nyc_taxi_clean) AS clean, (SELECT count(*) FROM lakehouse.silver.nyc_taxi_quarantine) AS quarantined\").show(false)",
+      "text": "%spark\nval counts = spark.sql(\"SELECT (SELECT count(*) FROM lakehouse.silver.nyc_taxi_clean) AS clean, (SELECT count(*) FROM lakehouse.silver.nyc_taxi_quarantine) AS quarantined\").first()\nassert(counts.getLong(0) + counts.getLong(1) == source_count)\nprintln(s\"source=$source_count clean=${counts.getLong(0)} quarantined=${counts.getLong(1)}\")",
       "config": {},
       "settings": {
         "params": {},

@@ -65,6 +65,7 @@ sections:
       - {id: spark-app-tpch-star-schema, number: '7.4', title: tpch-star-schema, source: docs/spark-apps/tpch-star-schema.md}
       - {id: spark-app-movielens-feature-pipeline, number: '7.5', title: movielens-feature-pipeline, source: docs/spark-apps/movielens-feature-pipeline.md}
       - {id: spark-app-gh-archive-pipeline, number: '7.6', title: gh-archive-pipeline, source: docs/spark-apps/gh-archive-pipeline.md}
+      - {id: spark-app-nyc-taxi-data-quality, number: '7.7', title: nyc-taxi-data-quality, source: docs/spark-apps/nyc-taxi-data-quality.md}
   - id: atlas-operations
     number: '8'
     title: Atlas Operations

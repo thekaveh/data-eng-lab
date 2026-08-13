@@ -75,7 +75,7 @@ def _unsupported_atlas_export_offenders(paths: Iterable[Path], *, root: Path = R
 
 def test_catalog_has_expected_atlas_artifacts():
     assert len(sorted((ROOT / "scenarios").rglob("dag.py"))) == 0
-    assert len(sorted((ROOT / "spark-apps").rglob("dag.py"))) == 5
+    assert len(sorted((ROOT / "spark-apps").rglob("dag.py"))) == 6
     assert len(sorted((ROOT / "scenarios").rglob("notebook.zpln"))) == 19
     assert len(sorted((ROOT / "scenarios").rglob("notebook.ipynb"))) == 19
 
@@ -284,6 +284,8 @@ empty=types.ModuleType("airflow.operators.empty"); empty.EmptyOperator=FakeOpera
 python=types.ModuleType("airflow.operators.python"); python.PythonOperator=FakeOperator
 spark_submit=types.ModuleType("airflow.providers.apache.spark.operators.spark_submit")
 spark_submit.SparkSubmitOperator=FakeOperator
+external_task=types.ModuleType("airflow.providers.standard.sensors.external_task")
+external_task.ExternalTaskSensor=FakeOperator
 pendulum=types.ModuleType("pendulum"); pendulum.datetime=lambda *args, **kwargs: object()
 atlas=types.ModuleType("atlas_spark_utils"); atlas.RestConfirmingSparkHook=FakeOperator
 resolver=types.ModuleType("datasets.resolver_service"); resolver.resolve_request=denied
@@ -296,6 +298,9 @@ for name, module in {
  "airflow.providers.apache.spark":types.ModuleType("airflow.providers.apache.spark"),
  "airflow.providers.apache.spark.operators":types.ModuleType("airflow.providers.apache.spark.operators"),
  "airflow.providers.apache.spark.operators.spark_submit":spark_submit, "pendulum":pendulum,
+ "airflow.providers.standard":types.ModuleType("airflow.providers.standard"),
+ "airflow.providers.standard.sensors":types.ModuleType("airflow.providers.standard.sensors"),
+ "airflow.providers.standard.sensors.external_task":external_task,
  "atlas_spark_utils":atlas, "datasets.resolver_service":resolver, "scripts.resolve_dataset":host_cli,
 }.items(): sys.modules[name]=module
 path=sys.argv[1]

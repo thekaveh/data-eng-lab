@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import gzip
 import io
 import json
@@ -22,9 +23,28 @@ from datasets.schema_inspection import (
     normalize_parquet_schema,
     verify_physical_schema,
 )
-from datasets.verification import LockMismatch, VerificationContext
+from datasets.verification import ExpectedObject, LockMismatch, VerificationContext, VerifiedFile
 
 CONTEXT = VerificationContext("fixture", "tiny", "schema", "artifact", "object")
+ARROW_PARQUET_FIXTURE = base64.b64decode(
+    "UEFSMRUEFRAVEEwVAhUEEgAAAQAAAAAAAAAVABUSFRIsFQIVBBUGFQYcGAgBAAAAAAAAABgIAQAAAAAAAAAW"
+    "ACgIAQAAAAAAAAAYCAEAAAAAAAAAEREAAAACAAAAAgEBAgAVBBUIFQhMFQIVBBIAAAIAAAAVABUSFRIsFQIV"
+    "BBUGFQYcGAQCAAAAGAQCAAAAFgAoBAIAAAAYBAIAAAAREQAAAAIAAAACAQECABUEFRAVEEwVAhUEEgAAAAAA"
+    "AAAAAAAAAAAVABUSFRIsFQIVBBUGFQYcGAgAAAAAAAAAABgIAAAAAAAAAAAWACgIAAAAAAAAAAAYCAAAAAAA"
+    "AAAAEREAAAACAAAAAgEBAgAVAhlMNQAYBnNjaGVtYRUGABUEJQIYBGlkNjQAFQIlAhgEaWQzMgAVBCUCGApl"
+    "dmVudF90aW1lJRRMjBIcLAAAAAAAFgIZHBk8JgAcFQQZJQQGGRgEaWQ2NBUAFgIWvAEWvAEmNCYIHBgIAQAA"
+    "AAAAAAAYCAEAAAAAAAAAFgAoCAEAAAAAAAAAGAgBAAAAAAAAABERABksFQQVBBUCABUAFQQVAgA8KQYZJgAC"
+    "AAAAJgAcFQIZJQQGGRgEaWQzMhUAFgIWlAEWlAEm6AEmxAEcGAQCAAAAGAQCAAAAFgAoBAIAAAAYBAIAAAAR"
+    "EQAZLBUEFQQVAgAVABUEFQIAPCkGGSYAAgAAACYAHBUEGSUEBhkYCmV2ZW50X3RpbWUVABYCFrwBFrwBJoQD"
+    "JtgCHBgIAAAAAAAAAAAYCAAAAAAAAAAAFgAoCAAAAAAAAAAAGAgAAAAAAAAAABERABksFQQVBBUCABUAFQQV"
+    "AgA8KQYZJgACAAAAFowEFgImCBaMBAAZHBgMQVJST1c6c2NoZW1hGMwCLy8vLy8vQUFBQUFRQUFBQUFBQUtB"
+    "QXdBQmdBRkFBZ0FDZ0FBQUFBQkJBQU1BQUFBQ0FBSUFBQUFCQUFJQUFBQUJBQUFBQU1BQUFDRUFBQUFRQUFB"
+    "QUFRQUFBQ1kvLy8vQUFBQkNoQUFBQUFrQUFBQUJBQUFBQUFBQUFBS0FBQUFaWFpsYm5SZmRHbHRaUUFBQUFB"
+    "R0FBZ0FCZ0FHQUFBQUFBQUNBTkQvLy84QUFBRUNFQUFBQUJnQUFBQUVBQUFBQUFBQUFBUUFBQUJwWkRNeUFB"
+    "QUFBTUQvLy84QUFBQUJJQUFBQUJBQUZBQUlBQVlBQndBTUFBQUFFQUFRQUFBQUFBQUJBaEFBQUFBZ0FBQUFC"
+    "QUFBQUFBQUFBQUVBQUFBYVdRMk5BQUFBQUFJQUF3QUNBQUhBQWdBQUFBQUFBQUJRQUFBQUFBQUFBQT0AGCBw"
+    "YXJxdWV0LWNwcC1hcnJvdyB2ZXJzaW9uIDI1LjAuMBk8HAAAHAAAHAAAAA4DAABQQVIx"
+)
 
 
 def contract(
@@ -218,10 +238,62 @@ def test_parquet_normalization_rejects_nested_group_before_its_leaf():
         normalize_parquet_schema(rows)
 
 
-def test_parquet_normalization_does_not_trust_inferred_integer_without_width_annotation():
-    row = parquet_row("value", "INTEGER", type="INT32", converted_type=None)
+@pytest.mark.parametrize(
+    ("physical", "duckdb_type", "logical"),
+    [("INT32", "INTEGER", "int32"), ("INT64", "BIGINT", "int64")],
+)
+def test_parquet_normalization_accepts_bare_signed_integer_only_on_exact_width_agreement(
+    physical: str, duckdb_type: str, logical: str
+):
+    row = parquet_row("value", duckdb_type, type=physical, converted_type=None)
 
-    with pytest.raises(ValueError, match="ambiguous"):
+    assert normalize_parquet_schema([row]) == (ObservedField("value", logical, True),)
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        parquet_row("value", "BIGINT", type="INT32", converted_type=None),
+        parquet_row("value", "INTEGER", type="INT64", converted_type=None),
+        parquet_row("value", "UINTEGER", type="INT32", converted_type=None),
+        parquet_row("value", "UBIGINT", type="INT64", converted_type=None),
+        parquet_row("value", "INTEGER", type=None, converted_type=None),
+        parquet_row("value", "", type="INT32", converted_type=None),
+    ],
+)
+def test_parquet_normalization_rejects_bare_integer_without_exact_signed_width_agreement(row):
+    with pytest.raises(ValueError, match="integer|physical|DuckDB|ambiguous|unsupported"):
+        normalize_parquet_schema([row])
+
+
+def test_arrow_parquet_physical_fixture_matches_locked_nyc_metadata_shape(tmp_path: Path):
+    path = tmp_path / "arrow.parquet"
+    path.write_bytes(ARROW_PARQUET_FIXTURE)
+    expected = contract(
+        "parquet",
+        (
+            SchemaField("id64", "int64", True),
+            SchemaField("id32", "int32", True),
+            SchemaField("event_time", "timestamp", True),
+        ),
+    )
+    with path.open("rb") as stream:
+        capability = VerifiedFile(
+            Path(f"/dev/fd/{stream.fileno()}"),
+            ExpectedObject(path.name, path.stat().st_size, "0" * 64, expected.id),
+        )
+
+        assert verify_physical_schema(capability, expected, CONTEXT).fields == (
+            ObservedField("id64", "int64", True),
+            ObservedField("id32", "int32", True),
+            ObservedField("event_time", "timestamp", True),
+        )
+
+
+def test_parquet_normalization_rejects_inferred_integer_without_physical_type():
+    row = parquet_row("value", "INTEGER", type=None, converted_type=None)
+
+    with pytest.raises(ValueError, match="physical|unsupported|ambiguous"):
         normalize_parquet_schema([row])
 
 
@@ -356,6 +428,48 @@ def test_parquet_timestamp_annotation_accepts_each_exact_supported_unit(unit: st
     )
 
     assert normalize_parquet_schema([row]) == (ObservedField("value", "timestamp", True),)
+
+
+@pytest.mark.parametrize(
+    ("adjusted", "duckdb_type", "logical"),
+    [("0", "TIMESTAMP", "timestamp"), ("1", "TIMESTAMP WITH TIME ZONE", "timestamp-tz")],
+)
+def test_parquet_duplicate_timestamp_metadata_uses_authoritative_logical_timezone(
+    adjusted: str, duckdb_type: str, logical: str
+):
+    row = parquet_row(
+        "value",
+        duckdb_type,
+        type="INT64",
+        converted_type="TIMESTAMP_MICROS",
+        logical_type=(
+            f"TimestampType(isAdjustedToUTC={adjusted}, unit=TimeUnit("
+            "MILLIS=<null>, MICROS=MicroSeconds(), NANOS=<null>))"
+        ),
+    )
+
+    assert normalize_parquet_schema([row]) == (ObservedField("value", logical, True),)
+
+
+@pytest.mark.parametrize(
+    ("converted", "unit"),
+    [
+        ("TIMESTAMP_MILLIS", "MILLIS=<null>, MICROS=MicroSeconds(), NANOS=<null>"),
+        ("TIMESTAMP_MICROS", "MILLIS=MilliSeconds(), MICROS=<null>, NANOS=<null>"),
+        ("TIMESTAMP_MICROS", "MILLIS=<null>, MICROS=<null>, NANOS=NanoSeconds()"),
+    ],
+)
+def test_parquet_duplicate_timestamp_metadata_rejects_unit_conflicts(converted: str, unit: str):
+    row = parquet_row(
+        "value",
+        "TIMESTAMP",
+        type="INT64",
+        converted_type=converted,
+        logical_type=f"TimestampType(isAdjustedToUTC=0, unit=TimeUnit({unit}))",
+    )
+
+    with pytest.raises(ValueError, match="timestamp"):
+        normalize_parquet_schema([row])
 
 
 FROZEN_PRODUCTION_PARQUET_SCHEMAS = {
