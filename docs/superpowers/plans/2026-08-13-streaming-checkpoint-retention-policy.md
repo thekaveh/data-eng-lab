@@ -179,6 +179,9 @@
   as the maximum terminal/retired timestamp, final heartbeat, and newest object
   timestamp. Reject any clock over 300 seconds in the future, any object newer than
   terminal evidence, missing evidence, or inconsistent lease/prefix/checkpoint IDs.
+  Durable registry transitions carry exact `retired_at` and `retirement_review`
+  fields; active entries require both null. Bound YAML to 262,144 bytes, 4,096 nodes,
+  depth 32, and no aliases before construction.
 
 - [ ] **Step 4: Implement exact class-specific eligibility**
 

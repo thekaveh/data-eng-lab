@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import io
 from pathlib import Path
 
 import pytest
@@ -47,6 +48,8 @@ checkpoints:
     source: redpanda:events
     sink: lakehouse.bronze.events
     lifecycle: active
+    retired_at: null
+    retirement_review: null
     durability: durable_stream
     terminal_states: [stopped, retired]
     retention_seconds: 2592000
@@ -61,6 +64,8 @@ checkpoints:
     source: redpanda:events
     sink: lakehouse.gold.event_windows
     lifecycle: active
+    retired_at: null
+    retirement_review: null
     durability: durable_stream
     terminal_states: [stopped, retired]
     retention_seconds: 2592000
@@ -75,6 +80,8 @@ checkpoints:
     source: redpanda:online_retail_cdc
     sink: lakehouse.silver.online_retail_cdc
     lifecycle: active
+    retired_at: null
+    retirement_review: null
     durability: durable_stream
     terminal_states: [stopped, retired]
     retention_seconds: 2592000
@@ -248,6 +255,70 @@ def test_parser_rejects_duplicate_checkpoint_ids_and_overlapping_prefixes():
         api.parse_policy(duplicate_id)
     with pytest.raises(api.PolicyError, match="overlapping_prefix"):
         api.parse_policy(overlap)
+
+
+def test_retired_durable_registry_requires_exact_reviewed_transition_facts():
+    api = _api()
+    retired = VALID_POLICY.replace(
+        "lifecycle: active\n    retired_at: null\n    retirement_review: null\n",
+        "lifecycle: retired\n"
+        "    retired_at: '2026-07-01T12:00:00Z'\n"
+        "    retirement_review: issue-85-reviewed-transition\n",
+        1,
+    )
+
+    entry = api.parse_policy(retired).entries["streaming-events-v1"]
+    assert entry.retired_at.isoformat() == "2026-07-01T12:00:00+00:00"
+    assert entry.retirement_review == "issue-85-reviewed-transition"
+
+    for broken in (
+        retired.replace("retired_at: '2026-07-01T12:00:00Z'", "retired_at: null", 1),
+        retired.replace("retirement_review: issue-85-reviewed-transition", "retirement_review: null", 1),
+        retired.replace("2026-07-01T12:00:00Z", "2026-07-01T12:00:00.001Z", 1),
+        retired.replace("issue-85-reviewed-transition", "contains spaces", 1),
+    ):
+        with pytest.raises(api.PolicyError, match="invalid_retirement_transition"):
+            api.parse_policy(broken)
+
+
+def test_active_durable_registry_rejects_premature_retirement_facts():
+    api = _api()
+    for broken in (
+        VALID_POLICY.replace("retired_at: null", "retired_at: '2026-07-01T12:00:00Z'", 1),
+        VALID_POLICY.replace("retirement_review: null", "retirement_review: issue-85", 1),
+    ):
+        with pytest.raises(api.PolicyError, match="invalid_retirement_transition"):
+            api.parse_policy(broken)
+
+
+@pytest.mark.parametrize(
+    ("text", "code"),
+    [
+        ("x: " + "a" * 262_145, "policy_too_large"),
+        ("root: &shared [1]\ncopy: *shared\n", "yaml_alias_forbidden"),
+        (
+            "root:\n" + "".join("  " * depth + "child:\n" for depth in range(1, 40)) + "  " * 40 + "value: 1\n",
+            "yaml_depth_exceeded",
+        ),
+        ("root:\n" + "  - value: 1\n" * 4_100, "yaml_node_limit"),
+    ],
+)
+def test_parser_rejects_bounded_yaml_resource_exhaustion_before_materialization(text: str, code: str):
+    with pytest.raises(_api().PolicyError, match=code):
+        _api().parse_policy(text)
+
+
+def test_policy_file_reader_stops_at_the_same_byte_bound():
+    class BoundedReadOnlyPath:
+        def read_text(self, **_kwargs):
+            raise AssertionError("unbounded read_text must not be called")
+
+        def open(self, mode):
+            assert mode == "rb"
+            return io.BytesIO(b"x" * 262_145)
+
+    with pytest.raises(_api().PolicyError, match="policy_too_large"):
+        _api().load_policy(BoundedReadOnlyPath())
 
 
 @pytest.mark.parametrize(

@@ -94,6 +94,8 @@ The registry records, per entry:
 
 - checkpoint ID, exact prefix or constrained template, owner, lifecycle state, and
   durability class;
+- for durable entries, an exact nullable `retired_at` and nullable bounded
+  `retirement_review`; both are null while active and both are required when retired;
 - runtime and source identity, sink identity, and output behavior;
 - retention duration and required terminal state;
 - recovery class, source availability requirement, and sink disposition;
@@ -103,6 +105,8 @@ The registry records, per entry:
 The registry rejects duplicate keys, unknown fields, duplicate checkpoint IDs,
 overlapping prefixes, unsafe templates, empty values, invalid classes or states,
 unbounded patterns, and inconsistent recovery or retention fields.
+The local parser reads at most 262,144 bytes and rejects YAML aliases, more than 4,096
+nodes, or nesting deeper than 32 nodes before construction.
 
 ## 5. Durability and retention clocks
 
@@ -147,6 +151,10 @@ Object age alone never grants eligibility. A clock more than five minutes in the
 future, an object modified after the accepted terminal record, a missing timestamp,
 or contradictory clocks cause refusal. Legacy objects without valid ownership and
 terminal metadata remain indefinitely ineligible for automated deletion.
+Lease clocks must be ordered and the expiry must be exactly 600 seconds after the
+heartbeat. Supplied Boolean facts require the exact Boolean type. Class-specific
+lease and terminal states must match: durable `stopped|retired`, generation
+`completed|stopped`, and disposable `stopped`.
 
 ## 6. Active lease contract
 

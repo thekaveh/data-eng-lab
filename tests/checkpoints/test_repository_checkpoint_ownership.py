@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import ast
 import json
+import re
+import subprocess
 from pathlib import Path
 
 from scripts.checkpoints.policy import load_policy
@@ -32,6 +34,64 @@ EXPECTED_SCENARIOS = {
         "lakehouse.bronze.gh_events_stream",
     ),
 }
+
+EXPECTED_EXECUTABLE_LOCATIONS = {
+    "docs/go-live.md": ("s3a://checkpoints/streaming_test",),
+    "scenarios/cdc_streaming-online_retail-spark-iceberg/jupyter/notebook.ipynb": (
+        "s3a://checkpoints/online_retail_cdc",
+    ),
+    "scenarios/cdc_streaming-online_retail-spark-iceberg/zeppelin/notebook.zpln": (
+        "s3a://checkpoints/online_retail_cdc",
+    ),
+    "scenarios/streaming_ingest-events-spark-iceberg/jupyter/notebook.ipynb": ("s3a://checkpoints/events",),
+    "scenarios/streaming_ingest-events-spark-iceberg/zeppelin/notebook.zpln": ("s3a://checkpoints/events",),
+    "scenarios/streaming_ingest-gh_archive-spark-iceberg/jupyter/notebook.ipynb": (
+        "s3a://checkpoints/gh_events_file/{scale}/{publication_id}/{manifest_sha256}",
+    ),
+    "scenarios/streaming_ingest-gh_archive-spark-iceberg/zeppelin/notebook.zpln": (
+        "s3a://checkpoints/gh_events_file/{scale}/{publication_id}/{manifest_sha256}",
+    ),
+    "scenarios/streaming_windows-events-spark-iceberg/jupyter/notebook.ipynb": ("s3a://checkpoints/event_windows",),
+    "scenarios/streaming_windows-events-spark-iceberg/zeppelin/notebook.zpln": ("s3a://checkpoints/event_windows",),
+}
+
+DYNAMIC_LOCATION_NORMALIZATION = {
+    "s3a://checkpoints/gh_events_file/{dataset_scale}/{publication_id}/{manifest_sha256}": (
+        "s3a://checkpoints/gh_events_file/{scale}/{publication_id}/{manifest_sha256}"
+    ),
+    "s3a://checkpoints/gh_events_file/$datasetScale/$publicationId/$manifestSha256": (
+        "s3a://checkpoints/gh_events_file/{scale}/{publication_id}/{manifest_sha256}"
+    ),
+}
+
+
+def _tracked_executable_checkpoint_locations() -> dict[str, tuple[str, ...]]:
+    tracked = (
+        subprocess.run(["git", "ls-files", "-z"], cwd=ROOT, check=True, capture_output=True)
+        .stdout.decode("utf-8")
+        .split("\0")
+    )
+    found: dict[str, tuple[str, ...]] = {}
+    for relative in tracked:
+        if not relative or relative.startswith(("tests/", "docs/notebooks/", "docs/superpowers/")):
+            continue
+        path = ROOT / relative
+        if not path.is_file():
+            continue
+        try:
+            text = path.read_text(encoding="utf-8", errors="strict")
+        except UnicodeDecodeError:
+            continue
+        if "checkpointLocation" not in text:
+            continue
+        raw_locations = re.findall(r"s3a://checkpoints/[A-Za-z0-9_/{\}$]+", text)
+        locations = tuple(DYNAMIC_LOCATION_NORMALIZATION.get(value, value) for value in raw_locations)
+        found[relative] = locations
+    return found
+
+
+def test_checkpoint_location_inventory_is_exhaustively_discovered_from_tracked_executables():
+    assert _tracked_executable_checkpoint_locations() == EXPECTED_EXECUTABLE_LOCATIONS
 
 
 def _literal_assignment(path: Path, name: str):

@@ -57,6 +57,8 @@ class CheckpointEntry:
     sink_disposition: str
     concurrent_writers: str
     retirement_authorization: str
+    retired_at: datetime | None = None
+    retirement_review: str | None = None
     scales: tuple[str, ...] = ()
 
 
@@ -91,6 +93,10 @@ class TerminalFacts:
     generation: Mapping[str, str]
     exclusive_run: bool = False
     successful: bool = False
+
+    def __post_init__(self) -> None:
+        if isinstance(self.generation, Mapping):
+            object.__setattr__(self, "generation", MappingProxyType(dict(self.generation)))
 
 
 @dataclass(frozen=True)
@@ -150,7 +156,24 @@ class CheckpointPolicy:
 
 
 class _UniqueKeyLoader(yaml.SafeLoader):
-    pass
+    def __init__(self, stream: str) -> None:
+        super().__init__(stream)
+        self._policy_node_count = 0
+        self._policy_depth = 0
+
+    def compose_node(self, parent: yaml.Node | None, index: object) -> yaml.Node:
+        if self.check_event(yaml.AliasEvent):
+            raise PolicyError("yaml_alias_forbidden")
+        self._policy_node_count += 1
+        if self._policy_node_count > _MAX_YAML_NODES:
+            raise PolicyError("yaml_node_limit")
+        self._policy_depth += 1
+        if self._policy_depth > _MAX_YAML_DEPTH:
+            raise PolicyError("yaml_depth_exceeded")
+        try:
+            return super().compose_node(parent, index)
+        finally:
+            self._policy_depth -= 1
 
 
 def _construct_unique_mapping(loader: _UniqueKeyLoader, node: yaml.MappingNode, deep: bool = False) -> dict[Any, Any]:
@@ -204,6 +227,7 @@ _ENTRY_KEYS = frozenset(
     }
 )
 _GENERATION_ENTRY_KEYS = _ENTRY_KEYS | {"scales"}
+_DURABLE_ENTRY_KEYS = _ENTRY_KEYS | {"retired_at", "retirement_review"}
 _GENERATION_TEMPLATE = "gh_events_file/{scale}/{publication_id}/{manifest_sha256}/"
 _GENERATION_PATTERN = re.compile(
     r"gh_events_file/(?P<scale>tiny|small|medium)/"
@@ -211,6 +235,10 @@ _GENERATION_PATTERN = re.compile(
     r"(?P<manifest_sha256>[0-9a-f]{64})/"
 )
 _SAFE_FIXED_PREFIX = re.compile(r"(?:[a-z0-9][a-z0-9_-]*/)+")
+_SAFE_REVIEW = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}")
+_MAX_POLICY_BYTES = 262_144
+_MAX_YAML_NODES = 4_096
+_MAX_YAML_DEPTH = 32
 
 _EXPECTED_ENTRIES: Mapping[str, Mapping[str, Any]] = {
     "streaming-events-v1": {
@@ -289,8 +317,15 @@ _EXPECTED_ENTRIES: Mapping[str, Mapping[str, Any]] = {
 
 def load_policy(path: Path) -> CheckpointPolicy:
     try:
-        text = path.read_text(encoding="utf-8")
+        with path.open("rb") as handle:
+            payload = handle.read(_MAX_POLICY_BYTES + 1)
     except (OSError, UnicodeError) as error:
+        raise PolicyError("policy_read_failed") from error
+    if len(payload) > _MAX_POLICY_BYTES:
+        raise PolicyError("policy_too_large")
+    try:
+        text = payload.decode("utf-8")
+    except UnicodeError as error:
         raise PolicyError("policy_read_failed") from error
     return parse_policy(text)
 
@@ -298,6 +333,12 @@ def load_policy(path: Path) -> CheckpointPolicy:
 def parse_policy(text: str) -> CheckpointPolicy:
     if not isinstance(text, str):
         raise PolicyError("invalid_type")
+    try:
+        encoded_size = len(text.encode("utf-8"))
+    except UnicodeError as error:
+        raise PolicyError("invalid_yaml") from error
+    if encoded_size > _MAX_POLICY_BYTES:
+        raise PolicyError("policy_too_large")
     try:
         raw = yaml.load(text, Loader=_UniqueKeyLoader)
     except PolicyError:
@@ -370,13 +411,13 @@ def evaluate_retention(policy: CheckpointPolicy, facts: EvaluationInput) -> Rete
     if lease is None:
         refusal_codes.append("lease_missing")
     else:
-        _evaluate_lease(policy, facts, matched, evaluated_at_valid, lease, refusal_codes)
+        _evaluate_lease(policy, facts, matched, entry, evaluated_at_valid, lease, terminal, refusal_codes)
     _evaluate_inventory(policy, facts, evaluated_at_valid, inventory, refusal_codes)
 
     if terminal is None:
         refusal_codes.append("terminal_missing")
     else:
-        _evaluate_terminal(entry, matched, terminal, refusal_codes)
+        _evaluate_terminal(policy, facts, entry, matched, terminal, refusal_codes)
         if (
             _is_exact_utc(terminal.occurred_at)
             and _is_exact_utc(inventory.newest_last_modified)
@@ -384,11 +425,13 @@ def evaluate_retention(policy: CheckpointPolicy, facts: EvaluationInput) -> Rete
         ):
             refusal_codes.append("object_after_terminal")
 
-    anchor = _retention_anchor(lease, terminal, inventory)
-    eligible_after = anchor + timedelta(seconds=entry.retention_seconds) if anchor else None
+    anchor = _retention_anchor(entry, lease, terminal, inventory)
+    eligible_after = _safe_add_seconds(anchor, entry.retention_seconds)
+    if anchor is not None and eligible_after is None:
+        refusal_codes.append("clock_overflow")
 
     if entry.durability == "durable_stream" and entry.lifecycle == "active":
-        refusal_codes = ["registry_active_durable"]
+        refusal_codes.append("registry_active_durable")
     elif evaluated_at_valid and eligible_after is not None and facts.evaluated_at < eligible_after:
         refusal_codes.append("retention_quarantine")
 
@@ -402,9 +445,14 @@ def evaluate_retention(policy: CheckpointPolicy, facts: EvaluationInput) -> Rete
         "evaluated_at": _format_utc(facts.evaluated_at),
         "inventory": {
             "newest_last_modified": _format_utc(inventory.newest_last_modified),
-            "object_count": inventory.object_count,
-            "sha256": inventory.inventory_sha256,
-            "total_bytes": inventory.total_bytes,
+            "object_count": inventory.object_count if type(inventory.object_count) is int else None,
+            "sha256": (
+                inventory.inventory_sha256
+                if isinstance(inventory.inventory_sha256, str)
+                and re.fullmatch(r"[0-9a-f]{64}", inventory.inventory_sha256)
+                else None
+            ),
+            "total_bytes": inventory.total_bytes if type(inventory.total_bytes) is int else None,
         },
         "policy_sha256": policy_sha256,
         "prefix": matched.prefix,
@@ -433,7 +481,12 @@ def _parse_entry(value: object) -> CheckpointEntry:
     expected = _EXPECTED_ENTRIES.get(checkpoint_id)
     if expected is None:
         raise PolicyError("invalid_checkpoint_id")
-    allowed_keys = _GENERATION_ENTRY_KEYS if "scales" in expected else _ENTRY_KEYS
+    if expected["durability"] == "durable_stream":
+        allowed_keys = _DURABLE_ENTRY_KEYS
+    elif "scales" in expected:
+        allowed_keys = _GENERATION_ENTRY_KEYS
+    else:
+        allowed_keys = _ENTRY_KEYS
     _require_exact_keys(raw, allowed_keys)
 
     for key in _ENTRY_KEYS - {"terminal_states", "retention_seconds", "lifecycle"}:
@@ -443,6 +496,24 @@ def _parse_entry(value: object) -> CheckpointEntry:
     allowed_lifecycle = {"active", "retired"} if expected["durability"] == "durable_stream" else {"active"}
     if lifecycle not in allowed_lifecycle:
         raise PolicyError("invalid_lifecycle")
+
+    retired_at: datetime | None = None
+    retirement_review: str | None = None
+    if expected["durability"] == "durable_stream":
+        raw_retired_at = raw["retired_at"]
+        raw_retirement_review = raw["retirement_review"]
+        if lifecycle == "active":
+            if raw_retired_at is not None or raw_retirement_review is not None:
+                raise PolicyError("invalid_retirement_transition")
+        else:
+            retired_at = _parse_utc_string(raw_retired_at)
+            if (
+                retired_at is None
+                or not isinstance(raw_retirement_review, str)
+                or _SAFE_REVIEW.fullmatch(raw_retirement_review) is None
+            ):
+                raise PolicyError("invalid_retirement_transition")
+            retirement_review = raw_retirement_review
 
     states_value = raw["terminal_states"]
     if not isinstance(states_value, list) or any(not isinstance(state, str) for state in states_value):
@@ -489,6 +560,8 @@ def _parse_entry(value: object) -> CheckpointEntry:
         sink_disposition=raw["sink_disposition"],
         concurrent_writers=raw["concurrent_writers"],
         retirement_authorization=raw["retirement_authorization"],
+        retired_at=retired_at,
+        retirement_review=retirement_review,
         scales=scales,
     )
 
@@ -560,25 +633,40 @@ def _evaluate_lease(
     policy: CheckpointPolicy,
     facts: EvaluationInput,
     matched: MatchedCheckpoint,
+    entry: CheckpointEntry,
     evaluated_at_valid: bool,
     lease: LeaseFacts,
+    terminal: TerminalFacts | None,
     refusal_codes: list[str],
 ) -> None:
-    if lease.malformed:
+    if type(lease.malformed) is not bool or type(lease.conflicting) is not bool:
+        refusal_codes.append("invalid_fact_type")
+    if lease.malformed is True:
         refusal_codes.append("lease_malformed")
-    if lease.conflicting:
+    if lease.conflicting is True:
         refusal_codes.append("lease_conflicting")
-    if lease.checkpoint_id != matched.checkpoint_id or lease.prefix != facts.prefix:
+    if (
+        not isinstance(lease.checkpoint_id, str)
+        or not isinstance(lease.prefix, str)
+        or lease.checkpoint_id != matched.checkpoint_id
+        or lease.prefix != facts.prefix
+    ):
         refusal_codes.append("lease_identity_mismatch")
-    if not lease.etag or len(lease.etag) > 128:
+    if not isinstance(lease.etag, str) or not lease.etag or len(lease.etag) > 128:
         refusal_codes.append("lease_etag_invalid")
     for value in (lease.acquired_at, lease.heartbeat_at, lease.expires_at):
         if not _is_exact_utc(value):
             refusal_codes.append("invalid_utc_timestamp")
-        elif evaluated_at_valid and value > facts.evaluated_at + timedelta(
-            seconds=policy.lease.future_tolerance_seconds
-        ):
+        elif evaluated_at_valid and _is_future_clock(value, facts.evaluated_at, policy.lease.future_tolerance_seconds):
             refusal_codes.append("future_clock")
+    if all(_is_exact_utc(value) for value in (lease.acquired_at, lease.heartbeat_at, lease.expires_at)):
+        if not (
+            lease.acquired_at <= lease.heartbeat_at <= lease.expires_at
+            and lease.expires_at - lease.heartbeat_at == timedelta(seconds=policy.lease.ttl_seconds)
+        ):
+            refusal_codes.append("lease_clock_invalid")
+    if not isinstance(lease.state, str):
+        refusal_codes.append("invalid_fact_type")
     if lease.state == "active":
         if evaluated_at_valid and _is_exact_utc(lease.expires_at):
             refusal_codes.append(
@@ -586,8 +674,24 @@ def _evaluate_lease(
             )
         else:
             refusal_codes.append("lease_active")
-    elif lease.state not in {"stopped", "completed", "retired"}:
+    elif lease.state not in ("stopped", "completed", "retired"):
         refusal_codes.append("lease_state_invalid")
+
+    expected_states = {
+        "durable_stream": {"stopped", "retired"},
+        "generation_reproducibility": {"completed", "stopped"},
+        "disposable_acceptance": {"stopped"},
+    }[entry.durability]
+    terminal_state = terminal.state if terminal is not None and isinstance(terminal.state, str) else None
+    if lease.state not in expected_states or terminal_state not in expected_states or lease.state != terminal_state:
+        refusal_codes.append("invalid_lease_terminal_state")
+    if (
+        terminal is not None
+        and _is_exact_utc(terminal.occurred_at)
+        and _is_exact_utc(lease.heartbeat_at)
+        and lease.heartbeat_at > terminal.occurred_at
+    ):
+        refusal_codes.append("lease_terminal_clock_conflict")
 
 
 def _evaluate_inventory(
@@ -604,22 +708,27 @@ def _evaluate_inventory(
         or type(inventory.total_bytes) is not int
         or inventory.total_bytes < 1
         or inventory.total_bytes > policy.bounds.max_bytes
+        or not isinstance(inventory.inventory_sha256, str)
         or re.fullmatch(r"[0-9a-f]{64}", inventory.inventory_sha256) is None
     ):
         refusal_codes.append("inventory_invalid")
     if not _is_exact_utc(inventory.newest_last_modified):
         refusal_codes.append("invalid_utc_timestamp")
-    elif evaluated_at_valid and inventory.newest_last_modified > facts.evaluated_at + timedelta(
-        seconds=policy.lease.future_tolerance_seconds
+    elif evaluated_at_valid and _is_future_clock(
+        inventory.newest_last_modified, facts.evaluated_at, policy.lease.future_tolerance_seconds
     ):
         refusal_codes.append("future_clock")
-    if inventory.changed_since_plan:
+    if type(inventory.changed_since_plan) is not bool or type(inventory.partial_retry_confined) is not bool:
+        refusal_codes.append("invalid_fact_type")
+    if inventory.changed_since_plan is True:
         refusal_codes.append("inventory_changed")
-    if not inventory.partial_retry_confined:
+    if inventory.partial_retry_confined is not True:
         refusal_codes.append("partial_retry_broadened")
 
 
 def _evaluate_terminal(
+    policy: CheckpointPolicy,
+    facts: EvaluationInput,
     entry: CheckpointEntry,
     matched: MatchedCheckpoint,
     terminal: TerminalFacts,
@@ -627,29 +736,53 @@ def _evaluate_terminal(
 ) -> None:
     if not _is_exact_utc(terminal.occurred_at):
         refusal_codes.append("invalid_utc_timestamp")
+    elif _is_future_clock(terminal.occurred_at, facts.evaluated_at, policy.lease.future_tolerance_seconds):
+        refusal_codes.append("future_clock")
+    if not isinstance(terminal.state, str):
+        refusal_codes.append("invalid_fact_type")
     if terminal.state not in entry.terminal_states:
         refusal_codes.append("invalid_terminal_state")
-    if not terminal.recovery_approved:
+    for value in (
+        terminal.recovery_approved,
+        terminal.source_available,
+        terminal.sink_disposition_approved,
+        terminal.exclusive_run,
+        terminal.successful,
+    ):
+        if type(value) is not bool:
+            refusal_codes.append("invalid_fact_type")
+    if terminal.recovery_approved is not True:
         refusal_codes.append("recovery_not_approved")
-    if not terminal.source_available:
+    if terminal.source_available is not True:
         refusal_codes.append("source_unavailable")
-    if not terminal.sink_disposition_approved:
+    if terminal.sink_disposition_approved is not True:
         refusal_codes.append("sink_disposition_not_approved")
 
-    if entry.durability == "durable_stream":
-        if not terminal.retirement_review:
+    if entry.durability == "durable_stream" and entry.lifecycle == "retired":
+        if not isinstance(terminal.retirement_review, str) or not terminal.retirement_review:
             refusal_codes.append("retirement_review_missing")
+        if not _is_exact_utc(entry.retired_at):
+            refusal_codes.append("retirement_clock_missing")
+        elif _is_future_clock(entry.retired_at, facts.evaluated_at, policy.lease.future_tolerance_seconds):
+            refusal_codes.append("future_clock")
+        if not isinstance(entry.retirement_review, str) or not entry.retirement_review:
+            refusal_codes.append("registry_retirement_review_missing")
+        elif _SAFE_REVIEW.fullmatch(entry.retirement_review) is None:
+            refusal_codes.append("registry_retirement_review_invalid")
+        elif terminal.retirement_review != entry.retirement_review:
+            refusal_codes.append("retirement_review_mismatch")
     elif entry.durability == "generation_reproducibility":
-        if dict(terminal.generation) != dict(matched.generation):
+        if not isinstance(terminal.generation, Mapping) or dict(terminal.generation) != dict(matched.generation):
             refusal_codes.append("generation_identity_mismatch")
     elif entry.durability == "disposable_acceptance":
-        if not terminal.exclusive_run:
+        if terminal.exclusive_run is not True:
             refusal_codes.append("exclusive_run_required")
-        if not terminal.successful:
+        if terminal.successful is not True:
             refusal_codes.append("successful_run_required")
 
 
 def _retention_anchor(
+    entry: CheckpointEntry,
     lease: LeaseFacts | None,
     terminal: TerminalFacts | None,
     inventory: InventorySummary,
@@ -659,6 +792,8 @@ def _retention_anchor(
         values.append(lease.heartbeat_at)
     if terminal is not None:
         values.append(terminal.occurred_at)
+    if entry.durability == "durable_stream" and entry.lifecycle == "retired":
+        values.append(entry.retired_at)
     if not all(_is_exact_utc(value) for value in values):
         return None
     return max(values)
@@ -677,6 +812,31 @@ def _format_utc(value: datetime | None) -> str | None:
     if value is None or not _is_exact_utc(value):
         return None
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_utc_string(value: object) -> datetime | None:
+    if not isinstance(value, str) or re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value) is None:
+        return None
+    try:
+        parsed = datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    return parsed if _is_exact_utc(parsed) else None
+
+
+def _is_future_clock(value: datetime, evaluated_at: datetime, tolerance_seconds: int) -> bool:
+    if not _is_exact_utc(value) or not _is_exact_utc(evaluated_at):
+        return False
+    return (value - evaluated_at).total_seconds() > tolerance_seconds
+
+
+def _safe_add_seconds(value: datetime | None, seconds: int) -> datetime | None:
+    if value is None:
+        return None
+    try:
+        return value + timedelta(seconds=seconds)
+    except OverflowError:
+        return None
 
 
 def _policy_sha256(policy: CheckpointPolicy) -> str:
@@ -702,6 +862,14 @@ def _policy_sha256(policy: CheckpointPolicy) -> str:
                 "sink_disposition": entry.sink_disposition,
                 "concurrent_writers": entry.concurrent_writers,
                 "retirement_authorization": entry.retirement_authorization,
+                **(
+                    {
+                        "retired_at": _format_utc(entry.retired_at),
+                        "retirement_review": entry.retirement_review,
+                    }
+                    if entry.durability == "durable_stream"
+                    else {}
+                ),
                 **({"scales": list(entry.scales)} if entry.scales else {}),
             }
             for entry in policy.entries.values()

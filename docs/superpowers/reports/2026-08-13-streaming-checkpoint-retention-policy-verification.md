@@ -11,7 +11,7 @@
   freezes the approved owners, sources, sinks, durability classes, terminal states,
   recovery consequences, retention durations, lease clocks, and operation bounds.
 - `scripts/checkpoints/policy.py` uses a duplicate-aware strict YAML loader,
-  immutable typed values, exact path/template matching, and a pure fail-closed
+  deeply immutable valid generation facts, exact path/template matching, and a pure fail-closed
   evaluator. It emits deterministic compact local plan JSON and SHA-256 without
   contacting a service or changing caller state.
 - All four streaming README/Jupyter/Zeppelin triples and their public scenario and
@@ -38,6 +38,14 @@ No production behavior was written before its named RED observation. Two fixture
 corrections preserved the approved policy: control-prefix rejection uses its specific
 code, and an anchor test uses a final heartbeat rather than an object newer than the
 terminal record.
+
+Independent review then established a combined adversarial RED of 77 failures and 17
+passes. The named gaps were durable retirement transition evidence, class-specific
+lease/terminal states, exact fact types and clock/TTL consistency, safe overflow and
+invalid hash/ETag refusal, bounded YAML construction, retained active-durable audit
+reasons, deep generation immutability, exhaustive executable checkpoint discovery,
+and deterministic runbook examples. The corrected focused parser/evaluator/ownership
+suite passes these cases without adding a network or mutation path.
 
 ## Fresh verification
 

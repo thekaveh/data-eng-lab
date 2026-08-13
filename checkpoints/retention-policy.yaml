@@ -22,6 +22,8 @@ checkpoints:
     source: redpanda:events
     sink: lakehouse.bronze.events
     lifecycle: active
+    retired_at: null
+    retirement_review: null
     durability: durable_stream
     terminal_states: [stopped, retired]
     retention_seconds: 2592000
@@ -36,6 +38,8 @@ checkpoints:
     source: redpanda:events
     sink: lakehouse.gold.event_windows
     lifecycle: active
+    retired_at: null
+    retirement_review: null
     durability: durable_stream
     terminal_states: [stopped, retired]
     retention_seconds: 2592000
@@ -50,6 +54,8 @@ checkpoints:
     source: redpanda:online_retail_cdc
     sink: lakehouse.silver.online_retail_cdc
     lifecycle: active
+    retired_at: null
+    retirement_review: null
     durability: durable_stream
     terminal_states: [stopped, retired]
     retention_seconds: 2592000

@@ -22,6 +22,13 @@ stale prose, and `redpanda/atlas_stream_events/` is an upstream Atlas example. R
 control, unknown, legacy, malformed, or overlapping prefixes remain unowned and are
 retained.
 
+For each durable entry, `retired_at` and `retirement_review` are explicit registry
+fields. Both are `null` while `lifecycle: active`. A reviewed transition changes all
+three fields together: `lifecycle: retired`, an exact whole-second UTC `retired_at`,
+and a bounded reviewed-change identifier. A terminal record must repeat that exact
+identifier. An old stopped timestamp cannot substitute for the registry retirement
+clock.
+
 ## 2. Lease and active-use safety
 
 Issue #86 will store leases at
@@ -35,6 +42,15 @@ The retention anchor is the maximum of the terminal or retirement time, final le
 heartbeat, and newest object `LastModified`. A clock more than five minutes in the
 future refuses evaluation. An object newer than the terminal record also refuses;
 object age alone never grants eligibility.
+
+The local YAML boundary reads at most 262,144 bytes and rejects aliases, more than
+4,096 composed nodes, or nesting deeper than 32 nodes before policy construction.
+Supplied facts are exact runtime types: Boolean evidence is never interpreted by
+truthiness, hashes and ETags must be strings, and all clocks are whole-second UTC.
+Lease clocks must satisfy `acquired_at <= heartbeat_at <= expires_at`, with
+`expires_at - heartbeat_at = 600 seconds`. The lease and terminal states must be the
+same class-approved state: durable `stopped|retired`, generation
+`completed|stopped`, and disposable `stopped`.
 
 ## 3. Dry-run and apply contract
 
@@ -53,6 +69,28 @@ retry is confined to the original remaining key set and cannot broaden by relist
 One operation is bounded to 100 listing pages, 100,000 objects, 10 GiB, 1,000 keys
 per delete request, and 15 minutes of active operation time excluding quiescence.
 Canonical summaries are at most 64 KiB; inventory manifest shards are at most 1 MiB.
+
+### Deterministic supplied-fact examples
+
+An eligible retired durable example uses registry lifecycle `retired`,
+`retired_at=2026-07-01T12:00:00Z`, and
+`retirement_review=issue-85-reviewed-transition`. At
+`evaluated_at=2026-08-01T12:00:00Z`, its exact `retired` lease has acquire,
+heartbeat, and expiry clocks `2026-07-01T11:50:00Z`,
+`2026-07-01T12:00:00Z`, and `2026-07-01T12:10:00Z`; its terminal record is
+`retired` at `2026-07-01T12:00:00Z`, repeats the review identifier, and has all
+three recovery approvals set to the Boolean `true`. Its inventory has a valid
+SHA-256, positive bounded count/bytes, newest object time no later than the terminal,
+Boolean `changed_since_plan=false`, and Boolean `partial_retry_confined=true`. The
+retention anchor is `2026-07-01T12:00:00Z`, the eligible-after clock is
+`2026-07-31T12:00:00Z`, and the refusal list is empty.
+
+A deterministic refusal changes that same registry back to `lifecycle: active`,
+with `retired_at=null` and `retirement_review=null`, and supplies a conflicting lease
+plus a changed inventory. The evaluator retains all applicable audit reasons in
+order—`lease_conflicting`, `inventory_changed`, and
+`registry_active_durable`—and emits `decision=refused`. Active durable status does
+not erase the other malformed or contradictory supplied-fact diagnostics.
 
 ## 4. Authorization and fail-closed deployment
 

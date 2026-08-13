@@ -23,7 +23,12 @@ def policy():
 
 def _retired(policy, checkpoint_id: str = "streaming-events-v1"):
     entries = dict(policy.entries)
-    entries[checkpoint_id] = replace(entries[checkpoint_id], lifecycle="retired")
+    entries[checkpoint_id] = replace(
+        entries[checkpoint_id],
+        lifecycle="retired",
+        retired_at=NOW - timedelta(days=31),
+        retirement_review="issue-85-reviewed-transition",
+    )
     return replace(policy, entries=entries)
 
 
@@ -164,7 +169,7 @@ def test_retired_durable_anchor_uses_newest_valid_clock(policy):
         _retired(policy),
         _facts(
             lease=_lease(age=timedelta(days=29, hours=23)),
-            terminal=_terminal(age=timedelta(days=34)),
+            terminal=_terminal(age=timedelta(days=29, hours=23)),
             inventory=_inventory(age=timedelta(days=34)),
         ),
     )
@@ -173,6 +178,37 @@ def test_retired_durable_anchor_uses_newest_valid_clock(policy):
     assert decision.retention_anchor == NOW - timedelta(days=29, hours=23)
     assert decision.eligible_after == NOW + timedelta(hours=1)
     assert decision.refusal_codes == ("retention_quarantine",)
+
+
+def test_new_retirement_cannot_inherit_old_terminal_age(policy):
+    retired = _retired(policy)
+    entries = dict(retired.entries)
+    entries["streaming-events-v1"] = replace(entries["streaming-events-v1"], retired_at=NOW - timedelta(hours=1))
+    retired = replace(retired, entries=entries)
+
+    decision = api.evaluate_retention(retired, _facts())
+
+    assert decision.eligible is False
+    assert decision.retention_anchor == NOW - timedelta(hours=1)
+    assert decision.refusal_codes == ("retention_quarantine",)
+
+
+@pytest.mark.parametrize(
+    ("entry_change", "code"),
+    [
+        ({"retired_at": None}, "retirement_clock_missing"),
+        ({"retirement_review": None}, "registry_retirement_review_missing"),
+        ({"retirement_review": "different-review"}, "retirement_review_mismatch"),
+    ],
+)
+def test_durable_evaluator_requires_registry_transition_binding(policy, entry_change, code):
+    retired = _retired(policy)
+    entries = dict(retired.entries)
+    entries["streaming-events-v1"] = replace(entries["streaming-events-v1"], **entry_change)
+    decision = api.evaluate_retention(replace(retired, entries=entries), _facts())
+
+    assert decision.eligible is False
+    assert code in decision.refusal_codes
 
 
 @pytest.mark.parametrize(
@@ -290,6 +326,158 @@ def test_disposable_scratch_requires_successful_exclusive_stopped_run(policy):
             policy, replace(eligible, terminal=replace(eligible.terminal, successful=False))
         ).refusal_codes
     )
+
+
+@pytest.mark.parametrize(
+    ("prefix", "lease_state", "terminal_state"),
+    [
+        ("events/", "completed", "stopped"),
+        (GENERATION_PREFIX, "retired", "completed"),
+        ("streaming_test/", "completed", "stopped"),
+        ("streaming_test/", "stopped", "successful"),
+    ],
+)
+def test_class_specific_lease_and_terminal_state_matrix_fails_closed(
+    policy, prefix: str, lease_state: str, terminal_state: str
+):
+    if prefix == "events/":
+        selected_policy = _retired(policy)
+        checkpoint_id = "streaming-events-v1"
+        generation = {}
+        review = "issue-85-reviewed-transition"
+    elif prefix == GENERATION_PREFIX:
+        selected_policy = policy
+        checkpoint_id = "streaming-gh-archive-file-v1"
+        generation = {"scale": "tiny", "publication_id": "a" * 32, "manifest_sha256": "b" * 64}
+        review = None
+    else:
+        selected_policy = policy
+        checkpoint_id = "go-live-streaming-test-v1"
+        generation = {}
+        review = None
+    facts = _facts(
+        prefix=prefix,
+        lease=_lease(checkpoint_id=checkpoint_id, prefix=prefix, state=lease_state),
+        terminal=_terminal(
+            state=terminal_state,
+            retirement_review=review,
+            generation=generation,
+            exclusive_run=True,
+            successful=True,
+        ),
+    )
+
+    decision = api.evaluate_retention(selected_policy, facts)
+
+    assert decision.eligible is False
+    assert "invalid_lease_terminal_state" in decision.refusal_codes
+
+
+@pytest.mark.parametrize(
+    "lease",
+    [
+        replace(_lease(), acquired_at=NOW, heartbeat_at=NOW - timedelta(days=31)),
+        replace(_lease(), expires_at=NOW - timedelta(days=32)),
+        replace(_lease(), expires_at=(NOW - timedelta(days=31)) + timedelta(hours=3)),
+    ],
+)
+def test_lease_clock_order_and_exact_ttl_are_mandatory(policy, lease):
+    decision = api.evaluate_retention(_retired(policy), _facts(lease=lease))
+
+    assert decision.eligible is False
+    assert "lease_clock_invalid" in decision.refusal_codes
+
+
+@pytest.mark.parametrize(
+    ("target", "field", "value", "code"),
+    [
+        ("lease", "conflicting", "false", "invalid_fact_type"),
+        ("lease", "malformed", 0, "invalid_fact_type"),
+        ("terminal", "recovery_approved", "yes", "invalid_fact_type"),
+        ("terminal", "source_available", 1, "invalid_fact_type"),
+        ("terminal", "sink_disposition_approved", "approved", "invalid_fact_type"),
+        ("terminal", "exclusive_run", "yes", "invalid_fact_type"),
+        ("terminal", "successful", 1, "invalid_fact_type"),
+        ("inventory", "changed_since_plan", 0, "invalid_fact_type"),
+        ("inventory", "partial_retry_confined", 1, "invalid_fact_type"),
+        ("inventory", "inventory_sha256", 42, "inventory_invalid"),
+        ("inventory", "inventory_sha256", b"not-json", "inventory_invalid"),
+        ("inventory", "object_count", object(), "inventory_invalid"),
+        ("lease", "etag", 42, "lease_etag_invalid"),
+    ],
+)
+def test_untyped_supplied_facts_refuse_without_raw_exceptions(policy, target, field, value, code):
+    facts = _facts(
+        prefix="streaming_test/",
+        lease=_lease(
+            checkpoint_id="go-live-streaming-test-v1",
+            prefix="streaming_test/",
+            state="stopped",
+            age=timedelta(days=1),
+        ),
+        terminal=_terminal(
+            state="stopped",
+            age=timedelta(days=1),
+            retirement_review=None,
+            exclusive_run=True,
+            successful=True,
+        ),
+        inventory=_inventory(age=timedelta(days=1)),
+    )
+    facts = replace(facts, **{target: replace(getattr(facts, target), **{field: value})})
+
+    decision = api.evaluate_retention(policy, facts)
+
+    assert decision.eligible is False
+    assert code in decision.refusal_codes
+
+
+def test_terminal_future_clock_and_clock_overflow_refuse_without_exception(policy):
+    future = api.evaluate_retention(
+        _retired(policy), _facts(terminal=replace(_terminal(), occurred_at=NOW + timedelta(minutes=6)))
+    )
+    assert "future_clock" in future.refusal_codes
+
+    extreme = datetime.max.replace(tzinfo=timezone.utc, microsecond=0)
+    overflow = api.evaluate_retention(
+        _retired(policy),
+        _facts(
+            evaluated_at=extreme,
+            lease=replace(_lease(), acquired_at=extreme, heartbeat_at=extreme, expires_at=extreme),
+            terminal=replace(_terminal(), occurred_at=extreme),
+            inventory=replace(_inventory(), newest_last_modified=extreme),
+        ),
+    )
+    assert overflow.eligible is False
+    assert "clock_overflow" in overflow.refusal_codes
+
+
+def test_active_durable_keeps_all_fail_closed_audit_reasons(policy):
+    facts = _facts(
+        lease=replace(_lease(), conflicting=True, etag=42),
+        terminal=replace(_terminal(), occurred_at=NOW + timedelta(minutes=6)),
+        inventory=replace(_inventory(), inventory_sha256=42),
+    )
+
+    decision = api.evaluate_retention(policy, facts)
+
+    assert decision.refusal_codes == (
+        "lease_conflicting",
+        "lease_etag_invalid",
+        "inventory_invalid",
+        "future_clock",
+        "registry_active_durable",
+    )
+
+
+def test_generation_facts_are_deeply_immutable_after_construction():
+    source = {"scale": "tiny", "publication_id": "a" * 32, "manifest_sha256": "b" * 64}
+    terminal = _terminal(generation=source)
+    source["scale"] = "medium"
+
+    assert terminal.generation["scale"] == "tiny"
+    with pytest.raises(TypeError):
+        terminal.generation["scale"] = "small"
 
 
 @pytest.mark.parametrize(
