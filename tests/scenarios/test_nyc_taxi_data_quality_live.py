@@ -39,8 +39,8 @@ _MAX_POINTER_BYTES = 1 << 20
 _MAX_TASK_LOG_BYTES = 1 << 20
 _MAX_TASK_LOG_ATTEMPTS = 4
 _MAX_TRINO_ERROR_BYTES = 4096
-_TRINO_NEXT_URI = re.compile(
-    r"\Ahttp://trino:8080/v1/statement/[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*\Z"
+_TRINO_NEXT_PATH = re.compile(
+    r"\A/v1/statement/[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*\Z"
 )
 BRONZE_FIELDS = (
         "VendorID:long",
@@ -760,10 +760,18 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 def _local_trino_next_uri(raw_next: object, port: str) -> str:
-    if not isinstance(raw_next, str) or not _TRINO_NEXT_URI.fullmatch(raw_next):
+    if not port.isdigit() or not 1 <= int(port) <= 65535 or not isinstance(raw_next, str):
         raise AssertionError("Trino next URI escaped the reviewed statement origin")
     parsed = urllib.parse.urlsplit(raw_next)
-    if any(segment in {".", ".."} for segment in parsed.path.split("/")):
+    allowed_origins = {"trino:8080", f"127.0.0.1:{port}"}
+    if (
+        parsed.scheme != "http"
+        or parsed.netloc not in allowed_origins
+        or parsed.query
+        or parsed.fragment
+        or not _TRINO_NEXT_PATH.fullmatch(parsed.path)
+        or any(segment in {".", ".."} for segment in parsed.path.split("/"))
+    ):
         raise AssertionError("Trino next URI escaped the reviewed statement origin")
     return f"http://127.0.0.1:{port}{parsed.path}"
 
@@ -1581,6 +1589,9 @@ def test_typed_trino_protocol_rejects_every_noncanonical_next_uri():
     assert _local_trino_next_uri(
         "http://trino:8080/v1/statement/20260813_010203_00001_abcd/1", "20029"
     ) == "http://127.0.0.1:20029/v1/statement/20260813_010203_00001_abcd/1"
+    assert _local_trino_next_uri(
+        "http://127.0.0.1:20029/v1/statement/queued/20260813_010203_00001_abcd/token/1", "20029"
+    ) == "http://127.0.0.1:20029/v1/statement/queued/20260813_010203_00001_abcd/token/1"
     for value in (
         "http://trino:8080/v1/statement/../info",
         "http://trino:8080/v1/statement/%2e%2e/info",
@@ -1588,6 +1599,7 @@ def test_typed_trino_protocol_rejects_every_noncanonical_next_uri():
         "http://trino:8080/v1/statement/query#fragment",
         "http://trino:8080/v1/statement/query;matrix",
         "http://other:8080/v1/statement/query",
+        "http://127.0.0.1:20030/v1/statement/query",
         "https://trino:8080/v1/statement/query",
         None,
     ):
