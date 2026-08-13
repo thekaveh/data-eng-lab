@@ -85,23 +85,23 @@ QUERY_COLUMNS = {
         ("quality_run_id", "varchar"), ("logical_date_utc", "varchar"),
         ("source_snapshot_id", "bigint"), ("layer", "varchar"), ("rule_id", "varchar"),
         ("owner", "varchar"), ("metric_name", "varchar"), ("metric_numerator", "bigint"),
-        ("metric_denominator", "bigint"), ("metric_value", "decimal(38,9)"),
+        ("metric_denominator", "bigint"), ("metric_value", "decimal(38, 9)"),
         ("warn_threshold", "varchar"), ("fail_threshold", "varchar"),
         ("severity", "varchar"), ("status", "varchar"), ("diagnostic_code", "varchar"),
     ],
     "trend": [
         ("quality_run_id", "varchar"), ("logical_date_utc", "varchar"),
         ("source_snapshot_id", "bigint"), ("source_row_count", "bigint"),
-        ("invalid_row_count", "bigint"), ("invalid_ratio", "decimal(38,9)"),
+        ("invalid_row_count", "bigint"), ("invalid_ratio", "decimal(38, 9)"),
         ("clean_row_count", "bigint"), ("quarantine_row_count", "bigint"),
-        ("quarantine_ratio", "decimal(38,9)"), ("overall_status", "varchar"),
+        ("quarantine_ratio", "decimal(38, 9)"), ("overall_status", "varchar(4)"),
     ],
     "operator_attention": [
         ("quality_run_id", "varchar"), ("logical_date_utc", "varchar"),
         ("source_snapshot_id", "bigint"), ("layer", "varchar"), ("rule_id", "varchar"),
         ("status", "varchar"), ("severity", "varchar"), ("diagnostic_code", "varchar"),
         ("owner", "varchar"), ("metric_name", "varchar"), ("metric_numerator", "bigint"),
-        ("metric_denominator", "bigint"), ("metric_value", "decimal(38,9)"),
+        ("metric_denominator", "bigint"), ("metric_value", "decimal(38, 9)"),
         ("warn_threshold", "varchar"), ("fail_threshold", "varchar"),
     ],
 }
@@ -1616,6 +1616,14 @@ def test_live_catalog_contract_requires_exact_ntz_producer_schema():
     ]
     with pytest.raises(AssertionError, match="exact producer/quality contract"):
         _assert_bronze_schema({"schema": legacy_utc})
+
+
+def test_dashboard_protocol_types_freeze_pinned_trino_482_rendering():
+    assert QUERY_COLUMNS["latest"][9] == ("metric_value", "decimal(38, 9)")
+    assert QUERY_COLUMNS["trend"][5] == ("invalid_ratio", "decimal(38, 9)")
+    assert QUERY_COLUMNS["trend"][8] == ("quarantine_ratio", "decimal(38, 9)")
+    assert QUERY_COLUMNS["trend"][9] == ("overall_status", "varchar(4)")
+    assert QUERY_COLUMNS["operator_attention"][12] == ("metric_value", "decimal(38, 9)")
 
 
 def test_snapshot_binding_uses_the_reviewed_trino_timestamp_literal(monkeypatch):
