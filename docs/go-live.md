@@ -642,7 +642,8 @@ After a successful go-live run:
 1. **Scenario execution:** Use the [execution-mode matrix](scenarios/execution-modes.md)
    delivered by [issue #82](https://github.com/thekaveh/data-eng-lab/issues/82)
    as the authority for all 19 validated paired scenarios. `nyc_taxi_etl`,
-   `nyc_taxi_medallion`, `tpch_star_schema`, and `movielens_feature_pipeline` are production DAGs today; approved children must
+   `nyc_taxi_medallion`, `tpch_star_schema`, `movielens_feature_pipeline`, and
+   `gh_archive_flatten_sessionization` are production DAGs today; approved children must
    pass their own implementation and live-acceptance gates before this runbook
    advertises another Airflow entrypoint.
 2. **Automation:** Integrate this runbook into CI/CD so every Atlas release is validated end-to-end.
@@ -654,4 +655,4 @@ After a successful go-live run:
 
 *See also:* [Go-Live Results](go-live-results.md) — the 2026-07-04 platform validation and the scoped 2026-07-31 Atlas acceptance result.
 
-*Maintained by `data-eng-lab`.* Latest update: 2026-08-10 current-pin Atlas acceptance baseline recorded; MovieLens production acceptance added 2026-08-12.
+*Maintained by `data-eng-lab`.* Latest update: 2026-08-10 current-pin Atlas acceptance baseline recorded; MovieLens and GH Archive production acceptance added 2026-08-12.

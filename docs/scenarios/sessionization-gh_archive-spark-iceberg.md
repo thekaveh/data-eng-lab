@@ -10,10 +10,12 @@ Sessionization is a foundational pattern in event-driven analytics, used to unde
 
 ### 2.1 Input Source
 
-Source: compressed GitHub Archive JSON objects from one resolver-verified immutable generation. The notebook sessionizes them directly and writes `lakehouse.silver.gh_sessions`.
+Source: `lakehouse.silver.gh_events` from the matching production flatten stage. The educational
+notebooks read this typed table directly.
 
 | Column | Type | Notes |
 |---|---|---|
+| `id` | string | Required source identifier; not a primary key |
 | `actor_login` | string | Partition key for session detection |
 | `created_at` | timestamp | Used for ordering and gap detection |
 | `type` | string | Event type |
@@ -23,13 +25,15 @@ Source: compressed GitHub Archive JSON objects from one resolver-verified immuta
 
 | Table | Layer | Key Columns |
 |---|---|---|
-| `lakehouse.silver.gh_sessions` | Silver | `actor_login`, `session_id`, `created_at`, `type` |
+| `lakehouse.silver.gh_sessions` | Silver | `id`, `type`, `actor_login`, `repo_name`, `created_at`, `previous_created_at`, `new_session`, `session_id` |
 
 ## 3. Architecture
 
 ![Architecture](../diagrams/img/sessionization-gh_archive-spark-iceberg.png)
 
-Data flows from the GitHub Events silver table through Spark batch processing. Events are partitioned by `actor_login`, ordered by timestamp, and the `LAG` window function detects gaps > 30 minutes between consecutive events. Sessions are assigned IDs via cumulative sum over gap indicators, and each output row includes the actor login and its session ID.
+Production reads the five provenance properties before the event rows and fails closed on any
+generation mismatch. Direct concurrent JAR execution is unsupported; Airflow serialization is the
+production boundary.
 
 ## 4. Notebooks
 
@@ -40,13 +44,16 @@ Both languages implement identical sessionization logic with gap detection, sess
 
 ## 5. Orchestration
 
-Classification: **approved new production DAG**. No production DAG exists yet. Child #109 owns this independently tested sessionization stage and enforces a successful matching flatten prerequisite; until it passes live acceptance, run the paired notebooks only.
+Classification: **existing production DAG**. `spark-apps/gh-archive-pipeline/dag.py` schedules
+`gh_archive_flatten_sessionization` `@daily`. It runs sessionization only after a successful matching
+flatten task and serializes runs with `max_active_runs=1`.
 
 ## 6. Usage
 
 1. Ensure the `silver` Iceberg namespace exists: `scripts/register_iceberg.py`
-2. Publish the expected GitHub Archive tier with `make datasets SCALE=<tier>`.
-3. Open either notebook on the Atlas stack.
+2. Run the production flatten stage through `gh_archive_flatten_sessionization`, or prepare an
+   isolated educational `gh_events` table.
+3. Open either notebook only for the educational path.
 4. Verify:
       ```bash
    spark-sql -e "SELECT actor_login, COUNT(DISTINCT session_id) AS num_sessions FROM lakehouse.silver.gh_sessions GROUP BY actor_login LIMIT 10"
@@ -60,7 +67,11 @@ Classification: **approved new production DAG**. No production DAG exists yet. C
 
 ## 8. Known Issues & Caveats
 
-The 30-minute gap threshold is hardcoded as 1800 seconds and not externally configurable. The `silver` namespace must exist; run `scripts/register_iceberg.py` first. The notebook resolves and verifies GitHub Archive directly, so it does not depend on the JSON-flatten table.
+The 30-minute gap threshold is fixed at 1,800 seconds. Both notebooks directly replace
+`lakehouse.silver.gh_sessions`; they do not write production provenance or participate in Airflow
+serialization and can invalidate downstream generation checks. Production writes must use
+`gh_archive_flatten_sessionization`. The notebook consumes `gh_events` and therefore requires the
+typed flatten table to exist.
 
 ## 9. See Also
 
