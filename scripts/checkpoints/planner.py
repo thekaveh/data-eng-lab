@@ -64,19 +64,14 @@ class RetentionPlanner:
             raise PlanFailure("inventory_failed") from None
         if not records:
             raise PlanFailure("inventory_empty")
-        try:
-            lease_body, lease_etag = self._gateway.read_control(
-                f"_retention/leases/{request.checkpoint_id}.json",
-                max_bytes=self._policy.bounds.max_summary_bytes,
-            )
-            terminal_body, _terminal_etag = self._gateway.read_control(
-                f"_retention/terminals/{request.checkpoint_id}.json",
-                max_bytes=self._policy.bounds.max_summary_bytes,
-            )
-        except GatewayFailure:
-            raise PlanFailure("control_read_failed") from None
-        lease = _decode_lease(lease_body, lease_etag)
-        terminal = _decode_terminal(terminal_body, request.checkpoint_id, request.prefix)
+        lease = self._optional_control(
+            f"_retention/leases/{request.checkpoint_id}.json",
+            lambda body, etag: _decode_lease(body, etag),
+        )
+        terminal = self._optional_control(
+            f"_retention/terminals/{request.checkpoint_id}.json",
+            lambda body, _etag: _decode_terminal(body, request.checkpoint_id, request.prefix),
+        )
         newest = max(record.last_modified for record in records)
         inventory = InventorySummary(
             object_count=len(records),
@@ -118,6 +113,15 @@ class RetentionPlanner:
         except RecordFailure:
             raise PlanFailure("plan_body_invalid") from None
         return PlanArtifact(summary, shards, body, hashlib.sha256(body).hexdigest())
+
+    def _optional_control(self, key: str, decode):
+        try:
+            body, etag = self._gateway.read_control(key, max_bytes=self._policy.bounds.max_summary_bytes)
+        except GatewayFailure as error:
+            if error.code == "control_missing":
+                return None
+            raise PlanFailure("control_read_failed") from None
+        return decode(body, etag)
 
     def _validate_request(self, request: PlanRequest):
         if not isinstance(request, PlanRequest):

@@ -172,7 +172,7 @@ def test_compose_runtime_is_single_replica_internal_nonroot_and_fail_closed():
         "CHECKPOINT_RETENTION_API_TOKEN": (
             "${CHECKPOINT_RETENTION_API_TOKEN:?CHECKPOINT_RETENTION_API_TOKEN is required}"
         ),
-        "DESTRUCTIVE_ENABLED": "false",
+        "DESTRUCTIVE_ENABLED": "${CHECKPOINT_RETENTION_DESTRUCTIVE_ENABLED:-false}",
     }
     assert not {"MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD"} & runtime["environment"].keys()
     assert runtime["healthcheck"]["test"][:2] == ["CMD", "/opt/venv/bin/python"]

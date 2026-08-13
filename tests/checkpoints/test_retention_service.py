@@ -395,3 +395,65 @@ def test_build_runtime_wires_live_revalidation_and_exact_runtime_clock(monkeypat
 
     assert backend._now is module._now
     assert callable(backend._operations._revalidate)
+
+
+def test_runtime_metrics_track_fixed_low_cardinality_plan_prepare_apply_outcomes(monkeypatch):
+    module = _service()
+    artifact = types.SimpleNamespace(
+        body=b'{"schema_version":1,"shards":[],"summary":{"decision":"eligible"}}',
+        sha256="a" * 64,
+    )
+
+    class Planner:
+        def plan(self, _request):
+            return artifact
+
+    class Operations:
+        def prepare(self, _request):
+            return types.SimpleNamespace(
+                body=b'{"operation_id":"550e8400-e29b-41d4-a716-446655440000","state":"prepared"}'
+            )
+
+        def apply(self, _request):
+            return types.SimpleNamespace(
+                body=b'{"deleted_objects":2,"operation_id":"550e8400-e29b-41d4-a716-446655440000","state":"completed"}'
+            )
+
+    monkeypatch.setattr(module, "decode_plan_artifact", lambda *_args, **_kwargs: object())
+    backend = module.RuntimeBackend(
+        gateway=types.SimpleNamespace(probe_capabilities=lambda: {"automatic_apply": False}),
+        leases=object(),
+        planner=Planner(),
+        operations=Operations(),
+        policy=types.SimpleNamespace(entries={}, bounds=types.SimpleNamespace(max_manifest_shard_bytes=1_048_576)),
+        destructive_enabled=True,
+        operation_id=lambda: "550e8400-e29b-41d4-a716-446655440000",
+    )
+    backend.invoke(
+        "plan",
+        {
+            "actor": "acceptance-engineering",
+            "checkpoint_id": "go-live-streaming-test-v1",
+            "evaluated_at": "2026-08-13T12:00:00Z",
+            "prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/",
+        },
+        None,
+    )
+    backend.invoke(
+        "prepare",
+        {"actor": "acceptance-engineering", "plan": {}, "plan_sha256": "a" * 64, "review": "review-86"},
+        None,
+    )
+    backend.invoke(
+        "apply",
+        {
+            "confirm_prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/",
+            "plan_sha256": "a" * 64,
+        },
+        "550e8400-e29b-41d4-a716-446655440000",
+    )
+
+    metrics = backend.metrics()
+    assert b'checkpoint_retention_plans_total{decision="eligible"} 1\n' in metrics
+    assert b'checkpoint_retention_prepared_total{outcome="completed"} 1\n' in metrics
+    assert b'checkpoint_retention_deleted_objects_total{outcome="completed"} 2\n' in metrics

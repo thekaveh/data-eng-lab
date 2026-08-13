@@ -72,6 +72,7 @@ class RuntimeBackend:
         self._now = now or (lambda: datetime.now(timezone.utc).replace(microsecond=0))
         self._operation_id = operation_id
         self._client = getattr(gateway, "_client", None)
+        self._metrics: dict[str, dict[tuple[str, ...], int]] = {}
 
     def health(self) -> dict[str, object]:
         capabilities = self._gateway.probe_capabilities()
@@ -84,7 +85,12 @@ class RuntimeBackend:
         }
 
     def metrics(self) -> bytes:
-        return render_metrics({})
+        return render_metrics(self._metrics)
+
+    def _increment(self, metric: str, label: str, amount: int = 1) -> None:
+        values = self._metrics.setdefault(metric, {})
+        key = (label,)
+        values[key] = values.get(key, 0) + amount
 
     def invoke(self, action: str, payload: dict[str, object] | None, operation_id: str | None):
         if action == "lease_acquire":
@@ -124,7 +130,11 @@ class RuntimeBackend:
             status = self._operations.apply(
                 ApplyRequest(operation_id or "", value["plan_sha256"], value["confirm_prefix"])
             )
-            return json.loads(status.body)
+            result = json.loads(status.body)
+            state = result.get("state")
+            if state in {"not_ready", "partial", "completed"}:
+                self._increment("checkpoint_retention_deleted_objects_total", state, result.get("deleted_objects", 0))
+            return result
         if action == "status":
             status = self._operations.status(operation_id or "")
             return json.loads(status.body)
@@ -140,7 +150,11 @@ class RuntimeBackend:
                     _parse_utc(value["evaluated_at"]),
                 )
             )
-            return json.loads(artifact.body)
+            result = json.loads(artifact.body)
+            decision = result.get("summary", {}).get("decision")
+            if decision in {"eligible", "refused"}:
+                self._increment("checkpoint_retention_plans_total", decision)
+            return result
         if action == "prepare":
             if not isinstance(payload, dict) or set(payload) != {"actor", "plan", "plan_sha256", "review"}:
                 raise ServiceFailure("request_invalid")
@@ -163,6 +177,7 @@ class RuntimeBackend:
                 )
                 result = json.loads(status.body)
                 result["state"] = "prepared"
+                self._increment("checkpoint_retention_prepared_total", "completed")
                 return result
             except (KeyboardInterrupt, SystemExit):
                 raise

@@ -159,6 +159,21 @@ def test_planner_refuses_terminal_identity_drift_before_accepting_a_plan():
         RetentionPlanner(ForeignTerminalGateway(), POLICY).plan(_request())
 
 
+def test_planner_treats_absent_terminal_as_a_refusal_fact_not_transport_failure():
+    class MissingTerminalGateway(ReadOnlyGateway):
+        def read_control(self, key, *, max_bytes):
+            if "/terminals/" in key:
+                from scripts.checkpoints.s3_gateway import GatewayFailure
+
+                raise GatewayFailure("control_missing")
+            return super().read_control(key, max_bytes=max_bytes)
+
+    artifact = RetentionPlanner(MissingTerminalGateway(), POLICY).plan(_request(evaluated_at=NOW - timedelta(days=1)))
+
+    assert artifact.summary["decision"] == "refused"
+    assert "terminal_missing" in artifact.summary["refusal_codes"]
+
+
 def test_exclusive_plan_write_is_mode_0600_atomic_and_refuses_existing_target(tmp_path):
     artifact = RetentionPlanner(ReadOnlyGateway(), POLICY).plan(_request())
     target = tmp_path / "reviewed-plan.json"
