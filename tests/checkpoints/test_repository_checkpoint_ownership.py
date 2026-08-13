@@ -132,7 +132,7 @@ def test_go_live_scratch_path_maps_to_disposable_acceptance_owner():
     entry = POLICY.entries["go-live-streaming-test-v1"]
     go_live = (ROOT / "docs/go-live.md").read_text(encoding="utf-8")
 
-    assert entry.prefix == "streaming_test/"
+    assert entry.prefix == "streaming_test/{run_uuid}/"
     assert entry.durability == "disposable_acceptance"
     assert entry.sink == "s3a://lakehouse/bronze/streaming_test"
     assert "s3a://checkpoints/streaming_test" in go_live

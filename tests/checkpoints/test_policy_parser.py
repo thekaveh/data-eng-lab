@@ -106,7 +106,7 @@ checkpoints:
     concurrent_writers: forbidden
     retirement_authorization: not_applicable
   - checkpoint_id: go-live-streaming-test-v1
-    prefix: streaming_test/
+    prefix: streaming_test/{run_uuid}/
     owner: Lab Acceptance Engineering
     workload: go-live-streaming-test
     source: bounded_synthetic
@@ -200,7 +200,7 @@ def test_parser_preserves_exact_owner_source_sink_and_recovery_contract():
             "reset_required",
         ),
         "go-live-streaming-test-v1": (
-            "streaming_test/",
+            "streaming_test/{run_uuid}/",
             "Lab Acceptance Engineering",
             "disposable_acceptance",
             "bounded_synthetic",
@@ -367,6 +367,15 @@ def test_multibyte_policy_is_still_bounded_by_encoded_bytes():
         "gh_events_file/tiny/" + "a" * 31 + "/" + "b" * 64 + "/",
         "gh_events_file/tiny/" + "a" * 32 + "/" + "b" * 63 + "/",
         "gh_events_file/tiny/" + "a" * 32 + "/" + "b" * 64 + "/extra/",
+        "streaming_test/",
+        "streaming_test/550E8400-E29B-41D4-A716-446655440000/",
+        "streaming_test/{550e8400-e29b-41d4-a716-446655440000}/",
+        "streaming_test/550e8400e29b41d4a716446655440000/",
+        "streaming_test/550e8400-e29b-41d4-a716-446655440000/extra/",
+        "streaming_test/../550e8400-e29b-41d4-a716-446655440000/",
+        "streaming_test//550e8400-e29b-41d4-a716-446655440000/",
+        "streaming_test/550e8400-e29b-41d4-a716-44665544000é/",
+        "streaming_test_sibling/550e8400-e29b-41d4-a716-446655440000/",
     ],
 )
 def test_match_prefix_rejects_unknown_root_control_and_malformed_generation(prefix: str):
@@ -379,11 +388,15 @@ def test_match_prefix_rejects_unknown_root_control_and_malformed_generation(pref
 def test_match_prefix_accepts_only_exact_fixed_and_generation_leaves():
     policy = _api().parse_policy(VALID_POLICY)
     generation = "gh_events_file/tiny/" + "a" * 32 + "/" + "b" * 64 + "/"
+    run_uuid = "550e8400-e29b-41d4-a716-446655440000"
 
     assert policy.match_prefix("events/").checkpoint_id == "streaming-events-v1"
     assert policy.match_prefix("event_windows/").checkpoint_id == ("streaming-event-windows-v1")
     assert policy.match_prefix("online_retail_cdc/").checkpoint_id == ("streaming-online-retail-cdc-v1")
-    assert policy.match_prefix("streaming_test/").checkpoint_id == ("go-live-streaming-test-v1")
+    scratch = policy.match_prefix(f"streaming_test/{run_uuid}/")
+    assert scratch.checkpoint_id == "go-live-streaming-test-v1"
+    assert scratch.prefix == f"streaming_test/{run_uuid}/"
+    assert scratch.generation == {"run_uuid": run_uuid}
     match = policy.match_prefix(generation)
     assert match.checkpoint_id == "streaming-gh-archive-file-v1"
     assert match.prefix == generation
