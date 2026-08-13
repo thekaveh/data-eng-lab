@@ -266,21 +266,29 @@ class OperationManager:
             except BaseException:
                 primary.add_note("partial_status_persist_failed")
             raise primary from None
-        status = self._record_status(
-            request.operation_id,
-            prepared["checkpoint_id"],
-            "completed",
-            request.plan_sha256,
-            deleted,
-            records,
-            None,
-            started,
-            head_requests=head_requests,
-            delete_requests=delete_requests,
-            postflight_inventory_sha256=postflight_sha256,
-        )
-        self._ensure_audit(request.operation_id, status, prepared)
-        self.check_deadline(started)
+        try:
+            status = self._record_status(
+                request.operation_id,
+                prepared["checkpoint_id"],
+                "completed",
+                request.plan_sha256,
+                deleted,
+                records,
+                None,
+                started,
+                head_requests=head_requests,
+                delete_requests=delete_requests,
+                postflight_inventory_sha256=postflight_sha256,
+            )
+            self._ensure_audit(request.operation_id, status, prepared)
+            self.check_deadline(started)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except OperationFailure as error:
+            error.partial = bool(deleted)
+            raise
+        except BaseException:
+            raise OperationFailure("evidence_write_failed", partial=bool(deleted)) from None
         return status
 
     def _ensure_audit(
@@ -303,12 +311,14 @@ class OperationManager:
                 "delete_requests": value["delete_requests"],
                 "head_requests": value["head_requests"],
                 "manifest_shards": prepared["manifest_shards"],
+                "evaluated_at": prepared["evaluated_at"],
                 "occurred_at": value["occurred_at"],
                 "operation_id": operation_id,
                 "plan_sha256": value["plan_sha256"],
                 "planned_objects": value["planned_objects"],
                 "policy_sha256": prepared["policy_sha256"],
                 "postflight_inventory_sha256": value["postflight_inventory_sha256"],
+                "prepared_at": prepared["prepared_at"],
                 "prefix_sha256": prepared["prefix_sha256"],
                 "primary_category": value["primary_category"],
                 "remaining_bytes": value["remaining_bytes"],

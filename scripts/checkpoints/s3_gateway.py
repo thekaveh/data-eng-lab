@@ -32,7 +32,7 @@ _CONTROL_KEY = re.compile(
     r"tombstones/[0-9a-f-]{36}/(?:manifest/[0-9]+-[0-9a-f]{64}\.json|prepared\.json|"
     r"results/(?:attempts/[0-9]{6}-[0-9a-f]{64}\.json|shards/[0-9a-f]{64}\.json))|"
     r"audits/[0-9a-f-]{36}/[0-9a-f]{64}\.json|"
-    r"capability/runtime-probe\.json"
+    r"capability/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json"
     r")"
 )
 _ETAG = re.compile(r"[0-9a-f]{32}(?:-[1-9][0-9]{0,9})?")
@@ -322,9 +322,10 @@ class S3Gateway:
         return expected
 
     def probe_capabilities(self) -> Mapping[str, object]:
-        key = "_retention/capability/runtime-probe.json"
-        body = b'{"profile":"minio-2025-09-manual-verified-readback","schema_version":1}'
         probe_uuid = str(uuid.uuid4())
+        missing_probe_uuid = str(uuid.uuid4())
+        key = f"_retention/capability/{probe_uuid}.json"
+        body = b'{"profile":"minio-2025-09-manual-verified-readback","schema_version":1}'
         data_prefix = f"streaming_test/{probe_uuid}/"
         data_keys = (f"{data_prefix}capability-a", f"{data_prefix}capability-b")
         try:
@@ -359,7 +360,7 @@ class S3Gateway:
             self._expect_client_error(
                 lambda: self._client.put_object(
                     Bucket=self._policy.bucket,
-                    Key=f"_retention/capability/{probe_uuid}.json",
+                    Key=f"_retention/capability/{missing_probe_uuid}.json",
                     Body=body,
                     IfMatch=f'"{"0" * 32}"',
                 ),
@@ -392,7 +393,7 @@ class S3Gateway:
             )
             self._expect_client_error(
                 lambda: self._client.list_objects_v2(Bucket="checkpoint-retention-denied", Prefix="", MaxKeys=1),
-                {"AccessDenied", "NoSuchBucket", "403", "404"},
+                {"AccessDenied", "AllAccessDisabled", "403"},
             )
             self._expect_client_error(
                 lambda: self._client.put_object(Bucket=self._policy.bucket, Key=data_keys[0], Body=b"denied"),

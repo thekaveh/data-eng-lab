@@ -4,6 +4,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -134,6 +135,51 @@ def test_owned_fixture_cleanup_failure_cannot_replace_body_primary():
             raise primary
     assert failure.value is primary
     assert getattr(primary, "__notes__", ()) == ["owned_fixture_cleanup_failed"]
+
+
+def test_runtime_capability_evidence_is_exactly_one_recent_control_and_is_cleaned():
+    live = _live()
+    started_at = datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc)
+    owned_key = "_retention/capability/550e8400-e29b-41d4-a716-446655440000.json"
+    old_key = "_retention/capability/11111111-1111-4111-8111-111111111111.json"
+    deleted = []
+
+    class Body:
+        def __init__(self):
+            self.closed = False
+
+        def read(self, size):
+            assert size == 129
+            return b'{"profile":"minio-2025-09-manual-verified-readback","schema_version":1}'
+
+        def close(self):
+            self.closed = True
+
+    class Client:
+        def list_objects_v2(self, *, Bucket, Prefix, MaxKeys):
+            assert Bucket == "checkpoints" and Prefix == "_retention/capability/" and MaxKeys == 1000
+            remaining = [] if owned_key in deleted else [{"Key": owned_key, "LastModified": started_at}]
+            return {
+                "Contents": [
+                    {"Key": old_key, "LastModified": started_at - timedelta(days=1)},
+                    *remaining,
+                ],
+                "IsTruncated": False,
+            }
+
+        def get_object(self, *, Bucket, Key):
+            assert Bucket == "checkpoints" and Key == owned_key
+            return {"Body": Body()}
+
+        def delete_objects(self, *, Bucket, Delete):
+            assert Bucket == "checkpoints"
+            keys = [item["Key"] for item in Delete["Objects"]]
+            deleted.extend(keys)
+            return {"Deleted": [{"Key": key} for key in keys], "Errors": []}
+
+    with live._owned_runtime_capability(Client(), started_at) as key:
+        assert key == owned_key
+    assert deleted == [owned_key]
 
 
 def test_maintenance_iam_probe_executes_exact_allowed_and_denied_calls_with_cleanup():

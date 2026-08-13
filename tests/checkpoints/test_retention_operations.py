@@ -426,8 +426,9 @@ def test_deleted_but_audit_failed_recovery_never_deletes_again():
         revalidate=lambda _prefix, _evaluated_at: artifact,
     )
 
-    with pytest.raises(OperationFailure, match="control_create_failed"):
+    with pytest.raises(OperationFailure, match="control_create_failed") as caught:
         manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    assert caught.value.partial is True
     delete_count = sum(call[0] == "delete" for call in gateway.calls)
 
     gateway.create_failure_suffix = None
@@ -563,6 +564,8 @@ def test_completed_audit_binds_prepare_identity_policy_manifest_result_and_absen
     assert audit["policy_sha256"] == "a" * 64
     assert audit["plan_sha256"] == artifact.sha256
     assert audit["manifest_shards"] == [shard.sha256 for shard in artifact.shards]
+    assert audit["prepared_at"] == "2026-08-13T12:00:00Z"
+    assert audit["evaluated_at"] == "2026-08-13T12:00:00Z"
     assert audit["postflight_inventory_sha256"] == inventory_sha256(())
     assert audit["remaining_objects"] == 0
     assert audit["primary_category"] is None

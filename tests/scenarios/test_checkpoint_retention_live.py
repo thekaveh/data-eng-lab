@@ -33,6 +33,8 @@ OWNED_FIXTURE_KEY = re.compile(
     rf"(?:streaming_test/{RUN_UUID.pattern}/(?:state/(?:offset|changed)|commits/0)"
     rf"|unknown-retention/{RUN_UUID.pattern}/sentinel)"
 )
+OWNED_CAPABILITY_KEY = re.compile(rf"_retention/capability/{RUN_UUID.pattern}\.json")
+CAPABILITY_BODY = b'{"profile":"minio-2025-09-manual-verified-readback","schema_version":1}'
 CHECKPOINT_IDS = {
     "streaming-events-v1",
     "streaming-event-windows-v1",
@@ -210,6 +212,72 @@ def _owned_fixture_objects(client):
                 if primary is None:
                     raise RuntimeError("owned_fixture_cleanup_failed") from None
                 primary.add_note("owned_fixture_cleanup_failed")
+
+
+@contextmanager
+def _owned_runtime_capability(client, started_at: datetime):
+    if not isinstance(started_at, datetime) or started_at.tzinfo is None or started_at.utcoffset() != timedelta(0):
+        raise AssertionError("invalid capability ownership clock")
+    owned: list[str] = []
+    primary = None
+    try:
+        response = client.list_objects_v2(Bucket="checkpoints", Prefix="_retention/capability/", MaxKeys=1000)
+        if response.get("IsTruncated") is not False or not isinstance(response.get("Contents", []), list):
+            raise AssertionError("capability inventory invalid")
+        for item in response.get("Contents", []):
+            if not isinstance(item, dict):
+                raise AssertionError("capability inventory invalid")
+            key = item.get("Key")
+            modified = item.get("LastModified")
+            if (
+                not isinstance(key, str)
+                or not isinstance(modified, datetime)
+                or modified.tzinfo is None
+                or modified.utcoffset() != timedelta(0)
+            ):
+                raise AssertionError("capability inventory invalid")
+            if modified >= started_at:
+                if OWNED_CAPABILITY_KEY.fullmatch(key) is None or len(owned) >= 2:
+                    raise AssertionError("capability ownership invalid")
+                owned.append(key)
+        if len(owned) != 1:
+            raise AssertionError("capability ownership invalid")
+        result = client.get_object(Bucket="checkpoints", Key=owned[0])
+        body = result.get("Body") if isinstance(result, dict) else None
+        if body is None or not hasattr(body, "read") or not hasattr(body, "close"):
+            raise AssertionError("capability evidence invalid")
+        try:
+            raw = body.read(129)
+        finally:
+            body.close()
+        if raw != CAPABILITY_BODY:
+            raise AssertionError("capability evidence invalid")
+        yield owned[0]
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        if owned:
+            try:
+                result = client.delete_objects(
+                    Bucket="checkpoints",
+                    Delete={"Objects": [{"Key": key} for key in owned], "Quiet": False},
+                )
+                deleted = sorted(item.get("Key") for item in result.get("Deleted", []))
+                if result.get("Errors") or deleted != sorted(owned):
+                    raise RuntimeError("capability_cleanup_failed")
+                remaining = client.list_objects_v2(
+                    Bucket="checkpoints",
+                    Prefix="_retention/capability/",
+                    MaxKeys=1000,
+                )
+                present = {item.get("Key") for item in remaining.get("Contents", [])}
+                if remaining.get("IsTruncated") is not False or any(key in present for key in owned):
+                    raise RuntimeError("capability_cleanup_failed")
+            except BaseException:
+                if primary is None:
+                    raise RuntimeError("capability_cleanup_failed") from None
+                primary.add_note("capability_cleanup_failed")
 
 
 def _fixture_identity(run_uuid: str) -> dict[str, object]:
@@ -516,6 +584,7 @@ def test_checkpoint_retention_live_acceptance():
     os.environ["MINIO_RETENTION_ACCESS_KEY"] = LIVE_RETENTION_ACCESS_KEY
     os.environ["CHECKPOINT_RETENTION_LEASE_TOKEN"] = LIVE_LEASE_TOKEN
     os.environ["CHECKPOINT_RETENTION_OPERATOR_TOKEN"] = LIVE_OPERATOR_TOKEN
+    stack_started_at = datetime.now(timezone.utc) - timedelta(seconds=1)
     try:
         with _owned_stack(), ExitStack() as owned_resources:
             health = _wait_service()
@@ -540,6 +609,7 @@ def test_checkpoint_retention_live_acceptance():
                 )
                 endpoint = values["ATLAS_MINIO_HOST_ENDPOINT"]
             root = _client(endpoint, _env("MINIO_ROOT_USER"), _env("MINIO_ROOT_PASSWORD"))
+            owned_resources.enter_context(_owned_runtime_capability(root, stack_started_at))
             put_owned = owned_resources.enter_context(_owned_fixture_objects(root))
             before = _production_snapshot(root)
             denied_key = f"unknown-retention/{uuid.uuid4()}/sentinel"

@@ -402,11 +402,18 @@ def test_build_runtime_wires_live_revalidation_and_exact_runtime_clock(monkeypat
     monkeypatch.setenv("MINIO_RETENTION_SECRET_KEY", "retention-secret")
     monkeypatch.setattr(module, "load_policy", lambda _path: policy)
     monkeypatch.setattr(module, "build_s3_client", lambda *_args: client)
+    startup_health = []
+    monkeypatch.setattr(
+        module.RuntimeBackend,
+        "health",
+        lambda _self: startup_health.append("observed") or {"ready": True},
+    )
 
     backend = module.build_runtime()
 
     assert backend._now is module._now
     assert callable(backend._operations._revalidate)
+    assert startup_health == ["observed"]
 
 
 def test_runtime_metrics_track_fixed_low_cardinality_plan_prepare_apply_outcomes(monkeypatch):

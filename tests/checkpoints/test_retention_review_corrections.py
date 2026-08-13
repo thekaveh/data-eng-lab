@@ -174,6 +174,45 @@ def test_health_requires_observed_storage_capability_evidence():
         backend.health()
 
 
+def test_health_runs_the_observed_capability_probe_once_per_runtime():
+    calls = []
+    capabilities = {
+        "automatic_apply": False,
+        "conditional_create": True,
+        "conditional_create_conflict": True,
+        "conditional_delete": False,
+        "conditional_replace_verified_readback": True,
+        "data_put_denied": True,
+        "exact_leaf_delete": True,
+        "exact_leaf_get": True,
+        "exact_leaf_list": True,
+        "multi_delete": True,
+        "observed": True,
+        "other_bucket_denied": True,
+        "profile": "minio-2025-09-manual-verified-readback",
+        "root_list_denied": True,
+        "stale_replace_denied": True,
+        "unknown_control_denied": True,
+    }
+
+    def probe():
+        calls.append("probe")
+        return dict(capabilities)
+
+    backend = service.RuntimeBackend(
+        gateway=types.SimpleNamespace(probe_capabilities=probe),
+        leases=object(),
+        planner=object(),
+        operations=object(),
+        policy=types.SimpleNamespace(entries={}),
+        destructive_enabled=False,
+    )
+
+    assert backend.health()["ready"] is True
+    assert backend.health()["ready"] is True
+    assert calls == ["probe"]
+
+
 def test_categorized_partial_response_is_not_rewritten_to_backend_failure():
     class Partial(Backend):
         def invoke(self, *_args, **_kwargs):
@@ -221,10 +260,40 @@ def test_runtime_shares_one_checkpoint_lock_registry_between_leases_and_apply(mo
     monkeypatch.setattr(service, "load_policy", lambda _path: policy)
     monkeypatch.setattr(service, "build_s3_client", lambda *_args: client)
     monkeypatch.setattr(service, "_policy_digest", lambda _policy: "a" * 64)
+    startup_health = []
+    monkeypatch.setattr(
+        service.RuntimeBackend,
+        "health",
+        lambda _self: startup_health.append("observed") or {"ready": True},
+    )
 
     backend = service.build_runtime()
 
     assert backend._leases._locks is backend._operations._locks
+    assert startup_health == ["observed"]
+
+
+def test_runtime_closes_storage_client_when_startup_capability_probe_fails(monkeypatch):
+    policy = types.SimpleNamespace(
+        lease=types.SimpleNamespace(quiescence_seconds=900),
+        bounds=types.SimpleNamespace(max_summary_bytes=65_536, max_delete_keys=1_000, max_active_seconds=900),
+    )
+    closed = []
+    client = types.SimpleNamespace(close=lambda: closed.append("closed"))
+    monkeypatch.setenv("MINIO_RETENTION_ACCESS_KEY", "retention-user")
+    monkeypatch.setenv("MINIO_RETENTION_SECRET_KEY", "retention-secret")
+    monkeypatch.setattr(service, "load_policy", lambda _path: policy)
+    monkeypatch.setattr(service, "build_s3_client", lambda *_args: client)
+    monkeypatch.setattr(service, "_policy_digest", lambda _policy: "a" * 64)
+    monkeypatch.setattr(
+        service.RuntimeBackend,
+        "health",
+        lambda _self: (_ for _ in ()).throw(service.ServiceFailure("capability_failed")),
+    )
+
+    with pytest.raises(service.ServiceFailure, match="capability_failed"):
+        service.build_runtime()
+    assert closed == ["closed"]
 
 
 def test_apply_holds_checkpoint_lock_across_revalidation_head_delete_and_status():
@@ -456,6 +525,34 @@ def test_runtime_returns_any_persisted_destructive_partial_as_partial():
     )
     assert result["state"] == "partial"
     assert result["primary_category"] == "postflight_not_empty"
+
+
+def test_runtime_reports_evidence_write_failure_after_completed_delete_as_partial():
+    operations = types.SimpleNamespace(
+        apply=lambda _request: (_ for _ in ()).throw(OperationFailure("control_create_failed", partial=True)),
+        status=lambda operation_id: types.SimpleNamespace(operation_id=operation_id, state="completed", body=b"{}"),
+    )
+    policy = types.SimpleNamespace(
+        entries={"go-live-streaming-test-v1": types.SimpleNamespace(durability="disposable_acceptance")},
+        match_prefix=lambda _prefix: types.SimpleNamespace(checkpoint_id="go-live-streaming-test-v1"),
+    )
+    backend = service.RuntimeBackend(
+        gateway=types.SimpleNamespace(probe_capabilities=lambda: {}),
+        leases=object(),
+        planner=object(),
+        operations=operations,
+        policy=policy,
+        destructive_enabled=True,
+    )
+
+    with pytest.raises(service.ServiceFailure, match="control_create_failed") as caught:
+        backend.invoke(
+            "apply",
+            {"confirm_prefix": PREFIX, "plan_sha256": "a" * 64},
+            "550e8400-e29b-41d4-a716-446655440000",
+        )
+    assert caught.value.state == "partial"
+    assert caught.value.status == 409
 
 
 def test_bulk_plan_records_plan_inventory_and_refusal_metrics():

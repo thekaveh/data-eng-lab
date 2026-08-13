@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from types import MappingProxyType
 from typing import Mapping, Sequence
 
 from scripts.checkpoints.leases import (
@@ -85,9 +86,14 @@ class RuntimeBackend:
         self._operation_id = operation_id
         self._client = getattr(gateway, "_client", None)
         self._metrics: dict[str, dict[tuple[str, ...], int]] = {}
+        self._capabilities: Mapping[str, object] | None = None
 
     def health(self) -> dict[str, object]:
-        capabilities = self._gateway.probe_capabilities()
+        if self._capabilities is None:
+            observed = self._gateway.probe_capabilities()
+            if isinstance(observed, Mapping):
+                self._capabilities = MappingProxyType(dict(observed))
+        capabilities = self._capabilities
         if (
             not isinstance(capabilities, Mapping)
             or capabilities.get("automatic_apply") is not False
@@ -427,7 +433,7 @@ def build_runtime() -> RuntimeBackend:
             locks=locks,
             max_active_seconds=policy.bounds.max_active_seconds,
         )
-        return RuntimeBackend(
+        runtime = RuntimeBackend(
             gateway=gateway,
             leases=LeaseManager(gateway, policy, now=_now, locks=locks),
             planner=planner,
@@ -436,6 +442,15 @@ def build_runtime() -> RuntimeBackend:
             destructive_enabled=destructive == "true",
             now=_now,
         )
+        try:
+            runtime.health()
+        except BaseException as primary:
+            try:
+                runtime.close()
+            except BaseException:
+                primary.add_note("runtime_close_failed")
+            raise
+        return runtime
     except (KeyboardInterrupt, SystemExit, ServiceFailure):
         raise
     except BaseException:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import re
 import traceback
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
@@ -306,6 +307,17 @@ def test_capability_probe_performs_observed_create_replace_readback_and_denied_d
         "unknown_control_denied": True,
     }
     assert client.calls[-1][0] == "delete-control"
+    capability_keys = [request["Key"] for operation, request in client.calls if operation == "put"]
+    assert capability_keys
+    assert re.fullmatch(r"_retention/capability/[0-9a-f-]{36}\.json", capability_keys[0])
+    assert "runtime-probe" not in capability_keys[0]
+    stale_replace_keys = {
+        request["Key"]
+        for operation, request in client.calls
+        if operation == "put" and request.get("IfMatch") == f'"{"0" * 32}"'
+    }
+    assert len(stale_replace_keys) == 2
+    assert capability_keys[0] in stale_replace_keys
 
 
 def test_capability_probe_observes_cas_failures_exact_leaf_access_and_scope_denials():
@@ -351,6 +363,12 @@ def test_capability_probe_observes_cas_failures_exact_leaf_access_and_scope_deni
     assert result["other_bucket_denied"] is True
     assert result["data_put_denied"] is True
     assert result["unknown_control_denied"] is True
+
+
+def test_capability_probe_does_not_treat_missing_foreign_bucket_as_authorization_denial():
+    failure = ClientError({"Error": {"Code": "NoSuchBucket"}}, "ListObjectsV2")
+    with pytest.raises(GatewayFailure, match="capability_failed"):
+        S3Gateway._expect_client_error(lambda: (_ for _ in ()).throw(failure), {"AccessDenied", "403"})
 
 
 def test_head_and_delete_require_every_exact_original_record_result():
