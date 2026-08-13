@@ -2,7 +2,7 @@
 
 - **Date:** 2026-08-12 America/New_York / 2026-08-13 UTC
 - **Branch:** `codex/83-trino-bi-pipelines`
-- **Result:** `1 passed in 156.01s`
+- **Result:** `1 passed in 155.17s`
 - **Harness:** `tests/scenarios/test_trino_bi_pipelines_live.py`
 
 ## Replay contract
@@ -60,25 +60,25 @@ terminal-success DagRuns per DAG and no third or unexpected active run.
 
 | DAG | First run | Second run | Result checksum |
 |---|---|---|---|
-| `tpch_bi_query` | `manual__2026-08-13T04:50:55.634320+00:00` | `manual__2026-08-13T04:51:10.378194+00:00` | `8eda339e07012ba2a7bea164d2152d845d5abd3440725b749e8a4c6110fb97d9` |
-| `nyc_taxi_trino_daily` | `manual__2026-08-13T04:51:04.760725+00:00` | `manual__2026-08-13T04:51:16.239789+00:00` | `d500d6e3954bddbc6febb109004b4889de60dfbbb4c2009e884c2d0e49610969` |
+| `tpch_bi_query` | `manual__2026-08-13T05:07:21.533136+00:00` | `manual__2026-08-13T05:07:35.913265+00:00` | `8eda339e07012ba2a7bea164d2152d845d5abd3440725b749e8a4c6110fb97d9` |
+| `nyc_taxi_trino_daily` | `manual__2026-08-13T05:07:30.327866+00:00` | `manual__2026-08-13T05:07:41.598290+00:00` | `d500d6e3954bddbc6febb109004b4889de60dfbbb4c2009e884c2d0e49610969` |
 
 The exact Trino query IDs were:
 
-- TPC-H first: `20260813_045058_00004_q8vjp`, `20260813_045058_00005_q8vjp`,
-  `20260813_045058_00006_q8vjp`, `20260813_045058_00007_q8vjp`,
-  `20260813_045059_00008_q8vjp`, `20260813_045059_00009_q8vjp`,
-  `20260813_045059_00010_q8vjp`.
-- TPC-H second: `20260813_045110_00018_q8vjp`, `20260813_045110_00019_q8vjp`,
-  `20260813_045110_00020_q8vjp`, `20260813_045111_00021_q8vjp`,
-  `20260813_045111_00022_q8vjp`, `20260813_045111_00023_q8vjp`,
-  `20260813_045111_00024_q8vjp`.
-- NYC first: `20260813_045105_00012_q8vjp`, `20260813_045105_00013_q8vjp`,
-  `20260813_045105_00014_q8vjp`, `20260813_045105_00015_q8vjp`,
-  `20260813_045105_00016_q8vjp`.
-- NYC second: `20260813_045116_00026_q8vjp`, `20260813_045116_00027_q8vjp`,
-  `20260813_045116_00028_q8vjp`, `20260813_045116_00029_q8vjp`,
-  `20260813_045117_00030_q8vjp`.
+- TPC-H first: `20260813_050723_00004_rgkr7`, `20260813_050724_00005_rgkr7`,
+  `20260813_050724_00006_rgkr7`, `20260813_050724_00007_rgkr7`,
+  `20260813_050724_00008_rgkr7`, `20260813_050725_00009_rgkr7`,
+  `20260813_050725_00010_rgkr7`.
+- TPC-H second: `20260813_050736_00018_rgkr7`, `20260813_050736_00019_rgkr7`,
+  `20260813_050736_00020_rgkr7`, `20260813_050736_00021_rgkr7`,
+  `20260813_050736_00022_rgkr7`, `20260813_050736_00023_rgkr7`,
+  `20260813_050737_00024_rgkr7`.
+- NYC first: `20260813_050730_00012_rgkr7`, `20260813_050730_00013_rgkr7`,
+  `20260813_050730_00014_rgkr7`, `20260813_050731_00015_rgkr7`,
+  `20260813_050731_00016_rgkr7`.
+- NYC second: `20260813_050742_00026_rgkr7`, `20260813_050742_00027_rgkr7`,
+  `20260813_050742_00028_rgkr7`, `20260813_050742_00029_rgkr7`,
+  `20260813_050742_00030_rgkr7`.
 
 The scheduler runtime imported the HTTP provider hook and `requests` while confirming that neither
 the Python Trino client nor an Airflow Trino provider was installed. After each task, a fixed
