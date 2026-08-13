@@ -325,7 +325,9 @@ def _airflow_dag() -> dict[str, object]:
 @pytest.mark.skipif(os.environ.get("RUN_INFRA") != "1", reason="needs the canonical exclusive Atlas stack")
 def test_checkpoint_retention_live_acceptance():
     previous_destructive = os.environ.get("CHECKPOINT_RETENTION_DESTRUCTIVE_ENABLED")
+    previous_access_key = os.environ.get("MINIO_RETENTION_ACCESS_KEY")
     os.environ["CHECKPOINT_RETENTION_DESTRUCTIVE_ENABLED"] = "true"
+    os.environ["MINIO_RETENTION_ACCESS_KEY"] = "retention86live"
     try:
         with _owned_stack():
             health = _wait_service()
@@ -428,3 +430,7 @@ def test_checkpoint_retention_live_acceptance():
             os.environ.pop("CHECKPOINT_RETENTION_DESTRUCTIVE_ENABLED", None)
         else:
             os.environ["CHECKPOINT_RETENTION_DESTRUCTIVE_ENABLED"] = previous_destructive
+        if previous_access_key is None:
+            os.environ.pop("MINIO_RETENTION_ACCESS_KEY", None)
+        else:
+            os.environ["MINIO_RETENTION_ACCESS_KEY"] = previous_access_key

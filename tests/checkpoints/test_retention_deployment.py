@@ -115,6 +115,8 @@ def test_provisioner_uses_root_only_in_init_and_never_xtraces_credentials():
     assert "echo $" not in script
     assert "set -x" not in script
     assert "env" not in [line.strip() for line in script.splitlines()]
+    assert '${#MINIO_RETENTION_ACCESS_KEY}' in script
+    assert '${#MINIO_RETENTION_SECRET_KEY}' in script
 
 
 def test_consumer_manifest_requires_the_ignored_operator_credential_overlay():
@@ -135,6 +137,14 @@ def test_consumer_manifest_requires_the_ignored_operator_credential_overlay():
     }
     assert "CHANGE_ME" in example
     assert "MINIO_ROOT" not in example
+    values = dict(
+        line.split("=", 1)
+        for line in example.splitlines()
+        if line and not line.startswith("#")
+    )
+    assert 3 <= len(values["MINIO_RETENTION_ACCESS_KEY"]) <= 20
+    assert 8 <= len(values["MINIO_RETENTION_SECRET_KEY"]) <= 40
+    assert 16 <= len(values["CHECKPOINT_RETENTION_API_TOKEN"]) <= 256
 
 
 def test_compose_runtime_is_single_replica_internal_nonroot_and_fail_closed():
