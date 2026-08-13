@@ -149,6 +149,9 @@ def _assembled_compose(scale: str | None = None) -> dict:
     environment.update(
         MINIO_ROOT_USER="ci-placeholder-user",
         MINIO_ROOT_PASSWORD="ci-placeholder-password",
+        MINIO_RETENTION_ACCESS_KEY="ci-retention-user",
+        MINIO_RETENTION_SECRET_KEY="ci-retention-password",
+        CHECKPOINT_RETENTION_API_TOKEN="ci-retention-api-token",
     )
     if scale is None:
         environment.pop("DATASET_SCALE", None)

@@ -230,7 +230,7 @@ def validate_execution_modes(modes: tuple[ExecutionMode, ...], root: Path) -> No
         for parent in (root / "spark-apps", root / "airflow-dags")
         for path in parent.rglob("dag.py")
     }
-    support_entrypoints = set(SUPPORT_DAGS)
+    support_entrypoints = {path for path in SUPPORT_DAGS if (root / path).is_file()}
     if declared_entrypoints | support_entrypoints != actual_entrypoints:
         raise ExecutionModeError(
             "production DAG inventory mismatch: "
@@ -253,8 +253,8 @@ def render_markdown(modes: tuple[ExecutionMode, ...]) -> str:
         "",
         "`nyc_taxi_etl`, `nyc_taxi_medallion`, `nyc_taxi_data_quality`, `tpch_star_schema`, "
         "`movielens_feature_pipeline`, `gh_archive_flatten_sessionization`, `tpch_bi_query`, "
-        "and `nyc_taxi_trino_daily` are eight "
-        "production pipeline DAGs today. The separate `checkpoint_retention` support DAG "
+        "and `nyc_taxi_trino_daily` are eight production DAGs today. The separate "
+        "`checkpoint_retention` support DAG "
         "is paused, manual, and dry-run-only with `schedule=None`. An "
         "approved child issue is a delivery boundary, not a runnable DAG. Notebook-only "
         "and continuous-stream scenarios run from their paired Zeppelin or Jupyter notebooks.",

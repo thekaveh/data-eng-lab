@@ -551,7 +551,7 @@ If Jenkins prompts for CSRF token or credentials during seed:
 
 The representative parity test is intentionally small enough for routine acceptance. Before a release or Atlas pin promotion, use the separate exhaustive gate to re-execute both the Zeppelin and Jupyter notebook for every scenario.
 
-Run this gate only against an exclusive, disposable lab stack. For batch scenarios it drops each scenario-owned output table before the Zeppelin run and again before the Jupyter run. The reset is limited to the batch tables declared in `OUTPUT_TABLES` in `tests/scenarios/test_notebook_reproducibility_live.py`:
+Run this gate only against an exclusive, disposable lab stack. Do not use the gate on a shared environment. It does not edit Atlas source. For batch scenarios it drops each scenario-owned output table before the Zeppelin run and again before the Jupyter run. The reset is limited to the batch tables declared in `OUTPUT_TABLES` in `tests/scenarios/test_notebook_reproducibility_live.py`:
 
 - `lakehouse.bronze.nyc_taxi_trips`, `lakehouse.bronze.events`, `lakehouse.bronze.gh_events_stream`
 - `lakehouse.silver.nyc_taxi_trips`, `lakehouse.silver.nyc_taxi_clean`, `lakehouse.silver.nyc_taxi_quarantine`, `lakehouse.silver.gh_events_se`, `lakehouse.silver.nyc_taxi_tt`, `lakehouse.silver.nyc_taxi_tm`, `lakehouse.silver.online_retail_cdc`, `lakehouse.silver.online_retail`, `lakehouse.silver.gh_events`, `lakehouse.silver.gh_sessions`
