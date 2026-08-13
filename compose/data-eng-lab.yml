@@ -34,17 +34,20 @@ services:
     environment:
       DATASET_RESOLVER_URI: http://dataset-resolver:8080
       DATASET_SCALE: ${DATASET_SCALE:-small}
+      AIRFLOW_CONN_TRINO_DEFAULT: http://trino:8080
     depends_on:
       dataset-resolver:
         condition: service_healthy
     volumes:
       - ../spark-apps:/opt/airflow/dags/data_eng_lab_spark_apps:ro
+      - ../airflow-dags:/opt/airflow/dags/data_eng_lab_airflow_dags:ro
       - ../datasets:/opt/data-eng-lab/datasets:ro
       - ../tests/infra/probes:/opt/probes:ro
 
   airflow-dag-processor:
     volumes:
       - ../spark-apps:/opt/airflow/dags/data_eng_lab_spark_apps:ro
+      - ../airflow-dags:/opt/airflow/dags/data_eng_lab_airflow_dags:ro
 
   jupyterhub:
     environment:

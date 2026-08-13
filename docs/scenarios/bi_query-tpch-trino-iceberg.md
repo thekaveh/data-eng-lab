@@ -4,7 +4,7 @@ Queries gold-layer marts via Trino SQL, demonstrating Trino as a lightweight SQL
 
 ## 1. Purpose
 
-Trino provides a lightweight, SQL-only query path over lakehouse data that complements Spark's programmatic ETL. This scenario shows how different engines can share the same underlying Iceberg tables: analysts can query data without writing Spark code. It reads `fct_orders` and `dim_customer` from the `star_schema` scenario, joins them, aggregates revenue by market segment, and writes a summary table — demonstrating true multi-engine lakehouse architecture.
+Trino provides a lightweight, SQL-only query path over lakehouse data that complements Spark's programmatic ETL. Production reads `fct_orders` and `dim_customer`, validates that they represent one immutable TPC-H generation, and returns a bounded revenue-by-segment result without writing Iceberg. The paired notebooks retain their direct CTAS cells only as an educational comparison.
 
 ## 2. Data Model
 
@@ -18,7 +18,9 @@ From `lakehouse.gold.fct_orders`:
 |---|---|---|
 | `o_orderkey` | long | Order key |
 | `o_custkey` | long | Customer FK |
-| `o_totalprice` | double | Order total |
+| `o_orderdate` | date | Order date |
+| `revenue` | decimal(25,2) | Sum of line extended prices |
+| `line_count` | bigint | Number of lines in the order |
 
 From `lakehouse.gold.dim_customer`:
 
@@ -28,38 +30,38 @@ From `lakehouse.gold.dim_customer`:
 | `c_name` | string | Customer name |
 | `c_mktsegment` | string | Market segment |
 
-### 2.2 Output Tables
+### 2.2 Output Artifact
 
 | Table | Layer | Key Columns |
 |---|---|---|
-| `lakehouse.gold.bi_segment_revenue` | Gold | `market_segment`, `total_revenue`, `order_count` |
+| Airflow metadata-DB XCom | Run artifact | `market_segment`, `total_revenue`, `line_count`, `order_count` |
 
 ## 3. Architecture
 
 ![Architecture](../diagrams/img/bi_query-tpch-trino-iceberg.png)
 
-Data flows from gold-layer Iceberg tables (`fct_orders`, `dim_customer`) through Trino SQL queries. The Trino coordinator connects to the Iceberg catalog, reads the gold tables, joins them, aggregates revenue by market segment, and writes the summary back to the gold layer — all via standard ANSI SQL with no Spark involvement.
+Data flows from gold-layer Iceberg tables (`fct_orders`, `dim_customer`) through fixed read-only Trino SQL. The production task reads both `$properties` tables before BI SQL, validates schemas and source measures, executes the aggregate, then rereads properties and snapshots before returning a canonical XCom artifact. No Spark or Iceberg write occurs.
 
 ## 4. Notebooks
 
 - **Zeppelin (Scala, `%trino`):** Sections: Overview, Read Gold Tables, Join + Aggregate, Write Summary, Verify; identical SQL to PySpark
 - **Jupyter (Py, `trino` client):** Sections: Overview, Read Gold Tables, Join + Aggregate, Write Summary, Verify; identical SQL executed via the Trino Python client connecting to `trino:8080`
 
-Both notebooks run the same SQL queries to demonstrate cross-engine parity for analytical queries.
+Both notebooks run the same SQL queries to demonstrate cross-engine parity. Their CTAS cells are an **educational direct-write path** that **does not enforce production provenance, snapshot checks, or serialization**. **Use the Airflow DAG for production BI queries and durable BI artifacts**; the production path itself is read-only and stores the artifact in Airflow metadata.
 
 ## 5. Orchestration
 
-Classification: **approved new production DAG**. No production DAG exists yet. Child #83 owns the proven Airflow/Trino execution contract and meaningful-result validation; until it passes live acceptance, run the paired Trino notebooks only.
+Classification: **existing production DAG** at `airflow-dags/trino_bi/dag.py`. `tpch_bi_query` runs daily at 01:00 UTC with `max_active_runs=1`, one retry, and a two-minute delay. Its bounded canonical metadata-DB XCom is retained with the Airflow metadata database and is **not an Iceberg table**; retrieve it from the task instance XCom view or API before configured metadata retention removes the DagRun.
+
+Before any BI SQL, the task queries `lakehouse.gold."dim_customer$properties"` and `lakehouse.gold."fct_orders$properties"`. It requires exactly equal nonblank `data_eng_lab.dataset`, `data_eng_lab.dataset.scale`, `data_eng_lab.dataset.plan_id`, `data_eng_lab.dataset.publication_id`, and `data_eng_lab.dataset.manifest_sha256` values and will **fail closed before BI SQL** on absence, duplication, malformed identity, or mismatch.
 
 ## 6. Usage
 
 1. Run the prerequisite scenario: `star_schema-tpch-spark-iceberg` (creates `fct_orders` and `dim_customer`)
 2. Ensure the `gold` Iceberg namespace exists: `scripts/register_iceberg.py`
-3. Open either notebook on the Atlas stack (Trino coordinator must be reachable at `trino:8080`) and run all sections
-4. Verify:
-     ```bash
-   spark-sql -e "SELECT * FROM lakehouse.gold.bi_segment_revenue ORDER BY total_revenue DESC"
-     ```
+3. For production, run `airflow dags test tpch_bi_query <logical-date> --use-executor` from the scheduler or let the daily schedule run.
+4. Retrieve `run_bounded_bi_query`'s `return_value` XCom through Airflow's task-instance view/API.
+5. Use either paired notebook only for the educational direct-query/CTAS walkthrough.
 
 ## 7. Dependencies
 
@@ -69,7 +71,7 @@ Classification: **approved new production DAG**. No production DAG exists yet. C
 
 ## 8. Known Issues & Caveats
 
-Atlas provides the Trino coordinator and both notebooks are live-gated; production orchestration remains owned by child #83. The `%trino` Zeppelin interpreter is seeded by Atlas pointing to the Trino coordinator. The `lakehouse.gold` namespace must exist before the Write query runs. Requires the upstream `star_schema-tpch-spark-iceberg` to run first.
+Atlas provides the Trino coordinator and the `%trino` Zeppelin interpreter. Production accepts only fixed registry SQL through internal `http://trino:8080`; no host fallback or arbitrary DagRun SQL exists. The catalog is currently unauthenticated/ALLOW_ALL, so the application-level read-only registry is a workload boundary, not a claim of catalog security. Requires the upstream `star_schema-tpch-spark-iceberg` to run first.
 
 ## 9. See Also
 

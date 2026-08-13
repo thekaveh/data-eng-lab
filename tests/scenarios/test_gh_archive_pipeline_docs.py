@@ -75,14 +75,14 @@ def test_notebook_index_names_both_gh_archive_production_prototypes():
     assert "educational" in index
 
 
-def test_public_counts_and_diagrams_describe_five_production_dags():
+def test_public_counts_and_diagrams_describe_current_production_dags():
     for path in (ROOT / "README.md", ROOT / "docs/index.md", ROOT / "docs/scenarios/index.md"):
         text = path.read_text(encoding="utf-8")
-        assert "five production dags" in text.lower()
+        assert "seven production dags" in text.lower()
         assert "four production dags" not in text.lower()
     projection = (ROOT / "docs/scenarios/execution-modes.md").read_text(encoding="utf-8")
     assert "`gh_archive_flatten_sessionization`" in projection
-    assert "five production DAGs today" in projection
+    assert "seven production DAGs today" in projection
     for scenario in SCENARIOS:
         diagram = (ROOT / f"docs/diagrams/{scenario}.html").read_text(encoding="utf-8")
         assert "existing production DAG" in diagram

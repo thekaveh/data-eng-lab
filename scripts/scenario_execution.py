@@ -202,8 +202,10 @@ def validate_execution_modes(modes: tuple[ExecutionMode, ...], root: Path) -> No
             resolved = (root / path).resolve()
             if path.is_absolute() or not resolved.is_relative_to(root) or not resolved.is_file():
                 raise ExecutionModeError(f"{mode.scenario_id}: invalid production entrypoint {entrypoint}")
-            if path.name != "dag.py" or path.parts[:1] != ("spark-apps",):
-                raise ExecutionModeError(f"{mode.scenario_id}: production entrypoint must be a spark-apps DAG")
+            if path.name != "dag.py" or path.parts[:1] not in (("spark-apps",), ("airflow-dags",)):
+                raise ExecutionModeError(
+                    f"{mode.scenario_id}: production entrypoint must be a spark-apps or airflow-dags DAG"
+                )
             if mode.child_issue is not None:
                 raise ExecutionModeError(f"{mode.scenario_id}: existing production DAG cannot have a child issue")
             declared_entrypoints.add(path.as_posix())
@@ -223,7 +225,9 @@ def validate_execution_modes(modes: tuple[ExecutionMode, ...], root: Path) -> No
             raise ExecutionModeError(f"{mode.scenario_id}: long-running stream must be explicitly unscheduled")
 
     actual_entrypoints = {
-        path.relative_to(root).as_posix() for path in (root / "spark-apps").rglob("dag.py")
+        path.relative_to(root).as_posix()
+        for parent in (root / "spark-apps", root / "airflow-dags")
+        for path in parent.rglob("dag.py")
     }
     if declared_entrypoints != actual_entrypoints:
         raise ExecutionModeError(
@@ -245,7 +249,8 @@ def render_markdown(modes: tuple[ExecutionMode, ...]) -> str:
         "YAML and run `uv run python -m scripts.scenario_execution --render`.",
         "",
         "`nyc_taxi_etl`, `nyc_taxi_medallion`, `tpch_star_schema`, "
-        "`movielens_feature_pipeline`, and `gh_archive_flatten_sessionization` are five "
+        "`movielens_feature_pipeline`, `gh_archive_flatten_sessionization`, `tpch_bi_query`, "
+        "and `nyc_taxi_trino_daily` are seven "
         "production DAGs today. An "
         "approved child issue is a delivery boundary, not a runnable DAG. Notebook-only "
         "and continuous-stream scenarios run from their paired Zeppelin or Jupyter notebooks.",
@@ -278,7 +283,8 @@ def render_markdown(modes: tuple[ExecutionMode, ...]) -> str:
             "",
             "## 1. Classification Rules",
             "",
-            "- **existing production DAG:** the entrypoint exists under `spark-apps/`, is "
+            "- **existing production DAG:** the entrypoint exists under `spark-apps/` or "
+            "`airflow-dags/`, is "
             "mounted into Airflow, and performs reviewed work.",
             "- **approved new production DAG:** no production entrypoint exists yet; the "
             "linked child owns implementation and live acceptance.",

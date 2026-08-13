@@ -2,7 +2,7 @@
 <html lang="en">
 <head><meta charset="utf-8"><title>data-eng-lab - federated_query-nyc_taxi-trino-iceberg</title></head>
 <body>
-  <!-- Verified against the paired notebooks and scenarios/execution-modes.yaml on 2026-08-12. -->
+  <!-- Verified against the production DAG, paired notebooks, and scenarios/execution-modes.yaml on 2026-08-13. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="600" viewBox="0 0 1280 600" font-family="'JetBrains Mono', 'Courier New', monospace" role="img" aria-labelledby="diagram-title diagram-description">
   <title id="diagram-title">Federated query: NYC Taxi with Trino and Iceberg</title>
   <desc id="diagram-description">Architecture and query-flow diagram for the NYC Taxi federated-query scenario.</desc>
@@ -23,8 +23,8 @@
         <rect width="1280" height="600" fill="url(#grid)"/>
 
         <!-- Title -->
-        <text x="640" y="38" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">federated query - NYC Taxi via Trino (same Iceberg catalog as Spark)</text>
-        <text x="640" y="60" fill="#94a3b8" font-size="12" text-anchor="middle">SQL-only daily aggregate: bronze.nyc_taxi_trips to gold.nyc_taxi_daily_trino - no Spark cluster involved</text>
+        <text x="640" y="38" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">production BI query - snapshot-bound NYC Taxi via Trino</text>
+        <text x="640" y="60" fill="#94a3b8" font-size="12" text-anchor="middle">Read-only Airflow task validates one unchanged Bronze Iceberg snapshot around a bounded daily aggregate</text>
 
         <!-- ================= BRONZE INPUT (Spark-written) ================= -->
         <rect x="30" y="120" width="280" height="360" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
@@ -45,12 +45,12 @@
 
         <!-- ================= TRINO (emphasized) ================= -->
         <rect x="350" y="120" width="540" height="360" rx="14" fill="rgba(34, 211, 238, 0.06)" stroke="#22d3ee" stroke-width="2"/>
-        <text x="620" y="146" fill="#22d3ee" font-size="14" font-weight="700" text-anchor="middle">TRINO - federated SQL engine (reads Iceberg directly)</text>
+        <text x="620" y="146" fill="#22d3ee" font-size="14" font-weight="700" text-anchor="middle">TRINO - fixed read-only query registry (no Spark cluster)</text>
 
         <rect x="380" y="168" width="480" height="64" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
         <text x="620" y="190" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Trino coordinator | trino:8080</text>
-        <text x="620" y="208" fill="#94a3b8" font-size="9" text-anchor="middle">connect(host='trino', port=8080, user='atlas', catalog='lakehouse')</text>
-        <text x="620" y="224" fill="#22d3ee" font-size="9" text-anchor="middle">catalog=lakehouse to Iceberg connector (same REST catalog as Spark)</text>
+        <text x="620" y="208" fill="#94a3b8" font-size="9" text-anchor="middle">internal http://trino:8080/v1/statement | same-origin bounded paging</text>
+        <text x="620" y="224" fill="#22d3ee" font-size="9" text-anchor="middle">fixed SELECT-only SQL | typed columns | cancellation and redaction</text>
 
         <!-- daily aggregate SQL -->
         <rect x="380" y="248" width="480" height="134" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
@@ -62,41 +62,41 @@
         <text x="620" y="348" fill="#f59e0b" font-size="10" text-anchor="middle">GROUP BY trip_date ORDER BY trip_date</text>
         <text x="620" y="368" fill="#94a3b8" font-size="9" text-anchor="middle">pushed-down aggregation over Iceberg splits</text>
 
-        <!-- CTAS write -->
+        <!-- pre/post checks -->
         <rect x="380" y="396" width="480" height="62" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
-        <text x="620" y="418" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">CREATE TABLE AS SELECT to daily summary</text>
-        <text x="620" y="438" fill="#94a3b8" font-size="9" text-anchor="middle">CREATE TABLE IF NOT EXISTS lakehouse.gold.nyc_taxi_daily_trino AS SELECT ...</text>
+        <text x="620" y="418" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">Fail closed before accepted result</text>
+        <text x="620" y="438" fill="#94a3b8" font-size="9" text-anchor="middle">schema + source count + snapshot before/after; no provenance claim</text>
 
-        <!-- ================= GOLD OUTPUT ================= -->
+        <!-- ================= RESULT ARTIFACT ================= -->
         <rect x="930" y="120" width="320" height="360" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
-        <text x="1090" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Gold Output (Trino-written)</text>
+        <text x="1090" y="142" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Bounded Airflow Result</text>
 
         <rect x="950" y="220" width="280" height="180" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.8"/>
-        <text x="1090" y="246" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">GOLD</text>
-        <text x="1090" y="270" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">nyc_taxi_daily_trino</text>
-        <text x="1090" y="288" fill="#94a3b8" font-size="9" text-anchor="middle">lakehouse.gold.nyc_taxi_daily_trino</text>
+        <text x="1090" y="246" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">METADATA-DB XCOM</text>
+        <text x="1090" y="270" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">daily fares artifact</text>
+        <text x="1090" y="288" fill="#94a3b8" font-size="9" text-anchor="middle">canonical JSON + SHA-256; not an Iceberg table</text>
         <line x1="970" y1="300" x2="1210" y2="300" stroke="#334155" stroke-width="1"/>
-        <text x="1090" y="322" fill="#ffffff" font-size="9" text-anchor="middle">trip_date</text>
-        <text x="1090" y="340" fill="#ffffff" font-size="9" text-anchor="middle">trips (count)</text>
-        <text x="1090" y="358" fill="#ffffff" font-size="9" text-anchor="middle">avg_fare</text>
-        <text x="1090" y="384" fill="#22d3ee" font-size="9" text-anchor="middle">ad-hoc BI / SQL consumption</text>
+        <text x="1090" y="322" fill="#ffffff" font-size="9" text-anchor="middle">trip_date | trip_count | avg_fare</text>
+        <text x="1090" y="340" fill="#ffffff" font-size="9" text-anchor="middle">source schema + count + snapshot</text>
+        <text x="1090" y="358" fill="#ffffff" font-size="9" text-anchor="middle">query IDs + deterministic result checksum</text>
+        <text x="1090" y="384" fill="#22d3ee" font-size="9" text-anchor="middle">retained with the producing Airflow DagRun</text>
 
         <!-- ================= CONNECTORS ================= -->
         <line x1="290" y1="310" x2="378" y2="300" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrowhead)"/>
         <text x="334" y="290" fill="#22d3ee" font-size="9" text-anchor="middle">Trino reads</text>
 
         <line x1="862" y1="427" x2="948" y2="310" stroke="#22d3ee" stroke-width="2" marker-end="url(#arrowhead)"/>
-        <text x="908" y="386" fill="#22d3ee" font-size="9" text-anchor="middle">CTAS write</text>
+        <text x="908" y="386" fill="#22d3ee" font-size="9" text-anchor="middle">validated XCom</text>
 
         <!-- shared catalog note (the key concept) -->
         <rect x="30" y="500" width="860" height="60" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1"/>
-        <text x="55" y="522" fill="#22d3ee" font-size="11" font-weight="600">One catalog, two engines - federated lakehouse</text>
-        <text x="55" y="540" fill="#94a3b8" font-size="9">Spark writes bronze via Iceberg REST (iceberg-rest:8181); Trino reads the SAME catalog via the lakehouse Iceberg connector - no data copy.</text>
-        <text x="55" y="554" fill="#94a3b8" font-size="9">Execution: approved new production DAG | child #83</text>
+        <text x="55" y="522" fill="#22d3ee" font-size="11" font-weight="600">Execution: existing production DAG | nyc_taxi_trino_daily | 0 2 * * * | max_active_runs=1</text>
+        <text x="55" y="540" fill="#94a3b8" font-size="9">Entrypoint: airflow-dags/trino_bi/dag.py | one fixed read-only task | retry once after two minutes</text>
+        <text x="55" y="554" fill="#94a3b8" font-size="9">Snapshot-bound only; notebooks are educational direct-write paths without production safeguards.</text>
 
         <rect x="930" y="500" width="320" height="60" rx="6" fill="#1e293b" stroke="#334155" stroke-width="1"/>
-        <text x="1090" y="522" fill="#22d3ee" font-size="9" font-weight="600" text-anchor="middle">Verify</text>
-        <text x="1090" y="540" fill="#94a3b8" font-size="9" text-anchor="middle">SELECT count(*) FROM lakehouse.gold.nyc_taxi_daily_trino</text>
+        <text x="1090" y="522" fill="#22d3ee" font-size="9" font-weight="600" text-anchor="middle">Read-only boundary</text>
+        <text x="1090" y="540" fill="#94a3b8" font-size="9" text-anchor="middle">Spark writes Bronze | Trino reads it without mutation</text>
       </svg>
 </body>
 </html>

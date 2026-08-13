@@ -67,7 +67,19 @@ def test_overlay_patches_required_services_without_legacy_user_service():
     for service in ("airflow-scheduler", "airflow-dag-processor"):
         volumes = services[service]["volumes"]
         assert "../spark-apps:/opt/airflow/dags/data_eng_lab_spark_apps:ro" in volumes
+        assert "../airflow-dags:/opt/airflow/dags/data_eng_lab_airflow_dags:ro" in volumes
+        assert volumes.count("../airflow-dags:/opt/airflow/dags/data_eng_lab_airflow_dags:ro") == 1
         assert all("../scenarios:" not in volume for volume in volumes)
+
+
+def test_overlay_exposes_only_the_internal_credential_free_trino_connection_to_task_runtime():
+    services = yaml.safe_load(OVERLAY.read_text(encoding="utf-8"))["services"]
+    assert services["airflow-scheduler"]["environment"]["AIRFLOW_CONN_TRINO_DEFAULT"] == (
+        "http://trino:8080"
+    )
+    assert "AIRFLOW_CONN_TRINO_DEFAULT" not in services["airflow-dag-processor"].get("environment", {})
+    rendered = str(services["airflow-scheduler"]["environment"]["AIRFLOW_CONN_TRINO_DEFAULT"])
+    assert all(marker not in rendered for marker in ("@", "${", "localhost", "host.docker.internal"))
 
 
 def test_manifest_declares_test_bucket():
