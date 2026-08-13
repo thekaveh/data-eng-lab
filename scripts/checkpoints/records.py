@@ -127,7 +127,7 @@ def canonical_json_bytes(value: object, *, max_bytes: int = _MAX_JSON_BYTES) -> 
 
 def decode_exact_json(
     body: bytes,
-    schema: Mapping[str, type],
+    schema: Mapping[str, type | tuple[type, ...]],
     *,
     max_bytes: int = _MAX_JSON_BYTES,
     max_depth: int = _MAX_JSON_DEPTH,
@@ -163,7 +163,10 @@ def decode_exact_json(
     if frozenset(decoded) != frozenset(schema):
         raise RecordFailure("json_unknown_or_missing_field")
     for key, expected_type in schema.items():
-        if type(decoded[key]) is not expected_type:
+        accepted_types = expected_type if isinstance(expected_type, tuple) else (expected_type,)
+        if not accepted_types or any(not isinstance(item, type) for item in accepted_types):
+            raise RecordFailure("json_schema_invalid")
+        if type(decoded[key]) not in accepted_types:
             raise RecordFailure("json_field_type_invalid")
     return decoded
 
