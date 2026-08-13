@@ -21,7 +21,7 @@ from scripts.checkpoints.leases import (
     LeaseManager,
     TerminalRequest,
 )
-from scripts.checkpoints.metrics import render_metrics
+from scripts.checkpoints.metrics import MetricsFailure, render_metrics
 from scripts.checkpoints.operations import ApplyRequest, OperationFailure, OperationManager, PrepareRequest
 from scripts.checkpoints.planner import PlanFailure, PlanRequest, RetentionPlanner
 from scripts.checkpoints.policy import CheckpointPolicy, load_policy
@@ -93,8 +93,18 @@ class RuntimeBackend:
             or capabilities.get("automatic_apply") is not False
             or capabilities.get("observed") is not True
             or capabilities.get("conditional_create") is not True
+            or capabilities.get("conditional_create_conflict") is not True
             or capabilities.get("conditional_replace_verified_readback") is not True
+            or capabilities.get("stale_replace_denied") is not True
             or capabilities.get("conditional_delete") is not False
+            or capabilities.get("exact_leaf_list") is not True
+            or capabilities.get("exact_leaf_get") is not True
+            or capabilities.get("exact_leaf_delete") is not True
+            or capabilities.get("multi_delete") is not True
+            or capabilities.get("root_list_denied") is not True
+            or capabilities.get("other_bucket_denied") is not True
+            or capabilities.get("data_put_denied") is not True
+            or capabilities.get("unknown_control_denied") is not True
         ):
             raise ServiceFailure("capability_failed")
         return {
@@ -104,7 +114,18 @@ class RuntimeBackend:
         }
 
     def metrics(self) -> bytes:
-        return render_metrics(self._metrics)
+        try:
+            return render_metrics(self._metrics)
+        except MetricsFailure:
+            fallback = {
+                "checkpoint_retention_request_failures_total": {("backend_failure",): 1},
+            }
+            return render_metrics(fallback)
+
+    def record_request_failure(self, outcome: str) -> None:
+        if outcome not in {"backend_failure", "capability_failed", "invalid_request", "timeout", "unauthorized"}:
+            outcome = "backend_failure"
+        self._increment("checkpoint_retention_request_failures_total", outcome)
 
     def _increment(self, metric: str, label: str, amount: int = 1) -> None:
         values = self._metrics.setdefault(metric, {})
@@ -167,34 +188,28 @@ class RuntimeBackend:
                     ApplyRequest(operation_id or "", value["plan_sha256"], value["confirm_prefix"])
                 )
             except OperationFailure as error:
-                if error.code == "delete_partial":
+                try:
                     status = self._operations.status(operation_id or "")
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except BaseException:
+                    status = None
+                if status is not None and status.state == "partial":
                     result = json.loads(status.body)
-                    self._increment("checkpoint_retention_partial_total", "partial")
+                    self._record_apply_metrics(result)
                     return result
+                if error.partial:
+                    self._increment("checkpoint_retention_partial_total", "partial")
+                    raise ServiceFailure(error.code, status=409, state="partial") from None
                 outcome = "timeout" if error.code == "operation_deadline" else "backend_failure"
-                self._increment("checkpoint_retention_request_failures_total", outcome)
+                self.record_request_failure(outcome)
                 raise ServiceFailure(
                     error.code,
                     status=504 if error.code == "operation_deadline" else 409,
                     state=None if error.code == "operation_deadline" else "refused",
                 ) from None
             result = json.loads(status.body)
-            state = result.get("state")
-            if state in {"not_ready", "partial", "completed"}:
-                self._increment("checkpoint_retention_deleted_objects_total", state, result.get("deleted_objects", 0))
-                self._increment("checkpoint_retention_deleted_bytes_total", state, result.get("deleted_bytes", 0))
-                if state == "partial":
-                    self._increment("checkpoint_retention_partial_total", "partial")
-                if state == "completed" and result.get("checkpoint_id") in getattr(
-                    __import__("scripts.checkpoints.metrics", fromlist=["_CHECKPOINT_IDS"]),
-                    "_CHECKPOINT_IDS",
-                ):
-                    self._set(
-                        "checkpoint_retention_last_success_unixtime",
-                        result["checkpoint_id"],
-                        int(self._now().timestamp()),
-                    )
+            self._record_apply_metrics(result)
             return result
         if action == "status":
             status = self._operations.status(operation_id or "")
@@ -214,23 +229,7 @@ class RuntimeBackend:
             result = json.loads(artifact.body)
             decision = result.get("summary", {}).get("decision")
             if decision in {"eligible", "refused"}:
-                self._increment("checkpoint_retention_plans_total", decision)
-                summary = result["summary"]
-                checkpoint_id = summary.get("checkpoint_id")
-                inventory = summary.get("inventory", {})
-                if checkpoint_id in getattr(
-                    __import__("scripts.checkpoints.metrics", fromlist=["_CHECKPOINT_IDS"]), "_CHECKPOINT_IDS"
-                ):
-                    total_bytes = inventory.get("total_bytes", 0)
-                    self._set("checkpoint_retention_objects", checkpoint_id, inventory.get("object_count", 0))
-                    self._set("checkpoint_retention_bytes", checkpoint_id, total_bytes)
-                    self._set(
-                        "checkpoint_retention_eligible_bytes",
-                        checkpoint_id,
-                        total_bytes if decision == "eligible" else 0,
-                    )
-                for code in summary.get("refusal_codes", ()):
-                    self._increment("checkpoint_retention_refusals_total", code)
+                self._record_plan_metrics(result["summary"])
             return result
         if action == "prepare":
             if not isinstance(payload, dict) or set(payload) != {"actor", "plan", "plan_sha256", "review"}:
@@ -285,6 +284,53 @@ class RuntimeBackend:
             raise ServiceFailure("lease_response_invalid") from None
         self._set("checkpoint_retention_lease_heartbeat_age_seconds", checkpoint_id, age)
 
+    def _record_plan_metrics(self, summary: Mapping[str, object]) -> None:
+        decision = summary.get("decision")
+        if decision not in {"eligible", "refused"}:
+            return
+        self._increment("checkpoint_retention_plans_total", decision)
+        checkpoint_id = summary.get("checkpoint_id")
+        inventory = summary.get("inventory", {})
+        allowed = getattr(
+            __import__("scripts.checkpoints.metrics", fromlist=["_CHECKPOINT_IDS"]),
+            "_CHECKPOINT_IDS",
+        )
+        if checkpoint_id in allowed and isinstance(inventory, Mapping):
+            object_count = inventory.get("object_count", 0)
+            total_bytes = inventory.get("total_bytes", 0)
+            if type(object_count) is int and type(total_bytes) is int:
+                self._set("checkpoint_retention_objects", checkpoint_id, object_count)
+                self._set("checkpoint_retention_bytes", checkpoint_id, total_bytes)
+                self._set(
+                    "checkpoint_retention_eligible_bytes",
+                    checkpoint_id,
+                    total_bytes if decision == "eligible" else 0,
+                )
+        refusal_codes = summary.get("refusal_codes", ())
+        if isinstance(refusal_codes, (list, tuple)):
+            for code in refusal_codes:
+                if isinstance(code, str):
+                    self._increment("checkpoint_retention_refusals_total", code)
+
+    def _record_apply_metrics(self, result: Mapping[str, object]) -> None:
+        state = result.get("state")
+        if state not in {"not_ready", "partial", "completed"}:
+            return
+        deleted_objects = result.get("deleted_objects", 0)
+        deleted_bytes = result.get("deleted_bytes", 0)
+        if type(deleted_objects) is int and deleted_objects >= 0:
+            self._increment("checkpoint_retention_deleted_objects_total", state, deleted_objects)
+        if type(deleted_bytes) is int and deleted_bytes >= 0:
+            self._increment("checkpoint_retention_deleted_bytes_total", state, deleted_bytes)
+        if state == "partial":
+            self._increment("checkpoint_retention_partial_total", "partial")
+        checkpoint_id = result.get("checkpoint_id")
+        if state == "completed" and checkpoint_id in getattr(
+            __import__("scripts.checkpoints.metrics", fromlist=["_CHECKPOINT_IDS"]),
+            "_CHECKPOINT_IDS",
+        ):
+            self._set("checkpoint_retention_last_success_unixtime", checkpoint_id, int(self._now().timestamp()))
+
     def _require_disposable(self, prefix: object) -> None:
         if (
             not isinstance(prefix, str)
@@ -319,11 +365,13 @@ class RuntimeBackend:
             entry = self._policy.entries[checkpoint_id]
             if "{" in entry.prefix:
                 summaries.append(_refused_summary(checkpoint_id, digest, "concrete_prefix_required"))
+                self._record_plan_metrics(summaries[-1])
                 continue
             try:
                 artifact = self._planner.plan(PlanRequest(checkpoint_id, entry.prefix, actor, evaluated_at))
             except PlanFailure as error:
                 summaries.append(_refused_summary(checkpoint_id, digest, error.code))
+                self._record_plan_metrics(summaries[-1])
             else:
                 summary = artifact.summary
                 summaries.append(
@@ -338,6 +386,7 @@ class RuntimeBackend:
                         "refusal_codes": list(summary["refusal_codes"]),
                     }
                 )
+                self._record_plan_metrics(summaries[-1])
         return {"plans": summaries, "state": "accepted"}
 
     def close(self) -> None:
@@ -466,6 +515,39 @@ class RetentionApplication:
         self._operator_token = operator_token
 
     def dispatch(
+        self,
+        method: str,
+        path: str,
+        headers: Sequence[tuple[str, str]],
+        body: bytes,
+    ) -> HttpResponse:
+        try:
+            return self._dispatch(method, path, headers, body)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except ServiceFailure as error:
+            outcome = (
+                "unauthorized"
+                if error.code == "unauthorized"
+                else "timeout"
+                if error.code == "request_timeout"
+                else "capability_failed"
+                if error.code == "capability_failed"
+                else "invalid_request"
+                if error.status < 500
+                else "backend_failure"
+            )
+            recorder = getattr(self._backend, "record_request_failure", None)
+            if callable(recorder):
+                try:
+                    recorder(outcome)
+                except (KeyboardInterrupt, SystemExit):
+                    raise
+                except BaseException:
+                    pass
+            raise
+
+    def _dispatch(
         self,
         method: str,
         path: str,

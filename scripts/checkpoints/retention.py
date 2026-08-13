@@ -126,7 +126,7 @@ def _request(path: str, payload: dict[str, object] | None, token: str) -> bytes:
         decoded = _decode_response(raw)
         if not isinstance(decoded, dict):
             raise CliFailure("response_invalid", 5)
-        result = _canonical(decoded)
+        result = _canonical(decoded, max_bytes=response_bound)
     except CliFailure as error:
         primary = error
         raise

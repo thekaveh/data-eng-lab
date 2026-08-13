@@ -266,11 +266,38 @@ def test_real_gateway_partial_retry_is_original_set_confined_and_idempotent(tmp_
 
         wrapped = PartialOnce(gateway)
         clock = [NOW]
+
+        def current_artifact(_prefix, _evaluated_at):
+            current_records = gateway.inventory(PREFIX)
+            current_shards = shard_inventory(current_records, policy.bounds.max_manifest_shard_bytes)
+            current_summary = dict(summary)
+            current_summary["inventory"] = {
+                "newest_last_modified": max(record.last_modified for record in current_records).strftime(
+                    "%Y-%m-%dT%H:%M:%SZ"
+                ),
+                "object_count": len(current_records),
+                "sha256": inventory_sha256(current_records),
+                "total_bytes": sum(record.size_bytes for record in current_records),
+            }
+            current_summary["manifest_shards"] = tuple(shard.sha256 for shard in current_shards)
+            current_value = {
+                "schema_version": 1,
+                "summary": current_summary,
+                "shards": [json.loads(value.body) for value in current_shards],
+            }
+            current_body = canonical_json_bytes(current_value, max_bytes=128 * 1024 * 1024)
+            return PlanArtifact(
+                current_summary,
+                current_shards,
+                current_body,
+                __import__("hashlib").sha256(current_body).hexdigest(),
+            )
+
         manager = OperationManager(
             wrapped,
             policy_sha256=_policy_sha256(policy),
             now=lambda: clock[0],
-            revalidate=lambda _prefix, _evaluated_at: artifact,
+            revalidate=current_artifact,
         )
         operation_id = RUN_UUID
         manager.prepare(PrepareRequest(operation_id, artifact, artifact.sha256, "issue86-partial", summary["actor"]))
@@ -282,10 +309,16 @@ def test_real_gateway_partial_retry_is_original_set_confined_and_idempotent(tmp_
 
         foreign_key = f"{PREFIX}foreign-after-plan"
         root.put_object(Bucket=BUCKET, Key=foreign_key, Body=b"foreign")
-        with pytest.raises(OperationFailure, match="postflight_not_empty"):
+        with pytest.raises(OperationFailure, match="revalidation_mismatch"):
             manager.apply(request)
         assert foreign_key not in {key for call in wrapped.delete_calls for key in call}
         root.delete_object(Bucket=BUCKET, Key=foreign_key)
+        manager = OperationManager(
+            wrapped,
+            policy_sha256=_policy_sha256(policy),
+            now=lambda: clock[0],
+            revalidate=current_artifact,
+        )
         assert manager.apply(request).state == "completed"
         delete_count = len(wrapped.delete_calls)
         assert manager.apply(request).state == "completed"

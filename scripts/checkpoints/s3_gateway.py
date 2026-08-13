@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import time
+import uuid
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, Mapping
 
@@ -323,7 +324,9 @@ class S3Gateway:
     def probe_capabilities(self) -> Mapping[str, object]:
         key = "_retention/capability/runtime-probe.json"
         body = b'{"profile":"minio-2025-09-manual-verified-readback","schema_version":1}'
-        observed = False
+        probe_uuid = str(uuid.uuid4())
+        data_prefix = f"streaming_test/{probe_uuid}/"
+        data_keys = (f"{data_prefix}capability-a", f"{data_prefix}capability-b")
         try:
             try:
                 etag = self.create_control(key, body)
@@ -331,10 +334,78 @@ class S3Gateway:
                 existing, etag = self.read_control(key, max_bytes=len(body))
                 if existing != body:
                     raise GatewayFailure("capability_failed")
+            self._expect_client_error(
+                lambda: self._client.put_object(
+                    Bucket=self._policy.bucket,
+                    Key=key,
+                    Body=body,
+                    IfNoneMatch="*",
+                ),
+                {"PreconditionFailed", "412"},
+            )
             replaced = self.replace_lease(key, etag, body)
             readback, read_etag = self.read_control(key, max_bytes=len(body))
             if readback != body or read_etag != replaced:
                 raise GatewayFailure("capability_failed")
+            self._expect_client_error(
+                lambda: self._client.put_object(
+                    Bucket=self._policy.bucket,
+                    Key=key,
+                    Body=body,
+                    IfMatch=f'"{"0" * 32}"',
+                ),
+                {"PreconditionFailed", "412"},
+            )
+            self._expect_client_error(
+                lambda: self._client.put_object(
+                    Bucket=self._policy.bucket,
+                    Key=f"_retention/capability/{probe_uuid}.json",
+                    Body=body,
+                    IfMatch=f'"{"0" * 32}"',
+                ),
+                {"NoSuchKey", "NoSuchObject", "PreconditionFailed", "404", "412"},
+            )
+            listed = self._client.list_objects_v2(
+                Bucket=self._policy.bucket,
+                Prefix=data_prefix,
+                MaxKeys=1,
+            )
+            if not isinstance(listed, Mapping) or listed.get("IsTruncated") is not False:
+                raise GatewayFailure("capability_failed")
+            self._expect_client_error(
+                lambda: self._client.get_object(Bucket=self._policy.bucket, Key=data_keys[0]),
+                {"NoSuchKey", "NoSuchObject", "404"},
+            )
+            deleted = self._client.delete_objects(
+                Bucket=self._policy.bucket,
+                Delete={"Objects": [{"Key": data_keys[0]}], "Quiet": False},
+            )
+            multi_deleted = self._client.delete_objects(
+                Bucket=self._policy.bucket,
+                Delete={"Objects": [{"Key": value} for value in data_keys], "Quiet": False},
+            )
+            if not self._exact_deleted(deleted, data_keys[:1]) or not self._exact_deleted(multi_deleted, data_keys):
+                raise GatewayFailure("capability_failed")
+            self._expect_client_error(
+                lambda: self._client.list_objects_v2(Bucket=self._policy.bucket, Prefix="", MaxKeys=1),
+                {"AccessDenied", "403"},
+            )
+            self._expect_client_error(
+                lambda: self._client.list_objects_v2(Bucket="checkpoint-retention-denied", Prefix="", MaxKeys=1),
+                {"AccessDenied", "NoSuchBucket", "403", "404"},
+            )
+            self._expect_client_error(
+                lambda: self._client.put_object(Bucket=self._policy.bucket, Key=data_keys[0], Body=b"denied"),
+                {"AccessDenied", "403"},
+            )
+            self._expect_client_error(
+                lambda: self._client.put_object(
+                    Bucket=self._policy.bucket,
+                    Key=f"unknown/{probe_uuid}.json",
+                    Body=b"denied",
+                ),
+                {"AccessDenied", "403"},
+            )
             try:
                 self._client.delete_object(Bucket=self._policy.bucket, Key=key)
             except ClientError as error:
@@ -343,7 +414,6 @@ class S3Gateway:
                     raise GatewayFailure("capability_failed") from None
             else:
                 raise GatewayFailure("capability_failed")
-            observed = True
         except (KeyboardInterrupt, SystemExit):
             raise
         except GatewayFailure:
@@ -353,17 +423,58 @@ class S3Gateway:
         return {
             "profile": "minio-2025-09-manual-verified-readback",
             "conditional_create": True,
+            "conditional_create_conflict": True,
             "conditional_replace_verified_readback": True,
+            "stale_replace_denied": True,
             "conditional_delete": False,
+            "exact_leaf_list": True,
+            "exact_leaf_get": True,
+            "exact_leaf_delete": True,
+            "multi_delete": True,
+            "root_list_denied": True,
+            "other_bucket_denied": True,
+            "data_put_denied": True,
+            "unknown_control_denied": True,
             "automatic_apply": False,
-            "observed": observed,
+            "observed": True,
         }
+
+    @staticmethod
+    def _expect_client_error(call: Callable[[], object], codes: set[str]) -> None:
+        try:
+            response = call()
+        except ClientError as error:
+            code = error.response.get("Error", {}).get("Code") if isinstance(error.response, Mapping) else None
+            if code in codes:
+                return
+            raise GatewayFailure("capability_failed") from None
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            raise GatewayFailure("capability_failed") from None
+        stream = response.get("Body") if isinstance(response, Mapping) else None
+        if stream is not None and hasattr(stream, "close"):
+            try:
+                stream.close()
+            except BaseException:
+                pass
+        raise GatewayFailure("capability_failed")
+
+    @staticmethod
+    def _exact_deleted(response: object, expected: tuple[str, ...]) -> bool:
+        if not isinstance(response, Mapping) or response.get("Errors", []) != []:
+            return False
+        deleted = response.get("Deleted")
+        return (
+            isinstance(deleted, list)
+            and tuple(value.get("Key") if isinstance(value, Mapping) else None for value in deleted) == expected
+        )
 
     def _write_control(self, key: str, body: bytes, *, if_none_match: bool, etag: str | None) -> str:
         _validate_control_key(key)
         bound = (
             self._policy.bounds.max_manifest_shard_bytes
-            if "/manifest/" in key
+            if "/manifest/" in key or "/results/shards/" in key
             else self._policy.bounds.max_summary_bytes
         )
         if type(body) is not bytes or not body or len(body) > bound:

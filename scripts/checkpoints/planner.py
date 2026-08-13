@@ -62,6 +62,21 @@ _LEASE_SCHEMA = {
     "terminal_evidence": (dict, type(None)),
     "workload": str,
 }
+_TERMINAL_SCHEMA = {
+    "checkpoint_id": str,
+    "exclusive_run": bool,
+    "generation": dict,
+    "occurred_at": str,
+    "prefix": str,
+    "recovery_approved": bool,
+    "schema_version": int,
+    "sink_disposition_approved": bool,
+    "source_available": bool,
+    "state": str,
+    "successful": bool,
+}
+_RETIRED_TERMINAL_SCHEMA = {**_TERMINAL_SCHEMA, "retirement_review": str}
+_MAX_PLAN_NODES = 600_128
 
 
 class RetentionPlanner:
@@ -128,7 +143,11 @@ class RetentionPlanner:
             "shards": [json.loads(shard.body) for shard in shards],
         }
         try:
-            body = canonical_json_bytes(artifact_value, max_bytes=128 * 1024 * 1024)
+            body = canonical_json_bytes(
+                artifact_value,
+                max_bytes=128 * 1024 * 1024,
+                max_nodes=_MAX_PLAN_NODES,
+            )
         except RecordFailure:
             raise PlanFailure("plan_body_invalid") from None
         return PlanArtifact(summary, shards, body, hashlib.sha256(body).hexdigest())
@@ -228,7 +247,10 @@ def _decode_lease(body: bytes, etag: str) -> LeaseFacts:
 
 def _decode_terminal(body: bytes, checkpoint_id: str, prefix: str) -> TerminalFacts:
     try:
-        value = json.loads(body)
+        try:
+            value = decode_exact_json(body, _TERMINAL_SCHEMA)
+        except RecordFailure:
+            value = decode_exact_json(body, _RETIRED_TERMINAL_SCHEMA)
         occurred = _parse_utc(value["occurred_at"])
         if occurred is None:
             raise ValueError
@@ -247,7 +269,7 @@ def _decode_terminal(body: bytes, checkpoint_id: str, prefix: str) -> TerminalFa
         )
     except PlanFailure:
         raise
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError, RecordFailure):
         raise PlanFailure("terminal_malformed") from None
 
 

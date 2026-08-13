@@ -292,7 +292,7 @@ def test_partial_delete_stops_before_later_batch_and_retry_uses_only_original_re
     gateway.delete_fail_on_call = None
     gateway.calls.clear()
 
-    with pytest.raises(OperationFailure, match="postflight_not_empty"):
+    with pytest.raises(OperationFailure, match="revalidation_mismatch"):
         manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
 
     deleted_keys = tuple(key for call in gateway.calls if call[0] == "delete" for key in call[1])
@@ -332,7 +332,7 @@ def test_mixed_partial_response_persists_successful_keys_for_original_set_retry(
     )
     gateway.delete_records = FakeGateway.delete_records.__get__(gateway)
     gateway.data += (ObjectRecord(f"{PREFIX}foreign-after-plan", "f" * 32, 4, NOW),)
-    with pytest.raises(OperationFailure, match="postflight_not_empty"):
+    with pytest.raises(OperationFailure, match="revalidation_mismatch"):
         manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
     assert first_key not in tuple(key for call in gateway.calls if call[0] == "delete" for key in call[1])
 
@@ -386,7 +386,7 @@ def test_partial_result_classification_is_sharded_and_restart_safe_beyond_summar
         gateway,
         policy_sha256="a" * 64,
         now=lambda: NOW.replace(minute=15),
-        revalidate=lambda _prefix, _evaluated_at: artifact,
+        revalidate=lambda _prefix, _evaluated_at: _artifact_for_records(gateway.data),
         max_delete_keys=1_000,
     )
     completed = restarted.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
@@ -442,3 +442,146 @@ def test_deleted_but_audit_failed_recovery_never_deletes_again():
     assert recovered.state == "completed"
     assert sum(call[0] == "delete" for call in gateway.calls) == delete_count
     assert any(key.startswith(f"_retention/audits/{OPERATION_ID}/") for key in gateway.controls)
+
+
+def _artifact_for_records(records):
+    shards = shard_inventory(records, 1_048_576)
+    summary = dict(_artifact().summary)
+    summary["inventory"] = {
+        "newest_last_modified": "2026-08-13T12:00:00Z",
+        "object_count": len(records),
+        "sha256": inventory_sha256(records),
+        "total_bytes": sum(record.size_bytes for record in records),
+    }
+    summary["manifest_shards"] = tuple(shard.sha256 for shard in shards)
+    body = canonical_json_bytes(
+        {"schema_version": 1, "summary": summary, "shards": [json.loads(shard.body) for shard in shards]},
+        max_bytes=128 * 1024 * 1024,
+        max_nodes=max(4_096, len(records) * 8 + 128),
+    )
+    return PlanArtifact(summary, shards, body, __import__("hashlib").sha256(body).hexdigest())
+
+
+def test_restart_revalidates_exact_original_manifest_minus_persisted_deleted_set():
+    artifact = _artifact()
+    gateway = FakeGateway()
+    _prepared_manager(gateway, artifact)
+    first_key = artifact.shards[0].records[0].key
+
+    def partial(records):
+        gateway.data = tuple(record for record in gateway.data if record.key != first_key)
+        raise GatewayFailure("delete_partial", deleted_keys=(first_key,))
+
+    gateway.delete_records = partial
+    first = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda *_args: artifact,
+    )
+    with pytest.raises(OperationFailure, match="delete_partial"):
+        first.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+
+    remaining_artifact = _artifact_for_records(gateway.data)
+    gateway.delete_records = FakeGateway.delete_records.__get__(gateway)
+    restarted = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda *_args: remaining_artifact,
+    )
+    assert restarted.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX)).state == "completed"
+    assert gateway.data == ()
+
+
+def test_conflicting_same_progress_attempts_fail_closed_instead_of_sorting_one():
+    artifact = _artifact()
+    gateway = FakeGateway()
+    _prepared_manager(gateway, artifact)
+    manager = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda *_args: artifact,
+    )
+    gateway.delete_failure = OperationFailure("delete_partial")
+    with pytest.raises(OperationFailure, match="delete_partial"):
+        manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    attempt_key = next(key for key in gateway.controls if "/results/attempts/" in key)
+    value = json.loads(gateway.controls[attempt_key][0])
+    value["primary_category"] = "postflight_not_empty"
+    value["attempt_sequence"] = 2
+    body = canonical_json_bytes(value)
+    conflicting = attempt_key.rsplit("/", 1)[0] + "/000002-" + __import__("hashlib").sha256(body).hexdigest() + ".json"
+    gateway.controls[conflicting] = (body, "f" * 32)
+
+    with pytest.raises(OperationFailure, match="status_ambiguous"):
+        manager.status(OPERATION_ID)
+
+
+def test_completed_recovery_validates_result_shards_and_exact_absence_before_audit():
+    artifact = _artifact()
+    gateway = FakeGateway()
+    _prepared_manager(gateway, artifact)
+    manager = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda *_args: artifact,
+    )
+    completed = manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    audit_keys = [key for key in gateway.controls if key.startswith(f"_retention/audits/{OPERATION_ID}/")]
+    for key in audit_keys:
+        del gateway.controls[key]
+    result_digest = json.loads(completed.body)["result_shards"][0]
+    del gateway.controls[f"_retention/tombstones/{OPERATION_ID}/results/shards/{result_digest}.json"]
+
+    with pytest.raises(OperationFailure, match="status_invalid"):
+        OperationManager(
+            gateway,
+            policy_sha256="a" * 64,
+            now=lambda: NOW.replace(minute=15),
+            revalidate=lambda *_args: _artifact_for_records(gateway.data),
+        ).apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+
+
+def test_completed_audit_binds_prepare_identity_policy_manifest_result_and_absence():
+    artifact = _artifact()
+    gateway = FakeGateway()
+    _prepared_manager(gateway, artifact)
+    manager = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda *_args: artifact,
+    )
+    manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    audit_key = next(key for key in gateway.controls if key.startswith(f"_retention/audits/{OPERATION_ID}/"))
+    audit = json.loads(gateway.controls[audit_key][0])
+    assert audit["actor"] == "acceptance-engineering"
+    assert audit["review"] == "review-86"
+    assert audit["policy_sha256"] == "a" * 64
+    assert audit["plan_sha256"] == artifact.sha256
+    assert audit["manifest_shards"] == [shard.sha256 for shard in artifact.shards]
+    assert audit["postflight_inventory_sha256"] == inventory_sha256(())
+    assert audit["remaining_objects"] == 0
+    assert audit["primary_category"] is None
+
+
+def test_repeated_equal_progress_attempts_use_distinct_append_only_sequence_keys():
+    artifact = _artifact()
+    gateway = FakeGateway()
+    _prepared_manager(gateway, artifact)
+    manager = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda *_args: artifact,
+    )
+    gateway.delete_failure = OperationFailure("delete_partial")
+    for _ in range(2):
+        with pytest.raises(OperationFailure, match="delete_partial"):
+            manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    attempt_keys = [key for key in gateway.controls if "/results/attempts/" in key]
+    assert len(attempt_keys) == 2
+    assert attempt_keys[0] != attempt_keys[1]

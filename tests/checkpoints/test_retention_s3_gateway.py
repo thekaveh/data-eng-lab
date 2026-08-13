@@ -50,12 +50,16 @@ class FakeS3:
 
     def list_objects_v2(self, **request):
         self.calls.append(("list", request))
+        if request.get("Bucket") != "checkpoints" or request.get("Prefix") == "":
+            raise ClientError({"Error": {"Code": "AccessDenied"}}, "ListObjectsV2")
         if not self.pages:
             return {"IsTruncated": False, "Contents": []}
         return self.pages.pop(0)
 
     def get_object(self, **request):
         self.calls.append(("get", request))
+        if request["Key"] not in self.objects:
+            raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
         body, etag, _modified = self.objects[request["Key"]]
         stream = BoundedBody(body)
         self.bodies.append(stream)
@@ -63,11 +67,13 @@ class FakeS3:
 
     def put_object(self, **request):
         self.calls.append(("put", request))
+        if request["Key"].startswith("streaming_test/") or request["Key"].startswith("unknown/"):
+            raise ClientError({"Error": {"Code": "AccessDenied"}}, "PutObject")
         current = self.objects.get(request["Key"])
         if request.get("IfNoneMatch") == "*" and current is not None:
-            raise RuntimeError("credential=do-not-leak")
+            raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
         if "IfMatch" in request and (current is None or request["IfMatch"].strip('"') != current[1]):
-            raise RuntimeError("endpoint=http://secret.invalid")
+            raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
         body = bytes(request["Body"])
         etag = __import__("hashlib").md5(body, usedforsecurity=False).hexdigest()
         self.objects[request["Key"]] = (body, etag, NOW)
@@ -80,6 +86,9 @@ class FakeS3:
 
     def delete_objects(self, **request):
         self.calls.append(("delete", request))
+        keys = tuple(value["Key"] for value in request["Delete"]["Objects"])
+        if keys and all("capability-" in key for key in keys):
+            return {"Deleted": [{"Key": key} for key in keys], "Errors": []}
         return self.delete_response
 
     def delete_object(self, **request):
@@ -232,6 +241,17 @@ def test_manifest_read_uses_manifest_shard_bound_while_summary_controls_stay_sma
         gateway.read_control(CONTROL, max_bytes=POLICY.bounds.max_summary_bytes + 1)
 
 
+def test_result_classification_shard_write_uses_same_one_megabyte_bound_as_read():
+    client = FakeS3()
+    gateway = S3Gateway(client, POLICY, monotonic=lambda: 0.0)
+    key = f"_retention/tombstones/550e8400-e29b-41d4-a716-446655440000/results/shards/{'b' * 64}.json"
+    body = b"x" * 70_000
+
+    gateway.create_control(key, body)
+
+    assert client.objects[key][0] == body
+
+
 @pytest.mark.parametrize("code", ["NoSuchKey", "NoSuchObject", "404"])
 def test_missing_control_is_distinguished_from_ambiguous_transport_failure(code):
     class MissingS3(FakeS3):
@@ -270,15 +290,67 @@ def test_capability_probe_performs_observed_create_replace_readback_and_denied_d
     assert result == {
         "automatic_apply": False,
         "conditional_create": True,
+        "conditional_create_conflict": True,
         "conditional_delete": False,
         "conditional_replace_verified_readback": True,
+        "data_put_denied": True,
+        "exact_leaf_delete": True,
+        "exact_leaf_get": True,
+        "exact_leaf_list": True,
+        "multi_delete": True,
         "observed": True,
+        "other_bucket_denied": True,
         "profile": "minio-2025-09-manual-verified-readback",
+        "root_list_denied": True,
+        "stale_replace_denied": True,
+        "unknown_control_denied": True,
     }
-    operations = tuple(operation for operation, _request in client.calls)
-    assert operations.count("put") == 2
-    assert operations.count("get") == 3
-    assert operations[-1] == "delete-control"
+    assert client.calls[-1][0] == "delete-control"
+
+
+def test_capability_probe_observes_cas_failures_exact_leaf_access_and_scope_denials():
+    class ProbeS3(FakeS3):
+        def list_objects_v2(self, **request):
+            self.calls.append(("list", request))
+            if request["Bucket"] != "checkpoints" or request["Prefix"] == "":
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "ListObjectsV2")
+            return {"IsTruncated": False, "Contents": []}
+
+        def get_object(self, **request):
+            if request["Key"].startswith("streaming_test/"):
+                self.calls.append(("get-data", request))
+                raise ClientError({"Error": {"Code": "NoSuchKey"}}, "GetObject")
+            return super().get_object(**request)
+
+        def put_object(self, **request):
+            if request["Key"].startswith("streaming_test/") or request["Key"].endswith("unknown.json"):
+                self.calls.append(("put-denied", request))
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "PutObject")
+            current = self.objects.get(request["Key"])
+            if request.get("IfNoneMatch") == "*" and current is not None:
+                self.calls.append(("put-conflict", request))
+                raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
+            if "IfMatch" in request and (current is None or request["IfMatch"].strip('"') != current[1]):
+                self.calls.append(("put-stale", request))
+                raise ClientError({"Error": {"Code": "PreconditionFailed"}}, "PutObject")
+            return super().put_object(**request)
+
+        def delete_objects(self, **request):
+            self.calls.append(("delete", request))
+            return {"Deleted": list(request["Delete"]["Objects"]), "Errors": []}
+
+    result = S3Gateway(ProbeS3(), POLICY, monotonic=lambda: 0.0).probe_capabilities()
+
+    assert result["conditional_create_conflict"] is True
+    assert result["stale_replace_denied"] is True
+    assert result["exact_leaf_list"] is True
+    assert result["exact_leaf_get"] is True
+    assert result["exact_leaf_delete"] is True
+    assert result["multi_delete"] is True
+    assert result["root_list_denied"] is True
+    assert result["other_bucket_denied"] is True
+    assert result["data_put_denied"] is True
+    assert result["unknown_control_denied"] is True
 
 
 def test_head_and_delete_require_every_exact_original_record_result():

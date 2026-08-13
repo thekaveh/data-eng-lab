@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 import pytest
 
 from scripts.checkpoints import planner, service
+from scripts.checkpoints import retention as retention_cli
+from scripts.checkpoints.metrics import render_metrics
 from scripts.checkpoints.operations import ApplyRequest, OperationFailure, OperationManager, PrepareRequest
 from scripts.checkpoints.records import (
     ObjectRecord,
@@ -371,3 +373,139 @@ def test_plan_metrics_publish_inventory_eligibility_and_refusal_outcomes():
     assert b'checkpoint_retention_bytes{checkpoint_id="go-live-streaming-test-v1"} 21\n' in metrics
     assert b'checkpoint_retention_eligible_bytes{checkpoint_id="go-live-streaming-test-v1"} 0\n' in metrics
     assert b'checkpoint_retention_refusals_total{refusal_code="lease_active"} 1\n' in metrics
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        b'{"checkpoint_id":"go-live-streaming-test-v1","exclusive_run":true,'
+        b'"generation":{},"occurred_at":"2026-08-13T12:00:00Z","prefix":"'
+        + PREFIX.encode()
+        + b'","recovery_approved":true,"schema_version":1,"sink_disposition_approved":true,'
+        b'"source_available":true,"state":"stopped","successful":false,"successful":true}',
+        b'{"checkpoint_id":"go-live-streaming-test-v1","exclusive_run":true,'
+        b'"generation":{},"occurred_at":"2026-08-13T12:00:00Z","prefix":"'
+        + PREFIX.encode()
+        + b'","recovery_approved":true,"schema_version":1,"sink_disposition_approved":true,'
+        b'"source_available":true,"state":"stopped","successful":true,"unknown":false}',
+    ],
+)
+def test_planner_terminal_controls_reject_duplicate_and_unknown_fields(body):
+    with pytest.raises(planner.PlanFailure, match="terminal_malformed"):
+        planner._decode_terminal(body, "go-live-streaming-test-v1", PREFIX)
+
+
+def test_cli_preserves_policy_sized_plan_response(monkeypatch):
+    value = {"schema_version": 1, "summary": {"padding": "x" * 70_000}, "shards": []}
+    body = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+
+    class Response:
+        def read(self, size):
+            assert size == retention_cli._MAX_PLAN_BODY + 1
+            return body
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(retention_cli, "_open", lambda _request, timeout: Response())
+    assert retention_cli._request("/v1/plans", {"actor": "operator"}, "token") == body
+
+
+def test_metrics_registry_accepts_every_policy_emitted_refusal_and_never_breaks_endpoint():
+    body = render_metrics({"checkpoint_retention_refusals_total": {("generation_identity_mismatch",): 1}})
+    assert b"generation_identity_mismatch" in body
+
+
+def test_runtime_returns_any_persisted_destructive_partial_as_partial():
+    partial = canonical_json_bytes(
+        {
+            "checkpoint_id": "go-live-streaming-test-v1",
+            "deleted_bytes": 1,
+            "deleted_objects": 1,
+            "operation_id": "550e8400-e29b-41d4-a716-446655440000",
+            "plan_sha256": "a" * 64,
+            "planned_objects": 2,
+            "primary_category": "postflight_not_empty",
+            "remaining_bytes": 1,
+            "remaining_objects": 1,
+            "result_shards": ["b" * 64],
+            "schema_version": 1,
+            "state": "partial",
+        }
+    )
+    operations = types.SimpleNamespace(
+        apply=lambda _request: (_ for _ in ()).throw(OperationFailure("postflight_not_empty")),
+        status=lambda operation_id: types.SimpleNamespace(operation_id=operation_id, state="partial", body=partial),
+    )
+    policy = types.SimpleNamespace(
+        entries={"go-live-streaming-test-v1": types.SimpleNamespace(durability="disposable_acceptance")},
+        match_prefix=lambda _prefix: types.SimpleNamespace(checkpoint_id="go-live-streaming-test-v1"),
+    )
+    backend = service.RuntimeBackend(
+        gateway=types.SimpleNamespace(probe_capabilities=lambda: {}),
+        leases=object(),
+        planner=object(),
+        operations=operations,
+        policy=policy,
+        destructive_enabled=True,
+    )
+    result = backend.invoke(
+        "apply",
+        {"confirm_prefix": PREFIX, "plan_sha256": "a" * 64},
+        "550e8400-e29b-41d4-a716-446655440000",
+    )
+    assert result["state"] == "partial"
+    assert result["primary_category"] == "postflight_not_empty"
+
+
+def test_bulk_plan_records_plan_inventory_and_refusal_metrics():
+    artifact = types.SimpleNamespace(
+        summary={
+            "checkpoint_id": "go-live-streaming-test-v1",
+            "decision": "refused",
+            "inventory": {"object_count": 3, "total_bytes": 21},
+            "policy_sha256": "a" * 64,
+            "refusal_codes": ("generation_identity_mismatch",),
+        }
+    )
+    entry = types.SimpleNamespace(prefix=PREFIX, durability="disposable_acceptance")
+    policy = types.SimpleNamespace(entries={"go-live-streaming-test-v1": entry})
+    backend = service.RuntimeBackend(
+        gateway=types.SimpleNamespace(probe_capabilities=lambda: {}),
+        leases=object(),
+        planner=types.SimpleNamespace(plan=lambda _request: artifact),
+        operations=object(),
+        policy=policy,
+        destructive_enabled=False,
+    )
+    monkeypatch_digest = "a" * 64
+    original = service._policy_digest
+    service._policy_digest = lambda _policy: monkeypatch_digest
+    try:
+        backend.invoke("plan", {"actor": "operator", "checkpoint_ids": ["go-live-streaming-test-v1"]}, None)
+    finally:
+        service._policy_digest = original
+    metrics = backend.metrics()
+    assert b'checkpoint_retention_plans_total{decision="refused"} 1' in metrics
+    assert b'checkpoint_retention_objects{checkpoint_id="go-live-streaming-test-v1"} 3' in metrics
+    assert b"generation_identity_mismatch" in metrics
+
+
+def test_http_boundary_records_auth_and_invalid_request_metrics_without_exposing_payload():
+    class RecordingBackend(Backend):
+        def __init__(self):
+            super().__init__()
+            self.failures = []
+
+        def record_request_failure(self, outcome):
+            self.failures.append(outcome)
+
+    backend = RecordingBackend()
+    app = service.RetentionApplication(backend, lease_token="lease-only-token", operator_token="manual-operator-token")
+    with pytest.raises(service.ServiceFailure, match="unauthorized"):
+        app.dispatch("POST", "/v1/plans", _headers(b"{}", "wrong-token"), b"{}")
+    duplicate = b'{"actor":"operator","actor":"payload-secret"}'
+    with pytest.raises(service.ServiceFailure, match="json_duplicate_key"):
+        app.dispatch("POST", "/v1/plans", _headers(duplicate, "manual-operator-token"), duplicate)
+
+    assert backend.failures == ["unauthorized", "invalid_request"]

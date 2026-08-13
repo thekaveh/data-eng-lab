@@ -118,6 +118,19 @@ def test_planner_is_read_only_and_binds_deterministic_summary_shards_and_sha():
     )
 
 
+def test_planner_materializes_policy_scale_inventory_with_explicit_node_bound():
+    gateway = ReadOnlyGateway()
+    gateway.records = tuple(
+        ObjectRecord(f"{PREFIX}state/{index:05d}", f"{index:032x}", 1, NOW - timedelta(days=1))
+        for index in range(1_000)
+    )
+
+    artifact = RetentionPlanner(gateway, POLICY).plan(_request())
+
+    assert artifact.summary["inventory"]["object_count"] == 1_000
+    assert len(json.loads(artifact.body)["shards"][0]) == 1_000
+
+
 @pytest.mark.parametrize(
     "changes",
     [
