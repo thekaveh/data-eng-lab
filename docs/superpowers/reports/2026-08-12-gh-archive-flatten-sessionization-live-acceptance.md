@@ -4,13 +4,13 @@
 
 **Date:** 2026-08-12
 
-**Result:** PASS after contract corrections for canonical duplicate IDs, Iceberg timestamp labels,
-and the session-boundary measure
+**Result:** PASS after review hardening of physical JSON validation, duplicate-aware session
+validation, and live evidence binding
 
 ## Accepted artifact and immutable input
 
 - Local and published JAR: `gh-archive-pipeline/0.1.0/app.jar`
-- JAR SHA-256: `ee683d4e25edce245146a6dd43ff7170681fc92cbded256b1dfcdf58361ccf47`
+- JAR SHA-256: `5d2459e4dc9cebe96c16715db027b21333307e6cb2fae39b0c67d395535d52d1`
 - Dataset/scale: `gh_archive` / `tiny`
 - Plan ID: `8ab812c3621cc3dae68989d9f24134351ea9683453133b31feaff579d0fa3e7f`
 - Publication ID: `e53a481df5d54c6eabc645838fb2f2ba`
@@ -41,12 +41,13 @@ documents, and required the exact pointer body and ETag to remain unchanged acro
 The project had zero running, stopped, exited, or created containers before the controlled replay.
 The harness started an exclusively owned stack, kept `gh_archive_flatten_sessionization` paused,
 and restored its initial pause state. It used complete bounded Airflow-v2 DagRun pagination and
-`airflow dags test --use-executor` with two unique whole-second logical dates:
+`airflow dags test --use-executor` with two unique whole-second logical dates. The final accepted
+API-visible DagRuns were:
 
-| Run | Logical date | Airflow | Spark drivers | REST terminal |
+| Run | Exact DagRun ID | Airflow | Spark drivers | REST terminal |
 |---|---|---|---|---|
-| first | `2026-08-13T00:23:10Z` | API-visible terminal `success` | `driver-20260813002508-0000`, `driver-20260813002546-0001` | both `FINISHED`, `success=true` |
-| second | `2026-08-13T00:26:19Z` | API-visible terminal `success` | `driver-20260813002653-0002`, `driver-20260813002731-0003` | both `FINISHED`, `success=true` |
+| first | `manual__2026-08-13T01:32:18.498994+00:00` | API-visible terminal `success` | `driver-20260813013253-0000`, `driver-20260813013341-0001` | both `FINISHED`, `success=true` |
+| second | `manual__2026-08-13T01:34:27.784721+00:00` | API-visible terminal `success` | `driver-20260813013459-0002`, `driver-20260813013536-0003` | both `FINISHED`, `success=true` |
 
 The bounded API inventory gained exactly one unique owned DagRun after each command, exactly two in
 the acceptance window, and no unexpected queued/running run. The second run started only after the
@@ -65,10 +66,10 @@ schema and exact whole-second UTC timestamps, and counted:
 
 Both accepted runs produced exact source-to-events-to-sessions multiset conservation:
 
-| Table | Exact ordered schema | Rows |
-|---|---|---:|
-| `lakehouse.silver.gh_events` | `id:string`, `type:string`, `actor_login:string`, `repo_name:string`, `created_at:timestamptz` | 101917 |
-| `lakehouse.silver.gh_sessions` | the five event columns, `previous_created_at:timestamptz`, `new_session:int`, `session_id:long` | 101917 |
+| Table | Exact ordered schema | Rows | Deterministic checksum |
+|---|---|---:|---|
+| `lakehouse.silver.gh_events` | `id:string`, `type:string`, `actor_login:string`, `repo_name:string`, `created_at:timestamptz` | 101917 | `7ea82e3d0b5bad96` |
+| `lakehouse.silver.gh_sessions` | the five event columns, `previous_created_at:timestamptz`, `new_session:int`, `session_id:long` | 101917 | `36136a1cab232348` |
 
 Meaningful session measures were:
 
@@ -76,6 +77,9 @@ Meaningful session measures were:
 - 16,767 session starts
 - zero rows with a gap greater than 1,800 seconds that were not marked as a new session
 - zero rows with a non-null gap at most 1,800 seconds that were marked as a new session
+- zero multiplicity mismatches from independently deriving every predecessor, boundary flag, and
+  contiguous per-actor session ID from `gh_events` and full-outer-comparing the complete grouped
+  eight-column multiset to `gh_sessions`
 
 Both `$properties` tables contained the same exact values:
 
@@ -87,10 +91,12 @@ data_eng_lab.dataset.publication_id=e53a481df5d54c6eabc645838fb2f2ba
 data_eng_lab.dataset.manifest_sha256=998ec39bc61dca1b460e4b851d718a5347b8c7e575b96dd1e3ec62fd0b791678
 ```
 
-The second run reproduced both complete logical table snapshots and deterministic checksums while
-advancing each Iceberg snapshot ID, proving convergent same-generation recovery and idempotent
-replacement. The harness also proved sessionization reread and matched all five `gh_events`
-properties before its source-table read.
+The first run created event snapshot `6523417985791786963` and session snapshot
+`6811919256567805613`. The second run reproduced both complete logical table snapshots and exact
+checksums while advancing them to event snapshot `8452302066651377567` and session snapshot
+`621494726108837077`, proving convergent same-generation recovery and idempotent replacement. The
+harness also proved sessionization reread and matched all five `gh_events` properties before its
+source-table read.
 
 ## Diagnostic corrections and safe cleanup
 
@@ -100,12 +106,17 @@ duplicate IDs before writing, and compare deterministic multiplicity-aware event
 Subsequent replays exposed two live-test assumptions rather than production defects: PyIceberg
 reports Iceberg timestamps with timezone as `timestamptz`, and null predecessors equal distinct
 actors while total session starts can be greater. Both assertions were narrowed under focused RED
-tests before the unchanged canonical replay passed:
+tests before the unchanged canonical replay passed. Independent review then added a bounded raw
+gzip/JSON token preflight before Spark inference, full duplicate-aware session multiset validation,
+failure injection at every planned read/write/readback boundary, production-risk notebook warnings,
+and frozen live identities. The first hardened replay's two production runs passed, but its new
+Trino oracle used an unsupported frame on `lag`; a focused RED test removed only that frame while
+retaining the cumulative frame for `session_id`. The complete hardened replay then passed:
 
 ```bash
 RUN_INFRA=1 uv run --group live pytest \
   tests/scenarios/test_gh_archive_pipeline_live.py -v -s
-# 1 passed in 425.50s
+# 1 passed in 463.97s
 ```
 
 The final `scripts/stop-all.sh` cleanup preserved every volume, restored the DAG pause state, and
