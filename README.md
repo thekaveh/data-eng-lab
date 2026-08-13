@@ -65,7 +65,7 @@ Every curated table is an Apache Iceberg table accessed through the Atlas Iceber
 | Destination | What it contains |
 |---|---|
 | [Scenario catalog](docs/scenarios/index.md) | All 19 end-to-end scenarios, dependencies, execution modes, and source datasets |
-| [Execution-mode matrix](docs/scenarios/execution-modes.md) | Five production DAGs, three approved children, seven notebook-only scenarios, and three unscheduled streams |
+| [Execution-mode matrix](docs/scenarios/execution-modes.md) | Seven production DAGs covering eight scenarios, one approved child, seven notebook-only scenarios, and three unscheduled streams |
 | [Notebook walkthroughs](docs/notebooks/index.md) | Side-by-side docs for 17 Scala/PySpark pairs and two Trino SQL/client pairs |
 | [Spark apps](docs/spark-apps/index.md) | Five CI-built Maven applications published by Jenkins and submitted through Airflow |
 | [Datasets](docs/datasets.md) | NYC Taxi, TPC-H, Online Retail, GH Archive, and MovieLens data plus synthetic events |

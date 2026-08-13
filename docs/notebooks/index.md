@@ -3,7 +3,7 @@
 Each scenario ships paired Zeppelin and Jupyter notebooks with equivalent intent. Seventeen Spark scenarios pair Scala with PySpark; the two Trino scenarios pair `%trino` SQL with the Python Trino client.
 The manifest-owned walkthroughs below are canonical. Spark pages show side-by-side language parity, while Trino pages document query/result equivalence without calling SQL “Scala” or the Python client “PySpark.”
 
-The [execution-mode matrix](../scenarios/execution-modes.md) records which notebook scenarios also have production orchestration. A paired notebook is always an executable teaching surface; it does not imply that a production DAG exists.
+The [execution-mode matrix](../scenarios/execution-modes.md) records which notebook scenarios also have production orchestration. A paired notebook is always an executable teaching surface; it does not imply that a production DAG exists. For the two Trino pairs, notebook CTAS cells are an educational direct-write path and do not enforce production provenance, snapshot checks, or serialization. Use `tpch_bi_query` or `nyc_taxi_trino_daily` for production; their durable metadata-DB XCom result is not an Iceberg table.
 The TPC-H star-schema, MovieLens feature-engineering, and GH Archive
 `json_flatten-gh_archive-spark-iceberg` / `sessionization-gh_archive-spark-iceberg` walkthroughs
 document notebook-equivalent transforms behind the production `tpch_star_schema`,

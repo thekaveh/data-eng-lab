@@ -78,6 +78,12 @@ The historical acceptance record reports all 19 scenarios passing and all 17 dua
 
 ## 5. Trino Validation
 
+Issue #83 added a current production replay for `tpch_bi_query` and `nyc_taxi_trino_daily` on
+2026-08-12/13. Two paused runs per DAG succeeded through the real Airflow/Trino path and produced
+stable canonical metadata-DB XCom checksums. TPC-H validated the exact five-key table provenance;
+NYC remained bound to one unchanged Bronze snapshot. No Iceberg snapshot, property, raw pointer, or
+Spark driver changed. See the [tracked acceptance report](superpowers/reports/2026-08-12-trino-bi-pipelines-live-acceptance.md).
+
 ```sql
 -- federated_query-nyc_taxi
 SELECT COUNT(*) FROM lakehouse.bronze.nyc_taxi_trips;

@@ -15,20 +15,20 @@ scenarios:
       - The run replaces lakehouse.bronze.nyc_taxi_trips and ends with Airflow success plus Spark FINISHED and success=true.
     child_issue: null
   - scenario_id: bi_query-tpch-trino-iceberg
-    classification: approved new production DAG
-    justification: The notebook SQL creates and validates a reusable BI aggregate, but the Airflow runtime API and meaningful-result contract must be proven before scheduling it.
+    classification: existing production DAG
+    justification: The daily read-only Airflow task validates both TPC-H tables' exact five-key provenance and stable snapshots before accepting a bounded canonical segment-revenue XCom artifact.
     owner: Analytics Engineering
-    runtime: "Atlas Trino through the execution surface selected by child issue #83"
-    schedule_policy: "No schedule until #83 passes live acceptance; proposed daily after the TPC-H star-schema dependency succeeds"
-    execution_entrypoint: null
+    runtime: Atlas Airflow PythonOperator using the bounded consumer-owned Trino HTTP statement client
+    schedule_policy: Daily at 01:00 UTC; max_active_runs=1 and one retry after two minutes
+    execution_entrypoint: airflow-dags/trino_bi/dag.py
     dependencies:
       - "#82 execution-mode matrix"
       - "#83 Trino Airflow execution contract"
       - "#107 production TPC-H star schema"
     acceptance_contract:
-      - Execute the reviewed SQL through a proven Airflow runtime client and reject empty or malformed results.
-      - Create and validate lakehouse.gold.bi_segment_revenue from matching fact and dimension inputs in a live run.
-    child_issue: 83
+      - Fail closed before BI SQL unless both $properties tables contain the exact equal five-key TPC-H provenance contract.
+      - Return a bounded canonical metadata-DB XCom segment-revenue artifact only after schema, source reconciliation, and unchanged postflight property/snapshot checks.
+    child_issue: null
   - scenario_id: cdc_streaming-online_retail-spark-iceberg
     classification: intentionally unscheduled long-running streaming
     justification: The notebook owns an unbounded Redpanda readStream and foreachBatch MERGE with durable checkpoint state; a periodic batch schedule would misrepresent its lifecycle.
@@ -75,20 +75,20 @@ scenarios:
       - Freeze schemas, duplicate-row aggregation semantics, key behavior, count invariants, five-key provenance, and idempotence with live Airflow and Spark success.
     child_issue: null
   - scenario_id: federated_query-nyc_taxi-trino-iceberg
-    classification: approved new production DAG
-    justification: The notebook SQL produces a useful daily aggregate, but the actual Airflow Trino client and meaningful-result assertions must be proven inside the pinned runtime.
+    classification: existing production DAG
+    justification: The daily read-only Airflow task binds to one unchanged NYC Bronze Iceberg snapshot and accepts a bounded canonical daily-fares XCom artifact after schema and source-count reconciliation.
     owner: Analytics Engineering
-    runtime: "Atlas Trino through the execution surface selected by child issue #83"
-    schedule_policy: "No schedule until #83 passes live acceptance; proposed after nyc_taxi_etl completes"
-    execution_entrypoint: null
+    runtime: Atlas Airflow PythonOperator using the bounded consumer-owned Trino HTTP statement client
+    schedule_policy: Daily at 02:00 UTC after the TPC-H BI cadence; max_active_runs=1 and one retry after two minutes
+    execution_entrypoint: airflow-dags/trino_bi/dag.py
     dependencies:
       - "#82 execution-mode matrix"
       - "#83 Trino Airflow execution contract"
       - nyc_taxi_etl Bronze table
     acceptance_contract:
-      - Execute identical reviewed SQL through a proven Airflow runtime client with connection and result validation.
-      - Create and validate nonempty lakehouse.gold.nyc_taxi_daily_trino in a live Trino run.
-    child_issue: 83
+      - Bind to one unchanged NYC Bronze Iceberg snapshot and reconcile nonempty daily counts to the independent source count.
+      - Return a bounded canonical metadata-DB XCom daily-fares artifact without claiming resolver-generation provenance or writing Iceberg.
+    child_issue: null
   - scenario_id: incremental_upsert-online_retail-spark-iceberg
     classification: intentionally notebook-only
     justification: The notebook intentionally seeds inline rows and demonstrates repeatable MERGE semantics; its synthetic changes are not a governed production feed.

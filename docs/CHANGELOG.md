@@ -4,6 +4,11 @@ All notable changes to this project are documented here (Keep a Changelog format
 
 ## 1. [Unreleased]
 ### Added
+- The two Trino scenarios now run as staggered, serialized, read-only production DAGs through a
+  bounded same-origin statement-protocol client. TPC-H fails closed on exact five-key provenance;
+  NYC is explicitly snapshot-bound. Both return canonical metadata-DB XCom artifacts, preserve
+  Iceberg/pointer state, and produced deterministic results across two live reruns with no Spark
+  driver delta.
 - The GH Archive flatten and sessionization scenarios now share a serialized daily production DAG
   and Jenkins-published Scala application. Two live tiny-scale Airflow runs preserved all 101,917
   source rows through `gh_events` and `gh_sessions`, including one exact duplicate, with four
