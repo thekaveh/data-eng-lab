@@ -9,7 +9,7 @@
 
 | Artifact | Exact identity |
 |---|---|
-| Retention service image | `sha256:0710363ce59fd42cf11dca3bc7cd5ab03b80e8a32af47003e4b625a90bd678b7` (`linux/amd64`) |
+| Retention service image | `sha256:a72ae4e0c2067d21a7b7a22a5c17001c787f8ae2260dddacbd6e64236e60d6f0` (`linux/amd64`) |
 | Pinned MinIO image | `minio/minio:RELEASE.2025-09-07T16-13-09Z`, local image ID `sha256:8f08aee614800a237906bd48114d733e5ac5bfac4ccdf731f141b0e880d7a253` |
 | Pinned MinIO client | `minio/mc:RELEASE.2025-08-13T08-35-41Z`, local image ID `sha256:5dee113ef037d349ac22ab6c20193ade5c4701e2a38e3777fa1c1bec1c063ad1` |
 | Policy YAML SHA-256 | `8b06b3cfd439652a4f70c9b2fc7e604321e953507096e63d872ef326db7568de` |
@@ -20,7 +20,41 @@ The service ran as one non-root, read-only-filesystem replica. Destructive mode 
 enabled only for the test-owned disposable proof. The deployed default remains
 `false`. No Atlas source or gitlink file changed.
 
-## Canonical 900-second operation proof
+## Final split-token runtime replay
+
+The final architectural-correction replay passed `1 passed in 146.446s` with zero
+failures, errors, or skips. It began and ended with zero all-state project
+containers and used standard volume-preserving teardown. The final service image
+above proved:
+
+- the lease-only bearer received HTTP 401 from the plan route, with exact bounded
+  body `{"code":"unauthorized"}`;
+- the operator bearer received the same HTTP 401 contract from lease acquire;
+- `/healthz` became ready only after observed conditional create, verified
+  conditional replace/readback, and expected-denied control deletion;
+- the actual maintenance credential retained the exact three allowed and four
+  denied IAM results described below;
+- an active disposable lease made planning refuse with `lease_active`, then its
+  exact stopped terminal evidence enabled byte-identical repeated eligible plans;
+- two reviewed immutable prepares returned `not_ready` before 900 seconds and made
+  zero checkpoint-data deletes; and
+- the paused `schedule=None` DAG, closed metrics, unrelated sentinel, and exact
+  production snapshot SHA-256
+  `19bd48d158628d31d62193a25a0be88714e293c9e1fa78ae754659c5b4cee217`
+  were unchanged.
+
+| Fixture UUID | Operation ID | Plan SHA-256 | Prepared at | State |
+|---|---|---|---|---|
+| `39dc697c-4990-473b-b498-ad7cdbb86bb9` | `466eb401-074a-4690-8ce9-c40dbae5b0da` | `858594db6ceaab77d029bc4ccd168aa133726d798503340ae46e72f663fca70f` | `2026-08-13T20:00:48Z` | `not_ready`; changed fixture remained three objects |
+| `2bde7ad1-b7f3-44ba-a765-966e8db4fbf1` | `ebdf0ed7-ed52-43af-8dd1-48af357679f7` | `2074ee68bbbc95b90a41dbb0bb5a96eb7a58dcb3d720054d7f67a6907db6685f` | `2026-08-13T20:00:50Z` | `not_ready`; exact two-object fixture preserved |
+
+The final operation implementation was also exercised against pinned disposable
+MinIO after the correction: `2 passed in 2.49s`. That layer uses the real gateway,
+immutable result-classification shards, a fresh manager after partial persistence,
+original-manifest-only retry, completed audit recovery, and idempotence. It supplies
+the final-byte delete/restart proof without repeating the wall-clock wait below.
+
+## Historical canonical 900-second operation proof
 
 The exclusive-stack harness began with zero all-state project containers, preserved
 all named volumes, and snapshotted the production checkpoint/control inventory. It
@@ -54,12 +88,15 @@ snapshot remained exactly
 The Airflow API returned `checkpoint_retention` paused; its source contract has
 `schedule=None` and no apply task.
 
-The run reached and passed every destructive assertion, then the test rejected the
+This earlier run established real wall-clock quiescence and exact deletion before
+the architectural correction. It reached every destructive assertion, then the test rejected the
 actual Prometheus body in its own incomplete closed-label parser. No service failure
 or unverified deletion occurred. Commit `be8d74a` corrected only that test parser;
 offline adversarial cases now accept every exact labeled/unlabeled metric family and
-reject unknown, duplicate, malformed, or high-cardinality samples. The 900-second
-wait was not repeated because no runtime byte changed in that correction.
+reject unknown, duplicate, malformed, or high-cardinality samples. That parser-only
+correction did not change runtime bytes. The later architectural correction did;
+the final split-token and pinned-MinIO evidence above supersedes the old runtime
+identity while retaining this wall-clock timing proof.
 
 ## Accelerated exact-delete proof
 
@@ -104,7 +141,7 @@ then returns one deterministic mixed partial response. The production manager:
 5. proves the exact original prefix empty; and
 6. returns the completed result idempotently without another delete.
 
-The pinned-MinIO integration result is `2 passed in 2.09s`. The focused gateway,
+The predecessor pinned-MinIO integration result was `2 passed in 2.09s`. The focused gateway,
 operation, IAM-helper, metrics-helper, and live-harness result is `43 passed, 1
 expected live skip in 0.11s`. This layered proof exercises the final partial-result
 runtime bytes without another 900-second wait and without changing the immutable

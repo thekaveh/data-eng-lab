@@ -69,7 +69,9 @@ retry is confined to the original remaining key set and cannot broaden by relist
 
 One operation is bounded to 100 listing pages, 100,000 objects, 10 GiB, 1,000 keys
 per delete request, and 15 minutes of active operation time excluding quiescence.
-Canonical summaries are at most 64 KiB; inventory manifest shards are at most 1 MiB.
+Canonical summaries are at most 64 KiB; inventory and result-classification shards
+are at most 1 MiB. Canonical local plan and prepare transport is bounded to 128 MiB
+and 600,128 JSON nodes so the 100,000-object policy ceiling remains representable.
 
 ### Manual command sequence
 
@@ -98,8 +100,10 @@ uv run python -m scripts.checkpoints.retention status \
 Before `prepared_at + 900 seconds`, apply returns `not_ready`; it never sleeps in
 the HTTP request. Exit codes are `0` for accepted/completed, `2` for invalid input,
 `3` for refused/not ready, `4` for partial, and `5` for a bounded service failure.
-The internal service origin and bearer token come only from the credential boundary;
-the CLI accepts no endpoint, bucket, policy, timeout, or arbitrary key override.
+The internal service origin and operator bearer come only from the credential
+boundary; the CLI accepts no endpoint, bucket, policy, timeout, or arbitrary key
+override. Notebooks receive a separate lease-only bearer and cannot plan, prepare,
+apply, or inspect operations. The operator bearer cannot acquire or mutate leases.
 
 ### Deterministic supplied-fact examples
 
@@ -139,6 +143,13 @@ and conditional delete guarantees required for destructive scheduling. A MinIO p
 advance or equivalent proven capability plus a separate reviewed change is mandatory
 before any automatic or scheduled destructive apply.
 
+The service health probe performs actual conditional create, verified conditional
+replace/readback, and expected-denied control deletion using the maintenance
+credential. Constants alone never make health ready. One shared per-checkpoint lock
+serializes lease acquire/transition with apply from its final lease reread through
+HEAD, delete, postflight, immutable result, and audit. This is deliberately only a
+single-replica manual safety boundary.
+
 ## 5. Recovery procedures
 
 ### Durable streams
@@ -174,7 +185,8 @@ remain forbidden. Tombstones and audits are evidence, not rollback.
 
 Issue #86 records immutable operation ID, actor, checkpoint ID, prefix digest, policy
 and plan SHAs, timestamps, object/byte/request counts, decision, refusal codes, and
-primary outcome. Low-cardinality metrics cover owned object/byte counts, eligible
+primary outcome. Restart reads immutable result summaries and exact outcome shards
+from S3; no deletion authorization depends on process memory. Low-cardinality metrics cover owned object/byte counts, eligible
 bytes, heartbeat age, refusal reasons, planned/deleted counts, and partial failures.
 Object keys, credentials, endpoints, headers, and payloads are excluded.
 

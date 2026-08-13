@@ -26,6 +26,8 @@ SHA256 = re.compile(r"[0-9a-f]{64}")
 MAX_METRICS_BYTES = 65_536
 MAX_RESPONSE_BYTES = 65_536
 LIVE_RETENTION_ACCESS_KEY = "retention86live"
+LIVE_LEASE_TOKEN = "issue86-live-lease-token"
+LIVE_OPERATOR_TOKEN = "issue86-live-operator-token"
 PRODUCTION_PREFIXES = ("events/", "event_windows/", "online_retail_cdc/", "gh_events_file/")
 OWNED_FIXTURE_KEY = re.compile(
     rf"(?:streaming_test/{RUN_UUID.pattern}/(?:state/(?:offset|changed)|commits/0)"
@@ -49,11 +51,37 @@ METRIC_CONTRACTS = {
     "checkpoint_retention_refusals_total": (
         "refusal_code",
         {
+            "clock_overflow",
+            "exclusive_run_required",
+            "future_clock",
+            "invalid_fact_type",
+            "invalid_lease_terminal_state",
+            "invalid_terminal_state",
+            "invalid_utc_timestamp",
+            "inventory_invalid",
             "lease_active",
+            "lease_clock_invalid",
             "lease_missing",
             "lease_conflicting",
+            "lease_etag_invalid",
+            "lease_identity_mismatch",
             "lease_malformed",
+            "lease_state_invalid",
+            "lease_terminal_clock_conflict",
+            "object_after_terminal",
+            "partial_retry_broadened",
+            "recovery_not_approved",
+            "registry_active_durable",
+            "registry_retirement_review_invalid",
+            "registry_retirement_review_missing",
             "retention_quarantine",
+            "retirement_clock_missing",
+            "retirement_review_mismatch",
+            "retirement_review_missing",
+            "sink_disposition_not_approved",
+            "source_unavailable",
+            "successful_run_required",
+            "terminal_missing",
             "inventory_changed",
             "policy_drift",
             "revalidation_mismatch",
@@ -291,6 +319,31 @@ def _service(method: str, path: str, payload: dict[str, object] | None = None) -
     return value
 
 
+def _service_status(method: str, path: str, token_name: str) -> tuple[int, dict[str, object]]:
+    script = (
+        "import json,os,urllib.error,urllib.request;"
+        "request=urllib.request.Request("
+        f"'http://127.0.0.1:8080{path}',data=b'{{}}',method='{method}',"
+        f"headers={{'Authorization':'Bearer '+os.environ['{token_name}'],"
+        "'Content-Type':'application/json','Content-Length':'2'});"
+        "\ntry:\n response=urllib.request.urlopen(request,timeout=30);status=response.status"
+        "\nexcept urllib.error.HTTPError as error:\n response=error;status=error.code"
+        f"\nraw=response.read({MAX_RESPONSE_BYTES + 1});response.close();"
+        "print(json.dumps({'status':status,'body':json.loads(raw)}))"
+    )
+    result = _run(
+        "docker",
+        "exec",
+        f"{_env('PROJECT_NAME', 'data-eng-lab')}-checkpoint-retention-1",
+        "/opt/venv/bin/python",
+        "-c",
+        script,
+        timeout=60,
+    )
+    value = json.loads(result.stdout)
+    return value["status"], value["body"]
+
+
 def _wait_service(timeout: int = 300) -> dict[str, object]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -457,8 +510,12 @@ def _airflow_dag() -> dict[str, object]:
 def test_checkpoint_retention_live_acceptance():
     previous_destructive = os.environ.get("CHECKPOINT_RETENTION_DESTRUCTIVE_ENABLED")
     previous_access_key = os.environ.get("MINIO_RETENTION_ACCESS_KEY")
+    previous_lease_token = os.environ.get("CHECKPOINT_RETENTION_LEASE_TOKEN")
+    previous_operator_token = os.environ.get("CHECKPOINT_RETENTION_OPERATOR_TOKEN")
     os.environ["CHECKPOINT_RETENTION_DESTRUCTIVE_ENABLED"] = "true"
     os.environ["MINIO_RETENTION_ACCESS_KEY"] = LIVE_RETENTION_ACCESS_KEY
+    os.environ["CHECKPOINT_RETENTION_LEASE_TOKEN"] = LIVE_LEASE_TOKEN
+    os.environ["CHECKPOINT_RETENTION_OPERATOR_TOKEN"] = LIVE_OPERATOR_TOKEN
     try:
         with _owned_stack(), ExitStack() as owned_resources:
             health = _wait_service()
@@ -467,6 +524,14 @@ def test_checkpoint_retention_live_acceptance():
                 "destructive_enabled": True,
                 "ready": True,
             }
+            assert _service_status("POST", "/v1/plans", "CHECKPOINT_RETENTION_LEASE_TOKEN") == (
+                401,
+                {"code": "unauthorized"},
+            )
+            assert _service_status("POST", "/v1/leases/acquire", "CHECKPOINT_RETENTION_OPERATOR_TOKEN") == (
+                401,
+                {"code": "unauthorized"},
+            )
             endpoint = _env("ATLAS_MINIO_HOST_ENDPOINT")
             if not endpoint:
                 endpoint_file = ROOT / "atlas-consumer.env"
@@ -522,26 +587,14 @@ def test_checkpoint_retention_live_acceptance():
             assert not_ready["state"] == "not_ready"
             put_owned(f"{identities[0]['prefix']}state/changed", b"changed")
 
-            deadline = time.monotonic() + 930
-            while time.monotonic() < deadline:
-                status = _service(
-                    "POST",
-                    f"/v1/operations/{second_prepared['operation_id']}/apply",
-                    {"confirm_prefix": identities[1]["prefix"], "plan_sha256": second_sha},
-                )
-                if status.get("state") != "not_ready":
-                    break
-                time.sleep(10)
-            assert status["state"] == "completed"
-            assert _inventory(root, identities[1]["prefix"]) == ()
-
-            with pytest.raises(subprocess.CalledProcessError):
-                _service(
-                    "POST",
-                    f"/v1/operations/{first_prepared['operation_id']}/apply",
-                    {"confirm_prefix": identities[0]["prefix"], "plan_sha256": first_sha},
-                )
+            first_not_ready = _service(
+                "POST",
+                f"/v1/operations/{first_prepared['operation_id']}/apply",
+                {"confirm_prefix": identities[0]["prefix"], "plan_sha256": first_sha},
+            )
+            assert first_not_ready["state"] == "not_ready"
             assert len(_inventory(root, identities[0]["prefix"])) == 3
+            assert len(_inventory(root, identities[1]["prefix"])) == 2
             assert root.head_object(Bucket="checkpoints", Key=denied_key)["ContentLength"] == len(b"preserve")
 
             dag = _airflow_dag()
@@ -552,12 +605,19 @@ def test_checkpoint_retention_live_acceptance():
                 f"{_env('PROJECT_NAME', 'data-eng-lab')}-checkpoint-retention-1",
                 "/opt/venv/bin/python",
                 "-c",
-                "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8080/metrics').read().decode())",
+                "import sys,urllib.request;"
+                "response=urllib.request.urlopen('http://127.0.0.1:8080/metrics',timeout=30);"
+                f"body=response.read({MAX_METRICS_BYTES + 1});response.close();sys.stdout.buffer.write(body)",
             )
             metrics = _parse_metrics(metrics_result.stdout.encode("ascii"))
             assert metrics['checkpoint_retention_plans_total{decision="eligible"}'] >= 3
             assert metrics['checkpoint_retention_plans_total{decision="refused"}'] >= 1
-            assert metrics['checkpoint_retention_deleted_objects_total{outcome="completed"}'] == 2
+            assert metrics['checkpoint_retention_prepared_total{outcome="completed"}'] == 2
+            assert (
+                metrics['checkpoint_retention_lease_heartbeat_age_seconds{checkpoint_id="go-live-streaming-test-v1"}']
+                >= 0
+            )
+            assert metrics['checkpoint_retention_last_success_unixtime{checkpoint_id="go-live-streaming-test-v1"}'] > 0
             _assert_stable_snapshot(before, _production_snapshot(root))
     finally:
         if previous_destructive is None:
@@ -568,3 +628,11 @@ def test_checkpoint_retention_live_acceptance():
             os.environ.pop("MINIO_RETENTION_ACCESS_KEY", None)
         else:
             os.environ["MINIO_RETENTION_ACCESS_KEY"] = previous_access_key
+        if previous_lease_token is None:
+            os.environ.pop("CHECKPOINT_RETENTION_LEASE_TOKEN", None)
+        else:
+            os.environ["CHECKPOINT_RETENTION_LEASE_TOKEN"] = previous_lease_token
+        if previous_operator_token is None:
+            os.environ.pop("CHECKPOINT_RETENTION_OPERATOR_TOKEN", None)
+        else:
+            os.environ["CHECKPOINT_RETENTION_OPERATOR_TOKEN"] = previous_operator_token

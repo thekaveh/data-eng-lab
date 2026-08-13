@@ -147,16 +147,23 @@ logged. A bounded category and safe operation name replace them.
 The service is one Compose replica on `backend-network`, with no host port. It
 mounts the policy read-only and receives only:
 
-- `CHECKPOINT_RETENTION_ACCESS_KEY`;
-- `CHECKPOINT_RETENTION_SECRET_KEY`;
+- `MINIO_RETENTION_ACCESS_KEY`;
+- `MINIO_RETENTION_SECRET_KEY`;
+- `CHECKPOINT_RETENTION_LEASE_TOKEN`;
 - `CHECKPOINT_RETENTION_OPERATOR_TOKEN`;
 - fixed internal MinIO endpoint, region, and bucket; and
 - `CHECKPOINT_RETENTION_DESTRUCTIVE_ENABLED`, default `false`.
 
-The API bearer token is distinct from the MinIO credential. Request tokens use a
-constant-time comparison. Requests use exact `application/json`, one bounded
-Content-Length, no transfer encoding, bodies at most 64 KiB, strict canonical data
-types, and no query string. The fixed routes are:
+Both API bearers are distinct from the MinIO credential and from each other.
+Notebook containers receive only the lease token; Airflow and the fixed CLI receive
+only the operator token; the service receives both. Lease routes accept only the
+lease token. Plan, prepare, apply, and status routes accept only the operator token.
+Request tokens use a constant-time comparison. Requests use exact
+`application/json`, one bounded Content-Length, no transfer encoding, strict
+canonical data types, and no query string. Lease and summary bodies are at most 64
+KiB; a policy-valid canonical plan body is bounded to 128 MiB and 600,128 JSON
+nodes. The server admits at most 16 concurrent requests and applies a 30-second
+socket timeout. The fixed routes are:
 
 | Method and route | Purpose |
 |---|---|
@@ -191,7 +198,7 @@ uv run python -m scripts.checkpoints.retention status --operation-id UUID
 ```
 
 The service URL is fixed by environment to the internal service and validated as
-exact HTTP origin; the CLI accepts no URL flag. The API token comes from the
+exact HTTP origin; the CLI accepts no URL flag. The operator token comes from the
 credential boundary and is never printed. `plan` is the default command when no
 subcommand is supplied. Commands return canonical JSON to stdout, safe diagnostics
 to stderr, and stable exit codes: `0` accepted/completed, `2` invalid request,
@@ -345,7 +352,13 @@ Apply never sleeps in an HTTP request. Before `prepared_at + 900 seconds`, it re
 7. deletes no more than 1,000 exact approved keys;
 8. parses every deleted/error result and stops on the first partial batch;
 9. relists the exact prefix and requires it to be empty; and
-10. writes one immutable terminal result and append-only audit.
+10. writes bounded immutable result-classification shards, one immutable terminal
+    result, and an append-only audit before releasing the checkpoint lock.
+
+One shared per-checkpoint process lock serializes lease acquire/transition with the
+final apply revalidation, HEAD, delete, postflight, result, and audit critical
+section. This closes the single-replica acquire/apply race. It is not claimed as a
+cross-process CAS and therefore does not authorize automatic or scheduled apply.
 
 HEAD-before-delete is not described as atomic conditional deletion. The active
 lease refusal, 15-minute quiescence, full inventory equality, manual approval, and
@@ -354,12 +367,17 @@ post-delete proof are the accepted manual safety boundary on this pin.
 ### 9.3 Partial result and retry
 
 A partial result preserves the primary categorized failure and records only object
-record digests from the original manifest as deleted, failed, or unattempted. A
-retry reads that immutable result and the original shards, derives the remaining
+record digests from the original manifest as deleted, failed, or unattempted.
+Classification shards live below
+`_retention/tombstones/{operation_id}/results/shards/{sha256}.json`, are at most 1
+MiB, and are referenced by an immutable summary below `results/attempts/`. A retry
+reads that immutable result and the original shards, derives the remaining
 original set, HEAD-verifies those records, and deletes only that set. It may relist
 for safety but cannot add a listed key to the operation. Each attempt writes a new
-immutable attempt record; exactly one terminal `completed`, `partial`, or `refused`
-summary is current through an immutable state link.
+immutable attempt record. The current terminal `completed`, `partial`, or `refused`
+summary is selected deterministically from the append-only attempt set. Missing,
+conflicting, malformed, non-canonical, or ambiguous controls refuse; they are never
+interpreted as a fresh operation.
 
 If all data deletes succeeded but the final audit write failed, recovery rereads the
 original manifest and proves that every approved key is absent and no unapproved key
