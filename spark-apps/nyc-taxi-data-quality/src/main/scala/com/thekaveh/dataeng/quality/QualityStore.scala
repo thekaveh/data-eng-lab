@@ -69,10 +69,13 @@ final class SparkQualityStore(backend: QualityStorageBackend) extends QualitySto
            |JOIN ${QualityContract.SourceTable}.snapshots s ON r.snapshot_id = s.snapshot_id
            |WHERE r.name = 'main'""".stripMargin
       val rows = backend.query(statement).collect().toSeq
-      require(rows.size == 1, "Bronze main snapshot metadata is invalid")
+      if (rows.isEmpty) return None
+      if (rows.size != 1) throw new QualityFailure(
+        "source_metadata", "readback_mismatch", "Bronze main snapshot metadata is invalid")
       val id = rows.head.getAs[Long]("snapshot_id")
       val committedAt = rows.head.getAs[java.sql.Timestamp]("committed_at")
-      require(id > 0 && committedAt != null, "Bronze main snapshot metadata is invalid")
+      if (id <= 0 || committedAt == null) throw new QualityFailure(
+        "source_metadata", "readback_mismatch", "Bronze main snapshot metadata is invalid")
       Some(SourceSnapshot(id, committedAt.toInstant, QualityContract.schemaSha256))
     }
   }
@@ -121,6 +124,13 @@ final class SparkQualityStore(backend: QualityStorageBackend) extends QualitySto
     require(keys.distinct.size == keys.size, "quality facts keys must be unique")
     require(values.forall(value => QualityContract.ExpectedRuleIds.contains(value.ruleId)),
       "quality fact rule is invalid")
+    require(values.forall(value => QualityContract.DiagnosticCodes.contains(value.diagnosticCode)),
+      "quality fact diagnostic is invalid")
+    values.foreach { value =>
+      QualityContract.requireStatusDiagnostic(value.status, value.diagnosticCode)
+      require(value.severity == QualityContract.severity(value.status),
+        "quality fact severity is invalid")
+    }
     backend.mergeFacts(values)
   }
 

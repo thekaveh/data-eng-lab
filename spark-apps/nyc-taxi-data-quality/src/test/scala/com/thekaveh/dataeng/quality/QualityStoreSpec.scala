@@ -120,14 +120,20 @@ class QualityStoreSpec extends AnyFunSuite with BeforeAndAfterAll {
     val missing = new RecordingBackend(exists = false)
     assert(new SparkQualityStore(missing).captureSource().isEmpty)
 
+    val absentMain = rows(MetadataSchema, Seq.empty)
+    assert(new SparkQualityStore(
+      new RecordingBackend(source = sourceFrame, metadata = absentMain)).captureSource().isEmpty)
+
     val duplicateMetadata = rows(MetadataSchema, Seq(
       Row(1L, Timestamp.from(Instant.parse("2026-08-13T00:00:00Z"))),
       Row(2L, Timestamp.from(Instant.parse("2026-08-13T00:01:00Z")))
     ))
-    assertThrows[IllegalArgumentException](new SparkQualityStore(
+    val duplicate = intercept[QualityFailure](new SparkQualityStore(
       new RecordingBackend(source = sourceFrame, metadata = duplicateMetadata)).captureSource())
-    assertThrows[IllegalArgumentException](new SparkQualityStore(
+    assert(duplicate.diagnosticCode == "readback_mismatch")
+    val malformed = intercept[QualityFailure](new SparkQualityStore(
       new RecordingBackend(source = sourceFrame, metadata = metadataFrame(0L))).captureSource())
+    assert(malformed.diagnosticCode == "readback_mismatch")
 
     val drift = empty(StructType(QualityContract.bronzeSchema.fields.reverse))
     val schemaFailure = intercept[QualityFailure](new SparkQualityStore(
@@ -201,6 +207,10 @@ class QualityStoreSpec extends AnyFunSuite with BeforeAndAfterAll {
     assertThrows[IllegalArgumentException](store.mergeFacts(Seq.empty))
     assertThrows[IllegalArgumentException](store.mergeFacts(Seq(fact(runId, facts.head.ruleId),
       fact("e" * 64, facts(1).ruleId))))
+    assertThrows[IllegalArgumentException](store.mergeFacts(Seq(
+      fact(runId, facts.head.ruleId).copy(diagnosticCode = "source_missing"))))
+    assertThrows[IllegalArgumentException](store.mergeFacts(Seq(
+      fact(runId, facts.head.ruleId).copy(severity = "error"))))
   }
 
   test("literal Iceberg MERGE matches only the composite run and rule key") {

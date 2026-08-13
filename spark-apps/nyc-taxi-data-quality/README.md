@@ -99,13 +99,15 @@ it bypasses this serialization boundary.
 ## Dashboard and operations
 
 The durable dashboard source is the Gold Iceberg table. A run is complete only when it has exactly
-one row for every frozen `(rule_id, rule_version)` pair with consistent dataset, binding, source
-table, snapshot, and schema fingerprint. These fixed SELECT-only Trino queries are bounded and
+one row for every frozen rule definition, exact rule metadata, and eight non-null equal bindings to
+the expected dataset, upstream DAG, source table, positive snapshot, commit timestamp, logical
+window, and frozen schema fingerprint. These fixed SELECT-only Trino queries are bounded and
 deterministically ordered:
 
 - `queries/latest.sql`: latest complete accepted eight-row fact set;
 - `queries/trend.sql`: at most 90 complete accepted runs; and
-- `queries/operator_attention.sql`: at most 100 warning/failure rows.
+- `queries/operator_attention.sql`: at most 100 governed warning/failure rows, including safe
+  partial diagnostics from missing, stale, or failed runs.
 
 Run them from a Trino-capable operator environment, for example:
 

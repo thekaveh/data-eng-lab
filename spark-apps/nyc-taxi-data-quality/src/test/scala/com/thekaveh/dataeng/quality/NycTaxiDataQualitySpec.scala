@@ -100,6 +100,9 @@ class NycTaxiDataQualitySpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(result.quarantineCount == 1L)
     assert(store.facts.map(_.ruleId) == QualityContract.ExpectedRuleIds)
     assert(store.facts.map(_.qualityRunId).distinct == Seq(result.qualityRunId))
+    val readback = store.facts.find(_.ruleId == "silver.output_readback.v1").get
+    assert((readback.metricNumerator, readback.metricDenominator, readback.metricValue.toString) ==
+      (Long.box(8L), Long.box(8L), "1.000000000"))
   }
 
   test("warning succeeds only after exact facts readback") {
@@ -149,7 +152,7 @@ class NycTaxiDataQualitySpec extends AnyFunSuite with BeforeAndAfterAll {
     }
     assertThrows[QualityFailure](new QualityPipeline(store).run(Arguments))
     assert(store.facts.map(_.ruleId) == Seq("silver.output_readback.v1"))
-    assert(store.facts.head.diagnosticCode == "source_changed")
+    assert(store.facts.head.diagnosticCode == "readback_mismatch")
   }
 
   test("failure between Silver writes converges on same-snapshot retry without duplicate facts") {
@@ -226,7 +229,7 @@ class NycTaxiDataQualitySpec extends AnyFunSuite with BeforeAndAfterAll {
       }
       val failure = intercept[QualityFailure](new QualityPipeline(store).run(Arguments))
       assert(failure.category == "facts_readback")
-      assert(failure.diagnosticCode == "facts_exact_mismatch")
+      assert(failure.diagnosticCode == "readback_mismatch")
     }
   }
 
@@ -242,7 +245,7 @@ class NycTaxiDataQualitySpec extends AnyFunSuite with BeforeAndAfterAll {
     }
     val failure = intercept[QualityFailure](new QualityPipeline(store).run(Arguments))
     assert(failure.category == "facts_readback")
-    assert(failure.diagnosticCode == "facts_exact_mismatch")
+    assert(failure.diagnosticCode == "readback_mismatch")
     assert(failure.getMessage == "Quality facts readback does not match the intended rows")
   }
 
@@ -259,11 +262,46 @@ class NycTaxiDataQualitySpec extends AnyFunSuite with BeforeAndAfterAll {
       val store = new RecordingStore(failAt = boundary)
       val failure = intercept[QualityFailure](new QualityPipeline(store).run(Arguments))
       assert(failure.category == category)
-      assert(failure.diagnosticCode.matches("[a-z0-9_]{1,64}"))
+      assert(QualityContract.DiagnosticCodes.contains(failure.diagnosticCode))
       assert(failure.getMessage.length <= 160 && !failure.getMessage.contains("failure:"))
       assert(!store.actions.dropWhile(_ != boundary).drop(1).exists(_.startsWith("replace")))
       if (boundary != "captureSource") assert(store.facts.nonEmpty)
     }
+  }
+
+  test("Spark action and postcheck failures are controlled and persist safe diagnostics") {
+    val invalidFailure = new RecordingStore(source = bronze().withColumn(
+      "fare_amount", org.apache.spark.sql.functions.expr("raise_error('secret-invalid-count')").cast("double")
+    ))
+    val invalid = intercept[QualityFailure](new QualityPipeline(invalidFailure).run(Arguments))
+    assert(invalid.diagnosticCode == "readback_mismatch")
+    assert(!invalid.getMessage.contains("secret"))
+    assert(invalidFailure.facts.map(_.ruleId) == Seq("bronze.invalid_ratio.v1"))
+
+    val countFailure = new RecordingStore() {
+      override def readSilver(identifier: String): DataFrame = {
+        actions += (if (identifier == QualityContract.CleanTable) "readClean" else "readQuarantine")
+        val frame = if (identifier == QualityContract.CleanTable) clean else quarantine
+        frame.withColumn("fare_amount",
+          org.apache.spark.sql.functions.expr("raise_error('secret-output-count')").cast("double"))
+      }
+    }
+    val output = intercept[QualityFailure](new QualityPipeline(countFailure).run(Arguments))
+    assert(output.diagnosticCode == "partition_mismatch")
+    assert(!output.getMessage.contains("secret"))
+    assert(countFailure.facts.map(_.ruleId) == Seq("silver.output_readback.v1"))
+
+    val postcheckFailure = new RecordingStore() {
+      private var captures = 0
+      override def captureSource(): Option[SourceSnapshot] = {
+        captures += 1
+        actions += "captureSource"
+        if (captures == 1) Some(Snapshot) else throw new IllegalStateException("secret-postcheck")
+      }
+    }
+    val postcheck = intercept[QualityFailure](new QualityPipeline(postcheckFailure).run(Arguments))
+    assert(postcheck.diagnosticCode == "readback_mismatch")
+    assert(postcheckFailure.facts.map(_.ruleId) == Seq("silver.output_readback.v1"))
   }
 
   test("schema mismatch persists the schema diagnostic before any Silver mutation") {

@@ -14,7 +14,7 @@ final class QualityFailure(
     cause: Throwable = null
 ) extends RuntimeException(message, cause) {
   require(category.matches("[a-z0-9_]{1,64}"), "quality failure category is invalid")
-  require(diagnosticCode.matches("[a-z0-9_]{1,64}"), "quality diagnostic code is invalid")
+  QualityContract.requireDiagnosticCode(diagnosticCode)
   require(message.nonEmpty && message.length <= 160, "quality failure message is invalid")
 }
 
@@ -38,7 +38,8 @@ final class QualityPipeline(store: QualityStore) {
       diagnostic: String
   ): QualityFact = {
     val rule = QualityContract.rules.find(_.ruleId == ruleId)
-      .getOrElse(throw new QualityFailure("contract", "rule_unavailable", "Quality rule is unavailable"))
+      .getOrElse(throw new IllegalArgumentException("Quality rule is unavailable"))
+    QualityContract.requireStatusDiagnostic(status, diagnostic)
     QualityFact(
       QualityContract.qualityRunId(arguments.logicalDate, snapshot.map(_.id)),
       Timestamp.from(arguments.logicalDate), Timestamp.from(arguments.dataIntervalEnd),
@@ -80,22 +81,22 @@ final class QualityPipeline(store: QualityStore) {
 
   private def requireFactsReadback(frame: DataFrame, expected: Seq[QualityFact]): Unit = {
     if (frame.schema != QualityContract.factsSchema) throw new QualityFailure(
-      "facts_readback", "facts_exact_mismatch", "Quality facts readback does not match the intended rows")
+      "facts_readback", "readback_mismatch", "Quality facts readback does not match the intended rows")
     val intended = SparkQualityStorageBackend.factFrame(frame.sparkSession, expected)
     val observedCount = frame.count()
     val exact = observedCount == expected.size &&
       frame.exceptAll(intended).limit(1).count() == 0L &&
       intended.exceptAll(frame).limit(1).count() == 0L
     if (!exact) throw new QualityFailure(
-      "facts_readback", "facts_exact_mismatch", "Quality facts readback does not match the intended rows")
+      "facts_readback", "readback_mismatch", "Quality facts readback does not match the intended rows")
   }
 
   def run(arguments: Arguments): RunResult = {
-    controlled("facts_store", "facts_store_unavailable", "Quality facts storage is unavailable") {
+    controlled("facts_store", "readback_mismatch", "Quality facts storage is unavailable") {
       store.ensureFactsTable()
     }
     val snapshot = try controlled(
-      "source_metadata", "source_metadata_invalid", "Bronze snapshot metadata is unavailable") {
+      "source_metadata", "readback_mismatch", "Bronze snapshot metadata is unavailable") {
       store.captureSource()
     } catch {
       case failure: QualityFailure =>
@@ -119,7 +120,7 @@ final class QualityPipeline(store: QualityStore) {
       throw new QualityFailure("source_stale", "source_stale", "Bronze source is stale")
     }
 
-    val bronze = try controlled("source_read", "source_read_failed", "Bronze source read failed") {
+    val bronze = try controlled("source_read", "readback_mismatch", "Bronze source read failed") {
       store.readBronze()
     } catch {
       case failure: QualityFailure =>
@@ -135,7 +136,7 @@ final class QualityPipeline(store: QualityStore) {
           Some(0L), Some(20L), Some(BigDecimal("0.000000000")), "fail", failure.diagnosticCode)))
         throw failure
     }
-    val sourceCount = try controlled("source_read", "source_count_failed", "Bronze source count failed") {
+    val sourceCount = try controlled("source_read", "readback_mismatch", "Bronze source count failed") {
       bronze.count()
     } catch {
       case failure: QualityFailure =>
@@ -148,7 +149,14 @@ final class QualityPipeline(store: QualityStore) {
         Some(0L), None, Some(BigDecimal(0).setScale(9)), "fail", "threshold_fail")))
       throw new QualityFailure("source_empty", "threshold_fail", "Bronze source is empty")
     }
-    val invalidCount = QualityTransforms.invalidCount(bronze)
+    val invalidCount = try controlled("source_read", "readback_mismatch", "Bronze invalid-row count failed") {
+      QualityTransforms.invalidCount(bronze)
+    } catch {
+      case failure: QualityFailure =>
+        persistDiagnostic(Seq(fact(arguments, snapshot, "bronze.invalid_ratio.v1",
+          None, Some(sourceCount), None, "fail", failure.diagnosticCode)))
+        throw failure
+    }
     val invalid = QualityTransforms.ratioObservation("bronze.invalid_ratio.v1", invalidCount, sourceCount)
 
     val bronzeFacts = Seq(
@@ -169,10 +177,10 @@ final class QualityPipeline(store: QualityStore) {
         "Bronze invalid ratio exceeds the fail threshold")
     }
 
-    val split = controlled("partition_validation", "partition_invalid", "Quality partition validation failed") {
+    val split = controlled("partition_validation", "partition_mismatch", "Quality partition validation failed") {
       QualityTransforms.split(bronze)
     }
-    try controlled("partition_validation", "partition_invalid", "Quality partition validation failed") {
+    try controlled("partition_validation", "partition_mismatch", "Quality partition validation failed") {
       QualityTransforms.assertPartition(bronze, split.clean, split.quarantine)
     } catch {
       case failure: QualityFailure =>
@@ -183,47 +191,55 @@ final class QualityPipeline(store: QualityStore) {
     val runId = QualityContract.qualityRunId(arguments.logicalDate, Some(sourceSnapshot.id))
     val properties = QualityProperties.forRun(runId, sourceSnapshot.id)
 
-    try controlled("silver_write", "clean_write_failed", "Clean Silver write failed") {
+    try controlled("silver_write", "readback_mismatch", "Clean Silver write failed") {
       store.replaceSilver(QualityContract.CleanTable, split.clean, properties)
     } catch {
       case failure: QualityFailure => diagnosticFailure(arguments, snapshot,
         "silver.output_readback.v1", failure.category, failure.diagnosticCode, failure.getMessage)
     }
-    val clean = try controlled("silver_readback", "clean_readback_failed", "Clean Silver readback failed") {
+    val clean = try controlled("silver_readback", "readback_mismatch", "Clean Silver readback failed") {
       store.readSilver(QualityContract.CleanTable)
     } catch {
       case failure: QualityFailure => diagnosticFailure(arguments, snapshot,
         "silver.output_readback.v1", failure.category, failure.diagnosticCode, failure.getMessage)
     }
-    try controlled("silver_write", "quarantine_write_failed", "Quarantine Silver write failed") {
+    try controlled("silver_write", "readback_mismatch", "Quarantine Silver write failed") {
       store.replaceSilver(QualityContract.QuarantineTable, split.quarantine, properties)
     } catch {
       case failure: QualityFailure => diagnosticFailure(arguments, snapshot,
         "silver.output_readback.v1", failure.category, failure.diagnosticCode, failure.getMessage)
     }
     val quarantine = try controlled(
-      "silver_readback", "quarantine_readback_failed", "Quarantine Silver readback failed") {
+      "silver_readback", "readback_mismatch", "Quarantine Silver readback failed") {
       store.readSilver(QualityContract.QuarantineTable)
     } catch {
       case failure: QualityFailure => diagnosticFailure(arguments, snapshot,
         "silver.output_readback.v1", failure.category, failure.diagnosticCode, failure.getMessage)
     }
-    try controlled("silver_readback", "partition_readback_failed", "Silver partition readback failed") {
+    try controlled("silver_readback", "partition_mismatch", "Silver partition readback failed") {
       QualityTransforms.assertPartition(bronze, clean, quarantine)
     } catch {
       case failure: QualityFailure => diagnosticFailure(arguments, snapshot,
         "silver.output_readback.v1", failure.category, failure.diagnosticCode, failure.getMessage)
     }
-    val cleanCount = clean.count()
-    val quarantineCount = quarantine.count()
+    val (cleanCount, quarantineCount) = try controlled(
+      "silver_readback", "readback_mismatch", "Silver output count failed") {
+      clean.count() -> quarantine.count()
+    } catch {
+      case failure: QualityFailure => diagnosticFailure(arguments, snapshot,
+        "silver.output_readback.v1", failure.category, failure.diagnosticCode, failure.getMessage)
+    }
 
-    val postSnapshot = controlled(
-      "source_metadata", "source_recheck_failed", "Bronze snapshot recheck failed") {
+    val postSnapshot = try controlled(
+      "source_metadata", "readback_mismatch", "Bronze snapshot recheck failed") {
       store.captureSource()
+    } catch {
+      case failure: QualityFailure => diagnosticFailure(arguments, snapshot,
+        "silver.output_readback.v1", failure.category, failure.diagnosticCode, failure.getMessage)
     }
     if (!postSnapshot.contains(sourceSnapshot))
       diagnosticFailure(arguments, snapshot, "silver.output_readback.v1",
-        "source_changed", "source_changed", "Bronze source changed during the quality run")
+        "source_changed", "readback_mismatch", "Bronze source changed during the quality run")
 
     val quarantineObservation = QualityTransforms.ratioObservation(
       "silver.quarantine_ratio.v1", quarantineCount, sourceCount)
@@ -236,7 +252,7 @@ final class QualityPipeline(store: QualityStore) {
       fact(arguments, snapshot, "silver.quarantine_ratio.v1", Some(quarantineCount), Some(sourceCount),
         Some(quarantineObservation.metricValue), quarantineObservation.status,
         quarantineObservation.diagnosticCode),
-      fact(arguments, snapshot, "silver.output_readback.v1", Some(cleanCount + quarantineCount), Some(sourceCount),
+      fact(arguments, snapshot, "silver.output_readback.v1", Some(8L), Some(8L),
         Some(BigDecimal("1.000000000")), "pass", "ok")
     )
     val allFacts = bronzeFacts ++ silverFacts
@@ -245,13 +261,13 @@ final class QualityPipeline(store: QualityStore) {
       persistDiagnostic(allFacts)
       throw new QualityFailure("silver_threshold", "threshold_fail", "Silver quality checks failed")
     }
-    controlled("facts_write", "facts_merge_failed", "Quality facts MERGE failed") {
+    controlled("facts_write", "readback_mismatch", "Quality facts MERGE failed") {
       store.mergeFacts(allFacts)
     }
-    val readback = controlled("facts_readback", "facts_read_failed", "Quality facts readback failed") {
+    val readback = controlled("facts_readback", "readback_mismatch", "Quality facts readback failed") {
       store.readFacts(runId)
     }
-    controlled("facts_readback", "facts_exact_mismatch",
+    controlled("facts_readback", "readback_mismatch",
       "Quality facts readback does not match the intended rows") {
       requireFactsReadback(readback, allFacts)
     }

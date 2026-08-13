@@ -116,6 +116,17 @@ class QualityContractSpec extends AnyFunSuite {
       (rule.ruleId, rule.layer, rule.owner, rule.warnThreshold, rule.failThreshold)) == expected)
   }
 
+  test("freezes the exact durable diagnostic registry") {
+    assert(QualityContract.DiagnosticCodes == Set(
+      "ok", "threshold_warn", "threshold_fail", "source_missing", "source_stale",
+      "schema_mismatch", "partition_mismatch", "output_empty", "readback_mismatch"
+    ))
+    assertThrows[IllegalArgumentException](QualityContract.requireDiagnosticCode("clean_write_failed"))
+    QualityContract.requireStatusDiagnostic("missing", "source_missing")
+    QualityContract.requireStatusDiagnostic("fail", "readback_mismatch")
+    assertThrows[IllegalArgumentException](QualityContract.requireStatusDiagnostic("pass", "source_missing"))
+  }
+
   test("uses half-up scale-nine ratios and closed status precedence") {
     assert(QualityContract.ratio(82414L, 8991502L).toString == "0.009165766")
     assert(QualityContract.ratio(1L, 6L).toString == "0.166666667")

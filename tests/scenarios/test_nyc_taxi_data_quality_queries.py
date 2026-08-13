@@ -1,14 +1,63 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
 from pathlib import Path
 
+import duckdb
 import pytest
 
 ROOT = Path(__file__).resolve().parents[2]
 QUERY_DIR = ROOT / "spark-apps/nyc-taxi-data-quality/queries"
 QUERY_NAMES = ("latest", "trend", "operator_attention")
 FACTS = "lakehouse.gold.nyc_taxi_quality_facts"
+SCHEMA_SHA256 = "5a8d2916cc5967c0eeb8318136c1262156cd616105dad67a713f1cb1cc872fc5"
+
+RULES = (
+    ("bronze.source_available.v1", "Bronze", "Data Engineering", "source_row_count", None, "rows=0"),
+    ("bronze.schema.v1", "Bronze", "Data Engineering", "schema_match_ratio", None, "ratio<1.000000000"),
+    (
+        "bronze.snapshot_freshness.v1",
+        "Bronze",
+        "Data Engineering",
+        "snapshot_age_seconds",
+        None,
+        "seconds>21600",
+    ),
+    (
+        "bronze.invalid_ratio.v1",
+        "Bronze",
+        "Data Quality Engineering",
+        "invalid_row_ratio",
+        "ratio>0.010000000",
+        "ratio>0.050000000",
+    ),
+    (
+        "silver.partition_conservation.v1",
+        "Silver",
+        "Data Quality Engineering",
+        "partition_row_ratio",
+        None,
+        "ratio!=1.000000000",
+    ),
+    ("silver.clean_nonempty.v1", "Silver", "Data Quality Engineering", "clean_row_count", None, "rows=0"),
+    (
+        "silver.quarantine_ratio.v1",
+        "Silver",
+        "Data Quality Engineering",
+        "quarantine_row_ratio",
+        "ratio>0.010000000",
+        "ratio>0.050000000",
+    ),
+    (
+        "silver.output_readback.v1",
+        "Silver",
+        "Data Platform Engineering",
+        "readback_check_ratio",
+        None,
+        "ratio<1.000000000",
+    ),
+)
 
 
 def _sql(name: str) -> str:
@@ -17,6 +66,62 @@ def _sql(name: str) -> str:
 
 def _compact(sql: str) -> str:
     return re.sub(r"\s+", " ", sql.strip()).lower()
+
+
+def _facts_connection(rows):
+    connection = duckdb.connect(":memory:")
+    connection.execute(
+        """CREATE TABLE facts (
+            quality_run_id VARCHAR, logical_date TIMESTAMP, data_interval_end TIMESTAMP,
+            dataset_id VARCHAR, binding_type VARCHAR, upstream_dag_id VARCHAR,
+            source_table VARCHAR, source_snapshot_id BIGINT, source_snapshot_committed_at TIMESTAMP,
+            source_schema_sha256 VARCHAR, layer VARCHAR, rule_id VARCHAR, rule_version VARCHAR,
+            owner VARCHAR, metric_name VARCHAR, metric_numerator BIGINT, metric_denominator BIGINT,
+            metric_value DECIMAL(38, 9), warn_threshold VARCHAR, fail_threshold VARCHAR,
+            severity VARCHAR, status VARCHAR, diagnostic_code VARCHAR
+        )"""
+    )
+    connection.executemany("INSERT INTO facts VALUES (" + ",".join("?" for _ in range(23)) + ")", rows)
+    return connection
+
+
+def _accepted_rows():
+    logical_date = datetime(2026, 8, 13, 10, 0, 0)
+    interval_end = datetime(2026, 8, 13, 11, 0, 0)
+    committed_at = datetime(2026, 8, 13, 9, 55, 0)
+    return [
+        (
+            "a" * 64,
+            logical_date,
+            interval_end,
+            "nyc_taxi",
+            "iceberg_snapshot",
+            "nyc_taxi_etl",
+            "lakehouse.bronze.nyc_taxi_trips",
+            123,
+            committed_at,
+            SCHEMA_SHA256,
+            layer,
+            rule_id,
+            "nyc_taxi_quality_v1",
+            owner,
+            metric_name,
+            1,
+            1,
+            "1.000000000",
+            warn,
+            fail,
+            "info",
+            "pass",
+            "ok",
+        )
+        for rule_id, layer, owner, metric_name, warn, fail in RULES
+    ]
+
+
+def _complete_run_query():
+    prefix = _sql("latest").split("),\nlatest_run AS (", maxsplit=1)[0]
+    return (prefix + ")\nSELECT quality_run_id FROM complete_runs").replace(FACTS, "facts")
 
 
 @pytest.mark.parametrize("name", QUERY_NAMES)
@@ -56,13 +161,22 @@ def test_latest_returns_the_latest_complete_accepted_eight_fact_set():
         "silver.quarantine_ratio.v1",
         "silver.output_readback.v1",
     ):
-        assert f"('{rule}', 'nyc_taxi_quality_v1')" in sql
+        assert f"('{rule}', 'nyc_taxi_quality_v1'," in sql
     for fragment in (
         "count(distinct f.dataset_id) = 1",
         "min(f.dataset_id) = 'nyc_taxi'",
         "count(distinct f.binding_type) = 1",
         "min(f.binding_type) = 'iceberg_snapshot'",
         "count(distinct f.source_snapshot_id) = 1",
+        "count(f.source_snapshot_id) = 8",
+        "min(f.source_snapshot_id) > 0",
+        "count(f.source_schema_sha256) = 8",
+        "min(f.source_schema_sha256) = '5a8d2916cc5967c0eeb8318136c1262156cd616105dad67a713f1cb1cc872fc5'",
+        "count(distinct f.logical_date) = 1",
+        "count(distinct f.data_interval_end) = 1",
+        "count(distinct f.upstream_dag_id) = 1",
+        "min(f.upstream_dag_id) = 'nyc_taxi_etl'",
+        "count(distinct f.source_snapshot_committed_at) = 1",
         "count(distinct f.rule_id) = 8",
     ):
         assert fragment in sql
@@ -91,7 +205,14 @@ def test_trend_returns_at_most_ninety_complete_runs_with_exact_measures():
 
 def test_operator_attention_is_exact_and_status_ordered():
     sql = _compact(_sql("operator_attention"))
-    assert "where f.status in ('warn', 'fail', 'missing', 'stale')" in sql
+    assert "f.status in ('warn', 'fail', 'missing', 'stale')" in sql
+    for diagnostic in (
+        "threshold_warn", "threshold_fail", "source_missing", "source_stale",
+        "schema_mismatch", "partition_mismatch", "output_empty", "readback_mismatch",
+    ):
+        assert f"'{diagnostic}'" in sql
+    assert "f.severity = case when f.status = 'warn' then 'warning' else 'error' end" in sql
+    assert "complete_runs" not in sql and "join complete_runs" not in sql
     assert "limit 100" in sql
     for column in (
         "diagnostic_code",
@@ -108,6 +229,75 @@ def test_operator_attention_is_exact_and_status_ordered():
         in sql
     )
     assert "order by f.logical_date desc" in sql and "f.layer, f.rule_id" in sql
+
+
+@pytest.mark.parametrize(
+    ("column", "value"),
+    (
+        (1, None),
+        (2, None),
+        (3, None),
+        (4, None),
+        (5, None),
+        (6, None),
+        (7, None),
+        (8, None),
+        (9, None),
+        (9, "f" * 64),
+        (5, "wrong_etl"),
+        (13, "wrong owner"),
+        (14, "wrong_metric"),
+        (19, "wrong threshold"),
+    ),
+)
+def test_complete_run_cte_rejects_null_wrong_lineage_and_rule_metadata(column, value):
+    rows = _accepted_rows()
+    changed = list(rows[0])
+    changed[column] = value
+    rows[0] = tuple(changed)
+    connection = _facts_connection(rows)
+    assert connection.execute(_complete_run_query()).fetchall() == []
+
+
+@pytest.mark.parametrize("mutation", ("missing", "duplicate", "foreign"))
+def test_complete_run_cte_rejects_missing_duplicate_and_foreign_rows(mutation):
+    rows = _accepted_rows()
+    if mutation == "missing":
+        rows.pop()
+    elif mutation == "duplicate":
+        rows.append(rows[0])
+    else:
+        changed = list(rows[0])
+        changed[11] = "foreign.rule.v1"
+        rows.append(tuple(changed))
+    connection = _facts_connection(rows)
+    assert connection.execute(_complete_run_query()).fetchall() == []
+
+
+def test_complete_run_cte_admits_only_the_exact_accepted_fact_set():
+    connection = _facts_connection(_accepted_rows())
+    assert connection.execute(_complete_run_query()).fetchall() == [("a" * 64,)]
+
+
+def test_operator_attention_surfaces_a_partial_missing_source_diagnostic():
+    row = list(_accepted_rows()[0])
+    row[7] = None
+    row[8] = None
+    row[9] = None
+    row[15] = None
+    row[16] = None
+    row[17] = None
+    row[20] = "error"
+    row[21] = "missing"
+    row[22] = "source_missing"
+    connection = _facts_connection([tuple(row)])
+    query = _sql("operator_attention").replace(FACTS, "facts").replace(
+        "format_datetime(f.logical_date, 'yyyy-MM-dd''T''HH:mm:ss''Z''')",
+        "strftime(f.logical_date, '%Y-%m-%dT%H:%M:%SZ')",
+    )
+    observed = connection.execute(query).fetchall()
+    assert len(observed) == 1
+    assert observed[0][4:8] == ("bronze.source_available.v1", "missing", "error", "source_missing")
 
 
 @pytest.mark.parametrize("name", QUERY_NAMES)

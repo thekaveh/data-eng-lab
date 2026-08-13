@@ -912,7 +912,7 @@ def _assert_owned_facts(rows: list[dict], expected_runs: dict[str, dict]) -> Non
             "silver.partition_conservation.v1": (source, source, "1.000000000"),
             "silver.clean_nonempty.v1": (clean, source, f"{clean}.000000000"),
             "silver.quarantine_ratio.v1": (quarantine, source, _ratio(quarantine, source)),
-            "silver.output_readback.v1": (source, source, "1.000000000"),
+            "silver.output_readback.v1": (8, 8, "1.000000000"),
         }
         ratio_status = "warn" if float(_ratio(quarantine, source)) > 0.01 else "pass"
         for row in observed:

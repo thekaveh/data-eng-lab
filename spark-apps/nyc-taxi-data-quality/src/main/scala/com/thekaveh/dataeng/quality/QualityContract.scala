@@ -81,6 +81,38 @@ object QualityContract {
 
   val ExpectedRuleIds: Seq[String] = rules.map(_.ruleId)
 
+  val DiagnosticCodes: Set[String] = Set(
+    "ok",
+    "threshold_warn",
+    "threshold_fail",
+    "source_missing",
+    "source_stale",
+    "schema_mismatch",
+    "partition_mismatch",
+    "output_empty",
+    "readback_mismatch"
+  )
+
+  def requireDiagnosticCode(value: String): String = {
+    require(DiagnosticCodes.contains(value), "quality diagnostic code is invalid")
+    value
+  }
+
+  def requireStatusDiagnostic(status: String, diagnostic: String): Unit = {
+    requireDiagnosticCode(diagnostic)
+    val valid = status match {
+      case "pass" => diagnostic == "ok"
+      case "warn" => diagnostic == "threshold_warn"
+      case "missing" => diagnostic == "source_missing"
+      case "stale" => diagnostic == "source_stale"
+      case "fail" => Set(
+        "threshold_fail", "schema_mismatch", "partition_mismatch", "output_empty", "readback_mismatch"
+      ).contains(diagnostic)
+      case _ => false
+    }
+    require(valid, "quality status and diagnostic code do not match")
+  }
+
   val bronzeSchema: StructType = StructType(Seq(
     StructField("VendorID", LongType, nullable = true),
     StructField("tpep_pickup_datetime", TimestampNTZType, nullable = true),

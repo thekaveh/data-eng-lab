@@ -244,7 +244,7 @@ published as current; fail, warn, and pass then express evaluated rule severity.
 | `silver.partition_conservation.v1` | Silver / Data Quality Engineering | clean + quarantine and union multiset equal Bronze; pass exact, otherwise fail | error; facts record failure when safe |
 | `silver.clean_nonempty.v1` | Silver / Data Quality Engineering | clean rows; pass `>0`, fail `=0` | error |
 | `silver.quarantine_ratio.v1` | Silver / Data Quality Engineering | quarantine/source; same 1% warn and 5% fail boundaries | warning/error mirrors observed output |
-| `silver.output_readback.v1` | Silver / Data Platform Engineering | post-write clean plus quarantine rows / source rows; pass only after exact schemas, multiset, predicate membership, properties and snapshot binding | error |
+| `silver.output_readback.v1` | Silver / Data Platform Engineering | both schemas, checksums, predicate membership, properties and snapshot binding exact; pass=1, fail=0 | error |
 
 The invalid-ratio bands are reviewed policy rather than runtime tuning. The preserved catalog
 snapshot inspected during design contained 8,991,502 rows and 82,414 invalid rows (about 0.9166%),
@@ -265,12 +265,13 @@ expressions rather than floating-point values:
 | `silver.partition_conservation.v1` | `partition_row_ratio` | clean plus quarantine rows / source rows / ratio | null / `ratio!=1.000000000` |
 | `silver.clean_nonempty.v1` | `clean_row_count` | clean rows / source rows / clean rows | null / `rows=0` |
 | `silver.quarantine_ratio.v1` | `quarantine_row_ratio` | quarantine rows / source rows / ratio | `ratio>0.010000000` / `ratio>0.050000000` |
-| `silver.output_readback.v1` | `readback_check_ratio` | clean plus quarantine rows / source rows / ratio | null / `ratio<1.000000000` |
+| `silver.output_readback.v1` | `readback_check_ratio` | passed checks / 8 / ratio | null / `ratio<1.000000000` |
 
-The output-readback fact is not a self-referential count of checks. It records conserved output
-rows over source rows only after all exact schema, membership, multiset, property, and snapshot
-checks have passed. A ratio has a non-null positive denominator; a missing denominator is never
-encoded as zero. Observed severity is `info` for pass, `warning` for warn, and `error` for
+The eight readback checks are exactly: clean schema, quarantine schema, clean predicate membership,
+quarantine predicate membership, combined count, combined multiset/checksum, clean properties, and
+quarantine properties. They describe the two Silver outputs; Gold completion remains the separate
+post-MERGE readback below. A ratio has a non-null positive denominator; a missing denominator is
+never encoded as zero. Observed severity is `info` for pass, `warning` for warn, and `error` for
 fail/missing/stale. Diagnostic codes are exactly `ok`, `threshold_warn`, `threshold_fail`,
 `source_missing`, `source_stale`, `schema_mismatch`, `partition_mismatch`, `output_empty`, or
 `readback_mismatch`, selected by the rule/status pair. Any other code fails validation.
@@ -324,10 +325,13 @@ Three checked-in fixed Trino queries read the durable Gold facts:
 3. `operator_attention` returns at most 100 `warn`, `fail`, `missing`, or `stale` rows ordered by
    logical date, status precedence, layer, and rule ID.
 
-Each query first admits a run only when it has exactly one row for each of the eight frozen
-`(rule_id, rule_version)` pairs, no duplicate or foreign row, and one consistent dataset, binding,
-source table, source snapshot, and schema fingerprint. Each query is one literal `SELECT`/`WITH`
-statement. Tests reject semicolons, comments,
+Latest and trend admit a run only when it has exactly one row for each of the eight frozen rule
+definitions, no duplicate or foreign row, exact rule metadata, and eight non-null equal bindings
+to the expected dataset, binding type, upstream DAG, source table, positive source snapshot,
+snapshot commit, logical date, data interval, and frozen schema fingerprint. Operator attention
+instead joins the same governed rule registry directly so bounded missing, stale, warning, and
+failure diagnostics remain visible even when only a safe partial fact set could be persisted. Each
+query is one literal `SELECT`/`WITH` statement. Tests reject semicolons, comments,
 multi-statements, DDL/DML/CALL/SET, interpolation, nondeterministic ordering, `SELECT *`, unbounded
 results, wrong table names, or arbitrary DagRun SQL. Exact output columns/types and decimal/UTC
 serialization are frozen. Operators retrieve the surface with the internal Trino CLI or UI using
