@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import gzip
 import io
 import json
@@ -10,8 +11,6 @@ from dataclasses import replace
 from pathlib import Path
 
 import duckdb
-import pyarrow as pa
-import pyarrow.parquet as pq
 import pytest
 
 import datasets.acquisition as acquisition
@@ -27,6 +26,25 @@ from datasets.schema_inspection import (
 from datasets.verification import ExpectedObject, LockMismatch, VerificationContext, VerifiedFile
 
 CONTEXT = VerificationContext("fixture", "tiny", "schema", "artifact", "object")
+ARROW_PARQUET_FIXTURE = base64.b64decode(
+    "UEFSMRUEFRAVEEwVAhUEEgAAAQAAAAAAAAAVABUSFRIsFQIVBBUGFQYcGAgBAAAAAAAAABgIAQAAAAAAAAAW"
+    "ACgIAQAAAAAAAAAYCAEAAAAAAAAAEREAAAACAAAAAgEBAgAVBBUIFQhMFQIVBBIAAAIAAAAVABUSFRIsFQIV"
+    "BBUGFQYcGAQCAAAAGAQCAAAAFgAoBAIAAAAYBAIAAAAREQAAAAIAAAACAQECABUEFRAVEEwVAhUEEgAAAAAA"
+    "AAAAAAAAAAAVABUSFRIsFQIVBBUGFQYcGAgAAAAAAAAAABgIAAAAAAAAAAAWACgIAAAAAAAAAAAYCAAAAAAA"
+    "AAAAEREAAAACAAAAAgEBAgAVAhlMNQAYBnNjaGVtYRUGABUEJQIYBGlkNjQAFQIlAhgEaWQzMgAVBCUCGApl"
+    "dmVudF90aW1lJRRMjBIcLAAAAAAAFgIZHBk8JgAcFQQZJQQGGRgEaWQ2NBUAFgIWvAEWvAEmNCYIHBgIAQAA"
+    "AAAAAAAYCAEAAAAAAAAAFgAoCAEAAAAAAAAAGAgBAAAAAAAAABERABksFQQVBBUCABUAFQQVAgA8KQYZJgAC"
+    "AAAAJgAcFQIZJQQGGRgEaWQzMhUAFgIWlAEWlAEm6AEmxAEcGAQCAAAAGAQCAAAAFgAoBAIAAAAYBAIAAAAR"
+    "EQAZLBUEFQQVAgAVABUEFQIAPCkGGSYAAgAAACYAHBUEGSUEBhkYCmV2ZW50X3RpbWUVABYCFrwBFrwBJoQD"
+    "JtgCHBgIAAAAAAAAAAAYCAAAAAAAAAAAFgAoCAAAAAAAAAAAGAgAAAAAAAAAABERABksFQQVBBUCABUAFQQV"
+    "AgA8KQYZJgACAAAAFowEFgImCBaMBAAZHBgMQVJST1c6c2NoZW1hGMwCLy8vLy8vQUFBQUFRQUFBQUFBQUtB"
+    "QXdBQmdBRkFBZ0FDZ0FBQUFBQkJBQU1BQUFBQ0FBSUFBQUFCQUFJQUFBQUJBQUFBQU1BQUFDRUFBQUFRQUFB"
+    "QUFRQUFBQ1kvLy8vQUFBQkNoQUFBQUFrQUFBQUJBQUFBQUFBQUFBS0FBQUFaWFpsYm5SZmRHbHRaUUFBQUFB"
+    "R0FBZ0FCZ0FHQUFBQUFBQUNBTkQvLy84QUFBRUNFQUFBQUJnQUFBQUVBQUFBQUFBQUFBUUFBQUJwWkRNeUFB"
+    "QUFBTUQvLy84QUFBQUJJQUFBQUJBQUZBQUlBQVlBQndBTUFBQUFFQUFRQUFBQUFBQUJBaEFBQUFBZ0FBQUFC"
+    "QUFBQUFBQUFBQUVBQUFBYVdRMk5BQUFBQUFJQUF3QUNBQUhBQWdBQUFBQUFBQUJRQUFBQUFBQUFBQT0AGCBw"
+    "YXJxdWV0LWNwcC1hcnJvdyB2ZXJzaW9uIDI1LjAuMBk8HAAAHAAAHAAAAA4DAABQQVIx"
+)
 
 
 def contract(
@@ -250,14 +268,7 @@ def test_parquet_normalization_rejects_bare_integer_without_exact_signed_width_a
 
 def test_arrow_parquet_physical_fixture_matches_locked_nyc_metadata_shape(tmp_path: Path):
     path = tmp_path / "arrow.parquet"
-    table = pa.table(
-        {
-            "id64": pa.array([1], type=pa.int64()),
-            "id32": pa.array([2], type=pa.int32()),
-            "event_time": pa.array([0], type=pa.timestamp("us")),
-        }
-    )
-    pq.write_table(table, path, version="1.0")
+    path.write_bytes(ARROW_PARQUET_FIXTURE)
     expected = contract(
         "parquet",
         (
