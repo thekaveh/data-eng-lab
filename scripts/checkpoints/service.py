@@ -230,9 +230,9 @@ def build_runtime() -> RuntimeBackend:
         gateway = S3Gateway(client, policy)
         planner = RetentionPlanner(gateway, policy)
 
-        def revalidate(prefix: str):
+        def revalidate(prefix: str, evaluated_at: datetime):
             matched = policy.match_prefix(prefix)
-            return planner.plan(PlanRequest(matched.checkpoint_id, prefix, "retention-revalidation", _now()))
+            return planner.plan(PlanRequest(matched.checkpoint_id, prefix, "retention-revalidation", evaluated_at))
 
         operations = OperationManager(
             gateway,

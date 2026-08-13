@@ -160,7 +160,7 @@ def _prepared_manager(gateway, artifact, *, now=NOW, revalidate=None, max_delete
         gateway,
         policy_sha256="a" * 64,
         now=lambda: now,
-        revalidate=revalidate or (lambda _prefix: artifact),
+        revalidate=revalidate or (lambda _prefix, _evaluated_at: artifact),
         max_delete_keys=max_delete_keys,
     )
     request = PrepareRequest(OPERATION_ID, artifact, artifact.sha256, "review-86", "acceptance-engineering")
@@ -178,7 +178,7 @@ def test_apply_returns_not_ready_at_899_seconds_without_sleep_or_mutation():
         gateway,
         policy_sha256="a" * 64,
         now=lambda: NOW + timedelta(seconds=899),
-        revalidate=lambda _prefix: artifact,
+        revalidate=lambda _prefix, _evaluated_at: artifact,
     ).apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
 
     assert status.state == "not_ready"
@@ -193,7 +193,9 @@ def test_apply_revalidates_then_heads_complete_manifest_before_delete_and_proves
         gateway,
         policy_sha256="a" * 64,
         now=lambda: NOW.replace(minute=15),
-        revalidate=lambda prefix: artifact if prefix == PREFIX else pytest.fail("wrong prefix"),
+        revalidate=lambda prefix, evaluated_at: (
+            artifact if prefix == PREFIX and evaluated_at == NOW else pytest.fail("wrong revalidation identity")
+        ),
         max_delete_keys=1,
     )
 
@@ -220,7 +222,7 @@ def test_apply_rejects_confirmation_or_revalidation_drift_before_head_and_delete
             gateway,
             policy_sha256="a" * 64,
             now=lambda: NOW.replace(minute=15),
-            revalidate=lambda _prefix: revalidated,
+            revalidate=lambda _prefix, _evaluated_at: revalidated,
         )
         with pytest.raises(OperationFailure, match="confirmation_mismatch|revalidation_mismatch"):
             manager.apply(request)
@@ -244,7 +246,7 @@ def test_apply_accepts_revalidation_with_new_evaluation_time_when_bound_state_is
         gateway,
         policy_sha256="a" * 64,
         now=lambda: NOW.replace(minute=15),
-        revalidate=lambda _prefix: current,
+        revalidate=lambda _prefix, _evaluated_at: current,
     )
 
     status = manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
@@ -261,7 +263,7 @@ def test_partial_delete_stops_before_later_batch_and_retry_uses_only_original_re
         gateway,
         policy_sha256="a" * 64,
         now=lambda: NOW.replace(minute=15),
-        revalidate=lambda _prefix: artifact,
+        revalidate=lambda _prefix, _evaluated_at: artifact,
         max_delete_keys=1,
     )
 
@@ -294,7 +296,7 @@ def test_head_failure_prevents_every_delete_and_control_flow_is_not_wrapped():
             gateway,
             policy_sha256="a" * 64,
             now=lambda: NOW.replace(minute=15),
-            revalidate=lambda _prefix: artifact,
+            revalidate=lambda _prefix, _evaluated_at: artifact,
         )
         with pytest.raises(type(failure)) as caught:
             manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
@@ -312,7 +314,7 @@ def test_deleted_but_audit_failed_recovery_never_deletes_again():
         gateway,
         policy_sha256="a" * 64,
         now=lambda: NOW.replace(minute=15),
-        revalidate=lambda _prefix: artifact,
+        revalidate=lambda _prefix, _evaluated_at: artifact,
     )
 
     with pytest.raises(OperationFailure, match="control_create_failed"):

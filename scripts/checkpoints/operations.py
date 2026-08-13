@@ -60,7 +60,7 @@ class OperationManager:
         quiescence_seconds: int = 900,
         max_summary_bytes: int = 65_536,
         max_delete_keys: int = 1_000,
-        revalidate: Callable[[str], PlanArtifact] | None = None,
+        revalidate: Callable[[str, datetime], PlanArtifact] | None = None,
     ) -> None:
         if not isinstance(policy_sha256, str) or _SHA256.fullmatch(policy_sha256) is None:
             raise OperationFailure("policy_digest_invalid")
@@ -83,6 +83,7 @@ class OperationManager:
         prepared = {
             "actor": request.actor,
             "checkpoint_id": summary["checkpoint_id"],
+            "evaluated_at": summary["evaluated_at"],
             "inventory_sha256": summary["inventory"]["sha256"],
             "manifest_shards": tuple(shard.sha256 for shard in artifact.shards),
             "operation_id": request.operation_id,
@@ -112,8 +113,9 @@ class OperationManager:
         if request.plan_sha256 != prepared["plan_sha256"] or request.confirm_prefix != prepared["prefix"]:
             raise OperationFailure("confirmation_mismatch")
         prepared_at = _parse_utc(prepared["prepared_at"])
+        evaluated_at = _parse_utc(prepared.get("evaluated_at"))
         now = self._exact_now()
-        if prepared_at is None:
+        if prepared_at is None or evaluated_at is None:
             raise OperationFailure("prepared_invalid")
         if now < prepared_at + timedelta(seconds=self._quiescence_seconds):
             return OperationStatus(request.operation_id, "not_ready", prepared_body)
@@ -132,7 +134,7 @@ class OperationManager:
         if self._revalidate is None:
             raise OperationFailure("revalidation_unavailable")
         try:
-            current = self._revalidate(request.confirm_prefix)
+            current = self._revalidate(request.confirm_prefix, evaluated_at)
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException:
