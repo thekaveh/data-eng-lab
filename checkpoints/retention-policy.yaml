@@ -1,0 +1,88 @@
+version: 1
+bucket: checkpoints
+control_prefix: _retention/
+lease:
+  heartbeat_seconds: 60
+  ttl_seconds: 600
+  future_tolerance_seconds: 300
+  quiescence_seconds: 900
+bounds:
+  max_pages: 100
+  max_objects: 100000
+  max_bytes: 10737418240
+  max_delete_keys: 1000
+  max_active_seconds: 900
+  max_summary_bytes: 65536
+  max_manifest_shard_bytes: 1048576
+checkpoints:
+  - checkpoint_id: streaming-events-v1
+    prefix: events/
+    owner: Streaming Data Engineering
+    workload: streaming_ingest-events-spark-iceberg
+    source: redpanda:events
+    sink: lakehouse.bronze.events
+    lifecycle: active
+    durability: durable_stream
+    terminal_states: [stopped, retired]
+    retention_seconds: 2592000
+    recovery_class: coordinated_replay
+    sink_disposition: snapshot_or_reset
+    concurrent_writers: forbidden
+    retirement_authorization: required
+  - checkpoint_id: streaming-event-windows-v1
+    prefix: event_windows/
+    owner: Streaming Data Engineering
+    workload: streaming_windows-events-spark-iceberg
+    source: redpanda:events
+    sink: lakehouse.gold.event_windows
+    lifecycle: active
+    durability: durable_stream
+    terminal_states: [stopped, retired]
+    retention_seconds: 2592000
+    recovery_class: coordinated_replay
+    sink_disposition: snapshot_or_reset
+    concurrent_writers: forbidden
+    retirement_authorization: required
+  - checkpoint_id: streaming-online-retail-cdc-v1
+    prefix: online_retail_cdc/
+    owner: Streaming Data Engineering
+    workload: cdc_streaming-online_retail-spark-iceberg
+    source: redpanda:online_retail_cdc
+    sink: lakehouse.silver.online_retail_cdc
+    lifecycle: active
+    durability: durable_stream
+    terminal_states: [stopped, retired]
+    retention_seconds: 2592000
+    recovery_class: coordinated_replay
+    sink_disposition: snapshot_or_reset
+    concurrent_writers: forbidden
+    retirement_authorization: required
+  - checkpoint_id: streaming-gh-archive-file-v1
+    prefix: gh_events_file/{scale}/{publication_id}/{manifest_sha256}/
+    scales: [tiny, small, medium]
+    owner: Streaming Data Engineering Education
+    workload: streaming_ingest-gh_archive-spark-iceberg
+    source: resolver:gh_archive
+    sink: lakehouse.bronze.gh_events_stream
+    lifecycle: active
+    durability: generation_reproducibility
+    terminal_states: [completed, stopped]
+    retention_seconds: 1209600
+    recovery_class: exact_generation_replay
+    sink_disposition: reset_required
+    concurrent_writers: forbidden
+    retirement_authorization: not_applicable
+  - checkpoint_id: go-live-streaming-test-v1
+    prefix: streaming_test/
+    owner: Lab Acceptance Engineering
+    workload: go-live-streaming-test
+    source: bounded_synthetic
+    sink: s3a://lakehouse/bronze/streaming_test
+    lifecycle: active
+    durability: disposable_acceptance
+    terminal_states: [successful, stopped]
+    retention_seconds: 86400
+    recovery_class: disposable_recreate
+    sink_disposition: reset_required
+    concurrent_writers: forbidden
+    retirement_authorization: not_applicable
