@@ -52,7 +52,9 @@ suite passes these cases without adding a network or mutation path.
 | Gate | Result |
 |---|---|
 | `uv run ruff check . --exclude graphify-out` | pass |
-| `uv run pytest -m 'not infra and not network' -q --junitxml=/tmp/issue85-pytest.xml` | 3,027 tests, 0 failures, 0 errors, 0 skipped, 51.382 s |
+| `uv run pytest -m 'not infra and not network' -q --junitxml=/tmp/issue85-review-fix-pytest.xml` | 3,062 passed, 71 deselected, 51.56 s |
+| `uv run pytest -q tests/checkpoints` | 110 passed, 0 failed, 0 skipped, 0.77 s |
+| focused checkpoint and documentation projections | 356 passed, 0 failed, 0 skipped, 4.58 s |
 | `make verify` | 0 findings, 0 errors |
 | `make docs-check` | pass; strict MkDocs build |
 | `make docs-wiki` | pass; deterministic wiki check |
@@ -104,6 +106,8 @@ volume-preserving cleanup using disposable fixtures.
 5. `13aeee7` — executable ownership/reset boundary
 6. `3a88a6d` — source notebook and README warnings
 7. `f958e7c` — canonical runbook and all public documentation surfaces
+8. `a79b2c5` — initial verification report and immutable review handoff
+9. `db5b17b` — close fail-closed evaluator, parser, ownership, and runbook review gaps
 
 The branch has not been pushed and no pull request exists. Independent specification
 and quality/security reviews must use the exact immutable diff package produced after
