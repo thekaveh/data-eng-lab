@@ -485,8 +485,8 @@ def _session_oracle(query=None) -> int:
     rows = execute(
         "WITH ordered AS ("
         "SELECT id, type, actor_login, repo_name, created_at, "
-        "lag(created_at) OVER (PARTITION BY actor_login ORDER BY created_at, id "
-        "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS previous_created_at "
+        "lag(created_at) OVER (PARTITION BY actor_login ORDER BY created_at, id) "
+        "AS previous_created_at "
         "FROM lakehouse.silver.gh_events), "
         "annotated AS ("
         "SELECT *, CASE WHEN previous_created_at IS NULL OR "

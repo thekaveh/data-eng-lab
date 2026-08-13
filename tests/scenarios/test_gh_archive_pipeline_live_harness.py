@@ -348,6 +348,8 @@ def test_full_session_oracle_requires_exact_duplicate_aware_multiset_equality():
 
     assert live._session_oracle(query=query) == 0
     sql = captured[0]
+    lag_window = sql.split("lag(created_at)", 1)[1].split("AS previous_created_at", 1)[0]
+    assert "ROWS BETWEEN" not in lag_window
     for required in (
         "lag(created_at)",
         "date_diff('second', previous_created_at, created_at) > 1800",
