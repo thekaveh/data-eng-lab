@@ -163,7 +163,12 @@ class S3Gateway:
 
     def read_control(self, key: str, *, max_bytes: int) -> tuple[bytes, str]:
         _validate_control_key(key)
-        if type(max_bytes) is not int or max_bytes < 1 or max_bytes > self._policy.bounds.max_summary_bytes:
+        bound = (
+            self._policy.bounds.max_manifest_shard_bytes
+            if "/manifest/" in key
+            else self._policy.bounds.max_summary_bytes
+        )
+        if type(max_bytes) is not int or max_bytes < 1 or max_bytes > bound:
             raise GatewayFailure("control_bound_invalid")
         try:
             response = self._client.get_object(Bucket=self._policy.bucket, Key=key)

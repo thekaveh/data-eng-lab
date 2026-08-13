@@ -19,6 +19,7 @@ NOW = datetime(2026, 8, 13, 12, 0, 0, tzinfo=timezone.utc)
 RUN_UUID = "550e8400-e29b-41d4-a716-446655440000"
 PREFIX = f"streaming_test/{RUN_UUID}/"
 CONTROL = "_retention/leases/go-live-streaming-test-v1.json"
+MANIFEST = f"_retention/tombstones/550e8400-e29b-41d4-a716-446655440000/manifest/0-{'a' * 64}.json"
 
 
 class BoundedBody:
@@ -212,6 +213,19 @@ def test_control_reads_are_bounded_closed_and_exact_key_only():
     for key in ("_retention/", "_retention/../events/x", f"{PREFIX}data", "other/control.json"):
         with pytest.raises(GatewayFailure, match="control_key_invalid"):
             gateway.read_control(key, max_bytes=64)
+
+
+def test_manifest_read_uses_manifest_shard_bound_while_summary_controls_stay_small():
+    client = FakeS3()
+    client.objects[MANIFEST] = (b"[]", "a" * 32, NOW)
+    client.objects[CONTROL] = (b"{}", "b" * 32, NOW)
+    gateway = S3Gateway(client, POLICY, monotonic=lambda: 0.0)
+
+    assert gateway.read_control(MANIFEST, max_bytes=POLICY.bounds.max_manifest_shard_bytes)[0] == b"[]"
+    with pytest.raises(GatewayFailure, match="control_bound_invalid"):
+        gateway.read_control(MANIFEST, max_bytes=POLICY.bounds.max_manifest_shard_bytes + 1)
+    with pytest.raises(GatewayFailure, match="control_bound_invalid"):
+        gateway.read_control(CONTROL, max_bytes=POLICY.bounds.max_summary_bytes + 1)
 
 
 @pytest.mark.parametrize("code", ["NoSuchKey", "NoSuchObject", "404"])
