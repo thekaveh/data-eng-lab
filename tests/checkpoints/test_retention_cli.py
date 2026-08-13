@@ -26,7 +26,10 @@ class Response:
 
 def test_cli_plan_uses_fixed_origin_token_header_and_canonical_output(monkeypatch, tmp_path, capsys):
     facts = tmp_path / "facts.json"
-    facts.write_text('{"actor":"acceptance-engineering"}', encoding="utf-8")
+    facts.write_text(
+        '{"actor":"acceptance-engineering","evaluated_at":"2026-08-13T12:00:00Z"}',
+        encoding="utf-8",
+    )
     output = tmp_path / "plan.json"
     captured = {}
     response = Response(b'{"state":"accepted","plan_sha256":"' + b"a" * 64 + b'"}')
@@ -58,9 +61,47 @@ def test_cli_plan_uses_fixed_origin_token_header_and_canonical_output(monkeypatc
     assert captured["timeout"] == 30
     assert captured["headers"]["Authorization"] == "Bearer api-secret-token"
     assert b"api-secret-token" not in captured["body"]
+    assert json.loads(captured["body"]) == {
+        "actor": "acceptance-engineering",
+        "checkpoint_id": "go-live-streaming-test-v1",
+        "evaluated_at": "2026-08-13T12:00:00Z",
+        "prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/",
+    }
     assert output.read_bytes() == b'{"plan_sha256":"' + b"a" * 64 + b'","state":"accepted"}'
     assert capsys.readouterr().out == output.read_text() + "\n"
     assert response.close_count == 1
+
+
+@pytest.mark.parametrize(
+    "facts_body",
+    [
+        '{"actor":"acceptance-engineering"}',
+        '{"actor":"acceptance-engineering","evaluated_at":"2026-08-13T12:00:00Z","extra":true}',
+        '{"actor":"acceptance-engineering","evaluated_at":1}',
+    ],
+)
+def test_cli_plan_rejects_nonexact_review_facts_before_network(monkeypatch, tmp_path, facts_body):
+    facts = tmp_path / "facts.json"
+    facts.write_text(facts_body, encoding="utf-8")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_API_TOKEN", "api-token")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_URI", "http://checkpoint-retention:8080")
+    monkeypatch.setattr(retention, "_open", lambda *_args, **_kwargs: pytest.fail("network attempted"))
+
+    code = retention.main(
+        [
+            "plan",
+            "--checkpoint-id",
+            "go-live-streaming-test-v1",
+            "--prefix",
+            "streaming_test/550e8400-e29b-41d4-a716-446655440000/",
+            "--facts",
+            str(facts),
+            "--output",
+            str(tmp_path / "plan.json"),
+        ]
+    )
+
+    assert code == 2
 
 
 @pytest.mark.parametrize(

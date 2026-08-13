@@ -13,6 +13,7 @@ from scripts.checkpoints.records import (
     canonical_json_bytes,
     canonical_records,
     decode_exact_json,
+    decode_plan_artifact,
     inventory_sha256,
     shard_inventory,
 )
@@ -126,3 +127,53 @@ def test_manifest_shards_are_bounded_complete_and_stable():
 
     with pytest.raises(RecordFailure, match="record_exceeds_shard_bound"):
         shard_inventory((_record("x" * 400, "a" * 32, 1),), max_bytes=128)
+
+
+def test_plan_artifact_round_trip_decoder_preserves_exact_body_shards_and_digest():
+    shards = shard_inventory((_record("state/0", "a" * 32, 7),), max_bytes=1_048_576)
+    summary = {
+        "actor": "acceptance-engineering",
+        "checkpoint_id": "go-live-streaming-test-v1",
+        "decision": "eligible",
+        "inventory": {"sha256": inventory_sha256(shards[0].records)},
+        "manifest_shards": [shards[0].sha256],
+        "policy_sha256": "b" * 64,
+        "prefix": PREFIX,
+    }
+    body = canonical_json_bytes(
+        {
+            "schema_version": 1,
+            "shards": [[dict(record.as_json()) for record in shards[0].records]],
+            "summary": summary,
+        },
+        max_bytes=65_536,
+    )
+
+    decoded = decode_plan_artifact(body, max_body_bytes=65_536, max_shard_bytes=1_048_576)
+
+    assert decoded.body == body
+    assert decoded.sha256 == __import__("hashlib").sha256(body).hexdigest()
+    assert decoded.shards == shards
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        lambda value: value.update(extra=True),
+        lambda value: value["shards"].append(value["shards"][0]),
+        lambda value: value["summary"].update(manifest_shards=["f" * 64]),
+        lambda value: value["shards"][0][0].update(size_bytes=0),
+    ],
+)
+def test_plan_artifact_decoder_rejects_shape_digest_and_record_ambiguity(mutation):
+    shard = shard_inventory((_record("state/0", "a" * 32, 7),), max_bytes=1_048_576)[0]
+    value = {
+        "schema_version": 1,
+        "shards": [[dict(record.as_json()) for record in shard.records]],
+        "summary": {"manifest_shards": [shard.sha256]},
+    }
+    mutation(value)
+    body = canonical_json_bytes(value, max_bytes=65_536)
+
+    with pytest.raises(RecordFailure):
+        decode_plan_artifact(body, max_body_bytes=65_536, max_shard_bytes=1_048_576)

@@ -139,7 +139,6 @@ class OperationManager:
             raise OperationFailure("revalidation_failed") from None
         if (
             not isinstance(current, PlanArtifact)
-            or current.sha256 != request.plan_sha256
             or current.summary.get("decision") != "eligible"
             or current.summary.get("policy_sha256") != self._policy_sha256
             or current.summary.get("prefix") != request.confirm_prefix

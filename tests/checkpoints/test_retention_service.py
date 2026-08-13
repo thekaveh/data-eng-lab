@@ -4,6 +4,7 @@ import importlib
 import json
 import traceback
 import types
+from datetime import datetime, timezone
 
 import pytest
 
@@ -36,8 +37,9 @@ def _headers(body: bytes, token="api-token"):
 
 
 def test_import_has_no_network_or_server_side_effect(monkeypatch):
+    module = _service()
     monkeypatch.setattr("socket.socket", lambda *_args, **_kwargs: pytest.fail("import opened socket"))
-    module = importlib.reload(_service())
+    module = importlib.reload(module)
     assert callable(module.create_server)
 
 
@@ -257,3 +259,139 @@ def test_runtime_backend_refuses_destructive_route_while_disabled():
         {"confirm_prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/", "plan_sha256": "a" * 64},
         "550e8400-e29b-41d4-a716-446655440000",
     ) == {"state": "refused", "refusal_codes": ["destructive_disabled"]}
+
+
+def test_runtime_backend_routes_one_exact_plan_and_prepare_with_server_owned_operation_id(monkeypatch):
+    module = _service()
+    calls = []
+    artifact = types.SimpleNamespace(
+        body=b'{"schema_version":1,"shards":[],"summary":{"decision":"eligible"}}',
+        sha256="a" * 64,
+    )
+
+    class Planner:
+        def plan(self, request):
+            calls.append(("plan", request))
+            return artifact
+
+    class Operations:
+        def prepare(self, request):
+            calls.append(("prepare", request))
+            return types.SimpleNamespace(
+                body=b'{"operation_id":"550e8400-e29b-41d4-a716-446655440000","state":"prepared"}'
+            )
+
+    decoded = object()
+    monkeypatch.setattr(module, "decode_plan_artifact", lambda body, **_bounds: decoded, raising=False)
+    backend = module.RuntimeBackend(
+        gateway=types.SimpleNamespace(probe_capabilities=lambda: {"automatic_apply": False}),
+        leases=object(),
+        planner=Planner(),
+        operations=Operations(),
+        policy=types.SimpleNamespace(entries={}),
+        destructive_enabled=False,
+        now=lambda: datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc),
+        operation_id=lambda: "550e8400-e29b-41d4-a716-446655440000",
+    )
+
+    planned = backend.invoke(
+        "plan",
+        {
+            "actor": "acceptance-engineering",
+            "checkpoint_id": "go-live-streaming-test-v1",
+            "evaluated_at": "2026-08-13T12:00:00Z",
+            "prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/",
+        },
+        None,
+    )
+    prepared = backend.invoke(
+        "prepare",
+        {
+            "actor": "acceptance-engineering",
+            "plan": json.loads(artifact.body),
+            "plan_sha256": "a" * 64,
+            "review": "review-86",
+        },
+        None,
+    )
+
+    assert planned == json.loads(artifact.body)
+    assert prepared == {
+        "operation_id": "550e8400-e29b-41d4-a716-446655440000",
+        "state": "prepared",
+    }
+    assert calls[0][0] == "plan"
+    assert calls[0][1].evaluated_at == datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc)
+    assert calls[1][0] == "prepare"
+    assert calls[1][1].artifact is decoded
+    assert calls[1][1].operation_id == "550e8400-e29b-41d4-a716-446655440000"
+
+
+def test_runtime_backend_bulk_plan_returns_registry_ordered_bounded_refusals(monkeypatch):
+    module = _service()
+    entries = {
+        "static": types.SimpleNamespace(checkpoint_id="static", prefix="events/"),
+        "dynamic": types.SimpleNamespace(checkpoint_id="dynamic", prefix="streaming_test/{run_uuid}/"),
+    }
+    monkeypatch.setattr(module, "_policy_digest", lambda _policy: "d" * 64)
+
+    class Planner:
+        def plan(self, request):
+            if request.checkpoint_id == "static":
+                raise module.PlanFailure("inventory_empty")
+            raise AssertionError("dynamic template must not be inventoried")
+
+    backend = module.RuntimeBackend(
+        gateway=types.SimpleNamespace(probe_capabilities=lambda: {"automatic_apply": False}),
+        leases=object(),
+        planner=Planner(),
+        operations=object(),
+        policy=types.SimpleNamespace(entries=entries),
+        destructive_enabled=False,
+        now=lambda: datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc),
+    )
+
+    result = backend.invoke(
+        "plan",
+        {"actor": "airflow-dry-run", "checkpoint_ids": ["static", "dynamic"]},
+        None,
+    )
+
+    assert result == {
+        "plans": [
+            {
+                "checkpoint_id": "static",
+                "decision": "refused",
+                "inventory": {"object_count": 0, "total_bytes": 0},
+                "policy_sha256": "d" * 64,
+                "refusal_codes": ["inventory_empty"],
+            },
+            {
+                "checkpoint_id": "dynamic",
+                "decision": "refused",
+                "inventory": {"object_count": 0, "total_bytes": 0},
+                "policy_sha256": "d" * 64,
+                "refusal_codes": ["concrete_prefix_required"],
+            },
+        ],
+        "state": "accepted",
+    }
+
+
+def test_build_runtime_wires_live_revalidation_and_exact_runtime_clock(monkeypatch):
+    module = _service()
+    from pathlib import Path
+
+    from scripts.checkpoints.policy import load_policy
+
+    policy = load_policy(Path(__file__).resolve().parents[2] / "checkpoints" / "retention-policy.yaml")
+    client = types.SimpleNamespace(close=lambda: None)
+    monkeypatch.setenv("MINIO_RETENTION_ACCESS_KEY", "retention-user")
+    monkeypatch.setenv("MINIO_RETENTION_SECRET_KEY", "retention-secret")
+    monkeypatch.setattr(module, "load_policy", lambda _path: policy)
+    monkeypatch.setattr(module, "build_s3_client", lambda *_args: client)
+
+    backend = module.build_runtime()
+
+    assert backend._now is module._now
+    assert callable(backend._operations._revalidate)

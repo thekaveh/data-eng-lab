@@ -171,6 +171,82 @@ def decode_exact_json(
     return decoded
 
 
+def decode_plan_artifact(
+    body: bytes,
+    *,
+    max_body_bytes: int = _MAX_JSON_BYTES,
+    max_shard_bytes: int = 1_048_576,
+) -> PlanArtifact:
+    """Reconstruct one canonical plan artifact without trusting caller objects."""
+
+    if type(body) is not bytes or type(max_body_bytes) is not int or len(body) > max_body_bytes:
+        raise RecordFailure("plan_body_invalid")
+
+    def pairs(values: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in values:
+            if key in result:
+                raise RecordFailure("json_duplicate_key")
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(body.decode("utf-8"), object_pairs_hook=pairs)
+        if (
+            not isinstance(value, dict)
+            or set(value) != {"schema_version", "shards", "summary"}
+            or value["schema_version"] != 1
+            or not isinstance(value["summary"], dict)
+            or not isinstance(value["shards"], list)
+            or not value["shards"]
+        ):
+            raise RecordFailure("plan_shape_invalid")
+        if canonical_json_bytes(value, max_bytes=max_body_bytes) != body:
+            raise RecordFailure("plan_canonical_invalid")
+        shards: list[ManifestShard] = []
+        for index, raw_shard in enumerate(value["shards"]):
+            if not isinstance(raw_shard, list) or not raw_shard:
+                raise RecordFailure("plan_shards_invalid")
+            records: list[ObjectRecord] = []
+            for raw_record in raw_shard:
+                if not isinstance(raw_record, dict) or set(raw_record) != {
+                    "etag",
+                    "key",
+                    "last_modified",
+                    "size_bytes",
+                }:
+                    raise RecordFailure("object_record_invalid")
+                timestamp = _parse_utc(raw_record["last_modified"])
+                if timestamp is None:
+                    raise RecordFailure("object_timestamp_invalid")
+                records.append(
+                    ObjectRecord(
+                        raw_record["key"],
+                        raw_record["etag"],
+                        raw_record["size_bytes"],
+                        timestamp,
+                    )
+                )
+            ordered = canonical_records(records)
+            if tuple(records) != ordered:
+                raise RecordFailure("plan_shard_order_invalid")
+            shard_body = canonical_json_bytes(raw_shard, max_bytes=max_shard_bytes)
+            shards.append(ManifestShard(index, ordered, shard_body, hashlib.sha256(shard_body).hexdigest()))
+        expected = value["summary"].get("manifest_shards")
+        if not isinstance(expected, list) or expected != [shard.sha256 for shard in shards]:
+            raise RecordFailure("plan_manifest_mismatch")
+        return PlanArtifact(
+            value["summary"],
+            tuple(shards),
+            body,
+            hashlib.sha256(body).hexdigest(),
+        )
+    except RecordFailure:
+        raise
+    except (KeyError, TypeError, ValueError, UnicodeError, json.JSONDecodeError, RecursionError):
+        raise RecordFailure("plan_body_invalid") from None
+
+
 def canonical_records(records: Iterable[ObjectRecord]) -> tuple[ObjectRecord, ...]:
     materialized = tuple(records)
     if any(not isinstance(record, ObjectRecord) for record in materialized):
@@ -286,6 +362,15 @@ def _exact_utc(value: object) -> bool:
 
 def _format_utc(value: datetime) -> str:
     return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _parse_utc(value: object) -> datetime | None:
+    if not isinstance(value, str) or re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value) is None:
+        return None
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
 
 
 def _freeze_mapping(value: Mapping[str, object]) -> Mapping[str, object]:

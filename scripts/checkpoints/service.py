@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import re
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,9 +15,10 @@ from typing import Mapping, Sequence
 
 from scripts.checkpoints.leases import AcquireRequest, HeartbeatRequest, LeaseManager, TerminalRequest
 from scripts.checkpoints.metrics import render_metrics
-from scripts.checkpoints.operations import ApplyRequest, OperationManager
-from scripts.checkpoints.planner import RetentionPlanner
+from scripts.checkpoints.operations import ApplyRequest, OperationManager, PrepareRequest
+from scripts.checkpoints.planner import PlanFailure, PlanRequest, RetentionPlanner
 from scripts.checkpoints.policy import CheckpointPolicy, load_policy
+from scripts.checkpoints.records import RecordFailure, canonical_json_bytes, decode_plan_artifact
 from scripts.checkpoints.s3_gateway import S3Gateway, build_s3_client
 
 
@@ -58,6 +60,8 @@ class RuntimeBackend:
         operations: OperationManager,
         policy: CheckpointPolicy,
         destructive_enabled: bool,
+        now=None,
+        operation_id=lambda: str(uuid.uuid4()),
     ) -> None:
         self._gateway = gateway
         self._leases = leases
@@ -65,6 +69,8 @@ class RuntimeBackend:
         self._operations = operations
         self._policy = policy
         self._destructive_enabled = destructive_enabled
+        self._now = now or (lambda: datetime.now(timezone.utc).replace(microsecond=0))
+        self._operation_id = operation_id
         self._client = getattr(gateway, "_client", None)
 
     def health(self) -> dict[str, object]:
@@ -122,9 +128,85 @@ class RuntimeBackend:
         if action == "status":
             status = self._operations.status(operation_id or "")
             return json.loads(status.body)
-        if action in {"plan", "prepare"}:
-            raise ServiceFailure("route_not_ready")
+        if action == "plan":
+            if isinstance(payload, dict) and set(payload) == {"actor", "checkpoint_ids"}:
+                return self._bulk_plan(payload)
+            value = _exact_payload(payload, {"actor", "checkpoint_id", "evaluated_at", "prefix"})
+            artifact = self._planner.plan(
+                PlanRequest(
+                    value["checkpoint_id"],
+                    value["prefix"],
+                    value["actor"],
+                    _parse_utc(value["evaluated_at"]),
+                )
+            )
+            return json.loads(artifact.body)
+        if action == "prepare":
+            if not isinstance(payload, dict) or set(payload) != {"actor", "plan", "plan_sha256", "review"}:
+                raise ServiceFailure("request_invalid")
+            if any(not isinstance(payload[field], str) for field in {"actor", "plan_sha256", "review"}):
+                raise ServiceFailure("request_invalid")
+            try:
+                plan_body = canonical_json_bytes(payload["plan"], max_bytes=_MAX_BODY)
+                artifact = decode_plan_artifact(
+                    plan_body,
+                    max_body_bytes=_MAX_BODY,
+                    max_shard_bytes=getattr(
+                        getattr(self._policy, "bounds", None),
+                        "max_manifest_shard_bytes",
+                        1_048_576,
+                    ),
+                )
+                identifier = self._operation_id()
+                status = self._operations.prepare(
+                    PrepareRequest(identifier, artifact, payload["plan_sha256"], payload["review"], payload["actor"])
+                )
+                result = json.loads(status.body)
+                result["state"] = "prepared"
+                return result
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except (RecordFailure, ValueError, TypeError):
+                raise ServiceFailure("request_invalid") from None
         raise ServiceFailure("route_invalid")
+
+    def _bulk_plan(self, payload: dict[str, object]) -> dict[str, object]:
+        actor = payload.get("actor")
+        checkpoint_ids = payload.get("checkpoint_ids")
+        if (
+            not isinstance(actor, str)
+            or not isinstance(checkpoint_ids, list)
+            or any(not isinstance(item, str) for item in checkpoint_ids)
+            or checkpoint_ids != list(self._policy.entries)
+        ):
+            raise ServiceFailure("request_invalid")
+        evaluated_at = self._now()
+        digest = _policy_digest(self._policy)
+        summaries = []
+        for checkpoint_id in checkpoint_ids:
+            entry = self._policy.entries[checkpoint_id]
+            if "{" in entry.prefix:
+                summaries.append(_refused_summary(checkpoint_id, digest, "concrete_prefix_required"))
+                continue
+            try:
+                artifact = self._planner.plan(PlanRequest(checkpoint_id, entry.prefix, actor, evaluated_at))
+            except PlanFailure as error:
+                summaries.append(_refused_summary(checkpoint_id, digest, error.code))
+            else:
+                summary = artifact.summary
+                summaries.append(
+                    {
+                        "checkpoint_id": checkpoint_id,
+                        "decision": summary["decision"],
+                        "inventory": {
+                            "object_count": summary["inventory"]["object_count"],
+                            "total_bytes": summary["inventory"]["total_bytes"],
+                        },
+                        "policy_sha256": summary["policy_sha256"],
+                        "refusal_codes": list(summary["refusal_codes"]),
+                    }
+                )
+        return {"plans": summaries, "state": "accepted"}
 
     def close(self) -> None:
         close = getattr(self._client, "close", None)
@@ -147,6 +229,11 @@ def build_runtime() -> RuntimeBackend:
         client = build_s3_client(access_key, secret_key)
         gateway = S3Gateway(client, policy)
         planner = RetentionPlanner(gateway, policy)
+
+        def revalidate(prefix: str):
+            matched = policy.match_prefix(prefix)
+            return planner.plan(PlanRequest(matched.checkpoint_id, prefix, "retention-revalidation", _now()))
+
         operations = OperationManager(
             gateway,
             policy_sha256=_policy_digest(policy),
@@ -154,6 +241,7 @@ def build_runtime() -> RuntimeBackend:
             quiescence_seconds=policy.lease.quiescence_seconds,
             max_summary_bytes=policy.bounds.max_summary_bytes,
             max_delete_keys=policy.bounds.max_delete_keys,
+            revalidate=revalidate,
         )
         return RuntimeBackend(
             gateway=gateway,
@@ -162,6 +250,7 @@ def build_runtime() -> RuntimeBackend:
             operations=operations,
             policy=policy,
             destructive_enabled=destructive == "true",
+            now=_now,
         )
     except (KeyboardInterrupt, SystemExit, ServiceFailure):
         raise
@@ -173,6 +262,25 @@ def _policy_digest(policy: CheckpointPolicy) -> str:
     from scripts.checkpoints.policy import _policy_sha256
 
     return _policy_sha256(policy)
+
+
+def _parse_utc(value: object) -> datetime:
+    if not isinstance(value, str) or re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", value) is None:
+        raise ServiceFailure("request_invalid")
+    try:
+        return datetime.strptime(value, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+    except ValueError:
+        raise ServiceFailure("request_invalid") from None
+
+
+def _refused_summary(checkpoint_id: str, policy_sha256: str, code: str) -> dict[str, object]:
+    return {
+        "checkpoint_id": checkpoint_id,
+        "decision": "refused",
+        "inventory": {"object_count": 0, "total_bytes": 0},
+        "policy_sha256": policy_sha256,
+        "refusal_codes": [code],
+    }
 
 
 def _now() -> datetime:

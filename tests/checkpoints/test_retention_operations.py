@@ -227,6 +227,31 @@ def test_apply_rejects_confirmation_or_revalidation_drift_before_head_and_delete
         assert not any(call[0] in {"head", "delete"} for call in gateway.calls)
 
 
+def test_apply_accepts_revalidation_with_new_evaluation_time_when_bound_state_is_identical():
+    artifact = _artifact()
+    current_value = json.loads(artifact.body)
+    current_value["summary"]["evaluated_at"] = "2026-08-13T12:15:00Z"
+    current_body = canonical_json_bytes(current_value)
+    current = PlanArtifact(
+        current_value["summary"],
+        artifact.shards,
+        current_body,
+        __import__("hashlib").sha256(current_body).hexdigest(),
+    )
+    gateway = FakeGateway()
+    _prepared_manager(gateway, artifact)
+    manager = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda _prefix: current,
+    )
+
+    status = manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+
+    assert status.state == "completed"
+
+
 def test_partial_delete_stops_before_later_batch_and_retry_uses_only_original_remaining_set():
     artifact = _artifact()
     gateway = FakeGateway()

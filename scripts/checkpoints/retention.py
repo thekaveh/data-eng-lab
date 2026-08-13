@@ -69,7 +69,16 @@ def main(argv: list[str] | None = None) -> int:
 def _command(namespace) -> tuple[str, dict[str, object] | None, Path | None]:
     if namespace.command == "plan":
         facts = _read_json_file(namespace.facts)
-        payload = {"checkpoint_id": namespace.checkpoint_id, "prefix": namespace.prefix, "facts": facts}
+        if set(facts) != {"actor", "evaluated_at"} or any(
+            not isinstance(facts[field], str) for field in {"actor", "evaluated_at"}
+        ):
+            raise CliFailure("file_invalid", 2)
+        payload = {
+            "actor": facts["actor"],
+            "checkpoint_id": namespace.checkpoint_id,
+            "evaluated_at": facts["evaluated_at"],
+            "prefix": namespace.prefix,
+        }
         return "/v1/plans", payload, namespace.output
     if namespace.command == "prepare":
         plan = _read_json_file(namespace.plan)
