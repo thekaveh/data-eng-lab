@@ -656,11 +656,11 @@ def test_gh_archive_flatten_sessionization_live_acceptance():
             assert first_snapshot_ids["events"] != second_snapshot_ids["events"]
             assert first_snapshot_ids["sessions"] != second_snapshot_ids["sessions"]
             assert first["events"]["schema"] == sorted(
-                ["id:string", "type:string", "actor_login:string", "repo_name:string", "created_at:timestamp"]
+                ["id:string", "type:string", "actor_login:string", "repo_name:string", "created_at:timestamptz"]
             )
             assert first["sessions"]["schema"] == sorted(
-                ["id:string", "type:string", "actor_login:string", "repo_name:string", "created_at:timestamp",
-                 "previous_created_at:timestamp", "new_session:int", "session_id:long"]
+                ["id:string", "type:string", "actor_login:string", "repo_name:string", "created_at:timestamptz",
+                 "previous_created_at:timestamptz", "new_session:int", "session_id:long"]
             )
             assert first["events"]["row_count"] == first["sessions"]["row_count"] == source.row_count
             expected_properties = {

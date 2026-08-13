@@ -401,6 +401,8 @@ def test_live_harness_is_gh_archive_specific_and_never_refreshes_the_pointer():
         '"gh_archive_consumed_fields"',
         '"lakehouse.silver.gh_events"',
         '"lakehouse.silver.gh_sessions"',
+        '"created_at:timestamptz"',
+        '"previous_created_at:timestamptz"',
         "first_snapshot_ids",
         "second_snapshot_ids",
         "date_diff('second', previous_created_at, created_at) > 1800",
