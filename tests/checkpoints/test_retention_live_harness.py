@@ -196,7 +196,7 @@ def test_metrics_and_logs_are_bounded_fixed_and_redacted():
         b"\n".join(
             [
                 b"checkpoint_retention_plans_total 3",
-                b'checkpoint_retention_apply_total{decision="completed"} 1',
+                b'checkpoint_retention_prepared_total{outcome="completed"} 1',
                 b"checkpoint_retention_deleted_objects_total 4",
             ]
         )
@@ -204,8 +204,16 @@ def test_metrics_and_logs_are_bounded_fixed_and_redacted():
     )
     metrics = live._parse_metrics(body)
     assert metrics["checkpoint_retention_plans_total"] == 3
-    assert metrics['checkpoint_retention_apply_total{decision="completed"}'] == 1
-    for invalid in (b"x" * 65_537, body + b"fixture_uuid 1\n", body + b"api-secret-token\n"):
+    assert metrics['checkpoint_retention_prepared_total{outcome="completed"}'] == 1
+    invalid = (
+        b"x" * 65_537,
+        body + b"fixture_uuid 1\n",
+        body + b"api-secret-token\n",
+        body + b'checkpoint_retention_plans_total{prefix="unique-fixture"} 1\n',
+        body + b'checkpoint_retention_prepared_total{outcome="unknown"} 1\n',
+        body + b"checkpoint_retention_plans_total 1\n",
+    )
+    for invalid in invalid:
         with pytest.raises(AssertionError):
             live._parse_metrics(invalid)
 

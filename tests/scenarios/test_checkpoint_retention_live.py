@@ -29,6 +29,43 @@ OWNED_FIXTURE_KEY = re.compile(
     rf"(?:streaming_test/{RUN_UUID.pattern}/(?:state/(?:offset|changed)|commits/0)"
     rf"|unknown-retention/{RUN_UUID.pattern}/sentinel)"
 )
+CHECKPOINT_IDS = {
+    "streaming-events-v1",
+    "streaming-event-windows-v1",
+    "streaming-online-retail-cdc-v1",
+    "streaming-gh-archive-file-v1",
+    "go-live-streaming-test-v1",
+}
+DECISIONS = {"eligible", "refused", "not_ready", "partial", "completed"}
+METRIC_CONTRACTS = {
+    "checkpoint_retention_objects": ("checkpoint_id", CHECKPOINT_IDS),
+    "checkpoint_retention_bytes": ("checkpoint_id", CHECKPOINT_IDS),
+    "checkpoint_retention_eligible_bytes": ("checkpoint_id", CHECKPOINT_IDS),
+    "checkpoint_retention_lease_heartbeat_age_seconds": ("checkpoint_id", CHECKPOINT_IDS),
+    "checkpoint_retention_last_success_unixtime": ("checkpoint_id", CHECKPOINT_IDS),
+    "checkpoint_retention_plans_total": ("decision", DECISIONS),
+    "checkpoint_retention_refusals_total": (
+        "refusal_code",
+        {
+            "lease_active",
+            "lease_missing",
+            "lease_conflicting",
+            "lease_malformed",
+            "retention_quarantine",
+            "inventory_changed",
+            "policy_drift",
+            "revalidation_mismatch",
+        },
+    ),
+    "checkpoint_retention_prepared_total": ("outcome", DECISIONS),
+    "checkpoint_retention_deleted_objects_total": ("outcome", DECISIONS),
+    "checkpoint_retention_deleted_bytes_total": ("outcome", DECISIONS),
+    "checkpoint_retention_partial_total": ("outcome", DECISIONS),
+    "checkpoint_retention_request_failures_total": (
+        "outcome",
+        {"backend_failure", "invalid_request", "unauthorized", "timeout", "capability_failed"},
+    ),
+}
 
 pytestmark = pytest.mark.infra
 
@@ -207,8 +244,11 @@ def _parse_metrics(body: bytes) -> dict[str, int]:
             value = int(raw_value)
         except (UnicodeError, ValueError):
             raise AssertionError("metrics body invalid") from None
-        pattern = r'checkpoint_retention_[a-z_]+(?:\{decision="(?:eligible|refused|completed|partial)"\})?'
-        if not re.fullmatch(pattern, name):
+        match = re.fullmatch(r'([a-z_]+)(?:\{([a-z_]+)="([a-z0-9_-]+)"\})?', name)
+        if match is None or match.group(1) not in METRIC_CONTRACTS:
+            raise AssertionError("metrics name invalid")
+        label_name, allowed_values = METRIC_CONTRACTS[match.group(1)]
+        if match.group(2) is not None and (match.group(2) != label_name or match.group(3) not in allowed_values):
             raise AssertionError("metrics name invalid")
         if value < 0 or name in result:
             raise AssertionError("metrics value invalid")
