@@ -2,6 +2,10 @@
 Documents the scenario's paired Jupyter (`notebook.ipynb`) and Zeppelin (`notebook.zpln`) implementations.
 Both notebooks implement identical logic in PySpark and Scala.
 
+### Checkpoint policy (#85)
+
+Checkpoint ID `streaming-online-retail-cdc-v1` is owned by **Streaming Data Engineering** and classified as a **durable stream**. While active or uncertain it is never age-deleted. Eligibility requires reviewed retirement, a stopped or retired terminal lease, approved recovery, and a 30-day quarantine. CDC recovery is not assumed safe: source retention, event ordering, and sink corrections must be reviewed. Automated deletion remains disabled until issue #86 implements the lease, tombstone, credential, and live-validation boundary.
+
 ## 1. Section map
 
 | Subsection | Scala (Zeppelin) | PySpark (Jupyter) |

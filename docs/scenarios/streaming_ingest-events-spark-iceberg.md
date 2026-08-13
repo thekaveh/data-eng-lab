@@ -20,6 +20,10 @@ Source: `redpanda:9092` → `events` Kafka topic (JSON messages produced by `pro
 
 Checkpoint: `s3a://checkpoints/events`
 
+### Checkpoint policy (#85)
+
+Checkpoint ID `streaming-events-v1` is owned by **Streaming Data Engineering** and classified as a **durable stream**. While active or uncertain it is never age-deleted. Eligibility requires reviewed retirement, a stopped or retired terminal lease, approved recovery, and a 30-day quarantine. Starting from a fresh checkpoint can duplicate append output. Automated deletion remains disabled until issue #86 implements the lease, tombstone, credential, and live-validation boundary.
+
 ### 2.2 Output Tables
 
 | Table | Layer | Key Columns |

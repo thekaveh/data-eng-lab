@@ -42,6 +42,7 @@ scenarios:
     acceptance_contract:
       - Apply ordered CDC micro-batches idempotently to lakehouse.silver.online_retail_cdc through foreachBatch MERGE.
       - Preserve and monitor the owned checkpoint; fail rather than launch a second writer with ambiguous ownership.
+      - "Keep retention scheduling disabled until issue #86 proves leases, scoped credentials, exact deletion, and recovery with disposable live fixtures."
     child_issue: null
   - scenario_id: data_quality-nyc_taxi-spark-iceberg
     classification: existing production DAG
@@ -218,6 +219,7 @@ scenarios:
     acceptance_contract:
       - Consume valid event records continuously into lakehouse.bronze.events with owned checkpoint recovery.
       - Fail malformed input or ambiguous concurrent ownership and preserve equivalent bounded live-test results in both notebooks.
+      - "Keep retention scheduling disabled until issue #86 proves leases, scoped credentials, exact deletion, and recovery with disposable live fixtures."
     child_issue: null
   - scenario_id: streaming_ingest-gh_archive-spark-iceberg
     classification: intentionally notebook-only
@@ -232,6 +234,7 @@ scenarios:
     acceptance_contract:
       - Process the selected immutable file set once without mixing generations and demonstrate checkpointed file discovery.
       - Bound the live-reproducibility run explicitly and preserve Scala/PySpark result parity.
+      - "Keep retention scheduling disabled until issue #86 proves exact-generation leases, scoped credentials, exact deletion, and sink-reset recovery with disposable live fixtures."
     child_issue: null
   - scenario_id: streaming_windows-events-spark-iceberg
     classification: intentionally unscheduled long-running streaming
@@ -247,6 +250,7 @@ scenarios:
     acceptance_contract:
       - Emit only watermark-closed event windows into lakehouse.gold.event_windows with recoverable checkpoint state.
       - Prove late-event and window semantics in bounded live tests without advertising a batch schedule.
+      - "Keep retention scheduling disabled until issue #86 proves leases, scoped credentials, exact deletion, and recovery with disposable live fixtures."
     child_issue: null
   - scenario_id: table_maintenance-nyc_taxi-spark-iceberg
     classification: intentionally notebook-only
