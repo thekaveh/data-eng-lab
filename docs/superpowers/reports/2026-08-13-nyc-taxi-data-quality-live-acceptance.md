@@ -1,6 +1,6 @@
 # NYC Taxi Data Quality Live Acceptance
 
-Status: pending canonical `RUN_INFRA=1` replay.
+Status: accepted by canonical `RUN_INFRA=1` replay on 2026-08-13.
 
 The tracked executable source of truth is
 `tests/scenarios/test_nyc_taxi_data_quality_live.py`. It requires an existing verified tiny NYC
@@ -61,8 +61,8 @@ prerequisite. The harness now passes exact bounded canonical JSON
 stored conf is not exactly that mapping. Production DAG code is unchanged. RED was two command
 contract failures; GREEN is eleven offline harness tests with one expected live skip.
 
-Exact artifact, run, driver, snapshot, fact, query, pointer, and teardown evidence will be appended
-only after the canonical replay succeeds.
+Exact artifact, run, driver, snapshot, fact, query, pointer, and teardown evidence appears in the
+final acceptance section below.
 
 ## Second replay and Bronze timestamp contract diagnosis
 
@@ -173,3 +173,53 @@ to all three immutable query files. The live Trino helper now also preserves onl
 endpoint- and secret-redacted diagnostic tail without exposing the fixed SQL body. The accepted
 partial state remained three deterministic run IDs with exactly eight rows and eight distinct rule
 keys each; no data mutation was needed for this read-only query correction.
+
+## Final canonical acceptance
+
+The corrected harness completed with `23 passed in 535.21s`. Both production DAGs stayed paused
+throughout controlled execution, then returned to their initial states: ETL unpaused and quality
+paused. The owned stack stopped volume-preserving and an all-state Docker probe returned zero
+project containers.
+
+Immutable inputs and artifacts:
+
+- resolver plan `66929ee59188f5a2deb8e29e8593fbe9bad1ad6dc1c4daadd7aeb45b51916189`;
+- publication `16e280e900a84d1b9d617743472b8ada`;
+- manifest SHA-256 `3b678261e704aeb6dee3ae981d699bf81db5696fa9da64abfbce6fe2bd7f6c12`;
+- active pointer ETag `"204190c685574dfa91c330acb64dfb82"`, unchanged before/after;
+- ETL JAR SHA-256 `cc50a4352de371151ddec2dcc66ab73a7e9af3c4b69d8b45fe7471bedef84b74`;
+  and
+- quality JAR SHA-256 `97b7a3d5ba4ad0b059a09b13580b269e2017fd567ca8f5907023aa368727ba5a`.
+
+Airflow and Spark execution evidence:
+
+- ETL runs `manual__2026-08-13T08:58:29.732074+00:00` and
+  `manual__2026-08-13T09:02:33.590601+00:00`;
+- first quality run `manual__2026-08-13T08:59:16.184984+00:00`, replaced under pinned same-date
+  test semantics by `manual__2026-08-13T09:01:06.546338+00:00`;
+- final quality run `manual__2026-08-13T09:02:56.239893+00:00`; and
+- five distinct REST-confirmed terminal drivers: `driver-20260813085834-0000`,
+  `driver-20260813085919-0001`, `driver-20260813090110-0002`,
+  `driver-20260813090236-0003`, and `driver-20260813090259-0004`.
+
+The first accepted source snapshot was `7406749614129383139`; the same-date retry advanced clean
+snapshot `8064938920291405697` to `7700155026136760051` and quarantine snapshot
+`3772650949156990311` to `5928903944035912115` while preserving exact table multisets and the fact
+set. The second matching ETL produced Bronze snapshot `4706204245680639235`. Its final Silver
+properties matched exactly and bound both outputs to deterministic run
+`98db6952f23ca948c98702fbe43873629f138840cecf542f187eab394f517e0e` and that Bronze snapshot.
+
+Final source/output evidence:
+
+- Bronze 2,943,859 rows, checksum `b66a4c29486af278`;
+- clean 2,917,820 rows, checksum `330b0a56eb827b24`;
+- quarantine 26,039 rows, checksum `d4c2179946371cbd`; and
+- facts 40 historical rows, checksum `3129bac3b8f8e3dc`, comprising five deterministic run IDs
+  with exactly eight rows, eight distinct governed rules, and zero rejected statuses each.
+
+The fixed dashboards executed read-only with exact bounded results: latest returned eight rows and
+checksum `ca540881a63a8e67d9a2506ad6740c6c577fbd918677550ba858354dc7994f46`;
+trend returned five rows and checksum
+`9f1e89d454e1de55e6946f9c8721895215def9fa87b57baf36ef3cf205d4ad50`; operator attention
+returned zero rows and canonical empty checksum
+`4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945`.
