@@ -186,3 +186,7 @@ def test_runtime_image_is_pinned_minimal_and_contains_only_required_code():
     assert 'USER 65532:65532' in dockerfile
     assert 'ENTRYPOINT ["/opt/venv/bin/python", "-m", "scripts.checkpoints.service"]' in dockerfile
     assert "COPY infra" not in dockerfile
+
+    dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8").splitlines()
+    assert "!scripts/checkpoints/" in dockerignore
+    assert "!checkpoints/retention-policy.yaml" in dockerignore

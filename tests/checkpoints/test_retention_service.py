@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import traceback
+import types
 
 import pytest
 
@@ -145,3 +146,114 @@ def test_dependency_failure_chain_is_sanitized():
     assert "super-secret" not in rendered
     assert "private.invalid" not in rendered
     assert failure.value.__cause__ is None
+
+
+def test_main_builds_runtime_serves_forever_and_closes_server_and_runtime(monkeypatch):
+    module = _service()
+    events = []
+
+    class Runtime(FakeBackend):
+        def close(self):
+            events.append("runtime.close")
+
+    class Server:
+        def serve_forever(self):
+            events.append("serve")
+
+        def server_close(self):
+            events.append("server.close")
+
+    runtime = Runtime()
+    monkeypatch.setenv("CHECKPOINT_RETENTION_API_TOKEN", "runtime-token")
+    monkeypatch.setattr(module, "build_runtime", lambda: runtime)
+
+    def server_factory(address, application):
+        assert address == ("0.0.0.0", 8080)
+        assert isinstance(application, module.RetentionApplication)
+        return Server()
+
+    monkeypatch.setattr(module, "create_server", server_factory)
+
+    assert module.main() == 0
+    assert events == ["serve", "server.close", "runtime.close"]
+
+
+def test_main_fails_closed_before_server_for_missing_token_and_sanitizes_build_failure(monkeypatch):
+    module = _service()
+    monkeypatch.delenv("CHECKPOINT_RETENTION_API_TOKEN", raising=False)
+    monkeypatch.setattr(module, "build_runtime", lambda: pytest.fail("runtime must not build"))
+    with pytest.raises(module.ServiceFailure, match="configuration_invalid"):
+        module.main()
+
+    monkeypatch.setenv("CHECKPOINT_RETENTION_API_TOKEN", "runtime-token")
+    monkeypatch.setattr(
+        module,
+        "build_runtime",
+        lambda: (_ for _ in ()).throw(RuntimeError("credential=must-not-escape")),
+    )
+    with pytest.raises(module.ServiceFailure, match="runtime_initialization_failed") as failure:
+        module.main()
+    rendered = "".join(traceback.format_exception(failure.value))
+    assert "must-not-escape" not in rendered
+    assert failure.value.__cause__ is None
+
+
+def test_runtime_backend_maps_exact_lease_requests_without_leaking_dependency_objects():
+    module = _service()
+    calls = []
+
+    class Leases:
+        def acquire(self, request):
+            calls.append(("acquire", request))
+            return types.SimpleNamespace(epoch="550e8400-e29b-41d4-a716-446655440000", etag="a" * 32, body=b"{}")
+
+        def heartbeat(self, request):
+            calls.append(("heartbeat", request))
+            return types.SimpleNamespace(epoch=request.epoch, etag="b" * 32, body=b"{}")
+
+        def terminal(self, request):
+            calls.append(("terminal", request))
+            return types.SimpleNamespace(epoch=request.epoch, etag="c" * 32, body=b"{}")
+
+    backend = module.RuntimeBackend(
+        gateway=types.SimpleNamespace(probe_capabilities=lambda: {"automatic_apply": False}),
+        leases=Leases(),
+        planner=object(),
+        operations=object(),
+        policy=types.SimpleNamespace(entries={}),
+        destructive_enabled=False,
+    )
+    acquired = backend.invoke(
+        "lease_acquire",
+        {
+            "checkpoint_id": "streaming-events-v1",
+            "owner_id": "jupyter-notebook",
+            "prefix": "events/",
+            "session_id": "550e8400-e29b-41d4-a716-446655440001",
+            "workload": "streaming_ingest-events-spark-iceberg",
+        },
+        None,
+    )
+    assert acquired == {
+        "epoch": "550e8400-e29b-41d4-a716-446655440000",
+        "etag": "a" * 32,
+        "state": "accepted",
+    }
+    assert calls[0][0] == "acquire"
+
+
+def test_runtime_backend_refuses_destructive_route_while_disabled():
+    module = _service()
+    backend = module.RuntimeBackend(
+        gateway=types.SimpleNamespace(probe_capabilities=lambda: {"automatic_apply": False}),
+        leases=object(),
+        planner=object(),
+        operations=object(),
+        policy=types.SimpleNamespace(entries={}),
+        destructive_enabled=False,
+    )
+    assert backend.invoke(
+        "apply",
+        {"confirm_prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/", "plan_sha256": "a" * 64},
+        "550e8400-e29b-41d4-a716-446655440000",
+    ) == {"state": "refused", "refusal_codes": ["destructive_disabled"]}

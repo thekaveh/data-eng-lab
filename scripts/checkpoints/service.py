@@ -4,10 +4,20 @@ from __future__ import annotations
 
 import hmac
 import json
+import os
 import re
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 from typing import Mapping, Sequence
+
+from scripts.checkpoints.leases import AcquireRequest, HeartbeatRequest, LeaseManager, TerminalRequest
+from scripts.checkpoints.metrics import render_metrics
+from scripts.checkpoints.operations import ApplyRequest, OperationManager
+from scripts.checkpoints.planner import RetentionPlanner
+from scripts.checkpoints.policy import CheckpointPolicy, load_policy
+from scripts.checkpoints.s3_gateway import S3Gateway, build_s3_client
 
 
 class ServiceFailure(ValueError):
@@ -34,6 +44,162 @@ _POST_ROUTES = {
     "/v1/operations/prepare": "prepare",
 }
 _MAX_BODY = 65_536
+
+
+class RuntimeBackend:
+    """Typed composition adapter between HTTP routes and retention managers."""
+
+    def __init__(
+        self,
+        *,
+        gateway: S3Gateway,
+        leases: LeaseManager,
+        planner: RetentionPlanner,
+        operations: OperationManager,
+        policy: CheckpointPolicy,
+        destructive_enabled: bool,
+    ) -> None:
+        self._gateway = gateway
+        self._leases = leases
+        self._planner = planner
+        self._operations = operations
+        self._policy = policy
+        self._destructive_enabled = destructive_enabled
+        self._client = getattr(gateway, "_client", None)
+
+    def health(self) -> dict[str, object]:
+        capabilities = self._gateway.probe_capabilities()
+        if not isinstance(capabilities, Mapping) or capabilities.get("automatic_apply") is not False:
+            raise ServiceFailure("capability_failed")
+        return {
+            "capability_profile": capabilities.get("profile", "manual-verified-readback"),
+            "destructive_enabled": self._destructive_enabled,
+            "ready": True,
+        }
+
+    def metrics(self) -> bytes:
+        return render_metrics({})
+
+    def invoke(self, action: str, payload: dict[str, object] | None, operation_id: str | None):
+        if action == "lease_acquire":
+            value = _exact_payload(payload, {"checkpoint_id", "owner_id", "prefix", "session_id", "workload"})
+            result = self._leases.acquire(
+                AcquireRequest(
+                    value["checkpoint_id"],
+                    value["prefix"],
+                    value["workload"],
+                    value["owner_id"],
+                    value["session_id"],
+                )
+            )
+            return _lease_response(result)
+        if action == "lease_heartbeat":
+            value = _exact_payload(payload, {"checkpoint_id", "epoch", "prefix"})
+            result = self._leases.heartbeat(HeartbeatRequest(value["checkpoint_id"], value["prefix"], value["epoch"]))
+            return _lease_response(result)
+        if action == "lease_terminal":
+            value = _exact_payload(payload, {"checkpoint_id", "epoch", "evidence", "prefix", "state"})
+            if not isinstance(value["evidence"], Mapping):
+                raise ServiceFailure("request_invalid")
+            result = self._leases.terminal(
+                TerminalRequest(
+                    value["checkpoint_id"],
+                    value["prefix"],
+                    value["epoch"],
+                    value["state"],
+                    value["evidence"],
+                )
+            )
+            return _lease_response(result)
+        if action == "apply":
+            if not self._destructive_enabled:
+                return {"state": "refused", "refusal_codes": ["destructive_disabled"]}
+            value = _exact_payload(payload, {"confirm_prefix", "plan_sha256"})
+            status = self._operations.apply(
+                ApplyRequest(operation_id or "", value["plan_sha256"], value["confirm_prefix"])
+            )
+            return json.loads(status.body)
+        if action == "status":
+            status = self._operations.status(operation_id or "")
+            return json.loads(status.body)
+        if action in {"plan", "prepare"}:
+            raise ServiceFailure("route_not_ready")
+        raise ServiceFailure("route_invalid")
+
+    def close(self) -> None:
+        close = getattr(self._client, "close", None)
+        if callable(close):
+            close()
+
+
+def build_runtime() -> RuntimeBackend:
+    access_key = _required_environment("MINIO_RETENTION_ACCESS_KEY")
+    secret_key = _required_environment("MINIO_RETENTION_SECRET_KEY")
+    endpoint = os.environ.get("MINIO_ENDPOINT", "http://minio:9000")
+    if endpoint != "http://minio:9000":
+        raise ServiceFailure("configuration_invalid")
+    destructive = os.environ.get("DESTRUCTIVE_ENABLED", "false")
+    if destructive not in {"false", "true"}:
+        raise ServiceFailure("configuration_invalid")
+    policy_path = Path(os.environ.get("CHECKPOINT_RETENTION_POLICY", "/workspace/checkpoints/retention-policy.yaml"))
+    try:
+        policy = load_policy(policy_path)
+        client = build_s3_client(access_key, secret_key)
+        gateway = S3Gateway(client, policy)
+        planner = RetentionPlanner(gateway, policy)
+        operations = OperationManager(
+            gateway,
+            policy_sha256=_policy_digest(policy),
+            now=_now,
+            quiescence_seconds=policy.lease.quiescence_seconds,
+            max_summary_bytes=policy.bounds.max_summary_bytes,
+            max_delete_keys=policy.bounds.max_delete_keys,
+        )
+        return RuntimeBackend(
+            gateway=gateway,
+            leases=LeaseManager(gateway, policy, now=_now),
+            planner=planner,
+            operations=operations,
+            policy=policy,
+            destructive_enabled=destructive == "true",
+        )
+    except (KeyboardInterrupt, SystemExit, ServiceFailure):
+        raise
+    except BaseException:
+        raise ServiceFailure("runtime_initialization_failed") from None
+
+
+def _policy_digest(policy: CheckpointPolicy) -> str:
+    from scripts.checkpoints.policy import _policy_sha256
+
+    return _policy_sha256(policy)
+
+
+def _now() -> datetime:
+    return datetime.now(timezone.utc).replace(microsecond=0)
+
+
+def _required_environment(name: str) -> str:
+    value = os.environ.get(name)
+    if not isinstance(value, str) or not value or len(value.encode("utf-8")) > 256:
+        raise ServiceFailure("configuration_invalid")
+    return value
+
+
+def _exact_payload(payload: object, fields: set[str]) -> dict[str, object]:
+    if not isinstance(payload, dict) or set(payload) != fields:
+        raise ServiceFailure("request_invalid")
+    if any(not isinstance(payload[field], str) for field in fields - {"evidence"}):
+        raise ServiceFailure("request_invalid")
+    return payload
+
+
+def _lease_response(result: object) -> dict[str, object]:
+    epoch = getattr(result, "epoch", None)
+    etag = getattr(result, "etag", None)
+    if not isinstance(epoch, str) or not isinstance(etag, str):
+        raise ServiceFailure("response_invalid")
+    return {"epoch": epoch, "etag": etag, "state": "accepted"}
 
 
 class RetentionApplication:
@@ -223,3 +389,41 @@ def _check_structure(value: object, *, depth: int, nodes: list[int]) -> None:
     elif isinstance(value, list):
         for item in value:
             _check_structure(item, depth=depth + 1, nodes=nodes)
+
+
+def main() -> int:
+    token = _required_environment("CHECKPOINT_RETENTION_API_TOKEN")
+    runtime = None
+    server = None
+    primary: BaseException | None = None
+    try:
+        try:
+            runtime = build_runtime()
+        except (KeyboardInterrupt, SystemExit, ServiceFailure):
+            raise
+        except BaseException:
+            raise ServiceFailure("runtime_initialization_failed") from None
+        server = create_server(("0.0.0.0", 8080), RetentionApplication(runtime, token=token))
+        server.serve_forever()
+    except KeyboardInterrupt:
+        return 0
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        for target in (server, runtime):
+            close = getattr(target, "server_close" if target is server else "close", None)
+            if callable(close):
+                try:
+                    close()
+                except (KeyboardInterrupt, SystemExit):
+                    if primary is None:
+                        raise
+                except BaseException:
+                    if primary is None:
+                        raise ServiceFailure("runtime_close_failed") from None
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
