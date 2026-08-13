@@ -32,6 +32,30 @@ _PAGE_LIMIT = 100
 _MAX_RUNS = 1000
 _MAX_REQUESTS = 10
 _MAX_POINTER_BYTES = 1 << 20
+BRONZE_SCHEMA = sorted(
+    (
+        "VendorID:long",
+        "tpep_pickup_datetime:timestamp",
+        "tpep_dropoff_datetime:timestamp",
+        "passenger_count:double",
+        "trip_distance:double",
+        "RatecodeID:double",
+        "store_and_fwd_flag:string",
+        "PULocationID:long",
+        "DOLocationID:long",
+        "payment_type:long",
+        "fare_amount:double",
+        "extra:double",
+        "mta_tax:double",
+        "tip_amount:double",
+        "tolls_amount:double",
+        "improvement_surcharge:double",
+        "total_amount:double",
+        "congestion_surcharge:double",
+        "airport_fee:double",
+        "trip_date:date",
+    )
+)
 
 pytestmark = pytest.mark.infra
 
@@ -395,6 +419,11 @@ def _snapshot_table(table: str) -> dict:
     return module.snapshot_table(table)
 
 
+def _assert_bronze_schema(snapshot: dict) -> None:
+    if snapshot.get("schema") != BRONZE_SCHEMA:
+        raise AssertionError("Bronze catalog schema does not match the exact producer/quality contract")
+
+
 def _snapshot_id(namespace: str, table: str) -> str:
     rows = _trino(
         f'SELECT snapshot_id FROM lakehouse.{namespace}."{table}$snapshots" '
@@ -471,6 +500,7 @@ def test_nyc_taxi_data_quality_live_acceptance():
                 "nyc_taxi_etl", first_logical, baseline=baseline["nyc_taxi_etl"], owned=owned["nyc_taxi_etl"]
             )
             owned["nyc_taxi_etl"].add(etl_run_1)
+            _assert_bronze_schema(_snapshot_table("lakehouse.bronze.nyc_taxi_trips"))
             quality_run_1, quality_driver_1 = _execute_owned_run(
                 "nyc_taxi_data_quality",
                 first_logical,
@@ -733,6 +763,16 @@ def test_owned_run_inventory_requires_exact_tiny_conf():
     for conf in ({}, None, {"dataset_scale": "small"}, {"dataset_scale": "tiny", "extra": True}):
         with pytest.raises(AssertionError, match="exact tiny"):
             _validate_tiny_run_conf({"conf": conf})
+
+
+def test_live_catalog_contract_requires_exact_ntz_producer_schema():
+    _assert_bronze_schema({"schema": BRONZE_SCHEMA})
+    legacy_utc = [
+        "tpep_pickup_datetime:timestamptz" if value == "tpep_pickup_datetime:timestamp" else value
+        for value in BRONZE_SCHEMA
+    ]
+    with pytest.raises(AssertionError, match="exact producer/quality contract"):
+        _assert_bronze_schema({"schema": legacy_utc})
 
 
 def test_resolver_failure_never_refreshes_or_attempts_a_second_command():

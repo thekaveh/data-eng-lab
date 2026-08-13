@@ -24,8 +24,8 @@ Bronze and both Silver tables preserve these 20 nullable fields in order:
 
 ```text
 VendorID long
-tpep_pickup_datetime timestamp
-tpep_dropoff_datetime timestamp
+tpep_pickup_datetime timestamp_ntz
+tpep_dropoff_datetime timestamp_ntz
 passenger_count double
 trip_distance double
 RatecodeID double
@@ -44,6 +44,10 @@ congestion_surcharge double
 airport_fee double
 trip_date date
 ```
+
+The two source-derived trip timestamps are local civil timestamps and therefore use Spark
+`TimestampNTZType`. Gold logical-date, interval-end, and source-commit fields remain UTC
+`TimestampType` instants.
 
 Rows are clean only when `fare_amount >= 0`, `passenger_count > 0`, and `trip_distance >= 0` all
 evaluate true. Null, NaN, and infinite rule operands are quarantined. Duplicates are preserved, and

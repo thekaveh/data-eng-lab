@@ -2,9 +2,11 @@ package com.thekaveh.dataeng.nyctaxi
 
 import java.nio.file.Files
 import java.sql.Timestamp
+import java.time.LocalDateTime
 
 import com.thekaveh.dataeng.nyctaxi.transforms.TaxiTransforms
-import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.{Row, SparkSession}
+import org.apache.spark.sql.types._
 import org.scalatest.BeforeAndAfterAll
 import org.scalatest.funsuite.AnyFunSuite
 
@@ -20,6 +22,41 @@ class TaxiTransformsSpec extends AnyFunSuite with BeforeAndAfterAll {
   override def afterAll(): Unit = if (spark != null) spark.stop()
 
   private def ts(s: String): Timestamp = Timestamp.valueOf(s)
+
+  test("producer transform preserves the exact TimestampNTZ Bronze contract consumed by quality") {
+    val rawSchema = StructType(Seq(
+      StructField("VendorID", LongType, nullable = true),
+      StructField("tpep_pickup_datetime", TimestampNTZType, nullable = true),
+      StructField("tpep_dropoff_datetime", TimestampNTZType, nullable = true),
+      StructField("passenger_count", DoubleType, nullable = true),
+      StructField("trip_distance", DoubleType, nullable = true),
+      StructField("RatecodeID", DoubleType, nullable = true),
+      StructField("store_and_fwd_flag", StringType, nullable = true),
+      StructField("PULocationID", LongType, nullable = true),
+      StructField("DOLocationID", LongType, nullable = true),
+      StructField("payment_type", LongType, nullable = true),
+      StructField("fare_amount", DoubleType, nullable = true),
+      StructField("extra", DoubleType, nullable = true),
+      StructField("mta_tax", DoubleType, nullable = true),
+      StructField("tip_amount", DoubleType, nullable = true),
+      StructField("tolls_amount", DoubleType, nullable = true),
+      StructField("improvement_surcharge", DoubleType, nullable = true),
+      StructField("total_amount", DoubleType, nullable = true),
+      StructField("congestion_surcharge", DoubleType, nullable = true),
+      StructField("airport_fee", DoubleType, nullable = true)
+    ))
+    val input = spark.createDataFrame(
+      spark.sparkContext.parallelize(Seq(Row(
+        1L, LocalDateTime.parse("2023-01-01T10:00:00"), LocalDateTime.parse("2023-01-01T10:10:00"),
+        2.0d, 1.5d, 1.0d, "N", 10L, 20L, 1L, 8.0d, 0.0d, 0.5d, 1.0d, 0.0d,
+        0.3d, 9.8d, 0.0d, 0.0d
+      ))),
+      rawSchema
+    )
+    val output = TaxiTransforms.clean(input)
+    assert(output.schema == StructType(rawSchema.fields :+
+      StructField("trip_date", DateType, nullable = true)))
+  }
 
   test("drops null pickup + non-positive passengers, adds trip_date") {
     val s = spark

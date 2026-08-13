@@ -99,8 +99,8 @@ timestamp. It validates the table's exact ordered schema below. The current cata
 | Column | Spark type | Nullable |
 |---|---|---|
 | `VendorID` | long | yes |
-| `tpep_pickup_datetime` | timestamp | yes |
-| `tpep_dropoff_datetime` | timestamp | yes |
+| `tpep_pickup_datetime` | timestamp_ntz | yes |
+| `tpep_dropoff_datetime` | timestamp_ntz | yes |
 | `passenger_count` | double | yes |
 | `trip_distance` | double | yes |
 | `RatecodeID` | double | yes |
@@ -124,6 +124,12 @@ information-schema presentation lowercases unquoted identifiers, but the Iceberg
 Spark schema preserve the mixed-case names shown above. Extra, missing,
 reordered, wrongly typed, or differently nullable fields fail before a Silver write. The canonical
 schema JSON is SHA-256 hashed and recorded with each fact.
+
+The two trip timestamps are source-derived local civil times. The NYC Parquet logical annotation
+has no UTC adjustment, so the Spark 4.1 ETL preserves them as `TimestampNTZType`; neither the ETL
+nor this quality application may silently reinterpret them as UTC instants. Operational fact
+timestamps (`logical_date`, `data_interval_end`, and `source_snapshot_committed_at`) remain Spark
+`TimestampType` UTC instants.
 
 Freshness is tied to the matching daily ETL window, not raw-event wall-clock recency. The current
 snapshot commit must be at or after `data_interval_end - 6 hours`. This permits normal scheduler and

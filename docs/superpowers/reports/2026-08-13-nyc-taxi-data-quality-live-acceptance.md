@@ -63,3 +63,23 @@ contract failures; GREEN is eleven offline harness tests with one expected live 
 
 Exact artifact, run, driver, snapshot, fact, query, pointer, and teardown evidence will be appended
 only after the canonical replay succeeds.
+
+## Second replay and Bronze timestamp contract diagnosis
+
+After the tiny-conf correction, the matching ETL completed and committed Bronze snapshot
+`8441725828099085709`. The first quality attempt and its retry both failed before a Silver write
+at `QualityTransforms.assertExactSchema`: Spark 4.1 `DESCRIBE` reported
+`tpep_pickup_datetime` and `tpep_dropoff_datetime` as `timestamp_ntz`, while the quality contract
+incorrectly expected UTC `timestamp`. The source Parquet logical annotations are explicitly not
+UTC-adjusted, and the ETL intentionally preserves those local civil timestamps. The exact worker
+exception was `IllegalArgumentException: NYC Taxi source schema is invalid`.
+
+The failed attempt created only the empty Gold facts table metadata (zero rows and zero snapshots).
+Neither Silver table existed and no fact row was persisted; the Bronze snapshot stayed stable.
+That empty metadata residue is safe because the application validates its exact schema and the
+supported same-logical-date rerun converges through the ordinary MERGE path. The corrected contract
+uses `TimestampNTZType` only for the two source-derived trip fields. Facts logical date, interval
+end, and source snapshot commit fields remain UTC `TimestampType`. Paired producer-transform and
+quality-consumer tests freeze the exact 20-column schema, reject the legacy timestamp type, and the
+live harness checks the actual post-ETL Iceberg schema before starting quality. Diagnostic cleanup
+left zero project containers and preserved all volumes.

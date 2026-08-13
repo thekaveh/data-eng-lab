@@ -83,8 +83,8 @@ object QualityContract {
 
   val bronzeSchema: StructType = StructType(Seq(
     StructField("VendorID", LongType, nullable = true),
-    StructField("tpep_pickup_datetime", TimestampType, nullable = true),
-    StructField("tpep_dropoff_datetime", TimestampType, nullable = true),
+    StructField("tpep_pickup_datetime", TimestampNTZType, nullable = true),
+    StructField("tpep_dropoff_datetime", TimestampNTZType, nullable = true),
     StructField("passenger_count", DoubleType, nullable = true),
     StructField("trip_distance", DoubleType, nullable = true),
     StructField("RatecodeID", DoubleType, nullable = true),

@@ -1,7 +1,7 @@
 package com.thekaveh.dataeng.quality
 
-import java.sql.{Date, Timestamp}
-import java.time.Instant
+import java.sql.Date
+import java.time.{Instant, LocalDateTime}
 
 import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import org.apache.spark.sql.types._
@@ -24,9 +24,9 @@ class QualityTransformsSpec extends AnyFunSuite with BeforeAndAfterAll {
       fare: java.lang.Double,
       passenger: java.lang.Double,
       vendor: java.lang.Long = 1L,
-      pickup: Timestamp = Timestamp.valueOf("2023-01-01 01:00:00")
+      pickup: LocalDateTime = LocalDateTime.parse("2023-01-01T01:00:00")
   ): Row = Row(
-    vendor, pickup, Timestamp.valueOf("2023-01-01 01:10:00"), passenger,
+    vendor, pickup, LocalDateTime.parse("2023-01-01T01:10:00"), passenger,
     1.0d, 1.0d, "N", 10L, 20L, 1L, fare, 0.0d, 0.5d, 1.0d, 0.0d, 0.3d,
     if (fare == null) null else Double.box(fare + 1.8d), 0.0d, 0.0d, Date.valueOf("2023-01-01")
   )
@@ -87,8 +87,11 @@ class QualityTransformsSpec extends AnyFunSuite with BeforeAndAfterAll {
     val missing = StructType(QualityContract.bronzeSchema.fields.dropRight(1))
     val extra = StructType(QualityContract.bronzeSchema.fields :+
       StructField("unexpected", StringType, nullable = true))
+    val legacyUtcTimestamps = StructType(QualityContract.bronzeSchema.fields
+      .updated(1, StructField("tpep_pickup_datetime", TimestampType, nullable = true))
+      .updated(2, StructField("tpep_dropoff_datetime", TimestampType, nullable = true)))
 
-    Seq(reordered, wrongType, wrongCase, wrongNullability, missing, extra).foreach { schema =>
+    Seq(reordered, wrongType, wrongCase, wrongNullability, missing, extra, legacyUtcTimestamps).foreach { schema =>
       assertThrows[IllegalArgumentException](QualityTransforms.assertExactSchema(frame(Seq.empty, schema)))
     }
   }

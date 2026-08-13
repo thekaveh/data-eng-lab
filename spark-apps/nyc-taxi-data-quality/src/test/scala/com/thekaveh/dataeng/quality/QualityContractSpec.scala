@@ -41,8 +41,8 @@ class QualityContractSpec extends AnyFunSuite {
   test("freezes the case-preserving optional Bronze and Silver schema") {
     val expected = Seq(
       "VendorID" -> LongType,
-      "tpep_pickup_datetime" -> TimestampType,
-      "tpep_dropoff_datetime" -> TimestampType,
+      "tpep_pickup_datetime" -> TimestampNTZType,
+      "tpep_dropoff_datetime" -> TimestampNTZType,
       "passenger_count" -> DoubleType,
       "trip_distance" -> DoubleType,
       "RatecodeID" -> DoubleType,
@@ -76,6 +76,9 @@ class QualityContractSpec extends AnyFunSuite {
     )
     assert(QualityContract.factsSchema.fieldNames.toSeq == expectedNames)
     assert(QualityContract.factsSchema("metric_value").dataType == DecimalType(38, 9))
+    assert(QualityContract.factsSchema("logical_date").dataType == TimestampType)
+    assert(QualityContract.factsSchema("data_interval_end").dataType == TimestampType)
+    assert(QualityContract.factsSchema("source_snapshot_committed_at").dataType == TimestampType)
     val nullable = QualityContract.factsSchema.fields.filter(_.nullable).map(_.name).toSet
     assert(nullable == Set("source_snapshot_id", "source_snapshot_committed_at",
       "source_schema_sha256", "metric_numerator", "metric_denominator", "metric_value",

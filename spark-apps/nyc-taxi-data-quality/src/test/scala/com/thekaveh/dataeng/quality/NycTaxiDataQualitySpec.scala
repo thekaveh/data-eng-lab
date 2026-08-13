@@ -1,7 +1,7 @@
 package com.thekaveh.dataeng.quality
 
 import java.sql.{Date, Timestamp}
-import java.time.Instant
+import java.time.{Instant, LocalDateTime}
 
 import scala.collection.mutable.ArrayBuffer
 
@@ -30,7 +30,7 @@ class NycTaxiDataQualitySpec extends AnyFunSuite with BeforeAndAfterAll {
     Instant.parse("2026-08-13T00:10:00Z"), QualityContract.schemaSha256)
 
   private def row(fare: Double, passenger: Double, vendor: Long): Row = Row(
-    vendor, Timestamp.valueOf("2023-01-01 01:00:00"), Timestamp.valueOf("2023-01-01 01:10:00"),
+    vendor, LocalDateTime.parse("2023-01-01T01:00:00"), LocalDateTime.parse("2023-01-01T01:10:00"),
     passenger, 1.0d, 1.0d, "N", 10L, 20L, 1L, fare, 0.0d, 0.5d, 1.0d, 0.0d,
     0.3d, fare + 1.8d, 0.0d, 0.0d, Date.valueOf("2023-01-01")
   )

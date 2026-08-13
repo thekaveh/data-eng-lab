@@ -65,7 +65,7 @@ def test_runbook_documents_exact_schemas_and_operational_commands():
     text = (APP / "README.md").read_text(encoding="utf-8")
     for column in (
         "VendorID long",
-        "tpep_pickup_datetime timestamp",
+        "tpep_pickup_datetime timestamp_ntz",
         "trip_distance double",
         "fare_amount double",
         "trip_date date",
