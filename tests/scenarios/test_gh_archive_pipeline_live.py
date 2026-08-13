@@ -13,6 +13,7 @@ import urllib.request
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import NamedTuple
 from urllib.parse import urlparse
 
 import pytest
@@ -35,6 +36,12 @@ _MAX_RUN_REQUESTS = 10
 _MAX_SOURCE_LINE_BYTES = 1 << 20
 
 pytestmark = pytest.mark.infra
+
+
+class SourceEvidence(NamedTuple):
+    row_count: int
+    distinct_ids: int
+    exact_duplicate_rows: int
 
 
 def _env(key: str, default: str = "") -> str:
@@ -305,7 +312,7 @@ def _pointer_snapshot(client) -> tuple[bytes, str]:
     return body, etag
 
 
-def _source_row_count(client, resolved: dict) -> int:
+def _source_inventory(client, resolved: dict) -> SourceEvidence:
     matches = [
         item for item in resolved["objects"]
         if item["object_name"] == "2023-01-01-0.json.gz"
@@ -341,7 +348,8 @@ def _source_row_count(client, resolved: dict) -> int:
         return value
 
     count = 0
-    event_ids: set[str] = set()
+    event_values: dict[str, tuple[str, str, str, str]] = {}
+    exact_duplicate_rows = 0
     try:
         with gzip.GzipFile(fileobj=io.BytesIO(payload), mode="rb") as stream:
             while True:
@@ -359,9 +367,9 @@ def _source_row_count(client, resolved: dict) -> int:
                 if not isinstance(document, dict):
                     raise AssertionError("GH Archive source record must be an object")
                 event_id = required_string(document, "id")
-                required_string(document, "type")
-                required_string(document, "actor", "login")
-                required_string(document, "repo", "name")
+                event_type = required_string(document, "type")
+                actor_login = required_string(document, "actor", "login")
+                repo_name = required_string(document, "repo", "name")
                 created_at = required_string(document, "created_at")
                 try:
                     parsed_timestamp = datetime.strptime(created_at, "%Y-%m-%dT%H:%M:%SZ")
@@ -371,15 +379,19 @@ def _source_row_count(client, resolved: dict) -> int:
                     ) from error
                 if parsed_timestamp.strftime("%Y-%m-%dT%H:%M:%SZ") != created_at:
                     raise AssertionError("GH Archive created_at must be exact whole-second UTC")
-                if event_id in event_ids:
-                    raise AssertionError("GH Archive source contains a duplicate event ID")
-                event_ids.add(event_id)
+                value = (event_type, actor_login, repo_name, created_at)
+                previous = event_values.get(event_id)
+                if previous is not None and previous != value:
+                    raise AssertionError("GH Archive source contains a conflicting event ID")
+                if previous == value:
+                    exact_duplicate_rows += 1
+                event_values[event_id] = value
                 count += 1
     except (gzip.BadGzipFile, EOFError) as error:
         raise AssertionError("GH Archive source is not a valid gzip stream") from error
     if count <= 0:
         raise AssertionError("GH Archive source must contain at least one event")
-    return count
+    return SourceEvidence(count, len(event_values), exact_duplicate_rows)
 
 
 def _driver_ids() -> set[str]:
@@ -584,7 +596,8 @@ def test_gh_archive_flatten_sessionization_live_acceptance():
                 ("2023-01-01-0.json.gz", "gh_archive_consumed_fields"),
             ]
             assert all(item["size_bytes"] > 0 for item in resolved["objects"])
-            source_rows = _source_row_count(minio, resolved)
+            source = _source_inventory(minio, resolved)
+            assert source.exact_duplicate_rows == 1
 
             _assert_owned_runs(_airflow, window_start, set(), baseline=baseline)
             first_run, first_drivers = _execute_paused_test_run(
@@ -649,7 +662,7 @@ def test_gh_archive_flatten_sessionization_live_acceptance():
                 ["id:string", "type:string", "actor_login:string", "repo_name:string", "created_at:timestamp",
                  "previous_created_at:timestamp", "new_session:int", "session_id:long"]
             )
-            assert first["events"]["row_count"] == first["sessions"]["row_count"] == source_rows
+            assert first["events"]["row_count"] == first["sessions"]["row_count"] == source.row_count
             expected_properties = {
                 "data_eng_lab.dataset": "gh_archive",
                 "data_eng_lab.dataset.scale": "tiny",
@@ -672,9 +685,12 @@ def test_gh_archive_flatten_sessionization_live_acceptance():
                 "date_diff('second', previous_created_at, created_at) <= 1800 AND new_session <> 0 "
                 "THEN 1 ELSE 0 END) FROM lakehouse.silver.gh_sessions"
             )[0]
-            assert int(event_measures[0]) == int(event_measures[1]) == source_rows
+            assert int(event_measures[0]) == source.row_count
+            assert int(event_measures[1]) == source.distinct_ids
+            assert int(event_measures[0]) - int(event_measures[1]) == source.exact_duplicate_rows
             assert int(event_measures[2]) > 0 and event_measures[3] <= event_measures[4]
-            assert int(session_measures[0]) == int(session_measures[1]) == source_rows
+            assert int(session_measures[0]) == source.row_count
+            assert int(session_measures[1]) == source.distinct_ids
             assert int(session_measures[2]) == int(session_measures[3]) > 0
             assert int(session_measures[4]) == int(session_measures[5]) == 0
             assert len(set(first_drivers + second_drivers)) == 4

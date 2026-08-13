@@ -74,10 +74,10 @@
 - [ ] **Step 4: Write failing nested-source and flatten tests**
 
   Construct local Spark frames with `id`, `type`, nested `actor.login`, nested `repo.name`, and
-  `created_at` as strings. Assert exact output schema/order, source-row conservation, unique IDs,
-  preserved duplicate non-key values, input-order independence, and allowed unrelated nested payload
-  fields. Reject absent/wrong source paths, wrong types, null/blank values, duplicate IDs, malformed
-  rows, and empty input.
+  `created_at` as strings. Assert exact output schema/order, multiplicity-aware source-row
+  conservation, preserved identical duplicate IDs, input-order independence, and allowed unrelated
+  nested payload fields. Reject absent/wrong source paths, wrong types, null/blank values,
+  conflicting records sharing an ID, malformed rows, and empty input.
 
   Parameterize timestamp cases so only `2023-01-01T00:00:00Z`-style whole-second UTC passes. Require
   rejection of fractional seconds, `+00:00`, other offsets, missing `Z`, lowercase `z`, whitespace,
@@ -101,8 +101,8 @@
   Assert exact ordered eight-column schema and types; partition by actor and order by
   `(created_at,id)`; simultaneous-event ID tie-breaks; first-row null previous time and session 1;
   1,799/1,800 seconds remain one session; 1,801 seconds starts another; multiple actors restart at
-  1; row/key conservation; repeatability under shuffled input; and exact `integer`/`long` types.
-  Reject null/blank actors, null timestamps/IDs, duplicate IDs, malformed event schema, invalid
+  1; multiset row conservation; repeatability under shuffled input; and exact `integer`/`long`
+  types. Reject null/blank actors, null timestamps/IDs, conflicting records sharing an ID, malformed event schema, invalid
   `previous_created_at` null placement, invalid new-session flags, and discontinuous session IDs.
 
 - [ ] **Step 8: Implement minimal deterministic sessionization**
@@ -133,7 +133,8 @@
 - [ ] **Step 1: Write failing flatten orchestration tests**
 
   With a recording/failing writer require namespace creation, complete input materialization and
-  validation before replacement, exact event table name, exact five properties, schema/rows/key/count
+  validation before replacement, exact event table name, exact five properties,
+  schema/multiplicity-aware-rows/count
   readback, and failure propagation. Require zero writes after argument/source/transform failure and
   failure on write/readback/property mismatch.
 
@@ -167,7 +168,8 @@
 
   Simulate successful flatten followed by session failure. Require the mixed generation to be
   observable through properties and the run to fail. Rerun the same `ResolvedSources` and require
-  both exact keyed row multisets, schemas, counts, session invariants, and properties to converge.
+  both exact multiplicity-aware row multisets, schemas, counts, session invariants, and properties to
+  converge.
   Also inject a first-stage failure and prove sessionization is never invoked by the supported
   orchestration contract.
 
@@ -291,9 +293,10 @@
 - [ ] **Step 3: Add independent immutable-source validation**
 
   Stream each resolver URI from object storage, prove exact byte size and SHA-256, decompress with
-  bounded iteration, parse every JSON object, validate exact consumed paths/types/timestamps/unique
-  IDs, and compute the authoritative source count and deterministic source checksum. Never infer a
-  source count from output tables.
+  bounded iteration, parse every JSON object, validate exact consumed paths/types/timestamps,
+  preserve/count identical duplicate IDs, reject conflicting duplicate IDs, and compute the
+  authoritative source count and deterministic source checksum. Never infer a source count from
+  output tables.
 
 - [ ] **Step 4: Start an exclusively owned canonical stack**
 
@@ -310,8 +313,9 @@
 
 - [ ] **Step 6: Query exact outputs and deterministic rerun**
 
-  Through Trino query exact schemas, unique IDs, strict session invariants, type/session measures,
-  five properties, snapshots, row counts, and deterministic ordered row checksums. Assert independently
+  Through Trino query exact schemas, duplicate multiplicity/distinct-ID measures, strict session
+  invariants, type/session measures, five properties, snapshots, row counts, and deterministic
+  multiplicity-aware row checksums. Assert independently
   `source count == gh_events count == gh_sessions count`. On the second run require identical logical
   counts/measures/checksums and advancing snapshots. Require four distinct Spark drivers total.
 

@@ -102,7 +102,7 @@ class GhArchivePipelineSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(flat.orderBy("id").collect().map(_.getString(0)).toSeq == Seq("1", "2"))
   }
 
-  test("rejects missing wrong null blank duplicate and empty nested source values") {
+  test("rejects missing wrong null blank conflicting-ID and empty nested source values") {
     val valid = nested(Seq(("1", "PushEvent", "alice", "acme/repo", "2023-01-01T00:00:00Z")))
     val invalid = Seq(
       valid.drop("type"),
@@ -167,6 +167,48 @@ class GhArchivePipelineSpec extends AnyFunSuite with BeforeAndAfterAll {
     val forward = GhArchiveTransforms.sessionize(eventRows(rows)).orderBy("id").collect().toSeq
     val reverse = GhArchiveTransforms.sessionize(eventRows(rows.reverse)).orderBy("id").collect().toSeq
     assert(forward == reverse)
+  }
+
+  test("identical duplicate IDs remain distinct through flatten and sessionization") {
+    val duplicated = Seq.fill(2)(
+      ("same", "IssuesEvent", "github-actions[bot]", "Shopify/shopify_python_api",
+        "2023-01-01T00:16:54Z")
+    )
+    val events = GhArchiveTransforms.flatten(nested(duplicated))
+    val sessions = GhArchiveTransforms.sessionize(events)
+    assert(events.count() == 2L)
+    assert(sessions.count() == 2L)
+    val annotations = sessions.select("previous_created_at", "new_session", "session_id")
+      .collect().map(row => (Option(row.getTimestamp(0)), row.getInt(1), row.getLong(2))).toSeq
+    assert(annotations.count(_._1.isEmpty) == 1)
+    assert(annotations.map { case (_, fresh, session) => fresh -> session }.sorted ==
+      Seq(0 -> 1L, 1 -> 1L))
+  }
+
+  test("conflicting records with the same ID fail before any table write") {
+    val resolved = GhArchiveSources.parse(args("tiny", names.take(1)))
+    val conflicting = nested(Seq(
+      ("same", "IssuesEvent", "alice", "a/r", "2023-01-01T00:00:00Z"),
+      ("same", "PushEvent", "alice", "a/r", "2023-01-01T00:00:00Z")
+    ))
+    val writer = new MemoryWriter
+    assertThrows[IllegalArgumentException](GhArchiveFlatten.runResolved(resolved, conflicting, writer))
+    assert(writer.calls.isEmpty)
+  }
+
+  test("duplicate-preserving event and session multisets are stable under shuffle") {
+    val duplicated = Seq(
+      ("same", "IssuesEvent", "alice", "a/r", "2023-01-01T00:00:00Z"),
+      ("same", "IssuesEvent", "alice", "a/r", "2023-01-01T00:00:00Z"),
+      ("later", "PushEvent", "alice", "a/r", "2023-01-01T00:45:00Z")
+    )
+    val forwardEvents = GhArchiveTransforms.flatten(nested(duplicated))
+    val reverseEvents = GhArchiveTransforms.flatten(nested(duplicated.reverse))
+    assert(IcebergTables.sameRows(forwardEvents, reverseEvents))
+    assert(IcebergTables.sameRows(
+      GhArchiveTransforms.sessionize(forwardEvents),
+      GhArchiveTransforms.sessionize(reverseEvents)
+    ))
   }
 
   test("flatten replaces the exact event table and verifies rows schema key and provenance") {

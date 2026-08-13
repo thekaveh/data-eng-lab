@@ -54,16 +54,21 @@ object GhArchiveTransforms {
     require(frame.where(invalid).limit(1).count() == 0, s"$label has null or blank required values")
   }
 
-  private def requireUniqueIds(frame: DataFrame, label: String): Unit =
-    require(frame.groupBy("id").count().where(F.col("count") > 1).limit(1).count() == 0,
-      s"$label has duplicate event IDs")
+  private def requireNoConflictingIds(frame: DataFrame, label: String): Unit = {
+    val flattenedValue = F.struct(
+      F.col("type"), F.col("actor_login"), F.col("repo_name"), F.col("created_at")
+    )
+    require(frame.groupBy("id").agg(F.countDistinct(flattenedValue).as("versions"))
+      .where(F.col("versions") > 1).limit(1).count() == 0,
+      s"$label has conflicting records for the same event ID")
+  }
 
   def validateEvents(frame: DataFrame): Unit = {
     requireNamesAndTypes(frame, EventsSchema, "gh_events")
     require(frame.limit(1).count() > 0, "gh_events must be nonempty")
     requireNonBlank(frame, Seq("id", "type", "actor_login", "repo_name"), "gh_events")
     require(frame.where(F.col("created_at").isNull).limit(1).count() == 0, "gh_events has null timestamps")
-    requireUniqueIds(frame, "gh_events")
+    requireNoConflictingIds(frame, "gh_events")
   }
 
   def flatten(source: DataFrame): DataFrame = {
@@ -83,7 +88,7 @@ object GhArchiveTransforms {
     val selected = projected.select(EventsSchema.fieldNames.map(F.col): _*)
     requireNonBlank(selected, Seq("id", "type", "actor_login", "repo_name"), "GitHub Archive source")
     require(selected.limit(1).count() > 0, "GitHub Archive source must be nonempty")
-    requireUniqueIds(selected, "GitHub Archive source")
+    requireNoConflictingIds(selected, "GitHub Archive source")
     val exact = source.sparkSession.createDataFrame(selected.rdd, EventsSchema)
     validateEvents(exact)
     exact
@@ -115,7 +120,7 @@ object GhArchiveTransforms {
       F.col("session_id").isNull).limit(1).count() == 0, "gh_sessions has null required values")
     require(frame.where(!F.col("new_session").isin(0, 1) || F.col("session_id") < 1L).limit(1).count() == 0,
       "gh_sessions has invalid session values")
-    requireUniqueIds(frame, "gh_sessions")
+    requireNoConflictingIds(frame, "gh_sessions")
     val firstWindow = Window.partitionBy("actor_login").orderBy(F.col("created_at"), F.col("id"))
     val checked = frame.withColumn("expected_row", F.row_number().over(firstWindow))
     require(checked.where(

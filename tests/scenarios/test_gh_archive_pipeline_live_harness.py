@@ -311,9 +311,14 @@ def _event(event_id="1", created_at="2023-01-01T00:00:00Z"):
     }
 
 
-def test_source_row_count_reads_exact_verified_gzip_and_validates_consumed_fields():
-    client, resolved = _source_fixture([_event("1"), _event("2", "2023-01-01T00:00:01Z")])
-    assert live._source_row_count(client, resolved) == 2
+def test_source_inventory_preserves_identical_duplicates_and_counts_them():
+    duplicate = _event("same")
+    client, resolved = _source_fixture(
+        [duplicate, duplicate, _event("other", "2023-01-01T00:00:01Z")]
+    )
+    assert live._source_inventory(client, resolved) == live.SourceEvidence(
+        row_count=3, distinct_ids=2, exact_duplicate_rows=1,
+    )
 
 
 @pytest.mark.parametrize(
@@ -325,23 +330,23 @@ def test_source_row_count_reads_exact_verified_gzip_and_validates_consumed_field
         ([{**_event(), "repo": {}}], "missing repo.name"),
         ([_event(created_at="2023-01-01T00:00:00+00:00")], "whole-second UTC"),
         ([_event(created_at="2023-01-01T00:00:00.000Z")], "whole-second UTC"),
-        ([_event("same"), _event("same")], "duplicate event ID"),
+        ([_event("same"), {**_event("same"), "type": "CreateEvent"}], "conflicting event ID"),
     ],
 )
 def test_source_row_count_rejects_invalid_consumed_values(records, message):
     client, resolved = _source_fixture(records)
     with pytest.raises(AssertionError, match=message):
-        live._source_row_count(client, resolved)
+        live._source_inventory(client, resolved)
 
 
 def test_source_row_count_rejects_size_digest_invalid_gzip_and_duplicate_json_keys():
     client, resolved = _source_fixture([_event()])
     wrong_size = {**resolved, "objects": [{**resolved["objects"][0], "size_bytes": 1}]}
     with pytest.raises(AssertionError, match="size"):
-        live._source_row_count(client, wrong_size)
+        live._source_inventory(client, wrong_size)
     wrong_digest = {**resolved, "objects": [{**resolved["objects"][0], "sha256": "0" * 64}]}
     with pytest.raises(AssertionError, match="digest"):
-        live._source_row_count(client, wrong_digest)
+        live._source_inventory(client, wrong_digest)
 
     invalid = b"not gzip"
     bad_client, bad_resolved = _source_fixture([_event()])
@@ -350,7 +355,7 @@ def test_source_row_count_rejects_size_digest_invalid_gzip_and_duplicate_json_ke
         size_bytes=len(invalid), sha256=hashlib.sha256(invalid).hexdigest()
     )
     with pytest.raises(AssertionError, match="gzip"):
-        live._source_row_count(bad_client, bad_resolved)
+        live._source_inventory(bad_client, bad_resolved)
 
     duplicate = gzip.compress(
         b'{"id":"1","id":"2","type":"PushEvent","actor":{"login":"a"},'
@@ -362,7 +367,7 @@ def test_source_row_count_rejects_size_digest_invalid_gzip_and_duplicate_json_ke
         size_bytes=len(duplicate), sha256=hashlib.sha256(duplicate).hexdigest()
     )
     with pytest.raises(AssertionError, match="duplicate JSON key"):
-        live._source_row_count(duplicate_client, duplicate_resolved)
+        live._source_inventory(duplicate_client, duplicate_resolved)
 
 
 def test_pointer_snapshot_binds_nonempty_body_and_etag():

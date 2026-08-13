@@ -160,8 +160,11 @@ position- or coercion-based parsing. These consumed fields must exist with these
 | `created_at` | string | yes |
 
 The registry schema is deliberately `minimum`, so unrelated GitHub payload fields are allowed and
-ignored. A malformed JSON record, missing or wrongly typed required path, null or blank required
-value, or duplicate `id` rejects the complete stage before any table replacement.
+ignored. A malformed JSON record, missing or wrongly typed required path, or null or blank required
+value rejects the complete stage before any table replacement. Canonical GH Archive data can repeat
+an event. Repeated IDs are accepted only when all five required flattened fields are identical;
+conflicting records sharing an ID reject the stage before replacement. Exact duplicates remain
+distinct rows. `id` is therefore a required source identifier, not a primary key.
 
 `created_at` accepts only the exact whole-second UTC representation
 `yyyy-MM-dd'T'HH:mm:ss'Z'`, for example `2023-01-01T00:17:42Z`. Fractional seconds, numeric offsets,
@@ -180,17 +183,17 @@ The flatten stage deterministically replaces exactly
 
 | Column | Spark type | Nullability | Meaning |
 |---|---|---|---|
-| `id` | string | non-null | unique GitHub event ID |
+| `id` | string | non-null | GitHub source event identifier; not a primary key |
 | `type` | string | non-null | GitHub event type |
 | `actor_login` | string | non-null | `actor.login` |
 | `repo_name` | string | non-null | `repo.name` |
 | `created_at` | timestamp | non-null | strict whole-second UTC event time |
 
-The namespace is exactly `lakehouse.silver`. The output contains one row per valid source record,
-preserves duplicate non-key event values, and has a unique `id`. Before writing, the application
-materializes and validates schema, non-null/blank constraints, ID uniqueness, and a positive row
-count. After replacement it reads the table back and verifies the exact schema, row multiset, key,
-row count, and provenance properties.
+The namespace is exactly `lakehouse.silver`. The output contains one row per valid source record and
+preserves exact duplicate records with multiplicity. Before writing, the application materializes
+and validates schema, non-null/blank constraints, the conflicting-ID guard, and a positive row
+count. After replacement it reads the table back and verifies the exact schema, multiplicity-aware
+row multiset, row count, and provenance properties.
 
 ## 6. Sessionization stage contract
 
@@ -204,13 +207,15 @@ unrelated system properties are allowed. A missing key, an unexpected additional
 before any write to `gh_sessions`.
 
 It then reads `lakehouse.silver.gh_events` and validates the exact flatten schema, non-null/blank
-constraints, unique event IDs, positive row count, and strict timestamp values. It does not read the
-landing objects. This makes the flat Iceberg table the independently testable stage boundary.
+constraints, conflicting-ID guard, positive row count, and strict timestamp values. It does not read
+the landing objects. This makes the flat Iceberg table the independently testable stage boundary.
 
 ### 6.2 Deterministic session semantics
 
 Events are partitioned by `actor_login` and ordered by `(created_at, id)` ascending. The ID
-tie-breaker makes simultaneous events deterministic. For each actor:
+tie-breaker orders distinct simultaneous events. Exact duplicate rows remain tied and
+indistinguishable; their individual physical identity is unspecified, while the complete annotated
+output multiset is deterministic and multiplicity-aware. For each actor:
 
 - the first ordered event has `previous_created_at = null`, `new_session = 1`, and
   `session_id = 1`;
@@ -239,10 +244,11 @@ The sessionization stage deterministically replaces exactly
 | `new_session` | integer | non-null |
 | `session_id` | long | non-null |
 
-The output preserves every flat-event row exactly once and keeps `id` as the unique row key. Before
-writing, the application validates the exact schema, row conservation, keys, ordering-derived
-columns, and a positive row count. After replacement it reads back and verifies the exact schema,
-row multiset, unique key, row count, session invariants, and provenance properties.
+The output preserves every flat-event row exactly once, including exact duplicates. Before writing,
+the application validates the exact schema, multiset row conservation, conflicting-ID guard,
+ordering-derived columns, and a positive row count. After replacement it reads back and verifies the
+exact schema, multiplicity-aware row multiset, row count, session invariants, and provenance
+properties.
 
 ## 7. Provenance and downstream trust
 
@@ -303,10 +309,12 @@ Tests cover:
 - malformed, duplicate, missing, extra, reordered, zero-size, wrong-schema, wrong-digest,
   wrong-UUID, wrong-path, flat-path, and cross-generation inputs;
 - nested source schema, extra payload fields, malformed records, wrong types, missing paths,
-  null/blank values, duplicate IDs, and empty input;
+  null/blank values, preserved identical duplicate IDs, rejected conflicting duplicate IDs, and
+  empty input;
 - exact UTC timestamp acceptance and rejection of fractional, offset, local, whitespace,
   normalized, impossible, and ambiguous forms;
-- exact flatten schema, types, keys, row conservation, and deterministic rows;
+- exact flatten schema, types, conflicting-ID guard, multiplicity-aware row conservation, and
+  deterministic rows;
 - deterministic timestamp/ID ordering, simultaneous events, first event, 1,799-, 1,800-, and
   1,801-second gaps, multiple actors, null actors/timestamps, output types, session continuity, and
   repeatability;
@@ -341,10 +349,11 @@ the hardened exclusive-ownership pattern used by the existing production pipelin
    one flatten driver followed by one sessionization driver. All four drivers across the acceptance
    window must be distinct and terminal `FINISHED` with `success=true`.
 7. Independently read and validate the resolver-verified gzip source objects, including exact object
-   size and SHA-256, strict JSON consumed fields, timestamps, unique IDs, and source row count.
+   size and SHA-256, strict JSON consumed fields, timestamps, exact-duplicate counts, conflicting-ID
+   rejection, and source row count.
 8. Query both Iceberg tables and independently prove `source rows = gh_events rows = gh_sessions
-   rows`, exact schemas, unique IDs, representative type/session measures, all five equal properties,
-   and nonempty results.
+   rows`, exact schemas, duplicate multiplicity/distinct-ID measures, representative type/session
+   measures, all five equal properties, and nonempty results.
 9. After the second run, require identical logical row counts, measures, and deterministic row
    checksums while allowing newer Iceberg snapshot IDs.
 10. Require the active pointer body and ETag to be byte-for-byte unchanged, exactly the two owned

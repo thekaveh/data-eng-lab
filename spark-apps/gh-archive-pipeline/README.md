@@ -15,8 +15,10 @@ converted to `s3a://` only inside the flatten application. There is no flat land
 directory discovery, refresh, `readStream`, or Redpanda dependency.
 
 The required JSON paths `id`, `type`, `actor.login`, `repo.name`, and `created_at` are strings.
-Unrelated payload fields are allowed. Required values are non-null and nonblank, IDs are unique, and
-timestamps must be exact whole-second UTC `yyyy-MM-dd'T'HH:mm:ss'Z'` values.
+Unrelated payload fields are allowed. Required values are non-null and nonblank. Exact duplicate
+flattened records are preserved as distinct rows; conflicting records sharing an ID fail closed, so
+`id` is a source identifier rather than a primary key. Timestamps must be exact whole-second UTC
+`yyyy-MM-dd'T'HH:mm:ss'Z'` values.
 
 ## Outputs
 
