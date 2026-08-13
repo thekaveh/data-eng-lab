@@ -1,0 +1,249 @@
+from __future__ import annotations
+
+import io
+import traceback
+from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pytest
+
+from scripts.checkpoints.policy import load_policy
+from scripts.checkpoints.records import ObjectRecord
+from scripts.checkpoints.s3_gateway import GatewayFailure, S3Gateway, build_s3_client
+
+ROOT = Path(__file__).resolve().parents[2]
+POLICY = load_policy(ROOT / "checkpoints" / "retention-policy.yaml")
+NOW = datetime(2026, 8, 13, 12, 0, 0, tzinfo=timezone.utc)
+RUN_UUID = "550e8400-e29b-41d4-a716-446655440000"
+PREFIX = f"streaming_test/{RUN_UUID}/"
+CONTROL = "_retention/leases/go-live-streaming-test-v1.json"
+
+
+class BoundedBody:
+    def __init__(self, body: bytes, *, close_error: BaseException | None = None):
+        self._stream = io.BytesIO(body)
+        self.close_error = close_error
+        self.read_sizes: list[int] = []
+        self.close_count = 0
+
+    def read(self, size=None):
+        assert isinstance(size, int) and size > 0, "body reads must always be bounded"
+        self.read_sizes.append(size)
+        return self._stream.read(size)
+
+    def close(self):
+        self.close_count += 1
+        if self.close_error is not None:
+            raise self.close_error
+
+
+class FakeS3:
+    def __init__(self):
+        self.pages: list[dict] = []
+        self.objects: dict[str, tuple[bytes, str, datetime]] = {}
+        self.calls: list[tuple[str, dict]] = []
+        self.bodies: list[BoundedBody] = []
+        self.delete_response: dict = {"Deleted": [], "Errors": []}
+
+    def list_objects_v2(self, **request):
+        self.calls.append(("list", request))
+        if not self.pages:
+            return {"IsTruncated": False, "Contents": []}
+        return self.pages.pop(0)
+
+    def get_object(self, **request):
+        self.calls.append(("get", request))
+        body, etag, _modified = self.objects[request["Key"]]
+        stream = BoundedBody(body)
+        self.bodies.append(stream)
+        return {"Body": stream, "ETag": f'"{etag}"', "ContentLength": len(body)}
+
+    def put_object(self, **request):
+        self.calls.append(("put", request))
+        current = self.objects.get(request["Key"])
+        if request.get("IfNoneMatch") == "*" and current is not None:
+            raise RuntimeError("credential=do-not-leak")
+        if "IfMatch" in request and (current is None or request["IfMatch"].strip('"') != current[1]):
+            raise RuntimeError("endpoint=http://secret.invalid")
+        body = bytes(request["Body"])
+        etag = __import__("hashlib").md5(body, usedforsecurity=False).hexdigest()
+        self.objects[request["Key"]] = (body, etag, NOW)
+        return {"ETag": f'"{etag}"'}
+
+    def head_object(self, **request):
+        self.calls.append(("head", request))
+        body, etag, modified = self.objects[request["Key"]]
+        return {"ETag": f'"{etag}"', "ContentLength": len(body), "LastModified": modified}
+
+    def delete_objects(self, **request):
+        self.calls.append(("delete", request))
+        return self.delete_response
+
+
+def _page(*keys: str, truncated: bool = False, token: str | None = None) -> dict:
+    page = {
+        "IsTruncated": truncated,
+        "Contents": [
+            {"Key": key, "ETag": f'"{index + 1:032x}"', "Size": index + 1, "LastModified": NOW}
+            for index, key in enumerate(keys)
+        ],
+    }
+    if token is not None:
+        page["NextContinuationToken"] = token
+    return page
+
+
+def test_inventory_uses_exact_prefix_and_canonical_order_across_pages():
+    client = FakeS3()
+    client.pages = [
+        _page(f"{PREFIX}z", truncated=True, token="page-2"),
+        _page(f"{PREFIX}a"),
+    ]
+
+    records = S3Gateway(client, POLICY, monotonic=lambda: 0.0).inventory(PREFIX)
+
+    assert tuple(record.key for record in records) == (f"{PREFIX}a", f"{PREFIX}z")
+    assert client.calls == [
+        ("list", {"Bucket": "checkpoints", "Prefix": PREFIX, "MaxKeys": 1000}),
+        (
+            "list",
+            {"Bucket": "checkpoints", "Prefix": PREFIX, "MaxKeys": 1000, "ContinuationToken": "page-2"},
+        ),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("pages", "code"),
+    [
+        ([_page(f"{PREFIX}a", truncated=True)], "inventory_token_missing"),
+        (
+            [
+                _page(f"{PREFIX}a", truncated=True, token="same"),
+                _page(f"{PREFIX}b", truncated=True, token="same"),
+            ],
+            "inventory_token_nonprogress",
+        ),
+        (
+            [
+                _page(f"{PREFIX}a", truncated=True, token="page-2"),
+                _page(f"{PREFIX}a"),
+            ],
+            "duplicate_object",
+        ),
+        ([_page("streaming_test/foreign/object")], "inventory_prefix_escape"),
+    ],
+)
+def test_inventory_fails_closed_on_pagination_duplicates_and_prefix_escape(pages, code):
+    client = FakeS3()
+    client.pages = pages
+
+    with pytest.raises(GatewayFailure, match=code):
+        S3Gateway(client, POLICY, monotonic=lambda: 0.0).inventory(PREFIX)
+
+
+def test_inventory_enforces_deadline_object_byte_and_page_bounds():
+    client = FakeS3()
+    client.pages = [_page(f"{PREFIX}a")]
+    clock = iter((0.0, 901.0))
+    with pytest.raises(GatewayFailure, match="gateway_deadline"):
+        S3Gateway(client, POLICY, monotonic=lambda: next(clock)).inventory(PREFIX)
+
+    too_many = FakeS3()
+    too_many.pages = [_page(f"{PREFIX}a", f"{PREFIX}b")]
+    bounded_policy = replace(POLICY, bounds=replace(POLICY.bounds, max_objects=1))
+    with pytest.raises(GatewayFailure, match="inventory_object_bound"):
+        S3Gateway(too_many, bounded_policy, monotonic=lambda: 0.0).inventory(PREFIX)
+
+
+def test_control_reads_are_bounded_closed_and_exact_key_only():
+    client = FakeS3()
+    client.objects[CONTROL] = (b'{"state":"active"}', "a" * 32, NOW)
+    gateway = S3Gateway(client, POLICY, monotonic=lambda: 0.0)
+
+    body, etag = gateway.read_control(CONTROL, max_bytes=64)
+
+    assert body == b'{"state":"active"}'
+    assert etag == "a" * 32
+    assert client.bodies[0].read_sizes == [65]
+    assert client.bodies[0].close_count == 1
+    for key in ("_retention/", "_retention/../events/x", f"{PREFIX}data", "other/control.json"):
+        with pytest.raises(GatewayFailure, match="control_key_invalid"):
+            gateway.read_control(key, max_bytes=64)
+
+
+def test_create_and_replace_use_conditions_and_verify_exact_readback():
+    client = FakeS3()
+    gateway = S3Gateway(client, POLICY, monotonic=lambda: 0.0)
+
+    first_etag = gateway.create_control(CONTROL, b'{"epoch":1}')
+    second_etag = gateway.replace_lease(CONTROL, first_etag, b'{"epoch":2}')
+
+    puts = [request for operation, request in client.calls if operation == "put"]
+    assert puts[0]["IfNoneMatch"] == "*"
+    assert "IfMatch" not in puts[0]
+    assert puts[1]["IfMatch"] == f'"{first_etag}"'
+    assert "IfNoneMatch" not in puts[1]
+    assert second_etag != first_etag
+    assert client.objects[CONTROL][0] == b'{"epoch":2}'
+
+
+def test_head_and_delete_require_every_exact_original_record_result():
+    client = FakeS3()
+    record = ObjectRecord(f"{PREFIX}state", "a" * 32, 4, NOW)
+    client.objects[record.key] = (b"data", record.etag, NOW)
+    gateway = S3Gateway(client, POLICY, monotonic=lambda: 0.0)
+
+    gateway.head_record(record)
+    client.delete_response = {"Deleted": [{"Key": record.key}], "Errors": []}
+    assert gateway.delete_records((record,)) == (record.key,)
+    request = [value for operation, value in client.calls if operation == "delete"][0]
+    assert request == {
+        "Bucket": "checkpoints",
+        "Delete": {"Objects": [{"Key": record.key}], "Quiet": False},
+    }
+
+    client.delete_response = {"Deleted": [], "Errors": [{"Key": record.key, "Code": "Denied"}]}
+    with pytest.raises(GatewayFailure, match="delete_partial"):
+        gateway.delete_records((record,))
+
+    client.delete_response = {"Deleted": [{"Key": record.key}, {"Key": record.key}], "Errors": []}
+    with pytest.raises(GatewayFailure, match="delete_response_invalid"):
+        gateway.delete_records((record,))
+
+
+def test_dependency_and_cleanup_failures_are_bounded_and_never_chain_raw_details():
+    class BrokenS3(FakeS3):
+        def list_objects_v2(self, **_request):
+            raise RuntimeError("credential=super-secret endpoint=http://private.invalid")
+
+    with pytest.raises(GatewayFailure, match="inventory_failed") as failure:
+        S3Gateway(BrokenS3(), POLICY, monotonic=lambda: 0.0).inventory(PREFIX)
+
+    rendered = "".join(traceback.format_exception(failure.value))
+    assert "super-secret" not in rendered
+    assert "private.invalid" not in rendered
+    assert failure.value.__cause__ is None
+
+
+def test_client_factory_pins_origin_config_and_disables_environment_discovery(monkeypatch):
+    captured = {}
+
+    def fake_client(service, **kwargs):
+        captured.update(service=service, **kwargs)
+        return object()
+
+    monkeypatch.setenv("HTTP_PROXY", "http://proxy.invalid")
+    monkeypatch.setenv("AWS_EC2_METADATA_DISABLED", "false")
+    monkeypatch.setattr("scripts.checkpoints.s3_gateway.boto3.client", fake_client)
+
+    build_s3_client("retention-access", "retention-secret")
+
+    assert captured["service"] == "s3"
+    assert captured["endpoint_url"] == "http://minio:9000"
+    assert captured["region_name"] == "us-east-1"
+    assert captured["config"].signature_version == "s3v4"
+    assert captured["config"].s3 == {"addressing_style": "path"}
+    assert captured["config"].connect_timeout == 5
+    assert captured["config"].read_timeout == 10
+    assert captured["config"].proxies == {}
