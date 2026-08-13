@@ -75,7 +75,100 @@ complete_runs AS (
        AND count(DISTINCT f.logical_date) = 1
        AND count(f.data_interval_end) = 8
        AND count(DISTINCT f.data_interval_end) = 1
-       AND count_if(f.status NOT IN ('pass', 'warn')) = 0
+       AND max(f.data_interval_end) = max(f.logical_date) + INTERVAL '1' HOUR
+       AND f.quality_run_id = lower(to_hex(sha256(to_utf8(concat(
+           'nyc_taxi', chr(10),
+           format_datetime(max(f.logical_date), 'yyyy-MM-dd''T''HH:mm:ss''Z'''), chr(10),
+           cast(max(f.source_snapshot_id) AS varchar), chr(10),
+           'nyc_taxi_quality_v1'
+       )))))
+       AND count_if(
+           f.rule_id = 'bronze.source_available.v1'
+           AND f.metric_numerator > 0
+           AND f.metric_denominator IS NULL
+           AND f.metric_value = cast(f.metric_numerator AS decimal(38, 9))
+           AND f.status = 'pass' AND f.severity = 'info' AND f.diagnostic_code = 'ok'
+       ) = 1
+       AND count_if(
+           f.rule_id = 'bronze.schema.v1'
+           AND f.metric_numerator = 20 AND f.metric_denominator = 20
+           AND f.metric_value = cast(1 AS decimal(38, 9))
+           AND f.status = 'pass' AND f.severity = 'info' AND f.diagnostic_code = 'ok'
+       ) = 1
+       AND count_if(
+           f.rule_id = 'bronze.snapshot_freshness.v1'
+           AND f.metric_numerator BETWEEN 0 AND 21600 AND f.metric_denominator = 21600
+           AND f.metric_numerator = date_diff(
+               'second', f.source_snapshot_committed_at, f.data_interval_end
+           )
+           AND f.metric_value = cast(f.metric_numerator AS decimal(38, 9))
+           AND f.status = 'pass' AND f.severity = 'info' AND f.diagnostic_code = 'ok'
+       ) = 1
+       AND count_if(
+           f.rule_id = 'bronze.invalid_ratio.v1'
+           AND f.metric_numerator BETWEEN 0 AND f.metric_denominator
+           AND f.metric_denominator > 0
+           AND f.metric_value = cast(
+               cast(f.metric_numerator AS decimal(38, 9)) / f.metric_denominator AS decimal(38, 9)
+           )
+           AND (
+               (f.metric_value <= cast(0.010000000 AS decimal(38, 9))
+                   AND f.status = 'pass' AND f.severity = 'info' AND f.diagnostic_code = 'ok')
+               OR
+               (f.metric_value > cast(0.010000000 AS decimal(38, 9))
+                   AND f.metric_value <= cast(0.050000000 AS decimal(38, 9))
+                   AND f.status = 'warn' AND f.severity = 'warning'
+                   AND f.diagnostic_code = 'threshold_warn')
+           )
+       ) = 1
+       AND count_if(
+           f.rule_id = 'silver.partition_conservation.v1'
+           AND f.metric_numerator > 0 AND f.metric_numerator = f.metric_denominator
+           AND f.metric_value = cast(1 AS decimal(38, 9))
+           AND f.status = 'pass' AND f.severity = 'info' AND f.diagnostic_code = 'ok'
+       ) = 1
+       AND count_if(
+           f.rule_id = 'silver.clean_nonempty.v1'
+           AND f.metric_numerator > 0 AND f.metric_denominator > 0
+           AND f.metric_value = cast(f.metric_numerator AS decimal(38, 9))
+           AND f.status = 'pass' AND f.severity = 'info' AND f.diagnostic_code = 'ok'
+       ) = 1
+       AND count_if(
+           f.rule_id = 'silver.quarantine_ratio.v1'
+           AND f.metric_numerator BETWEEN 0 AND f.metric_denominator
+           AND f.metric_denominator > 0
+           AND f.metric_value = cast(
+               cast(f.metric_numerator AS decimal(38, 9)) / f.metric_denominator AS decimal(38, 9)
+           )
+           AND (
+               (f.metric_value <= cast(0.010000000 AS decimal(38, 9))
+                   AND f.status = 'pass' AND f.severity = 'info' AND f.diagnostic_code = 'ok')
+               OR
+               (f.metric_value > cast(0.010000000 AS decimal(38, 9))
+                   AND f.metric_value <= cast(0.050000000 AS decimal(38, 9))
+                   AND f.status = 'warn' AND f.severity = 'warning'
+                   AND f.diagnostic_code = 'threshold_warn')
+           )
+       ) = 1
+       AND count_if(
+           f.rule_id = 'silver.output_readback.v1'
+           AND f.metric_numerator = 8 AND f.metric_denominator = 8
+           AND f.metric_value = cast(1 AS decimal(38, 9))
+           AND f.status = 'pass' AND f.severity = 'info' AND f.diagnostic_code = 'ok'
+       ) = 1
+       AND max(CASE WHEN f.rule_id = 'bronze.source_available.v1' THEN f.metric_numerator END)
+           = max(CASE WHEN f.rule_id = 'bronze.invalid_ratio.v1' THEN f.metric_denominator END)
+       AND max(CASE WHEN f.rule_id = 'bronze.source_available.v1' THEN f.metric_numerator END)
+           = max(CASE WHEN f.rule_id = 'silver.partition_conservation.v1' THEN f.metric_numerator END)
+       AND max(CASE WHEN f.rule_id = 'bronze.source_available.v1' THEN f.metric_numerator END)
+           = max(CASE WHEN f.rule_id = 'silver.clean_nonempty.v1' THEN f.metric_denominator END)
+       AND max(CASE WHEN f.rule_id = 'bronze.source_available.v1' THEN f.metric_numerator END)
+           = max(CASE WHEN f.rule_id = 'silver.quarantine_ratio.v1' THEN f.metric_denominator END)
+       AND max(CASE WHEN f.rule_id = 'bronze.invalid_ratio.v1' THEN f.metric_numerator END)
+           = max(CASE WHEN f.rule_id = 'silver.quarantine_ratio.v1' THEN f.metric_numerator END)
+       AND max(CASE WHEN f.rule_id = 'silver.clean_nonempty.v1' THEN f.metric_numerator END)
+           + max(CASE WHEN f.rule_id = 'silver.quarantine_ratio.v1' THEN f.metric_numerator END)
+           = max(CASE WHEN f.rule_id = 'bronze.source_available.v1' THEN f.metric_numerator END)
 )
 SELECT
     quality_run_id,

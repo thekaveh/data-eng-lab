@@ -49,11 +49,32 @@ WHERE f.dataset_id = 'nyc_taxi'
   AND f.upstream_dag_id = 'nyc_taxi_etl'
   AND f.source_table = concat('lakehouse.bronze.', 'nyc_taxi_trips')
   AND f.status IN ('warn', 'fail', 'missing', 'stale')
-  AND f.diagnostic_code IN (
-      'threshold_warn', 'threshold_fail', 'source_missing', 'source_stale',
-      'schema_mismatch', 'partition_mismatch', 'output_empty', 'readback_mismatch'
+  AND (
+      (f.rule_id = 'bronze.source_available.v1' AND (
+          (f.status = 'missing' AND f.severity = 'error' AND f.diagnostic_code = 'source_missing')
+          OR (f.status = 'fail' AND f.severity = 'error'
+              AND f.diagnostic_code IN ('threshold_fail', 'readback_mismatch'))
+      ))
+      OR (f.rule_id = 'bronze.schema.v1'
+          AND f.status = 'fail' AND f.severity = 'error' AND f.diagnostic_code = 'schema_mismatch')
+      OR (f.rule_id = 'bronze.snapshot_freshness.v1'
+          AND f.status = 'stale' AND f.severity = 'error' AND f.diagnostic_code = 'source_stale')
+      OR (f.rule_id = 'bronze.invalid_ratio.v1' AND (
+          (f.status = 'warn' AND f.severity = 'warning' AND f.diagnostic_code = 'threshold_warn')
+          OR (f.status = 'fail' AND f.severity = 'error'
+              AND f.diagnostic_code IN ('threshold_fail', 'readback_mismatch'))
+      ))
+      OR (f.rule_id = 'silver.partition_conservation.v1'
+          AND f.status = 'fail' AND f.severity = 'error' AND f.diagnostic_code = 'partition_mismatch')
+      OR (f.rule_id = 'silver.clean_nonempty.v1'
+          AND f.status = 'fail' AND f.severity = 'error' AND f.diagnostic_code = 'output_empty')
+      OR (f.rule_id = 'silver.quarantine_ratio.v1' AND (
+          (f.status = 'warn' AND f.severity = 'warning' AND f.diagnostic_code = 'threshold_warn')
+          OR (f.status = 'fail' AND f.severity = 'error' AND f.diagnostic_code = 'threshold_fail')
+      ))
+      OR (f.rule_id = 'silver.output_readback.v1'
+          AND f.status = 'fail' AND f.severity = 'error' AND f.diagnostic_code = 'readback_mismatch')
   )
-  AND f.severity = CASE WHEN f.status = 'warn' THEN 'warning' ELSE 'error' END
 ORDER BY f.logical_date DESC,
     CASE f.status
         WHEN 'missing' THEN 4

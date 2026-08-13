@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import re
 from datetime import datetime
 from pathlib import Path
@@ -88,10 +89,23 @@ def _facts_connection(rows):
 def _accepted_rows():
     logical_date = datetime(2026, 8, 13, 10, 0, 0)
     interval_end = datetime(2026, 8, 13, 11, 0, 0)
-    committed_at = datetime(2026, 8, 13, 9, 55, 0)
+    committed_at = datetime(2026, 8, 13, 10, 55, 0)
+    run_id = hashlib.sha256(
+        f"nyc_taxi\n{logical_date.strftime('%Y-%m-%dT%H:%M:%SZ')}\n123\nnyc_taxi_quality_v1".encode()
+    ).hexdigest()
+    metrics = {
+        "bronze.source_available.v1": (100, None, "100.000000000"),
+        "bronze.schema.v1": (20, 20, "1.000000000"),
+        "bronze.snapshot_freshness.v1": (300, 21600, "300.000000000"),
+        "bronze.invalid_ratio.v1": (1, 100, "0.010000000"),
+        "silver.partition_conservation.v1": (100, 100, "1.000000000"),
+        "silver.clean_nonempty.v1": (99, 100, "99.000000000"),
+        "silver.quarantine_ratio.v1": (1, 100, "0.010000000"),
+        "silver.output_readback.v1": (8, 8, "1.000000000"),
+    }
     return [
         (
-            "a" * 64,
+            run_id,
             logical_date,
             interval_end,
             "nyc_taxi",
@@ -106,9 +120,9 @@ def _accepted_rows():
             "nyc_taxi_quality_v1",
             owner,
             metric_name,
-            1,
-            1,
-            "1.000000000",
+            metrics[rule_id][0],
+            metrics[rule_id][1],
+            metrics[rule_id][2],
             warn,
             fail,
             "info",
@@ -121,7 +135,16 @@ def _accepted_rows():
 
 def _complete_run_query():
     prefix = _sql("latest").split("),\nlatest_run AS (", maxsplit=1)[0]
-    return (prefix + ")\nSELECT quality_run_id FROM complete_runs").replace(FACTS, "facts")
+    return (
+        (prefix + ")\nSELECT quality_run_id FROM complete_runs")
+        .replace(FACTS, "facts")
+        .replace("lower(to_hex(sha256(to_utf8(concat(", "sha256(concat(")
+        .replace("'nyc_taxi_quality_v1'\n       )))))", "'nyc_taxi_quality_v1'\n       ))")
+        .replace(
+            "format_datetime(max(f.logical_date), 'yyyy-MM-dd''T''HH:mm:ss''Z''')",
+            "strftime(max(f.logical_date), '%Y-%m-%dT%H:%M:%SZ')",
+        )
+    )
 
 
 @pytest.mark.parametrize("name", QUERY_NAMES)
@@ -142,7 +165,7 @@ def test_latest_returns_the_latest_complete_accepted_eight_fact_set():
     sql = _compact(_sql("latest"))
     for fragment in (
         "having count(*) = 8",
-        "count_if(f.status not in ('pass', 'warn')) = 0",
+        "f.quality_run_id = lower(to_hex(sha256(to_utf8(concat(",
         "order by logical_date desc, source_snapshot_id desc, quality_run_id desc",
         "limit 1",
         "order by f.layer, f.rule_id",
@@ -186,7 +209,7 @@ def test_trend_returns_at_most_ninety_complete_runs_with_exact_measures():
     sql = _compact(_sql("trend"))
     for fragment in (
         "having count(*) = 8",
-        "count_if(f.status not in ('pass', 'warn')) = 0",
+        "f.quality_run_id = lower(to_hex(sha256(to_utf8(concat(",
         "limit 90",
         "order by logical_date desc, source_snapshot_id desc, quality_run_id desc",
         "as source_row_count",
@@ -198,7 +221,7 @@ def test_trend_returns_at_most_ninety_complete_runs_with_exact_measures():
         "as overall_status",
     ):
         assert fragment in sql
-    assert sql.count("decimal(38, 9)") == 2
+    assert sql.count("decimal(38, 9)") >= 2
     assert "count(distinct f.rule_id) = 8" in sql
     assert "count(distinct f.source_snapshot_id) = 1" in sql
 
@@ -211,7 +234,8 @@ def test_operator_attention_is_exact_and_status_ordered():
         "schema_mismatch", "partition_mismatch", "output_empty", "readback_mismatch",
     ):
         assert f"'{diagnostic}'" in sql
-    assert "f.severity = case when f.status = 'warn' then 'warning' else 'error' end" in sql
+    assert "f.rule_id = 'bronze.source_available.v1'" in sql
+    assert "f.status = 'missing' and f.severity = 'error' and f.diagnostic_code = 'source_missing'" in sql
     assert "complete_runs" not in sql and "join complete_runs" not in sql
     assert "limit 100" in sql
     for column in (
@@ -275,8 +299,59 @@ def test_complete_run_cte_rejects_missing_duplicate_and_foreign_rows(mutation):
 
 
 def test_complete_run_cte_admits_only_the_exact_accepted_fact_set():
-    connection = _facts_connection(_accepted_rows())
-    assert connection.execute(_complete_run_query()).fetchall() == [("a" * 64,)]
+    rows = _accepted_rows()
+    connection = _facts_connection(rows)
+    assert connection.execute(_complete_run_query()).fetchall() == [(rows[0][0],)]
+
+
+def test_complete_run_cte_admits_the_exact_warning_band_and_conserved_partition():
+    rows = _accepted_rows()
+    updates = {
+        "bronze.invalid_ratio.v1": (2, 100, "0.020000000", "warning", "warn", "threshold_warn"),
+        "silver.clean_nonempty.v1": (98, 100, "98.000000000", "info", "pass", "ok"),
+        "silver.quarantine_ratio.v1": (2, 100, "0.020000000", "warning", "warn", "threshold_warn"),
+    }
+    for index, row in enumerate(rows):
+        if row[11] in updates:
+            changed = list(row)
+            numerator, denominator, value, severity, status, diagnostic = updates[row[11]]
+            changed[15:18] = [numerator, denominator, value]
+            changed[20:23] = [severity, status, diagnostic]
+            rows[index] = tuple(changed)
+    assert _facts_connection(rows).execute(_complete_run_query()).fetchall() == [(rows[0][0],)]
+
+
+@pytest.mark.parametrize(
+    ("rule_id", "column", "value"),
+    (
+        ("silver.output_readback.v1", 15, 1),
+        ("silver.output_readback.v1", 16, 1),
+        ("silver.output_readback.v1", 17, "0.125000000"),
+        ("bronze.source_available.v1", 15, 99),
+        ("bronze.schema.v1", 15, 19),
+        ("bronze.snapshot_freshness.v1", 16, 1),
+        ("bronze.invalid_ratio.v1", 17, "0.020000000"),
+        ("silver.partition_conservation.v1", 15, 99),
+        ("silver.clean_nonempty.v1", 16, 99),
+        ("silver.quarantine_ratio.v1", 15, 2),
+        ("bronze.schema.v1", 20, "error"),
+        ("bronze.schema.v1", 21, "warn"),
+        ("bronze.schema.v1", 22, "threshold_warn"),
+    ),
+)
+def test_complete_run_cte_rejects_wrong_rule_signal_values(rule_id, column, value):
+    rows = _accepted_rows()
+    index = next(index for index, row in enumerate(rows) if row[11] == rule_id)
+    changed = list(rows[index])
+    changed[column] = value
+    rows[index] = tuple(changed)
+    assert _facts_connection(rows).execute(_complete_run_query()).fetchall() == []
+
+
+def test_complete_run_cte_rejects_run_id_not_bound_to_logical_date_snapshot_and_version():
+    rows = [tuple(("f" * 64) if index == 0 else value for index, value in enumerate(row))
+            for row in _accepted_rows()]
+    assert _facts_connection(rows).execute(_complete_run_query()).fetchall() == []
 
 
 def test_operator_attention_surfaces_a_partial_missing_source_diagnostic():
@@ -298,6 +373,25 @@ def test_operator_attention_surfaces_a_partial_missing_source_diagnostic():
     observed = connection.execute(query).fetchall()
     assert len(observed) == 1
     assert observed[0][4:8] == ("bronze.source_available.v1", "missing", "error", "source_missing")
+
+
+def test_operator_attention_rejects_impossible_rule_status_diagnostic_combinations():
+    row = list(_accepted_rows()[0])
+    row[20] = "warning"
+    row[21] = "warn"
+    row[22] = "threshold_warn"
+    connection = _facts_connection([tuple(row)])
+    query = _sql("operator_attention").replace(FACTS, "facts").replace(
+        "format_datetime(f.logical_date, 'yyyy-MM-dd''T''HH:mm:ss''Z''')",
+        "strftime(f.logical_date, '%Y-%m-%dT%H:%M:%SZ')",
+    )
+    assert connection.execute(query).fetchall() == []
+
+
+def test_spark_failure_injections_never_embed_secret_like_values():
+    source = (ROOT / "spark-apps/nyc-taxi-data-quality/src/test/scala/com/thekaveh/dataeng/quality/"
+              "NycTaxiDataQualitySpec.scala").read_text(encoding="utf-8")
+    assert "secret-" not in source
 
 
 @pytest.mark.parametrize("name", QUERY_NAMES)

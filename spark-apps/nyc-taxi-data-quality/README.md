@@ -101,7 +101,11 @@ it bypasses this serialization boundary.
 The durable dashboard source is the Gold Iceberg table. A run is complete only when it has exactly
 one row for every frozen rule definition, exact rule metadata, and eight non-null equal bindings to
 the expected dataset, upstream DAG, source table, positive snapshot, commit timestamp, logical
-window, and frozen schema fingerprint. These fixed SELECT-only Trino queries are bounded and
+window, and frozen schema fingerprint. The fixed queries also recompute its canonical run ID,
+validate every rule's exact metric/status/severity/diagnostic semantics, and reconcile the source,
+invalid, clean, quarantine, and partition counts. Structurally complete malformed or legacy sets
+are excluded without rewriting Gold history. Operator attention accepts only the closed
+rule/status/diagnostic registry. These fixed SELECT-only Trino queries are bounded and
 deterministically ordered:
 
 - `queries/latest.sql`: latest complete accepted eight-row fact set;

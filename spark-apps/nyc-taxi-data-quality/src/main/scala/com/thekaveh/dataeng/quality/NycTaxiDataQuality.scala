@@ -39,7 +39,7 @@ final class QualityPipeline(store: QualityStore) {
   ): QualityFact = {
     val rule = QualityContract.rules.find(_.ruleId == ruleId)
       .getOrElse(throw new IllegalArgumentException("Quality rule is unavailable"))
-    QualityContract.requireStatusDiagnostic(status, diagnostic)
+    QualityContract.requireRuleStatusDiagnostic(ruleId, status, diagnostic)
     QualityFact(
       QualityContract.qualityRunId(arguments.logicalDate, snapshot.map(_.id)),
       Timestamp.from(arguments.logicalDate), Timestamp.from(arguments.dataIntervalEnd),
@@ -216,7 +216,7 @@ final class QualityPipeline(store: QualityStore) {
       case failure: QualityFailure => diagnosticFailure(arguments, snapshot,
         "silver.output_readback.v1", failure.category, failure.diagnosticCode, failure.getMessage)
     }
-    try controlled("silver_readback", "partition_mismatch", "Silver partition readback failed") {
+    try controlled("silver_readback", "readback_mismatch", "Silver partition readback failed") {
       QualityTransforms.assertPartition(bronze, clean, quarantine)
     } catch {
       case failure: QualityFailure => diagnosticFailure(arguments, snapshot,

@@ -113,6 +113,36 @@ object QualityContract {
     require(valid, "quality status and diagnostic code do not match")
   }
 
+  private val RuleStatusDiagnostics: Set[(String, String, String)] = Set(
+    ("bronze.source_available.v1", "pass", "ok"),
+    ("bronze.source_available.v1", "missing", "source_missing"),
+    ("bronze.source_available.v1", "fail", "threshold_fail"),
+    ("bronze.source_available.v1", "fail", "readback_mismatch"),
+    ("bronze.schema.v1", "pass", "ok"),
+    ("bronze.schema.v1", "fail", "schema_mismatch"),
+    ("bronze.snapshot_freshness.v1", "pass", "ok"),
+    ("bronze.snapshot_freshness.v1", "stale", "source_stale"),
+    ("bronze.invalid_ratio.v1", "pass", "ok"),
+    ("bronze.invalid_ratio.v1", "warn", "threshold_warn"),
+    ("bronze.invalid_ratio.v1", "fail", "threshold_fail"),
+    ("bronze.invalid_ratio.v1", "fail", "readback_mismatch"),
+    ("silver.partition_conservation.v1", "pass", "ok"),
+    ("silver.partition_conservation.v1", "fail", "partition_mismatch"),
+    ("silver.clean_nonempty.v1", "pass", "ok"),
+    ("silver.clean_nonempty.v1", "fail", "output_empty"),
+    ("silver.quarantine_ratio.v1", "pass", "ok"),
+    ("silver.quarantine_ratio.v1", "warn", "threshold_warn"),
+    ("silver.quarantine_ratio.v1", "fail", "threshold_fail"),
+    ("silver.output_readback.v1", "pass", "ok"),
+    ("silver.output_readback.v1", "fail", "readback_mismatch")
+  )
+
+  def requireRuleStatusDiagnostic(ruleId: String, status: String, diagnostic: String): Unit = {
+    requireStatusDiagnostic(status, diagnostic)
+    require(RuleStatusDiagnostics.contains((ruleId, status, diagnostic)),
+      "quality rule status and diagnostic code do not match")
+  }
+
   val bronzeSchema: StructType = StructType(Seq(
     StructField("VendorID", LongType, nullable = true),
     StructField("tpep_pickup_datetime", TimestampNTZType, nullable = true),

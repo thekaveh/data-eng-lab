@@ -211,6 +211,9 @@ class QualityStoreSpec extends AnyFunSuite with BeforeAndAfterAll {
       fact(runId, facts.head.ruleId).copy(diagnosticCode = "source_missing"))))
     assertThrows[IllegalArgumentException](store.mergeFacts(Seq(
       fact(runId, facts.head.ruleId).copy(severity = "error"))))
+    assertThrows[IllegalArgumentException](store.mergeFacts(Seq(
+      fact(runId, "bronze.schema.v1").copy(
+        status = "fail", severity = "error", diagnosticCode = "output_empty"))))
   }
 
   test("literal Iceberg MERGE matches only the composite run and rule key") {

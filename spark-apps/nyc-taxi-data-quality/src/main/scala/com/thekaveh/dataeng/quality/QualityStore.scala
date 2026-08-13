@@ -127,7 +127,7 @@ final class SparkQualityStore(backend: QualityStorageBackend) extends QualitySto
     require(values.forall(value => QualityContract.DiagnosticCodes.contains(value.diagnosticCode)),
       "quality fact diagnostic is invalid")
     values.foreach { value =>
-      QualityContract.requireStatusDiagnostic(value.status, value.diagnosticCode)
+      QualityContract.requireRuleStatusDiagnostic(value.ruleId, value.status, value.diagnosticCode)
       require(value.severity == QualityContract.severity(value.status),
         "quality fact severity is invalid")
     }

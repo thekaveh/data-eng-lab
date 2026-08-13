@@ -271,7 +271,7 @@ class NycTaxiDataQualitySpec extends AnyFunSuite with BeforeAndAfterAll {
 
   test("Spark action and postcheck failures are controlled and persist safe diagnostics") {
     val invalidFailure = new RecordingStore(source = bronze().withColumn(
-      "fare_amount", org.apache.spark.sql.functions.expr("raise_error('secret-invalid-count')").cast("double")
+      "fare_amount", org.apache.spark.sql.functions.expr("raise_error('injected-invalid-count')").cast("double")
     ))
     val invalid = intercept[QualityFailure](new QualityPipeline(invalidFailure).run(Arguments))
     assert(invalid.diagnosticCode == "readback_mismatch")
@@ -283,11 +283,11 @@ class NycTaxiDataQualitySpec extends AnyFunSuite with BeforeAndAfterAll {
         actions += (if (identifier == QualityContract.CleanTable) "readClean" else "readQuarantine")
         val frame = if (identifier == QualityContract.CleanTable) clean else quarantine
         frame.withColumn("fare_amount",
-          org.apache.spark.sql.functions.expr("raise_error('secret-output-count')").cast("double"))
+          org.apache.spark.sql.functions.expr("raise_error('injected-output-count')").cast("double"))
       }
     }
     val output = intercept[QualityFailure](new QualityPipeline(countFailure).run(Arguments))
-    assert(output.diagnosticCode == "partition_mismatch")
+    assert(output.diagnosticCode == "readback_mismatch")
     assert(!output.getMessage.contains("secret"))
     assert(countFailure.facts.map(_.ruleId) == Seq("silver.output_readback.v1"))
 
@@ -296,7 +296,7 @@ class NycTaxiDataQualitySpec extends AnyFunSuite with BeforeAndAfterAll {
       override def captureSource(): Option[SourceSnapshot] = {
         captures += 1
         actions += "captureSource"
-        if (captures == 1) Some(Snapshot) else throw new IllegalStateException("secret-postcheck")
+        if (captures == 1) Some(Snapshot) else throw new IllegalStateException("injected-postcheck")
       }
     }
     val postcheck = intercept[QualityFailure](new QualityPipeline(postcheckFailure).run(Arguments))
