@@ -691,7 +691,8 @@ def test_gh_archive_flatten_sessionization_live_acceptance():
             assert int(event_measures[2]) > 0 and event_measures[3] <= event_measures[4]
             assert int(session_measures[0]) == source.row_count
             assert int(session_measures[1]) == source.distinct_ids
-            assert int(session_measures[2]) == int(session_measures[3]) > 0
+            assert int(session_measures[2]) == int(event_measures[2]) > 0
+            assert int(session_measures[3]) >= int(session_measures[2])
             assert int(session_measures[4]) == int(session_measures[5]) == 0
             assert len(set(first_drivers + second_drivers)) == 4
             assert datetime.fromisoformat(second_run["start_date"]) >= datetime.fromisoformat(first_run["end_date"])

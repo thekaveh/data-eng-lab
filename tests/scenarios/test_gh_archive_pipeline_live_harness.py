@@ -406,6 +406,8 @@ def test_live_harness_is_gh_archive_specific_and_never_refreshes_the_pointer():
         "first_snapshot_ids",
         "second_snapshot_ids",
         "date_diff('second', previous_created_at, created_at) > 1800",
+        "int(session_measures[2]) == int(event_measures[2]) > 0",
+        "int(session_measures[3]) >= int(session_measures[2])",
         "len(set(first_drivers + second_drivers)) == 4",
     ):
         assert value in text
