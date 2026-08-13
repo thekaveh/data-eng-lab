@@ -29,10 +29,10 @@ All notable changes to this project are documented here (Keep a Changelog format
   sizes, gives downstream #83 an exact five-property fail-closed preflight, warns that notebooks are
   not production writers, and replaces report-string acceptance with an executable live lifecycle.
 - The TPC-H star-schema scenario now has a daily operator-owned production DAG and Jenkins-published Scala application. Two live tiny-scale Airflow runs ended in success with Spark `FINISHED` and `success=true`; `dim_customer` and `fct_orders` reproduced identical logical checksums and carry matching scale, plan, publication, and manifest properties for downstream Trino generation checks.
-- All 19 scenarios now have one tested execution-mode contract. The five current production DAGs
-  are `nyc_taxi_etl`, `nyc_taxi_medallion`, `tpch_star_schema`,
-  `movielens_feature_pipeline`, and `gh_archive_flatten_sessionization`; three rows are approved
-  behind child issues, seven remain intentionally
+- All 19 scenarios now have one tested execution-mode contract. Seven current production DAGs
+  cover eight scenarios: `nyc_taxi_etl`, `nyc_taxi_medallion`, `tpch_star_schema`,
+  `movielens_feature_pipeline`, `gh_archive_flatten_sessionization`, `tpch_bi_query`, and
+  `nyc_taxi_trino_daily`; one row remains approved behind child issue #91, seven remain intentionally
   notebook-only, and three remain unscheduled continuous streams. The 19
   scenario-local no-op DAGs were removed so Airflow and public
   documentation cannot report successful no-op work.

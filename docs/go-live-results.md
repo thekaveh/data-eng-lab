@@ -82,20 +82,22 @@ Issue #83 added a current production replay for `tpch_bi_query` and `nyc_taxi_tr
 2026-08-12/13. Two paused runs per DAG succeeded through the real Airflow/Trino path and produced
 stable canonical metadata-DB XCom checksums. TPC-H validated the exact five-key table provenance;
 NYC remained bound to one unchanged Bronze snapshot. No Iceberg snapshot, property, raw pointer, or
-Spark driver changed. See the [tracked acceptance report](superpowers/reports/2026-08-12-trino-bi-pipelines-live-acceptance.md).
+Spark driver changed. The tracked internal acceptance report preserves the exact run IDs, query IDs,
+snapshot IDs, and canonical checksums for operator audit.
 
 ```sql
--- federated_query-nyc_taxi
-SELECT COUNT(*) FROM lakehouse.bronze.nyc_taxi_trips;
--- Result: matches Spark count ✓
+-- nyc_taxi_trino_daily: snapshot-bound daily result (read-only)
+SELECT trip_date, count(*) AS trip_count, avg(fare_amount) AS avg_fare
+FROM lakehouse.bronze.nyc_taxi_trips
+GROUP BY trip_date ORDER BY trip_date;
+-- Result: daily counts reconcile to the unchanged Bronze snapshot ✓
 
--- bi_query-tpch
-CREATE TABLE lakehouse.gold.bi_segment_revenue AS
-SELECT market_segment, SUM(totalprice) AS revenue
-FROM lakehouse.bronze.orders o
-JOIN lakehouse.bronze.customer c ON o.o_custkey = c.c_custkey
-GROUP BY market_segment;
--- Result: 5 segments with revenue ✓
+-- tpch_bi_query: provenance-bound segment result (read-only)
+SELECT c.c_mktsegment, sum(f.revenue) AS revenue
+FROM lakehouse.gold.fct_orders f
+JOIN lakehouse.gold.dim_customer c ON f.o_custkey = c.c_custkey
+GROUP BY c.c_mktsegment ORDER BY c.c_mktsegment;
+-- Result: 5 segments after exact five-key provenance comparison ✓
 ```
 
 ## 6. Streaming Validation
