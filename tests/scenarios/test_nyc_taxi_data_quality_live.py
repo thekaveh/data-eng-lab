@@ -835,7 +835,7 @@ def _snapshot_id(namespace: str, table: str) -> str:
 
 def _snapshot_binding(namespace: str, table: str) -> tuple[str, str]:
     rows = _trino(
-        f'SELECT snapshot_id, format_datetime(committed_at, \'yyyy-MM-dd\'\'T\'\'HH:mm:ss\'\'Z\'\') '
+        f'SELECT snapshot_id, format_datetime(committed_at, \'yyyy-MM-dd\'\'T\'\'HH:mm:ss\'\'Z\'\'\') '
         f'AS committed_at_utc FROM lakehouse.{namespace}."{table}$snapshots" '
         "ORDER BY committed_at DESC, snapshot_id DESC LIMIT 1"
     )
@@ -1607,6 +1607,18 @@ def test_live_catalog_contract_requires_exact_ntz_producer_schema():
     ]
     with pytest.raises(AssertionError, match="exact producer/quality contract"):
         _assert_bronze_schema({"schema": legacy_utc})
+
+
+def test_snapshot_binding_uses_the_reviewed_trino_timestamp_literal(monkeypatch):
+    statements = []
+
+    def trino(sql):
+        statements.append(sql)
+        return [{"snapshot_id": 123, "committed_at_utc": "2026-08-13T10:08:41Z"}]
+
+    monkeypatch.setitem(_snapshot_binding.__globals__, "_trino", trino)
+    assert _snapshot_binding("bronze", "nyc_taxi_trips") == ("123", "2026-08-13T10:08:41Z")
+    assert "format_datetime(committed_at, 'yyyy-MM-dd''T''HH:mm:ss''Z''')" in statements[0]
 
 
 def test_failed_dag_test_terminalizes_only_its_exact_stopped_test_owned_run():
