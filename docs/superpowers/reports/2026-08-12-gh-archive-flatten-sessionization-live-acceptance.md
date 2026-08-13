@@ -10,8 +10,8 @@ validation, and live evidence binding
 ## Accepted artifact and immutable input
 
 - Local and published JAR: `gh-archive-pipeline/0.1.0/app.jar`
-- Final reviewed JAR SHA-256: `b826e218d8ad4a9a4dadd1b835e3533c9649735725cfb3f71508e7e04e952c04`
-- Canonical live-replay JAR SHA-256: `5d2459e4dc9cebe96c16715db027b21333307e6cb2fae39b0c67d395535d52d1`
+- Final reviewed and live-replayed JAR SHA-256:
+  `b826e218d8ad4a9a4dadd1b835e3533c9649735725cfb3f71508e7e04e952c04`
 - Dataset/scale: `gh_archive` / `tiny`
 - Plan ID: `8ab812c3621cc3dae68989d9f24134351ea9683453133b31feaff579d0fa3e7f`
 - Publication ID: `e53a481df5d54c6eabc645838fb2f2ba`
@@ -47,8 +47,8 @@ API-visible DagRuns were:
 
 | Run | Exact DagRun ID | Airflow | Spark drivers | REST terminal |
 |---|---|---|---|---|
-| first | `manual__2026-08-13T01:32:18.498994+00:00` | API-visible terminal `success` | `driver-20260813013253-0000`, `driver-20260813013341-0001` | both `FINISHED`, `success=true` |
-| second | `manual__2026-08-13T01:34:27.784721+00:00` | API-visible terminal `success` | `driver-20260813013459-0002`, `driver-20260813013536-0003` | both `FINISHED`, `success=true` |
+| first | `manual__2026-08-13T01:59:53.292818+00:00` | API-visible terminal `success` | `driver-20260813020027-0000`, `driver-20260813020106-0001` | both `FINISHED`, `success=true` |
+| second | `manual__2026-08-13T02:01:51.040643+00:00` | API-visible terminal `success` | `driver-20260813020221-0002`, `driver-20260813020300-0003` | both `FINISHED`, `success=true` |
 
 The bounded API inventory gained exactly one unique owned DagRun after each command, exactly two in
 the acceptance window, and no unexpected queued/running run. The second run started only after the
@@ -92,10 +92,10 @@ data_eng_lab.dataset.publication_id=e53a481df5d54c6eabc645838fb2f2ba
 data_eng_lab.dataset.manifest_sha256=998ec39bc61dca1b460e4b851d718a5347b8c7e575b96dd1e3ec62fd0b791678
 ```
 
-The first run created event snapshot `6523417985791786963` and session snapshot
-`6811919256567805613`. The second run reproduced both complete logical table snapshots and exact
-checksums while advancing them to event snapshot `8452302066651377567` and session snapshot
-`621494726108837077`, proving convergent same-generation recovery and idempotent replacement. The
+The first run created event snapshot `7842522292748146604` and session snapshot
+`1308617323785351075`. The second run reproduced both complete logical table snapshots and exact
+checksums while advancing them to event snapshot `5570704582347302741` and session snapshot
+`4109156861464491375`, proving convergent same-generation recovery and idempotent replacement. The
 harness also proved sessionization reread and matched all five `gh_events` properties before its
 source-table read.
 
@@ -117,7 +117,7 @@ retaining the cumulative frame for `session_id`. The complete hardened replay th
 ```bash
 RUN_INFRA=1 uv run --group live pytest \
   tests/scenarios/test_gh_archive_pipeline_live.py -v -s
-# 1 passed in 463.97s
+# 1 passed in 461.46s
 ```
 
 The final `scripts/stop-all.sh` cleanup preserved every volume, restored the DAG pause state, and
@@ -125,9 +125,9 @@ left zero project containers in `docker ps --all`. Direct concurrent JAR invocat
 unsupported; serialized Airflow execution is the production boundary and same-generation rerun is
 the supported recovery path.
 
-After live acceptance, final quality review replaced the raw preflight's per-record 1 MiB line
+Final quality review replaced the raw preflight's per-record 1 MiB line
 allocation with one reusable buffer that grows from 4 KiB to the same hard 1 MiB ceiling. A physical
 5,000-record regression proves the buffer is allocated only three times for 9 KiB records, while all
 19 Scala tests prove the same valid-input, newline, EOF, over-limit, digest, and resource-closure
-behavior. This allocation-only refactor cannot alter table rows or provenance, so the live pipeline
-was not replayed; the next canonical acceptance is pinned to the final reviewed JAR hash above.
+behavior. The canonical acceptance above then replayed the final JAR and proved unchanged rows,
+checksums, provenance, pointer, session oracle, and cleanup behavior.
