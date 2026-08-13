@@ -37,7 +37,11 @@ EXPECTED = {
         "airflow-dags/trino_bi/dag.py",
     ),
     "cdc_streaming-online_retail-spark-iceberg": (UNSCHEDULED, None, None),
-    "data_quality-nyc_taxi-spark-iceberg": (APPROVED, 91, None),
+    "data_quality-nyc_taxi-spark-iceberg": (
+        EXISTING,
+        None,
+        "spark-apps/nyc-taxi-data-quality/dag.py",
+    ),
     "feature_engineering-movielens-spark-iceberg": (
         EXISTING,
         None,
@@ -111,15 +115,13 @@ def test_reviewed_classifications_children_and_entrypoints_are_frozen():
     for mode in modes:
         counts[mode.classification] += 1
     assert counts == {
-        EXISTING: 8,
-        APPROVED: 1,
+        EXISTING: 9,
+        APPROVED: 0,
         NOTEBOOK_ONLY: 7,
         UNSCHEDULED: 3,
         DEPRECATED: 0,
     }
-    assert {mode.child_issue for mode in modes if mode.child_issue is not None} == {
-        91,
-    }
+    assert {mode.child_issue for mode in modes if mode.child_issue is not None} == set()
 
 
 def test_every_row_has_complete_reviewable_contract_fields():
@@ -210,7 +212,7 @@ def test_issue_references_survive_yaml_parse_and_markdown_projection_exactly():
         "#81 verified dataset resolver",
         "checkpoint ownership policy #85",
         "events producer and checkpoint ownership policy #85",
-        "Production Atlas Airflow and Spark standalone application owned by child issue #91",
+        "#91 durable quality monitoring",
     }
     for line in text.splitlines():
         if "#" in line and not line.lstrip().startswith("#"):
@@ -224,6 +226,49 @@ def test_issue_references_survive_yaml_parse_and_markdown_projection_exactly():
     }
     assert issue_phrases <= parsed_phrases
     assert all(phrase in rendered for phrase in issue_phrases)
+
+
+def test_nyc_quality_notebooks_use_null_safe_conservation_and_warn_against_production_writes():
+    scenario = ROOT / "scenarios/data_quality-nyc_taxi-spark-iceberg"
+    jupyter = json.loads((scenario / "jupyter/notebook.ipynb").read_text(encoding="utf-8"))
+    zeppelin = json.loads((scenario / "zeppelin/notebook.zpln").read_text(encoding="utf-8"))
+    python = "\n".join("".join(cell.get("source", [])) for cell in jupyter["cells"])
+    scala = "\n".join(paragraph.get("text", "") for paragraph in zeppelin["paragraphs"])
+    exact_columns = {
+        "VendorID",
+        "tpep_pickup_datetime",
+        "tpep_dropoff_datetime",
+        "passenger_count",
+        "trip_distance",
+        "RatecodeID",
+        "store_and_fwd_flag",
+        "PULocationID",
+        "DOLocationID",
+        "payment_type",
+        "fare_amount",
+        "extra",
+        "mta_tax",
+        "tip_amount",
+        "tolls_amount",
+        "improvement_surcharge",
+        "total_amount",
+        "congestion_surcharge",
+        "airport_fee",
+        "trip_date",
+    }
+    for text in (python, scala):
+        assert "coalesce" in text and "source_count" in text
+        assert "valid_count + quarantine_count == source_count" in text
+        assert "NOT (" not in text and "fare_amount IS NULL" not in text
+        assert all(column in text for column in exact_columns)
+        assert "lakehouse.bronze.nyc_taxi_trips" in text
+        assert "lakehouse.silver.nyc_taxi_clean" in text
+        assert "lakehouse.silver.nyc_taxi_quarantine" in text
+        warning = text.casefold()
+        assert "production writes must use" in warning
+        assert "without production provenance" in warning
+        assert "bypass airflow serialization" in warning
+        assert "invalidate" in warning and "quality facts" in warning
 
 
 def test_classification_semantics_and_paths_validate():
@@ -250,6 +295,7 @@ def test_no_scenario_local_dag_or_runtime_empty_operator_remains():
     assert [path.relative_to(ROOT).as_posix() for path in production_dags] == [
         "spark-apps/gh-archive-pipeline/dag.py",
         "spark-apps/movielens-feature-pipeline/dag.py",
+        "spark-apps/nyc-taxi-data-quality/dag.py",
         "spark-apps/nyc-taxi-etl/dag.py",
         "spark-apps/nyc-taxi-medallion/dag.py",
         "spark-apps/tpch-star-schema/dag.py",
@@ -446,7 +492,6 @@ def test_data_quality_docs_match_both_executable_notebooks_exactly():
     }
     assert all(value in jupyter and value in zeppelin for value in exact_contract)
     forbidden = (
-        "nyc_taxi_quality",
         "custom spark sql function",
         "no downstream sink",
         "csv seed",
@@ -461,8 +506,8 @@ def test_data_quality_docs_match_both_executable_notebooks_exactly():
         assert all(value in text for value in exact_contract - {'createOrReplace()'})
         assert "createOrReplace" in text
         assert all(value not in text.casefold() for value in forbidden), path
-        assert "Current notebook behavior" in text
-        assert "Future production scope (#91)" in text
+        assert "without production provenance" in text
+        assert "production writes must use" in text
 
 
 def test_all_scenario_diagram_visible_text_is_ascii_for_portable_png_rendering():

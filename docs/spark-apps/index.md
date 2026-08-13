@@ -10,13 +10,14 @@ The NYC Taxi applications form a sequence from Bronze to Silver and Gold. The in
 |---|---|---|---|---|
 | [nyc-taxi-etl](nyc-taxi-etl.md) | Raw Parquet → Bronze Iceberg with quality filtering | resolver-verified immutable NYC Taxi generation | `lakehouse.bronze.nyc_taxi_trips` | `nyc_taxi_etl` |
 | [nyc-taxi-medallion](nyc-taxi-medallion.md) | Bronze → Silver dedup → Gold daily aggregation | `lakehouse.bronze.nyc_taxi_trips` | `lakehouse.silver.*`, `lakehouse.gold.*` | `nyc_taxi_medallion` |
+| [nyc-taxi-data-quality](nyc-taxi-data-quality.md) | Stable Bronze snapshot → null-safe Silver split and governed facts | `lakehouse.bronze.nyc_taxi_trips` | `lakehouse.silver.nyc_taxi_{clean,quarantine}`, `lakehouse.gold.nyc_taxi_quality_facts` | `nyc_taxi_data_quality` |
 | [tpch-star-schema](tpch-star-schema.md) | Verified TPC-H → customer dimension and order fact | immutable TPC-H generation | `lakehouse.gold.dim_customer`, `lakehouse.gold.fct_orders` | `tpch_star_schema` |
 | [movielens-feature-pipeline](movielens-feature-pipeline.md) | Verified MovieLens ratings → user and movie aggregates | immutable MovieLens generation | `lakehouse.gold.ml_user_features`, `lakehouse.gold.ml_movie_features` | `movielens_feature_pipeline` |
 | [gh-archive-pipeline](gh-archive-pipeline.md) | Verified GH Archive JSON → typed events → actor sessions | immutable GH Archive generation | `lakehouse.silver.gh_events`, `lakehouse.silver.gh_sessions` | `gh_archive_flatten_sessionization` |
 
 ## 2. CI/CD Pipeline
 
-All five apps follow the same CI/CD pattern:
+All six apps follow the same CI/CD pattern:
 
 1. **CI:** Jenkins runs `mvn test`, then `mvn package`, and publishes the local Maven artifact to the stable MinIO object `s3a://jars/<app>/0.1.0/app.jar`.
 2. **CD:** Airflow's `SparkSubmitOperator` submits the object in Spark standalone cluster mode with the Iceberg catalog configuration; its hook is wrapped by Atlas's adapter to confirm the completed driver through the Spark REST endpoint.

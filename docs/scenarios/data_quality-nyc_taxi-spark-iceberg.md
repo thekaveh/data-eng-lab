@@ -1,74 +1,69 @@
 # 5.8. data_quality-nyc_taxi-spark-iceberg
 
-Splits Bronze NYC taxi trips into clean and quarantine Iceberg tables with one explicit fare-and-passenger rule.
+Runs the snapshot-bound NYC Taxi quality gate as an **existing production DAG**. The reviewed Spark application partitions every Bronze row into clean or quarantine, persists eight governed Gold facts, and exposes three fixed Trino dashboard queries.
 
 ## 1. Purpose
 
-This scenario demonstrates a small, executable quality boundary. Both paired notebooks read `lakehouse.bronze.nyc_taxi_trips`, apply the exact rule `fare_amount > 0 AND passenger_count BETWEEN 1 AND 6`, and materialize separate Silver outputs for rows that pass or fail that rule.
+The production entrypoint is `spark-apps/nyc-taxi-data-quality/dag.py`, DAG `nyc_taxi_data_quality`. It evaluates one stable `lakehouse.bronze.nyc_taxi_trips` snapshot after the matching successful `nyc_taxi_etl` logical date. This is snapshot-bound lineage, not upstream five-key resolver-generation provenance; adding those five properties to the Bronze producer remains deferred hardening.
 
 ## 2. Data Model
 
-### 2.1 Input Source
+| Table | Role |
+|---|---|
+| `lakehouse.bronze.nyc_taxi_trips` | Stable 20-column source snapshot |
+| `lakehouse.silver.nyc_taxi_clean` | Rows whose fare, passenger-count, and distance operands are valid |
+| `lakehouse.silver.nyc_taxi_quarantine` | Null-safe complement of clean, including null/NaN/infinite rule operands |
+| `lakehouse.gold.nyc_taxi_quality_facts` | Eight versioned facts keyed by deterministic run ID and rule ID |
 
-The current notebooks call `spark.table("lakehouse.bronze.nyc_taxi_trips")`. The Bronze table is populated by `batch_ingest-nyc_taxi-spark-iceberg` from a resolver-verified immutable NYC Taxi generation.
+Duplicates and rows with null rule operands are preserved. The application verifies exact schema, null-safe multiset conservation, readback counts, and source snapshot stability. Silver replacement and Gold MERGE are not cross-table atomic; a same-date rerun is the supported recovery and converges without duplicate facts.
 
-### 2.2 Output Tables
+## 3. Governed Rules
 
-| Table | Layer | Current notebook behavior |
-|---|---|---|
-| `lakehouse.silver.nyc_taxi_clean` | Silver | Rows where fare is positive and passenger count is between 1 and 6 |
-| `lakehouse.silver.nyc_taxi_quarantine` | Silver | Rows matching `NOT (rule) OR fare_amount IS NULL` |
+The fixed rule version records owners, severity, thresholds, numerator/denominator, canonical decimal metrics, and status:
 
-Each notebook writes both tables with Iceberg `writeTo(...).using("iceberg").createOrReplace()`.
+- `bronze.source_available.v1`
+- `bronze.schema.v1`
+- `bronze.snapshot_freshness.v1`
+- `bronze.invalid_ratio.v1`
+- `silver.partition_conservation.v1`
+- `silver.clean_nonempty.v1`
+- `silver.quarantine_ratio.v1`
+- `silver.output_readback.v1`
 
-## 3. Architecture
+Invalid and quarantine ratios pass through 1%, warn above 1% through 5%, and fail above 5%. Missing and stale outrank fail, then warn, then pass. A task succeeds only after the exact accepted fact set is read back.
 
-![Architecture](../diagrams/img/data_quality-nyc_taxi-spark-iceberg.png)
+## 4. Orchestration
 
-The current notebook path is an interactive Bronze-to-Silver split. The approved production boundary in #91 is future work and does not describe code that exists in this scenario today.
+The `@daily` DAG uses `max_active_runs=1`. `wait_for_matching_nyc_taxi_etl` is a bounded rescheduling `ExternalTaskSensor` for `nyc_taxi_etl.submit_nyc_taxi_etl` at the same logical date; `submit_nyc_taxi_data_quality` submits the Jenkins-published JAR through Atlas's REST-confirming Spark operator. Concurrent direct JAR execution is unsupported.
 
-## 4. Notebooks
+The final artifact passed matching-ETL execution, a same-date Airflow replacement/retry, distinct terminal Spark-driver confirmation, exact fact idempotence, fixed-dashboard validation, unchanged source pointer, and volume-preserving cleanup. The tracked evidence record is `2026-08-13-nyc-taxi-data-quality-live-acceptance.md` in the repository's internal report directory.
 
-- **Zeppelin (Scala):** the paired notebook reads the Bronze table, applies the exact rule, replaces both Silver tables, and queries their row counts.
-- **Jupyter (PySpark):** the paired notebook performs the same read, filter, two `createOrReplace` writes, and count verification.
+## 5. Dashboard and Operations
 
-### 4.1 Current notebook behavior
+The durable dashboard source is the Gold facts table. Operators retrieve bounded, deterministically ordered results with:
 
-Both notebooks execute the same table names and operations. They do not yet persist run-level quality facts, implement configurable rule ownership or severity, or publish a dashboard.
+- `spark-apps/nyc-taxi-data-quality/queries/latest.sql`
+- `spark-apps/nyc-taxi-data-quality/queries/trend.sql`
+- `spark-apps/nyc-taxi-data-quality/queries/operator_attention.sql`
 
-### 4.2 Future production scope (#91)
+These are fixed SELECT-only queries; thresholds and arbitrary SQL are not DagRun inputs. For recovery, correct the primary failure and rerun the same logical date. Inspect the exact accepted eight-fact set before treating the run as complete.
 
-Child #91 owns a reviewed Spark standalone application and operator-owned Atlas Airflow DAG, durable Bronze/Silver/Gold quality facts, governed thresholds and failure semantics, a dashboard or query surface, operator response, and terminal live Airflow/Spark acceptance. Those deliverables are not implemented by the current notebooks.
+## 6. Educational Notebooks
 
-## 5. Orchestration
+The paired Zeppelin and Jupyter notebooks read with `spark.table("lakehouse.bronze.nyc_taxi_trips")`, preserve the original rule `fare_amount > 0 AND passenger_count BETWEEN 1 AND 6`, perform the null-safe two-table split with `createOrReplace`, and assert row conservation. They directly replace the production Silver tables without production provenance, bypass Airflow serialization, and do not persist the governed fact set. Run them only in an isolated learning environment; production writes must use the DAG/application.
 
-Classification: **approved new production DAG**. No production DAG exists yet. Until #91 passes its implementation and live-acceptance contract, run the paired notebooks interactively.
+## 7. Usage
 
-## 6. Usage
+```bash
+mvn -q -B -f spark-apps/nyc-taxi-data-quality/pom.xml test
+mvn -q -B -f spark-apps/nyc-taxi-data-quality/pom.xml package
+```
 
-1. Run the production `nyc_taxi_etl` DAG so `lakehouse.bronze.nyc_taxi_trips` exists.
-2. Open either paired notebook on the Atlas stack and run all cells.
-3. Verify the two current outputs:
+Airflow schedules the production path daily. A manual run must share a logical date with a successful `nyc_taxi_etl` run so the sensor contract is exercised rather than bypassed.
 
-     ```sql
-     SELECT
-       (SELECT count(*) FROM lakehouse.silver.nyc_taxi_clean) AS clean,
-       (SELECT count(*) FROM lakehouse.silver.nyc_taxi_quarantine) AS quarantined;
-     ```
+## 8. See Also
 
-## 7. Dependencies
-
-- **Dataset:** `lakehouse.bronze.nyc_taxi_trips` from a successful matching `nyc_taxi_etl` load
-- **Runtime:** Atlas Spark Connect and the Iceberg catalog
-- **Productionization:** #91 depends on #82, #81, and #78
-
-## 8. Known Issues & Caveats
-
-The current rule is a literal notebook string rather than a versioned policy. SQL null semantics can leave a row with a non-null fare and null passenger count outside both filters; the notebooks only report the two output counts and do not assert that they partition every Bronze row. Run-level facts, trend history, alerting, and operator workflow belong to #91.
-
-## 9. See Also
-
-- [Related: batch_ingest-nyc_taxi-spark-iceberg](./batch_ingest-nyc_taxi-spark-iceberg.md) — Produces the Bronze input
-- [Execution-mode matrix](./execution-modes.md)
-- [Datasets](../datasets.md)
+- [Spark application](../spark-apps/nyc-taxi-data-quality.md)
+- [Execution-mode matrix](execution-modes.md)
 - [Lakehouse Architecture](../lakehouse.md)
+- [NYC Taxi dataset](../datasets.md)

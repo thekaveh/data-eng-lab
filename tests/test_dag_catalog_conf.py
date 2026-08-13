@@ -206,6 +206,19 @@ def test_cluster_jar_dags_use_operator_owned_rest_confirmation():
                 "application_args": [],
             },
         ),
+        "nyc-taxi-data-quality": {
+            "task_id": "submit_nyc_taxi_data_quality",
+            "application": "s3a://jars/nyc-taxi-data-quality/0.1.0/app.jar",
+            "java_class": "com.thekaveh.dataeng.quality.NycTaxiDataQuality",
+            "application_args": [
+                "--logical-date",
+                "{{ logical_date.strftime('%Y-%m-%dT%H:%M:%SZ') }}",
+                "--data-interval-end",
+                "{{ data_interval_end.strftime('%Y-%m-%dT%H:%M:%SZ') }}",
+                "--upstream-dag-id",
+                "nyc_taxi_etl",
+            ],
+        },
     }
     for path in sorted((ROOT / "spark-apps").rglob("dag.py")):
         module = ast.parse(path.read_text(), filename=str(path))
@@ -320,6 +333,8 @@ def test_parent_dags_can_import_atlas_rest_adapter_from_the_shared_dags_root():
 
 def test_dataset_dags_resolve_only_inside_operator_execution_and_pass_frozen_uris():
     for path in sorted((ROOT / "spark-apps").rglob("dag.py")):
+        if path.parent.name == "nyc-taxi-data-quality":
+            continue
         module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         operator_name = (
             "AtlasResolvedSparkSubmitOperator"
@@ -349,6 +364,8 @@ def test_dataset_dags_resolve_only_inside_operator_execution_and_pass_frozen_uri
 
 def test_dataset_dags_freeze_valid_scale_precedence_and_exact_request_contract():
     for path in sorted((ROOT / "spark-apps").rglob("dag.py")):
+        if path.parent.name == "nyc-taxi-data-quality":
+            continue
         text = path.read_text(encoding="utf-8")
         assert "dataset_scale" in text
         assert "DATASET_SCALE" in text
@@ -361,6 +378,8 @@ def test_dataset_dags_freeze_valid_scale_precedence_and_exact_request_contract()
 
 def test_dataset_dags_bound_and_strictly_parse_resolution_documents():
     for path in sorted((ROOT / "spark-apps").rglob("dag.py")):
+        if path.parent.name == "nyc-taxi-data-quality":
+            continue
         text = path.read_text(encoding="utf-8")
         assert "response.read(_MAX_RESOLUTION_BYTES + 1)" in text
         assert "object_pairs_hook=_unique_mapping" in text

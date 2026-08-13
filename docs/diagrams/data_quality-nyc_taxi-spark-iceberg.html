@@ -1,134 +1,56 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><title>data-eng-lab - data_quality-nyc_taxi-spark-iceberg</title></head>
-<body>
-  <!-- Verified against the paired notebooks and scenarios/execution-modes.yaml on 2026-08-12. -->
-<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="600" viewBox="0 0 1280 600" font-family="'JetBrains Mono', 'Courier New', monospace" role="img" aria-labelledby="diagram-title diagram-description">
-  <title id="diagram-title">Data quality: NYC Taxi with Spark and Iceberg</title>
-  <desc id="diagram-description">Architecture and validation-flow diagram for the NYC Taxi data-quality scenario.</desc>
-        <defs>
-          <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-            <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee" />
-          </marker>
-          <marker id="arrowheadamber" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
-            <polygon points="0 0, 10 3.5, 0 7" fill="#f59e0b" />
-          </marker>
-          <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
-            <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
-          </pattern>
-        </defs>
+<head><meta charset="utf-8"><title>NYC Taxi production quality gate</title></head>
+<body style="margin:0;background:#070b16">
+<!-- Verified against spark-apps/nyc-taxi-data-quality/dag.py and scenarios/execution-modes.yaml on 2026-08-13. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720" font-family="Inter,Arial,sans-serif" role="img" aria-labelledby="diagram-title diagram-description">
+  <title id="diagram-title">NYC Taxi production data-quality architecture</title>
+  <desc id="diagram-description">The nyc_taxi_etl completion gates a serialized snapshot-bound Spark quality application, a null-safe Silver split, governed Gold facts, and fixed Trino dashboards.</desc>
+  <defs>
+    <pattern id="grid" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#162038" stroke-width="1"/></pattern>
+    <marker id="cyan" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0L10 4L0 8Z" fill="#22d3ee"/></marker>
+    <marker id="amber" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0L10 4L0 8Z" fill="#fbbf24"/></marker>
+    <filter id="glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter>
+  </defs>
+  <rect width="1280" height="720" fill="#070b16"/><rect width="1280" height="720" fill="url(#grid)" opacity=".55"/>
+  <text x="64" y="58" fill="#f8fafc" font-size="28" font-weight="700">NYC Taxi production quality gate</text>
+  <text x="64" y="86" fill="#94a3b8" font-size="14">existing production DAG | snapshot-bound validation | deterministic same-date recovery</text>
 
-        <!-- Background -->
-        <rect width="1280" height="600" fill="#0a0f1f"/>
-        <rect width="1280" height="600" fill="url(#grid)"/>
+  <!-- Arrows are drawn before opaque cards so connectors never cross labels. -->
+  <path d="M230 174H330" stroke="#22d3ee" stroke-width="3" marker-end="url(#cyan)"/>
+  <path d="M510 174H610" stroke="#22d3ee" stroke-width="3" marker-end="url(#cyan)"/>
+  <path d="M890 174H792" stroke="#22d3ee" stroke-width="3" marker-end="url(#cyan)"/>
+  <path d="M700 248V330H350V376" fill="none" stroke="#22d3ee" stroke-width="3" marker-end="url(#cyan)"/>
+  <path d="M700 248V330H700V376" fill="none" stroke="#fbbf24" stroke-width="3" marker-end="url(#amber)"/>
+  <path d="M790 426H890" stroke="#22d3ee" stroke-width="3" marker-end="url(#cyan)"/>
+  <path d="M1060 476V548H710" fill="none" stroke="#a78bfa" stroke-width="2" stroke-dasharray="7 6" marker-end="url(#cyan)"/>
 
-        <!-- Title -->
-        <text x="640" y="40" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">data_quality - NYC Taxi (Spark to Iceberg)</text>
-        <text x="640" y="62" fill="#94a3b8" font-size="12" text-anchor="middle">Business-rule validation splits trips into a clean path and a quarantined-violations path</text>
+  <g fill="#111a2e" stroke="#334155" stroke-width="2">
+    <rect x="60" y="124" width="170" height="100" rx="14"/>
+    <rect x="330" y="124" width="180" height="100" rx="14"/>
+    <rect x="610" y="116" width="180" height="132" rx="14" stroke="#22d3ee" filter="url(#glow)"/>
+    <rect x="890" y="124" width="270" height="100" rx="14"/>
+    <rect x="220" y="376" width="260" height="100" rx="14" stroke="#22d3ee"/>
+    <rect x="570" y="376" width="260" height="100" rx="14" stroke="#fbbf24"/>
+    <rect x="890" y="376" width="270" height="100" rx="14" stroke="#a78bfa"/>
+    <rect x="520" y="548" width="380" height="92" rx="14"/>
+  </g>
 
-        <!-- ================= STAGE 1: BRONZE SOURCE ================= -->
-        <rect x="40" y="110" width="230" height="350" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
-        <text x="155" y="132" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Source - Bronze</text>
+  <g text-anchor="middle">
+    <text x="145" y="154" fill="#22d3ee" font-size="12" font-weight="700">UPSTREAM</text><text x="145" y="180" fill="#f8fafc" font-size="16" font-weight="700">nyc_taxi_etl</text><text x="145" y="203" fill="#94a3b8" font-size="12">same logical date</text>
+    <text x="420" y="154" fill="#22d3ee" font-size="12" font-weight="700">AIRFLOW GATE</text><text x="420" y="180" fill="#f8fafc" font-size="15" font-weight="700">ExternalTaskSensor</text><text x="420" y="203" fill="#94a3b8" font-size="12">successful Spark task</text>
+    <text x="700" y="146" fill="#22d3ee" font-size="12" font-weight="700">SERIALIZED @daily</text><text x="700" y="174" fill="#f8fafc" font-size="16" font-weight="700">nyc_taxi_data_quality</text><text x="700" y="199" fill="#94a3b8" font-size="12">max_active_runs=1</text><text x="700" y="220" fill="#94a3b8" font-size="11">snapshot capture + recheck</text>
+    <text x="1025" y="154" fill="#22d3ee" font-size="12" font-weight="700">BRONZE SOURCE</text><text x="1025" y="180" fill="#f8fafc" font-size="15" font-weight="700">nyc_taxi_trips</text><text x="1025" y="203" fill="#94a3b8" font-size="12">snapshot-bound, 20 columns</text>
+    <text x="350" y="406" fill="#22d3ee" font-size="12" font-weight="700">NULL-SAFE CLEAN</text><text x="350" y="433" fill="#f8fafc" font-size="16" font-weight="700">nyc_taxi_clean</text><text x="350" y="455" fill="#94a3b8" font-size="12">exact multiset partition</text>
+    <text x="700" y="406" fill="#fbbf24" font-size="12" font-weight="700">NULL-SAFE QUARANTINE</text><text x="700" y="433" fill="#f8fafc" font-size="16" font-weight="700">nyc_taxi_quarantine</text><text x="700" y="455" fill="#94a3b8" font-size="12">null / NaN / invalid operands</text>
+    <text x="1025" y="406" fill="#a78bfa" font-size="12" font-weight="700">GOVERNED GOLD</text><text x="1025" y="433" fill="#f8fafc" font-size="15" font-weight="700">nyc_taxi_quality_facts</text><text x="1025" y="455" fill="#94a3b8" font-size="12">8 exact rules | idempotent MERGE</text>
+    <text x="710" y="578" fill="#a78bfa" font-size="12" font-weight="700">Fixed Trino dashboards</text><text x="710" y="604" fill="#f8fafc" font-size="15" font-weight="700">latest | trend | operator attention</text><text x="710" y="625" fill="#94a3b8" font-size="11">bounded SELECT-only operational retrieval</text>
+  </g>
 
-        <rect x="65" y="160" width="180" height="280" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
-        <text x="155" y="188" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">BRONZE</text>
-        <text x="155" y="214" fill="#22d3ee" font-size="10" font-weight="600" text-anchor="middle">lakehouse.bronze.</text>
-        <text x="155" y="232" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">nyc_taxi_trips</text>
-        <line x1="85" y1="252" x2="225" y2="252" stroke="#334155" stroke-width="1"/>
-        <text x="155" y="274" fill="#94a3b8" font-size="9" text-anchor="middle">raw taxi trips</text>
-        <text x="155" y="292" fill="#94a3b8" font-size="9" text-anchor="middle">populated by batch_ingest</text>
-        <text x="155" y="322" fill="#ffffff" font-size="9" text-anchor="middle">fare_amount</text>
-        <text x="155" y="338" fill="#ffffff" font-size="9" text-anchor="middle">passenger_count</text>
-        <text x="155" y="354" fill="#ffffff" font-size="9" text-anchor="middle">tpep_pickup_datetime</text>
-        <text x="155" y="400" fill="#22d3ee" font-size="9" text-anchor="middle">spark.table("bronze")</text>
-
-        <!-- ================= STAGE 2: SPARK VALIDATION ================= -->
-        <rect x="330" y="110" width="330" height="350" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
-        <text x="495" y="132" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Validate - Apache Spark</text>
-
-        <rect x="355" y="160" width="280" height="100" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
-        <text x="495" y="188" fill="#ffffff" font-size="15" font-weight="700" text-anchor="middle">Spark Session</text>
-        <text x="495" y="212" fill="#94a3b8" font-size="10" text-anchor="middle">Spark Connect sc://spark-connect:15002</text>
-        <text x="495" y="234" fill="#94a3b8" font-size="10" text-anchor="middle">PySpark (Jupyter) / Scala (Zeppelin)</text>
-
-        <rect x="355" y="280" width="280" height="160" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
-        <text x="495" y="306" fill="#ffffff" font-size="12" font-weight="600" text-anchor="middle">Business-Rule Filter</text>
-        <line x1="375" y1="318" x2="615" y2="318" stroke="#334155" stroke-width="1"/>
-        <text x="495" y="338" fill="#22d3ee" font-size="9" text-anchor="middle">rule =</text>
-        <text x="495" y="356" fill="#ffffff" font-size="9" text-anchor="middle">fare_amount &gt; 0</text>
-        <text x="495" y="372" fill="#ffffff" font-size="9" text-anchor="middle">AND passenger_count</text>
-        <text x="495" y="386" fill="#ffffff" font-size="9" text-anchor="middle">BETWEEN 1 AND 6</text>
-        <text x="495" y="414" fill="#94a3b8" font-size="9" text-anchor="middle">valid = df.where(rule)</text>
-        <text x="495" y="430" fill="#94a3b8" font-size="9" text-anchor="middle">quarantine = NOT(rule) OR NULL</text>
-
-        <!-- ================= STAGE 3: SPLIT OUTPUTS ================= -->
-        <rect x="720" y="110" width="300" height="350" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
-        <text x="870" y="132" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Sink - Silver (split)</text>
-
-        <!-- Clean path -->
-        <rect x="740" y="148" width="260" height="150" rx="8" fill="#1e293b" stroke="#22d3ee" stroke-width="1.5"/>
-        <text x="870" y="172" fill="#22d3ee" font-size="10" font-weight="600" text-anchor="middle">VALID</text>
-        <text x="870" y="196" fill="#ffffff" font-size="12" font-weight="700" text-anchor="middle">silver.</text>
-        <text x="870" y="214" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">nyc_taxi_clean</text>
-        <line x1="760" y1="230" x2="980" y2="230" stroke="#334155" stroke-width="1"/>
-        <text x="870" y="250" fill="#94a3b8" font-size="9" text-anchor="middle">rows passing the rule</text>
-        <text x="870" y="276" fill="#22d3ee" font-size="9" text-anchor="middle">writeTo("...clean")</text>
-        <text x="870" y="290" fill="#22d3ee" font-size="9" text-anchor="middle">.createOrReplace()</text>
-
-        <!-- Quarantine path -->
-        <rect x="740" y="316" width="260" height="150" rx="8" fill="#1e293b" stroke="#f59e0b" stroke-width="1.5"/>
-        <text x="870" y="340" fill="#f59e0b" font-size="10" font-weight="600" text-anchor="middle">VIOLATIONS</text>
-        <text x="870" y="364" fill="#ffffff" font-size="12" font-weight="700" text-anchor="middle">silver.</text>
-        <text x="870" y="382" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">nyc_taxi_quarantine</text>
-        <line x1="760" y1="398" x2="980" y2="398" stroke="#334155" stroke-width="1"/>
-        <text x="870" y="418" fill="#94a3b8" font-size="9" text-anchor="middle">rows failing the rule</text>
-        <text x="870" y="444" fill="#22d3ee" font-size="9" text-anchor="middle">writeTo("...quarantine")</text>
-        <text x="870" y="458" fill="#22d3ee" font-size="9" text-anchor="middle">.createOrReplace()</text>
-
-        <!-- ================= STAGE 4: CATALOG ================= -->
-        <rect x="1070" y="110" width="170" height="350" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
-        <text x="1155" y="132" fill="#22d3ee" font-size="12" font-weight="600" text-anchor="middle">Catalog</text>
-
-        <rect x="1090" y="180" width="130" height="210" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
-        <text x="1155" y="208" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">Iceberg</text>
-        <text x="1155" y="228" fill="#ffffff" font-size="13" font-weight="700" text-anchor="middle">REST Catalog</text>
-        <text x="1155" y="254" fill="#94a3b8" font-size="9" text-anchor="middle">iceberg-rest:8181</text>
-        <text x="1155" y="272" fill="#94a3b8" font-size="9" text-anchor="middle">name: lakehouse</text>
-        <line x1="1105" y1="288" x2="1205" y2="288" stroke="#334155" stroke-width="1"/>
-        <text x="1155" y="308" fill="#22d3ee" font-size="9" text-anchor="middle">2 silver tables</text>
-        <text x="1155" y="324" fill="#94a3b8" font-size="9" text-anchor="middle">ACID commit</text>
-        <text x="1155" y="340" fill="#94a3b8" font-size="9" text-anchor="middle">snapshots</text>
-        <text x="1155" y="368" fill="#22d3ee" font-size="9" text-anchor="middle">data on</text>
-        <text x="1155" y="382" fill="#22d3ee" font-size="9" text-anchor="middle">lakehouse/ (MinIO)</text>
-
-        <!-- ================= CONNECTORS ================= -->
-        <!-- Bronze -> Spark -->
-        <line x1="245" y1="300" x2="353" y2="210" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#arrowhead)"/>
-        <text x="300" y="246" fill="#22d3ee" font-size="9" text-anchor="middle">read table</text>
-
-        <!-- Spark filter -> clean (branch up) -->
-        <path d="M 635 350 C 680 350 690 223 738 223" fill="none" stroke="#22d3ee" stroke-width="1.8" marker-end="url(#arrowhead)"/>
-        <text x="687" y="262" fill="#22d3ee" font-size="9" text-anchor="middle">valid</text>
-
-        <!-- Spark filter -> quarantine (branch down) -->
-        <path d="M 635 390 C 680 390 690 391 738 391" fill="none" stroke="#f59e0b" stroke-width="1.8" marker-end="url(#arrowheadamber)"/>
-        <text x="687" y="370" fill="#f59e0b" font-size="9" text-anchor="middle">violations</text>
-
-        <!-- Outputs -> catalog commit -->
-        <path d="M 1000 223 C 1040 223 1050 260 1088 270" fill="none" stroke="#22d3ee" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrowhead)"/>
-        <path d="M 1000 391 C 1040 391 1050 320 1088 310" fill="none" stroke="#22d3ee" stroke-width="1.2" stroke-dasharray="5,4" marker-end="url(#arrowhead)"/>
-
-        <!-- Orchestrator + verify strip -->
-        <rect x="40" y="490" width="1200" height="82" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
-        <text x="70" y="516" fill="#22d3ee" font-size="11" font-weight="600">Orchestration</text>
-        <text x="70" y="536" fill="#94a3b8" font-size="9">Execution: approved new production DAG | child #91</text>
-        <text x="70" y="554" fill="#94a3b8" font-size="9">depends on batch_ingest (bronze populated first)</text>
-        <text x="430" y="516" fill="#22d3ee" font-size="11" font-weight="600">Notebooks</text>
-        <text x="430" y="536" fill="#94a3b8" font-size="9">Current: PySpark (Jupyter) and Scala (Zeppelin)</text>
-        <text x="430" y="554" fill="#94a3b8" font-size="9">Future production application and DAG: child #91</text>
-        <text x="900" y="516" fill="#22d3ee" font-size="11" font-weight="600">Verify</text>
-        <text x="900" y="536" fill="#94a3b8" font-size="9">SELECT clean, quarantined counts</text>
-        <text x="900" y="554" fill="#94a3b8" font-size="9">notebook reports both output counts</text>
-      </svg>
+  <rect x="60" y="668" width="1160" height="32" rx="8" fill="#0f172a" stroke="#334155"/>
+  <text x="78" y="689" fill="#94a3b8" font-size="12">Entrypoint: spark-apps/nyc-taxi-data-quality/dag.py</text>
+  <text x="505" y="689" fill="#94a3b8" font-size="12">same-date rerun converges non-atomic writes</text>
+  <text x="925" y="689" fill="#94a3b8" font-size="12">authority: execution-modes.yaml</text>
+</svg>
 </body>
 </html>
