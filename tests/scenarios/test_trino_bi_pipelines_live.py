@@ -28,6 +28,7 @@ _RUN_PAGE_LIMIT = 100
 _MAX_RUN_INVENTORY = 1000
 _MAX_RUN_REQUESTS = 10
 _MAX_XCOM_BYTES = 256 * 1024
+_MAX_POINTER_BYTES = 1024 * 1024
 _AIRFLOW_TOKEN = ""
 
 pytestmark = pytest.mark.infra
@@ -254,6 +255,53 @@ def _pointer_snapshot(client, dataset: str) -> tuple[bytes, str]:
     return body, etag
 
 
+def _optional_pointer_snapshot(client, dataset: str) -> tuple:
+    """Capture exact pointer state; only an explicit NoSuchKey means absent."""
+    try:
+        response = client.get_object(
+            Bucket=_env("MINIO_BUCKET_LANDING", "landing"),
+            Key=f"_data-eng-locks/current/{dataset}.json",
+        )
+    except Exception as error:
+        error_document = getattr(error, "response", None)
+        code = (
+            error_document.get("Error", {}).get("Code")
+            if isinstance(error_document, dict)
+            else None
+        )
+        if code == "NoSuchKey":
+            return ("absent",)
+        raise AssertionError(f"{dataset} pointer read failed closed") from error
+
+    body_stream = response.get("Body") if isinstance(response, dict) else None
+    etag = response.get("ETag") if isinstance(response, dict) else None
+    if body_stream is None or not callable(getattr(body_stream, "read", None)):
+        raise AssertionError(f"{dataset} pointer response is malformed")
+    try:
+        body = body_stream.read(_MAX_POINTER_BYTES + 1)
+    except Exception as error:
+        raise AssertionError(f"{dataset} pointer response is malformed") from error
+    finally:
+        close = getattr(body_stream, "close", None)
+        if callable(close):
+            close()
+    if (
+        not isinstance(body, bytes)
+        or not body
+        or len(body) > _MAX_POINTER_BYTES
+        or not isinstance(etag, str)
+        or not etag
+    ):
+        raise AssertionError(f"{dataset} pointer response is malformed")
+    try:
+        document = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise AssertionError(f"{dataset} pointer response is malformed") from error
+    if not isinstance(document, dict):
+        raise AssertionError(f"{dataset} pointer response is malformed")
+    return ("present", body, etag)
+
+
 def _driver_ids() -> set[str]:
     with urllib.request.urlopen(
         f"http://127.0.0.1:{_env('SPARK_MASTER_UI_PORT', '20027')}/json", timeout=30
@@ -405,7 +453,6 @@ def test_trino_bi_pipelines_live_acceptance():
                 _assert_owned_runs(_airflow, dag_id, baselines[dag_id], set())
 
             tpch = _verify_existing_tiny("tpch")
-            nyc = _verify_existing_tiny("nyc_taxi")
             import boto3  # noqa: PLC0415
 
             minio = boto3.client(
@@ -417,7 +464,7 @@ def test_trino_bi_pipelines_live_acceptance():
             )
             pointers_before = {
                 "tpch": _pointer_snapshot(minio, "tpch"),
-                "nyc_taxi": _pointer_snapshot(minio, "nyc_taxi"),
+                "nyc_taxi": _optional_pointer_snapshot(minio, "nyc_taxi"),
             }
             tables_before = _table_state()
             drivers_before = _driver_ids()
@@ -457,7 +504,7 @@ def test_trino_bi_pipelines_live_acceptance():
             )
             assert _table_state() == tables_before
             assert _pointer_snapshot(minio, "tpch") == pointers_before["tpch"]
-            assert _pointer_snapshot(minio, "nyc_taxi") == pointers_before["nyc_taxi"]
+            assert _optional_pointer_snapshot(minio, "nyc_taxi") == pointers_before["nyc_taxi"]
             _assert_no_spark_driver_delta(drivers_before, _driver_ids())
             print(
                 json.dumps(
@@ -470,7 +517,7 @@ def test_trino_bi_pipelines_live_acceptance():
                         "result_sha256": {
                             dag_id: artifacts[dag_id][0]["result_sha256"] for dag_id in DAG_IDS
                         },
-                        "source": {"tpch": tpch, "nyc_taxi": nyc},
+                        "source": {"tpch": tpch, "nyc_pointer_state": pointers_before["nyc_taxi"][0]},
                         "snapshots": tables_before["snapshots"],
                         "spark_driver_delta": [],
                     },

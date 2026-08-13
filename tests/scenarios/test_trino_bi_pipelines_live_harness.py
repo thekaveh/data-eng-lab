@@ -178,6 +178,80 @@ def test_resolver_rejects_identity_change_across_verify_only():
         live._verify_existing_tiny("tpch", runner=runner)
 
 
+class _Body:
+    def __init__(self, payload: bytes):
+        self.payload = payload
+        self.closed = False
+
+    def read(self, size=-1):
+        return self.payload if size < 0 else self.payload[:size]
+
+    def close(self):
+        self.closed = True
+
+
+class _S3Error(Exception):
+    def __init__(self, code: str):
+        self.response = {"Error": {"Code": code}}
+
+
+class _S3:
+    def __init__(self, response=None, error=None):
+        self.response = response
+        self.error = error
+        self.calls = []
+
+    def get_object(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.error:
+            raise self.error
+        return self.response
+
+
+def test_nyc_pointer_negative_control_distinguishes_exact_absence_without_resolver_calls():
+    client = _S3(error=_S3Error("NoSuchKey"))
+    assert live._optional_pointer_snapshot(client, "nyc_taxi") == ("absent",)
+    assert client.calls == [
+        {"Bucket": "landing", "Key": "_data-eng-locks/current/nyc_taxi.json"}
+    ]
+
+
+def test_nyc_pointer_negative_control_captures_exact_present_body_and_etag():
+    body = _Body(b'{"dataset":"nyc_taxi"}')
+    client = _S3(response={"Body": body, "ETag": '"etag"'})
+    assert live._optional_pointer_snapshot(client, "nyc_taxi") == (
+        "present",
+        b'{"dataset":"nyc_taxi"}',
+        '"etag"',
+    )
+    assert body.closed is True
+
+
+@pytest.mark.parametrize(
+    ("client", "message"),
+    [
+        (_S3(error=_S3Error("AccessDenied")), "read failed"),
+        (_S3(error=TimeoutError("network")), "read failed"),
+        (_S3(response={}), "malformed"),
+        (_S3(response={"Body": _Body(b""), "ETag": '"etag"'}), "malformed"),
+        (_S3(response={"Body": _Body(b"not-json"), "ETag": '"etag"'}), "malformed"),
+        (_S3(response={"Body": _Body(b"[]"), "ETag": '"etag"'}), "malformed"),
+        (_S3(response={"Body": _Body(b"{}"), "ETag": ""}), "malformed"),
+    ],
+)
+def test_nyc_pointer_negative_control_fails_closed_on_ambiguous_or_malformed_read(client, message):
+    with pytest.raises(AssertionError, match=message):
+        live._optional_pointer_snapshot(client, "nyc_taxi")
+
+
+def test_nyc_acceptance_source_never_resolves_verifies_or_publishes_raw_dataset():
+    source = (ROOT / "tests/scenarios/test_trino_bi_pipelines_live.py").read_text(encoding="utf-8")
+    acceptance = source.split("def test_trino_bi_pipelines_live_acceptance", 1)[1]
+    assert '_verify_existing_tiny("nyc_taxi")' not in acceptance
+    assert "download_datasets.py" not in acceptance
+    assert "resolve_dataset.py" not in acceptance
+
+
 def test_owned_run_validation_requires_exact_two_terminal_runs_and_no_active_foreign():
     baseline = {"historical"}
     inventory = {

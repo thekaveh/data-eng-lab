@@ -196,8 +196,12 @@ causes failure and no accepted XCom.
 ## 7. NYC Taxi daily contract
 
 The NYC Bronze producer predates five-key Iceberg provenance. This task is therefore explicitly
-snapshot-bound, not resolver-generation-bound. Raw dataset pointer body/ETag checks in live
-acceptance are negative-control evidence that the consumer performed no dataset mutation; they do
+snapshot-bound, not resolver-generation-bound. The live gate does not resolve, verify, publish, or
+refresh an NYC raw publication. Instead, it reads the optional active-pointer control key directly:
+explicit `NoSuchKey` is a captured absent state, while a present key requires bounded valid JSON
+bytes and a nonblank ETag. That exact absent or present state must be unchanged afterward. Ambiguous
+authorization, transport, or malformed-response failures fail closed and are never interpreted as
+absence. This is negative-control evidence that the consumer performed no dataset mutation; it does
 not establish Bronze table provenance.
 
 Before aggregation, the task captures the exact current Iceberg snapshot ID, validates that the
@@ -249,14 +253,14 @@ Offline tests cover:
 - notebook, README, diagram, site, wiki, go-live, and changelog truth.
 
 The genuine `RUN_INFRA=1` gate requires an already prepared stack with the existing reviewed tiny
-TPC-H and NYC outputs. It never refreshes or mutates a dataset pointer. It:
+TPC-H outputs and existing NYC Bronze table. It never refreshes or mutates a dataset pointer. It:
 
 1. fails closed if any project container already exists, starts an exclusively owned stack, and
    proves the exact task imports inside the pinned Airflow image;
 2. keeps both daily DAGs paused, records and restores initial pause state, and rejects unexpected
    active or newly created DagRuns using complete bounded Airflow-v2 pagination;
-3. snapshots TPC-H and NYC pointer bodies/ETags, all input Iceberg snapshot/property state, and the
-   Spark driver inventory;
+3. snapshots the mandatory TPC-H pointer body/ETag, the exact optional NYC pointer state, all input
+   Iceberg snapshot/property state, and the Spark driver inventory;
 4. runs two controlled paused DagRuns for each DAG through `airflow dags test --use-executor`;
 5. requires terminal Airflow success, exact XCom artifacts, terminal successful Trino query
    inventories, meaningful measures, source reconciliation, frozen five-key TPC-H provenance,

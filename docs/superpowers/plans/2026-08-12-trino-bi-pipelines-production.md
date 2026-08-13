@@ -194,12 +194,15 @@ Iceberg REST/MinIO, pytest/Ruff, repository docs tooling.
    - only an owned stack is stopped and owned-failure cleanup preserves the primary error;
    - both DAGs stay paused, their initial pause states restore, and unexpected active/new runs fail;
    - pagination is complete and bounded, including an unexpected run on page 2;
-   - resolver/pointer absence or failure never triggers download, verify, refresh, or retry;
+   - TPC-H resolver/pointer failure never triggers download, refresh, or retry; NYC is never
+     resolved or verified, and its optional pointer distinguishes explicit absence from ambiguous
+     or malformed reads while requiring exact state equality;
    - exact two owned runs per DAG and no third are required;
    - Trino query inventory, XCom retrieval, no Spark driver delta, source metadata/pointer equality,
      and zero-container teardown are asserted from runtime state rather than report strings.
-3. The opt-in live test must skip safely unless `RUN_INFRA=1`. It must require existing verified
-   tiny TPC-H and NYC prerequisites and fail closed without mutating them.
+3. The opt-in live test must skip safely unless `RUN_INFRA=1`. It must require an existing verified
+   tiny TPC-H publication and existing NYC Bronze table, fail closed without mutating them, and
+   never resolve, verify, or publish NYC raw data.
 4. Run the offline harness suite RED/GREEN and commit:
 
    ```bash
@@ -216,12 +219,13 @@ Iceberg REST/MinIO, pytest/Ruff, repository docs tooling.
 
 - `docs/superpowers/reports/2026-08-12-trino-bi-pipelines-live-acceptance.md`
 
-1. Verify zero project containers, protected hashes, and existing tiny publications/pointers.
+1. Verify zero project containers, protected hashes, the existing tiny TPC-H publication, and the
+   exact optional NYC pointer state without invoking an NYC resolver/acquisition workflow.
 2. Start the canonical stack without cold cleanup. Prove inside the actual Airflow task runtime:
    exact HttpHook/requests imports, no required Trino provider/client, exact connection origin, DAG
    parse health, and both DAGs paused.
-3. Snapshot input table schemas/properties/snapshots, both raw pointer bodies/ETags, and the complete
-   Spark driver inventory.
+3. Snapshot input table schemas/properties/snapshots, the mandatory TPC-H pointer body/ETag, the
+   exact absent-or-present NYC pointer state, and the complete Spark driver inventory.
 4. Run two unique controlled paused DagRuns per DAG via `airflow dags test --use-executor`, with
    whole-second logical dates and bounded output. Require exact run-set differences and terminal
    Airflow success.
