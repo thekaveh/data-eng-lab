@@ -132,3 +132,25 @@ The correction constructs explicit Spark Rows under the exact 23-field
 materializes all eight real `QualityFact` values and proves exact names/order/types/nullability,
 scale-nine decimals, UTC timestamps, row count, and snake-case temp-view binding. The Gold MERGE
 SQL and idempotent `(quality_run_id, rule_id)` key remain unchanged.
+
+## Fifth replay and Airflow same-date retry semantics
+
+The fact-schema correction completed two real quality applications and produced one exact
+eight-rule fact set. The acceptance harness then failed closed because it expected both same-date
+test DagRuns to remain in the Airflow API inventory. Pinned Airflow 3.3.0 implements
+`DAG.test()` through `get_or_create_dagrun`; that helper selects an existing run by
+`(dag_id, logical_date)`, deletes and commits it, then creates the replacement test run. The first
+run is therefore intentionally absent from the final API inventory even though its bounded task
+logs and terminal Spark event log remain durable acceptance evidence.
+
+Read-only recovery evidence bound both executions to the successful ETL task at logical date
+`2026-08-13T08:25:20+00:00`. Drivers `driver-20260813082614-0001` and
+`driver-20260813082806-0002` both reached `FINISHED` with successful applications
+`app-20260813082617-0002` and `app-20260813082808-0003`. The two fact snapshots contained exactly
+eight rows, eight distinct `(quality_run_id, rule_id)` keys, and one deterministic quality run ID;
+clean 2,917,820 plus quarantine 26,039 conserved all 2,943,859 Bronze rows. The harness correction
+now captures and validates the first run's exact conf, sensor log, Spark log, driver, and terminal
+state before invoking the retry. It then requires the API transition to remove exactly that owned
+run and add exactly one successful same-date replacement, with no unrelated or active run delta,
+and preserves both bounded sensor/driver proofs. Unique-date executions retain the additive
+inventory contract.

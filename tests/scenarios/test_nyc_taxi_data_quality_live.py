@@ -32,6 +32,8 @@ _PAGE_LIMIT = 100
 _MAX_RUNS = 1000
 _MAX_REQUESTS = 10
 _MAX_POINTER_BYTES = 1 << 20
+_MAX_TASK_LOG_BYTES = 1 << 20
+_MAX_TASK_LOG_ATTEMPTS = 4
 BRONZE_SCHEMA = sorted(
     (
         "VendorID:long",
@@ -259,6 +261,148 @@ def _validate_tiny_run_conf(run: dict) -> None:
         raise AssertionError("owned DagRun did not preserve the exact tiny dataset scale")
 
 
+def _validate_same_date_replacement(
+    before: list[dict],
+    after: list[dict],
+    baseline: set[str],
+    owned: set[str],
+    replaced_run_id: str,
+) -> dict:
+    before_ids = {run["dag_run_id"] for run in before}
+    after_by_id = {run["dag_run_id"]: run for run in after}
+    after_ids = set(after_by_id)
+    if replaced_run_id not in owned or replaced_run_id not in before_ids:
+        raise AssertionError("same-date retry does not bind the first owned run")
+    if replaced_run_id in after_ids:
+        raise AssertionError("same-date retry did not remove the first owned run")
+    unrelated = before_ids - {replaced_run_id}
+    if after_ids & unrelated != unrelated:
+        raise AssertionError("same-date retry changed unrelated run inventory")
+    additions = after_ids - unrelated
+    if len(additions) != 1:
+        raise AssertionError("same-date retry did not create exactly one replacement")
+    replacement = after_by_id[additions.pop()]
+    expected_after = baseline | (owned - {replaced_run_id}) | {replacement["dag_run_id"]}
+    if after_ids != expected_after:
+        raise AssertionError("same-date retry changed foreign or unrelated run inventory")
+    if replacement.get("state") != "success":
+        raise AssertionError("same-date replacement did not succeed")
+    _validate_tiny_run_conf(replacement)
+    active = {
+        run["dag_run_id"]
+        for run in after
+        if str(run.get("state", "")).lower() in {"queued", "running"}
+        and run["dag_run_id"] != replacement["dag_run_id"]
+    }
+    if active:
+        raise AssertionError(f"same-date retry left unexpected active runs: {sorted(active)}")
+    return replacement
+
+
+def _validate_retry_evidence(first: dict, second: dict, logical_date: str) -> tuple[str, str]:
+    drivers = (first.get("driver_id"), second.get("driver_id"))
+    if not all(isinstance(value, str) and value.startswith("driver-") for value in drivers):
+        raise AssertionError("same-date retry driver identity is invalid")
+    if len(set(drivers)) != 2:
+        raise AssertionError("same-date retry did not create two distinct drivers")
+    sensor_probe = (
+        "Poking for tasks ['submit_nyc_taxi_etl'] in dag nyc_taxi_etl "
+        f"on {logical_date}"
+    )
+    for evidence, driver_id in zip((first, second), drivers, strict=True):
+        run = evidence.get("run")
+        if (
+            not isinstance(run, dict)
+            or run.get("dag_run_id") != evidence.get("run_id")
+            or run.get("state") != "success"
+        ):
+            raise AssertionError("same-date retry DagRun is not a terminal success")
+        _validate_tiny_run_conf(run)
+        observed_logical = str(run.get("logical_date", "")).replace("Z", "+00:00")
+        if observed_logical != logical_date:
+            raise AssertionError("same-date retry DagRun logical date is invalid")
+        terminal = evidence.get("driver")
+        if (
+            not isinstance(terminal, dict)
+            or terminal.get("driverState") != "FINISHED"
+            or terminal.get("success") is not True
+        ):
+            raise AssertionError("same-date retry driver is not a terminal success")
+        sensor_log = evidence.get("sensor_log")
+        if (
+            not isinstance(sensor_log, str)
+            or sensor_probe not in sensor_log
+            or "Success criteria met. Exiting." not in sensor_log
+        ):
+            raise AssertionError("same-date retry did not prove the exact successful ETL sensor dependency")
+        spark_log = evidence.get("spark_log")
+        if (
+            not isinstance(spark_log, str)
+            or f"submitted as {driver_id}" not in spark_log
+            or f"driver {driver_id} is FINISHED" not in spark_log
+        ):
+            raise AssertionError("same-date retry Spark task log does not bind its terminal driver")
+    return drivers
+
+
+def _task_log(run_id: str, task_id: str, runner=None) -> str:
+    execute = runner or _run
+    script = f"""
+import pathlib, sys
+root = pathlib.Path('/opt/airflow/logs') / ('dag_id=nyc_taxi_data_quality')
+root = root / ('run_id=' + sys.argv[1]) / ('task_id=' + sys.argv[2])
+files = sorted(root.glob('attempt=*.log'))
+if not files:
+    raise SystemExit('owned task log is missing')
+if len(files) > {_MAX_TASK_LOG_ATTEMPTS}:
+    raise SystemExit('owned task log exceeds attempt bound')
+remaining = {_MAX_TASK_LOG_BYTES}
+for path in files:
+    with path.open('rb') as stream:
+        while True:
+            chunk = stream.read(min(16384, remaining + 1))
+            if not chunk:
+                break
+            if len(chunk) > remaining:
+                raise SystemExit('owned task log exceeds byte bound')
+            sys.stdout.buffer.write(chunk)
+            remaining -= len(chunk)
+""".strip()
+    result = execute(
+        "docker",
+        "exec",
+        f"{_env('PROJECT_NAME', 'data-eng-lab')}-airflow-scheduler",
+        "python",
+        "-c",
+        script,
+        run_id,
+        task_id,
+        timeout=30,
+    )
+    if not isinstance(result.stdout, str) or len(result.stdout.encode("utf-8")) > _MAX_TASK_LOG_BYTES:
+        raise AssertionError("owned task log exceeds byte bound")
+    return result.stdout
+
+
+def _quality_run_evidence(run_id: str, driver_id: str, logical_date: datetime) -> dict:
+    matches = [
+        run
+        for run in _list_runs(_airflow, "nyc_taxi_data_quality")
+        if run.get("dag_run_id") == run_id
+    ]
+    if len(matches) != 1:
+        raise AssertionError("owned quality DagRun is missing before evidence capture")
+    return {
+        "run_id": run_id,
+        "run": matches[0],
+        "driver_id": driver_id,
+        "driver": _spark_terminal(driver_id),
+        "sensor_log": _task_log(run_id, "wait_for_nyc_taxi_etl"),
+        "spark_log": _task_log(run_id, "submit_nyc_taxi_data_quality"),
+        "logical_date": logical_date.isoformat(),
+    }
+
+
 def _terminalize_failed_dag_test(api, dag_id: str, run: dict) -> None:
     run_id = str(run.get("dag_run_id", ""))
     if not (
@@ -447,6 +591,49 @@ def _execute_owned_run(
     return run_id, driver_id
 
 
+def _execute_same_date_replacement(
+    logical_date: datetime,
+    *,
+    baseline: set[str],
+    owned: set[str],
+    replaced_run_id: str,
+    first_evidence: dict,
+) -> tuple[str, str, dict]:
+    dag_id = "nyc_taxi_data_quality"
+    before_runs = _list_runs(_airflow, dag_id)
+    _validate_runs(before_runs, baseline, owned)
+    before_drivers = _driver_ids()
+    try:
+        _execute_dag_test(dag_id, logical_date)
+    except BaseException as primary:
+        try:
+            after_failure = _list_runs(_airflow, dag_id)
+            created = [
+                run for run in after_failure
+                if run["dag_run_id"] not in {item["dag_run_id"] for item in before_runs}
+            ]
+            if len(created) == 1:
+                _terminalize_failed_dag_test(_airflow, dag_id, created[0])
+        except BaseException as cleanup:
+            primary.add_note(f"failed replacement DagRun terminalization also failed: {cleanup}")
+        raise
+    after_runs = _list_runs(_airflow, dag_id)
+    replacement = _validate_same_date_replacement(
+        before_runs,
+        after_runs,
+        baseline,
+        owned,
+        replaced_run_id,
+    )
+    new_drivers = _driver_ids() - before_drivers
+    if len(new_drivers) != 1:
+        raise AssertionError(f"same-date retry created {len(new_drivers)} drivers instead of one")
+    driver_id = new_drivers.pop()
+    evidence = _quality_run_evidence(replacement["dag_run_id"], driver_id, logical_date)
+    _validate_retry_evidence(first_evidence, evidence, logical_date.isoformat())
+    return replacement["dag_run_id"], driver_id, evidence
+
+
 def _trino(sql: str) -> list[dict]:
     result = _run(
         "docker",
@@ -557,6 +744,7 @@ def test_nyc_taxi_data_quality_live_acceptance():
                 owned=owned["nyc_taxi_data_quality"],
             )
             owned["nyc_taxi_data_quality"].add(quality_run_1)
+            quality_evidence_1 = _quality_run_evidence(quality_run_1, quality_driver_1, first_logical)
             first = {
                 "bronze": _snapshot_table("lakehouse.bronze.nyc_taxi_trips"),
                 "clean": _snapshot_table("lakehouse.silver.nyc_taxi_clean"),
@@ -568,12 +756,14 @@ def test_nyc_taxi_data_quality_live_acceptance():
                 "clean_properties": _quality_properties("nyc_taxi_clean"),
                 "quarantine_properties": _quality_properties("nyc_taxi_quarantine"),
             }
-            retry_run, retry_driver = _execute_owned_run(
-                "nyc_taxi_data_quality",
+            retry_run, retry_driver, retry_evidence = _execute_same_date_replacement(
                 first_logical,
                 baseline=baseline["nyc_taxi_data_quality"],
                 owned=owned["nyc_taxi_data_quality"],
+                replaced_run_id=quality_run_1,
+                first_evidence=quality_evidence_1,
             )
+            owned["nyc_taxi_data_quality"].remove(quality_run_1)
             owned["nyc_taxi_data_quality"].add(retry_run)
             retry = {
                 "clean": _snapshot_table("lakehouse.silver.nyc_taxi_clean"),
@@ -675,6 +865,13 @@ def test_nyc_taxi_data_quality_live_acceptance():
                             "quality": sorted(owned["nyc_taxi_data_quality"]),
                         },
                         "drivers": all_drivers,
+                        "same_date_retry": {
+                            "replaced_run": quality_run_1,
+                            "replacement_run": retry_run,
+                            "first_driver": quality_evidence_1["driver_id"],
+                            "replacement_driver": retry_evidence["driver_id"],
+                            "sensor_log_proof": True,
+                        },
                         "first": first,
                         "retry": retry,
                         "second": second,
@@ -812,6 +1009,135 @@ def test_owned_run_inventory_requires_exact_tiny_conf():
     for conf in ({}, None, {"dataset_scale": "small"}, {"dataset_scale": "tiny", "extra": True}):
         with pytest.raises(AssertionError, match="exact tiny"):
             _validate_tiny_run_conf({"conf": conf})
+
+
+def test_same_logical_date_retry_replaces_exactly_the_first_owned_run():
+    baseline = {"historical"}
+    owned = {"first"}
+    before = [
+        {"dag_run_id": "historical", "state": "success"},
+        {"dag_run_id": "first", "state": "success", "conf": {"dataset_scale": "tiny"}},
+    ]
+    after = [
+        {"dag_run_id": "historical", "state": "success"},
+        {"dag_run_id": "replacement", "state": "success", "conf": {"dataset_scale": "tiny"}},
+    ]
+
+    replacement = _validate_same_date_replacement(before, after, baseline, owned, "first")
+
+    assert replacement["dag_run_id"] == "replacement"
+
+
+@pytest.mark.parametrize(
+    ("after", "message"),
+    (
+        (
+            [
+                {"dag_run_id": "historical", "state": "success"},
+                {"dag_run_id": "first", "state": "success"},
+                {"dag_run_id": "replacement", "state": "success", "conf": {"dataset_scale": "tiny"}},
+            ],
+            "did not remove",
+        ),
+        (
+            [
+                {"dag_run_id": "replacement", "state": "success", "conf": {"dataset_scale": "tiny"}},
+            ],
+            "unrelated run inventory",
+        ),
+        (
+            [
+                {"dag_run_id": "historical", "state": "success"},
+                {"dag_run_id": "replacement", "state": "success", "conf": {"dataset_scale": "tiny"}},
+                {"dag_run_id": "unexpected", "state": "success"},
+            ],
+            "one replacement",
+        ),
+        (
+            [
+                {"dag_run_id": "historical", "state": "success"},
+                {"dag_run_id": "replacement", "state": "failed", "conf": {"dataset_scale": "tiny"}},
+            ],
+            "did not succeed",
+        ),
+    ),
+)
+def test_same_logical_date_retry_rejects_unsafe_inventory_changes(after, message):
+    before = [
+        {"dag_run_id": "historical", "state": "success"},
+        {"dag_run_id": "first", "state": "success", "conf": {"dataset_scale": "tiny"}},
+    ]
+    with pytest.raises(AssertionError, match=message):
+        _validate_same_date_replacement(before, after, {"historical"}, {"first"}, "first")
+
+
+def test_retry_evidence_requires_two_distinct_terminal_drivers_and_exact_sensor_logs():
+    first = {
+        "run_id": "first",
+        "run": {
+            "dag_run_id": "first",
+            "state": "success",
+            "logical_date": "2026-08-13T08:25:20Z",
+            "conf": {"dataset_scale": "tiny"},
+        },
+        "driver_id": "driver-first",
+        "driver": {"driverState": "FINISHED", "success": True},
+        "sensor_log": (
+            "Poking for tasks ['submit_nyc_taxi_etl'] in dag nyc_taxi_etl "
+            "on 2026-08-13T08:25:20+00:00\nSuccess criteria met. Exiting."
+        ),
+        "spark_log": "Driver successfully submitted as driver-first\nState of driver driver-first is FINISHED",
+    }
+    second = {
+        **first,
+        "run_id": "replacement",
+        "run": {**first["run"], "dag_run_id": "replacement"},
+        "driver_id": "driver-second",
+        "spark_log": "Driver successfully submitted as driver-second\nState of driver driver-second is FINISHED",
+    }
+    assert _validate_retry_evidence(first, second, "2026-08-13T08:25:20+00:00") == (
+        "driver-first",
+        "driver-second",
+    )
+
+    for changed in (
+        {**second, "driver_id": "driver-first"},
+        {**second, "driver": {"driverState": "FAILED", "success": False}},
+        {**second, "sensor_log": "Success criteria met. Exiting."},
+        {**second, "spark_log": "State of driver driver-second is FINISHED"},
+    ):
+        with pytest.raises(AssertionError):
+            _validate_retry_evidence(first, changed, "2026-08-13T08:25:20+00:00")
+    for changed_first in (
+        {**first, "run": {**first["run"], "state": "failed"}},
+        {**first, "run": {**first["run"], "conf": {"dataset_scale": "small"}}},
+        {**first, "run": {**first["run"], "logical_date": "2026-08-13T08:25:21Z"}},
+    ):
+        with pytest.raises(AssertionError):
+            _validate_retry_evidence(changed_first, second, "2026-08-13T08:25:20+00:00")
+
+
+def test_retry_task_log_reader_is_attempt_and_byte_bounded():
+    calls = []
+
+    def runner(*command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout="bounded", stderr="")
+
+    assert _task_log("owned", "wait_for_nyc_taxi_etl", runner) == "bounded"
+    command, kwargs = calls.pop()
+    script = command[5]
+    assert f"len(files) > {_MAX_TASK_LOG_ATTEMPTS}" in script
+    assert f"remaining = {_MAX_TASK_LOG_BYTES}" in script
+    assert "stream.read(min(16384, remaining + 1))" in script
+    assert "read_bytes" not in script and "read_text" not in script
+    assert kwargs == {"timeout": 30}
+
+    def oversized(*command, **_kwargs):
+        return subprocess.CompletedProcess(command, 0, stdout="x" * (_MAX_TASK_LOG_BYTES + 1), stderr="")
+
+    with pytest.raises(AssertionError, match="byte bound"):
+        _task_log("owned", "submit_nyc_taxi_data_quality", oversized)
 
 
 def test_live_catalog_contract_requires_exact_ntz_producer_schema():
