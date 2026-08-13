@@ -260,7 +260,7 @@ class S3Gateway:
         if not isinstance(response, Mapping):
             raise GatewayFailure("delete_response_invalid")
         deleted = response.get("Deleted")
-        errors = response.get("Errors")
+        errors = response.get("Errors", [])
         if not isinstance(deleted, list) or not isinstance(errors, list):
             raise GatewayFailure("delete_response_invalid")
         expected = tuple(record.key for record in ordered)

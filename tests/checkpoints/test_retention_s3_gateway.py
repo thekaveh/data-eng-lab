@@ -250,7 +250,7 @@ def test_head_and_delete_require_every_exact_original_record_result():
     gateway = S3Gateway(client, POLICY, monotonic=lambda: 0.0)
 
     gateway.head_record(record)
-    client.delete_response = {"Deleted": [{"Key": record.key}], "Errors": []}
+    client.delete_response = {"Deleted": [{"Key": record.key}]}
     assert gateway.delete_records((record,)) == (record.key,)
     request = [value for operation, value in client.calls if operation == "delete"][0]
     assert request == {
@@ -263,6 +263,10 @@ def test_head_and_delete_require_every_exact_original_record_result():
         gateway.delete_records((record,))
 
     client.delete_response = {"Deleted": [{"Key": record.key}, {"Key": record.key}], "Errors": []}
+    with pytest.raises(GatewayFailure, match="delete_response_invalid"):
+        gateway.delete_records((record,))
+
+    client.delete_response = {"Errors": []}
     with pytest.raises(GatewayFailure, match="delete_response_invalid"):
         gateway.delete_records((record,))
 
