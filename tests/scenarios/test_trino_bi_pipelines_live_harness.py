@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
@@ -300,3 +301,25 @@ def test_fixed_live_source_contains_no_refresh_or_arbitrary_sql_inputs():
     assert "dag_run.conf" not in source
     assert "input(" not in source
     assert "RUN_INFRA" in source
+
+
+def test_dag_test_failure_is_bounded_and_redacts_runtime_secrets(monkeypatch):
+    monkeypatch.setenv("AIRFLOW_ADMIN_PASSWORD", "airflow-secret")
+    monkeypatch.setenv("MINIO_ICEBERG_SECRET_KEY", "minio-secret")
+
+    def runner(*command, **_kwargs):
+        raise subprocess.CalledProcessError(
+            1,
+            command,
+            output="airflow-secret " + "x" * 6000,
+            stderr="minio-secret task failed",
+        )
+
+    with pytest.raises(AssertionError, match="paused Airflow test execution failed") as failure:
+        live._execute_dag_test(
+            "tpch_bi_query", datetime(2026, 8, 13, tzinfo=timezone.utc), runner=runner
+        )
+    text = str(failure.value)
+    assert "airflow-secret" not in text and "minio-secret" not in text
+    assert "<redacted>" in text and "<truncated>" in text
+    assert len(text) < 5000

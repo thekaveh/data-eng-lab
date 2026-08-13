@@ -362,7 +362,7 @@ def _table_state() -> dict:
 
 def _execute_dag_test(dag_id: str, logical_date: datetime, runner=None):
     execute = runner or _run
-    return execute(
+    command = (
         "docker",
         "exec",
         f"{_env('PROJECT_NAME', 'data-eng-lab')}-airflow-scheduler",
@@ -375,8 +375,29 @@ def _execute_dag_test(dag_id: str, logical_date: datetime, runner=None):
         dag_id,
         logical_date.replace(microsecond=0).isoformat(),
         "--use-executor",
-        timeout=900,
     )
+    try:
+        return execute(*command, timeout=900)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as error:
+        output = "\n".join(
+            str(value)
+            for value in (
+                getattr(error, "stdout", None),
+                getattr(error, "output", None),
+                getattr(error, "stderr", None),
+            )
+            if value
+        )
+        for secret in (
+            _env("AIRFLOW_ADMIN_PASSWORD"),
+            _env("MINIO_ROOT_PASSWORD"),
+            _env("MINIO_ICEBERG_SECRET_KEY"),
+        ):
+            if secret:
+                output = output.replace(secret, "<redacted>")
+        if len(output) > 4400:
+            output = output[:500] + "\n...<truncated>...\n" + output[-3800:]
+        raise AssertionError(f"paused Airflow test execution failed:\n{output}") from error
 
 
 def _decode_xcom(document: dict) -> dict:
