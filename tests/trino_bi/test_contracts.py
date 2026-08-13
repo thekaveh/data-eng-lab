@@ -40,6 +40,28 @@ def _property_rows(values=PROVENANCE):
     return [[key, values[key]] for key in EXPECTED_KEYS]
 
 
+def test_registry_freezes_actual_trino_482_declared_type_spelling():
+    c = _load_contracts()
+    assert c.QUERIES[c.QueryName.TPCH_PROPERTIES].columns == (
+        ("source_table", "varchar(12)"),
+        ("key", "varchar"),
+        ("value", "varchar"),
+    )
+    assert c.QUERIES[c.QueryName.TPCH_SNAPSHOTS].columns[0] == (
+        "source_table",
+        "varchar(12)",
+    )
+    assert c.QUERIES[c.QueryName.TPCH_SOURCE_TOTALS].columns[1] == (
+        "fact_revenue",
+        "decimal(38, 2)",
+    )
+    assert c.QUERIES[c.QueryName.TPCH_SEGMENT_REVENUE].columns[1] == (
+        "total_revenue",
+        "decimal(38, 2)",
+    )
+    assert c.TPCH_FACT_SCHEMA[3] == ("revenue", "decimal(25, 2)")
+
+
 DIM_SCHEMA = [
     ["c_custkey", "bigint"],
     ["c_name", "varchar"],
@@ -50,7 +72,7 @@ FACT_SCHEMA = [
     ["o_orderkey", "bigint"],
     ["o_custkey", "bigint"],
     ["o_orderdate", "date"],
-    ["revenue", "decimal(25,2)"],
+    ["revenue", "decimal(25, 2)"],
     ["line_count", "bigint"],
 ]
 TPC_ROWS = [

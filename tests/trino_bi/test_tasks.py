@@ -49,7 +49,7 @@ def _tpch_results(module):
         ["fct_orders", "o_orderkey", "bigint"],
         ["fct_orders", "o_custkey", "bigint"],
         ["fct_orders", "o_orderdate", "date"],
-        ["fct_orders", "revenue", "decimal(25,2)"],
+        ["fct_orders", "revenue", "decimal(25, 2)"],
         ["fct_orders", "line_count", "bigint"],
     ]
     totals = [[5, "150.00", 15, 0]]

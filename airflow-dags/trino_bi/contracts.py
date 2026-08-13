@@ -53,12 +53,12 @@ TPCH_FACT_SCHEMA = (
     ("o_orderkey", "bigint"),
     ("o_custkey", "bigint"),
     ("o_orderdate", "date"),
-    ("revenue", "decimal(25,2)"),
+    ("revenue", "decimal(25, 2)"),
     ("line_count", "bigint"),
 )
 TPCH_RESULT_COLUMNS = (
     ("market_segment", "varchar"),
-    ("total_revenue", "decimal(38,2)"),
+    ("total_revenue", "decimal(38, 2)"),
     ("line_count", "bigint"),
     ("order_count", "bigint"),
 )
@@ -99,7 +99,7 @@ FROM (
   )
 )
 ORDER BY source_table, key""",
-        (("source_table", "varchar"), ("key", "varchar"), ("value", "varchar")),
+        (("source_table", "varchar(12)"), ("key", "varchar"), ("value", "varchar")),
         10,
         "gold",
     ),
@@ -114,7 +114,7 @@ FROM (
   FROM lakehouse.gold."fct_orders$refs" WHERE name = 'main'
 )
 ORDER BY source_table""",
-        (("source_table", "varchar"), ("snapshot_id", "bigint")),
+        (("source_table", "varchar(12)"), ("snapshot_id", "bigint")),
         2,
         "gold",
     ),
@@ -138,7 +138,7 @@ FROM lakehouse.gold.fct_orders f
 LEFT JOIN lakehouse.gold.dim_customer c ON f.o_custkey = c.c_custkey""",
         (
             ("fact_order_count", "bigint"),
-            ("fact_revenue", "decimal(38,2)"),
+            ("fact_revenue", "decimal(38, 2)"),
             ("fact_line_count", "bigint"),
             ("unmatched_orders", "bigint"),
         ),

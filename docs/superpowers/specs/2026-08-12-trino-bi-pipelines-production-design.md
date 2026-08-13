@@ -171,7 +171,7 @@ The task also captures the current snapshot ID of both tables and validates the 
 - `dim_customer(c_custkey bigint, c_name varchar, c_nationkey integer,
   c_mktsegment varchar)`; and
 - `fct_orders(o_orderkey bigint, o_custkey bigint, o_orderdate date,
-  revenue decimal(25,2), line_count bigint)`.
+  revenue decimal(25, 2), line_count bigint)` using Trino 482's exact declared type spelling.
 
 ### 6.2 BI result and reconciliation
 
@@ -181,7 +181,7 @@ segment, and returns in ascending segment order:
 | Column | Trino type | Contract |
 |---|---|---|
 | `market_segment` | `varchar` | unique, nonblank |
-| `total_revenue` | `decimal(38,2)` | canonical positive decimal string |
+| `total_revenue` | `decimal(38, 2)` | canonical positive decimal string |
 | `line_count` | `bigint` | positive |
 | `order_count` | `bigint` | positive and no greater than line count |
 
