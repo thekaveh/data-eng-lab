@@ -62,7 +62,7 @@ class QualityStoreSpec extends AnyFunSuite with BeforeAndAfterAll {
     override def createFactsTable(): Unit = actions += "create:facts"
     override def replace(identifier: String, frame: DataFrame): Unit = actions += s"replace:$identifier"
     override def setProperties(identifier: String, values: Map[String, String]): Unit =
-      actions += s"properties:$identifier:${values.toSeq.sorted.mkString(",")}" 
+      actions += s"properties:$identifier:${values.toSeq.sorted.mkString(",")}"
     override def mergeFacts(values: Seq[QualityFact]): Unit = { actions += "merge:facts"; merged = values }
   }
 
