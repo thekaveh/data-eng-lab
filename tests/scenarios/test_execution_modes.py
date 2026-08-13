@@ -31,7 +31,11 @@ DEPRECATED = "deprecated or superseded"
 
 EXPECTED = {
     "batch_ingest-nyc_taxi-spark-iceberg": (EXISTING, None, "spark-apps/nyc-taxi-etl/dag.py"),
-    "bi_query-tpch-trino-iceberg": (APPROVED, 83, None),
+    "bi_query-tpch-trino-iceberg": (
+        EXISTING,
+        None,
+        "airflow-dags/trino_bi/dag.py",
+    ),
     "cdc_streaming-online_retail-spark-iceberg": (UNSCHEDULED, None, None),
     "data_quality-nyc_taxi-spark-iceberg": (APPROVED, 91, None),
     "feature_engineering-movielens-spark-iceberg": (
@@ -39,7 +43,11 @@ EXPECTED = {
         None,
         "spark-apps/movielens-feature-pipeline/dag.py",
     ),
-    "federated_query-nyc_taxi-trino-iceberg": (APPROVED, 83, None),
+    "federated_query-nyc_taxi-trino-iceberg": (
+        EXISTING,
+        None,
+        "airflow-dags/trino_bi/dag.py",
+    ),
     "incremental_upsert-online_retail-spark-iceberg": (NOTEBOOK_ONLY, None, None),
     "join_optimization-tpch-spark-iceberg": (NOTEBOOK_ONLY, None, None),
     "json_flatten-gh_archive-spark-iceberg": (
@@ -103,14 +111,13 @@ def test_reviewed_classifications_children_and_entrypoints_are_frozen():
     for mode in modes:
         counts[mode.classification] += 1
     assert counts == {
-        EXISTING: 6,
-        APPROVED: 3,
+        EXISTING: 8,
+        APPROVED: 1,
         NOTEBOOK_ONLY: 7,
         UNSCHEDULED: 3,
         DEPRECATED: 0,
     }
     assert {mode.child_issue for mode in modes if mode.child_issue is not None} == {
-        83,
         91,
     }
 
@@ -248,6 +255,10 @@ def test_no_scenario_local_dag_or_runtime_empty_operator_remains():
         "spark-apps/tpch-star-schema/dag.py",
     ]
     assert all("EmptyOperator" not in path.read_text(encoding="utf-8") for path in production_dags)
+    consumer_dags = sorted((ROOT / "airflow-dags").rglob("dag.py"))
+    assert [path.relative_to(ROOT).as_posix() for path in consumer_dags] == [
+        "airflow-dags/trino_bi/dag.py",
+    ]
 
 
 def test_zero_scenario_dags_is_independent_of_matrix_loading():
@@ -258,6 +269,7 @@ def test_zero_scenario_dags_is_independent_of_matrix_loading():
 def test_production_dag_mount_and_matrix_entrypoints_agree():
     overlay = (ROOT / "compose/data-eng-lab.yml").read_text(encoding="utf-8")
     assert "../spark-apps:/opt/airflow/dags/data_eng_lab_spark_apps:ro" in overlay
+    assert "../airflow-dags:/opt/airflow/dags/data_eng_lab_airflow_dags:ro" in overlay
     assert "../scenarios:/opt/airflow/dags" not in overlay
     assert overlay.count("../spark-apps:/opt/airflow/dags/data_eng_lab_spark_apps:ro") == 2
     modes = load_execution_modes(MATRIX, ROOT)
@@ -267,7 +279,8 @@ def test_production_dag_mount_and_matrix_entrypoints_agree():
         if mode.execution_entrypoint is not None
     } == {
         path.relative_to(ROOT).as_posix()
-        for path in (ROOT / "spark-apps").rglob("dag.py")
+        for parent in (ROOT / "spark-apps", ROOT / "airflow-dags")
+        for path in parent.rglob("dag.py")
     }
 
 
@@ -320,8 +333,10 @@ def test_current_public_docs_never_publish_no_op_dags_or_false_triggers():
     assert obsolete <= {
         "gh_archive_flatten_sessionization",
         "movielens_feature_pipeline",
+        "nyc_taxi_trino_daily",
         "nyc_taxi_etl",
         "nyc_taxi_medallion",
+        "tpch_bi_query",
         "tpch_star_schema",
     }
 

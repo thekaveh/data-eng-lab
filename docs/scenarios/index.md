@@ -1,6 +1,6 @@
 # 5.1. Catalog
 
-This page catalogs all 19 scenarios in the `data-eng-lab` lakehouse, organized by functional category. Each scenario is a self-contained folder with paired Zeppelin and Jupyter implementations. The [execution-mode matrix](execution-modes.md) distinguishes the five production DAGs, approved production work, notebook-only demonstrations, and intentionally unscheduled streams. Seventeen Spark scenarios form Scala/PySpark parity pairs; the two Trino scenarios instead pair `%trino` Zeppelin SQL with a Jupyter client. Architecture diagrams are linked from each scenario's README.
+This page catalogs all 19 scenarios in the `data-eng-lab` lakehouse, organized by functional category. Each scenario is a self-contained folder with paired Zeppelin and Jupyter implementations. The [execution-mode matrix](execution-modes.md) distinguishes the seven production DAGs covering eight scenarios, approved production work, notebook-only demonstrations, and intentionally unscheduled streams. Seventeen Spark scenarios form Scala/PySpark parity pairs; the two Trino scenarios instead pair `%trino` Zeppelin SQL with a Jupyter client. Architecture diagrams are linked from each scenario's README.
 
 ## 1. Categories
 
@@ -43,7 +43,7 @@ Four Structured Streaming scenarios cover broker ingestion, incremental file ing
 
 ### BI & Queries
 
-Trino SQL queries over Iceberg tables via the REST connector. Demonstrates multi-engine interoperability: Spark writes, Trino reads (and writes via CTAS), with both engines accessing the same Iceberg tables on shared storage.
+Trino SQL queries over Iceberg tables via the REST connector. The notebooks demonstrate multi-engine interoperability, including educational CTAS writes. Production uses the read-only `tpch_bi_query` and `nyc_taxi_trino_daily` DAGs and stores bounded canonical artifacts as metadata-DB XCom records, not Iceberg tables.
 
 - [federated_query-nyc_taxi-trino-iceberg](federated_query-nyc_taxi-trino-iceberg.md)
 - [bi_query-tpch-trino-iceberg](bi_query-tpch-trino-iceberg.md)
@@ -86,7 +86,7 @@ Window-based sessionization on timestamped events. Per-actor gap-based session b
 
 ## 2. Running Scenarios
 
-Each scenario follows a dual-notebook pattern across Zeppelin and JupyterHub. The 17 Spark pairs must produce equivalent output, validated by `tests/scenarios/parity.py`; the two Trino pairs are execution-gated but excluded from Scala/PySpark parity. Airflow runs five production DAGs: `nyc_taxi_etl`, `nyc_taxi_medallion`, `tpch_star_schema`, `movielens_feature_pipeline`, and `gh_archive_flatten_sessionization`. Approved child issues do not become runnable entrypoints until their implementation and live acceptance pass.
+Each scenario follows a dual-notebook pattern across Zeppelin and JupyterHub. The 17 Spark pairs must produce equivalent output, validated by `tests/scenarios/parity.py`; the two Trino pairs are execution-gated but excluded from Scala/PySpark parity. Airflow runs seven production DAGs: `nyc_taxi_etl`, `nyc_taxi_medallion`, `tpch_star_schema`, `movielens_feature_pipeline`, `gh_archive_flatten_sessionization`, `tpch_bi_query`, and `nyc_taxi_trino_daily`. The two Trino tasks return durable metadata-DB XCom records for their DagRuns; those artifacts are not Iceberg tables and follow the Airflow metadata retention policy. Retrieve them from the task-instance XCom view/API before retention cleanup. Approved child issues do not become runnable entrypoints until implementation and live acceptance pass.
 
 The three broker-backed scenarios require Redpanda and their Kafka topics (created through `REDPANDA_DEMO_TOPICS` or a scenario producer). The GH Archive streaming-ingest scenario instead requests one resolver-verified immutable file set. All four store checkpoint state in MinIO's `checkpoints` bucket, so a rerun resumes from the last processed offset or file unless its checkpoint is intentionally reset.
 

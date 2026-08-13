@@ -1,10 +1,10 @@
 # federated_query-nyc_taxi-trino-iceberg
 
-Query the NYC-taxi Iceberg lakehouse via Trino SQL — `lakehouse.bronze.nyc_taxi_trips` → `lakehouse.gold.nyc_taxi_daily_trino` — from both a Zeppelin `%trino` notebook and a Jupyter notebook using the `trino` Python client. Both surfaces run identical SQL.
+Query `lakehouse.bronze.nyc_taxi_trips` through a read-only production Trino task and paired educational Zeppelin/Jupyter SQL notebooks.
 
 ## 1. Purpose
 
-This scenario demonstrates Trino as a query engine over the same Iceberg lakehouse used by Spark scenarios. Trino reads Iceberg tables directly via the `lakehouse` catalog, aggregates NYC-taxi trips into a daily summary, and writes the result back to the gold layer — all via standard ANSI SQL (no Spark required). It provides a lightweight SQL-only alternative to PySpark/Scala workloads, complementing Spark's programmatic ETL with ad-hoc querying.
+This scenario demonstrates Trino over the same Iceberg lakehouse used by Spark. Production binds to one unchanged NYC Bronze snapshot, reconciles daily counts to an independent source count, and returns a bounded canonical artifact without Spark or an Iceberg write. The paired notebooks retain direct CTAS only as an educational comparison.
 
 ## 2. Data Model
 
@@ -16,29 +16,33 @@ Source: `lakehouse.bronze.nyc_taxi_trips` (populated by `batch_ingest-nyc_taxi-s
 
 | Table | Layer | Key Columns |
 |---|---|---|
-| `lakehouse.gold.nyc_taxi_daily_trino` | Gold | `trip_date`, `trip_count`, `avg_fare` (aggregated daily summary) |
+| Airflow metadata-DB XCom | Run artifact | `trip_date`, `trip_count`, `avg_fare` |
 
 ## 3. Architecture
 
 ![Architecture](../../docs/diagrams/img/federated_query-nyc_taxi-trino-iceberg.png)
 
-Data flows from the bronze Iceberg table through Trino SQL aggregation into the gold layer. Trino reads directly from the Iceberg REST catalog (same catalog as Spark), executes ANSI SQL queries for daily aggregation, and writes results back — no Spark cluster involved.
+Data flows from the Bronze Iceberg table through fixed read-only Trino SQL to an Airflow metadata artifact. The task checks schema, count, and snapshot before accepting the daily aggregate, then requires the same snapshot afterward.
 
 ## 4. Notebooks
 
 - **Zeppelin (Scala, `%trino`):** Sections: Overview → Read Bronze Table, Aggregate by Day, Write Gold Summary → Verify; identical SQL to PySpark
 - **Jupyter (Py, `trino`):** Same sections; identical SQL via the Trino Python client
 
+Their CTAS cells are an **educational direct-write path** that **does not enforce production provenance, snapshot checks, or serialization**. **Use the Airflow DAG for production BI queries and durable BI artifacts**; the production path itself is read-only and stores the artifact in Airflow metadata.
+
 ## 5. Orchestration
 
-Classification: **approved new production DAG**. No production DAG exists yet. Child #83 owns the proven Airflow/Trino execution contract and meaningful-result validation; until it passes live acceptance, run the paired Trino notebooks only.
+Classification: **existing production DAG** at `airflow-dags/trino_bi/dag.py`. `nyc_taxi_trino_daily` runs daily at 02:00 UTC with `max_active_runs=1`, one retry, and a two-minute delay. Its bounded canonical metadata-DB XCom is retained with the Airflow metadata database and is **not an Iceberg table**; retrieve it from the task instance XCom view or API before configured metadata retention removes the DagRun.
+
+The NYC producer predates the five-key table-property contract, so this workflow is explicitly **snapshot-bound** and **not resolver-generation-bound**. It does not claim five-key provenance. The task captures and rereads the exact Bronze snapshot; the optional raw pointer state in live acceptance is negative-control evidence only.
 
 ## 6. Usage
 
 1. Populate bronze table: `batch_ingest-nyc_taxi-spark-iceberg` (or ensure it exists)
-2. Ensure the `gold` Iceberg namespace exists: `scripts/register_iceberg.py`
-3. Open either notebook on the Atlas stack (Trino coordinator at `trino:8080`) and run all sections
-4. Verify: `spark-sql -e "SELECT * FROM lakehouse.gold.nyc_taxi_daily_trino LIMIT 10"`
+2. For production, run `airflow dags test nyc_taxi_trino_daily <logical-date> --use-executor` from the scheduler or let the daily schedule run.
+3. Retrieve `run_bounded_bi_query`'s `return_value` XCom through Airflow's task-instance view/API.
+4. Use either paired notebook only for the educational direct-query/CTAS walkthrough.
 
 ## 7. Dependencies
 
@@ -48,7 +52,7 @@ Classification: **approved new production DAG**. No production DAG exists yet. C
 
 ## 8. Known Issues & Caveats
 
-Atlas provides the Trino coordinator and both notebooks are live-gated; production orchestration remains owned by child #83. The `%trino` interpreter is seeded by Atlas pointing to the Trino coordinator. The `lakehouse.gold` namespace must exist in the Iceberg REST catalog before the Write cell runs.
+Atlas provides the Trino coordinator and `%trino` interpreter. Production accepts only fixed registry SQL through internal `http://trino:8080`; no host fallback or arbitrary DagRun SQL exists. The catalog is currently unauthenticated/ALLOW_ALL, so the application-level read-only registry is a workload boundary, not a claim of catalog security.
 
 ## See Also
 
