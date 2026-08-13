@@ -8,7 +8,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -25,6 +25,10 @@ SHA256 = re.compile(r"[0-9a-f]{64}")
 MAX_METRICS_BYTES = 65_536
 MAX_RESPONSE_BYTES = 65_536
 PRODUCTION_PREFIXES = ("events/", "event_windows/", "online_retail_cdc/", "gh_events_file/")
+OWNED_FIXTURE_KEY = re.compile(
+    rf"(?:streaming_test/{RUN_UUID.pattern}/(?:state/(?:offset|changed)|commits/0)"
+    rf"|unknown-retention/{RUN_UUID.pattern}/sentinel)"
+)
 
 pytestmark = pytest.mark.infra
 
@@ -98,6 +102,49 @@ def _owned_stack(runner=None, probe=None):
             primary.add_note("cleanup_failed")
 
 
+@contextmanager
+def _owned_fixture_objects(client):
+    keys: list[str] = []
+    primary = None
+
+    def put(key: str, body: bytes) -> None:
+        if not isinstance(key, str) or OWNED_FIXTURE_KEY.fullmatch(key) is None:
+            raise AssertionError("invalid owned fixture key")
+        if not isinstance(body, bytes) or not body or len(body) > 64:
+            raise AssertionError("invalid owned fixture body")
+        if key in keys or len(keys) >= 16:
+            raise AssertionError("invalid owned fixture key set")
+        keys.append(key)
+        client.put_object(Bucket="checkpoints", Key=key, Body=body)
+
+    try:
+        yield put
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        if keys:
+            try:
+                response = client.delete_objects(
+                    Bucket="checkpoints",
+                    Delete={"Objects": [{"Key": key} for key in keys], "Quiet": False},
+                )
+                if response.get("Errors"):
+                    raise RuntimeError("owned_fixture_cleanup_failed")
+                deleted = tuple(sorted(item.get("Key") for item in response.get("Deleted", [])))
+                if deleted != tuple(sorted(keys)):
+                    raise RuntimeError("owned_fixture_cleanup_failed")
+                prefixes = tuple(sorted({key.split("/", 2)[0] + "/" + key.split("/", 2)[1] + "/" for key in keys}))
+                for prefix in prefixes:
+                    listed = client.list_objects_v2(Bucket="checkpoints", Prefix=prefix, MaxKeys=1000)
+                    if listed.get("IsTruncated") is not False or listed.get("Contents"):
+                        raise RuntimeError("owned_fixture_cleanup_failed")
+            except BaseException:
+                if primary is None:
+                    raise RuntimeError("owned_fixture_cleanup_failed") from None
+                primary.add_note("owned_fixture_cleanup_failed")
+
+
 def _fixture_identity(run_uuid: str) -> dict[str, object]:
     if not isinstance(run_uuid, str) or RUN_UUID.fullmatch(run_uuid) is None:
         raise AssertionError("fixture UUID must be canonical")
@@ -120,9 +167,7 @@ def _assert_stable_snapshot(before: dict[str, object], after: dict[str, object])
         raise AssertionError("production snapshot changed")
 
 
-def _assert_operation_evidence(
-    evidence: dict[str, object], operation_id: str, plan_sha256: str, prefix: str
-) -> None:
+def _assert_operation_evidence(evidence: dict[str, object], operation_id: str, plan_sha256: str, prefix: str) -> None:
     if set(evidence) != {"audit", "plan", "prepared", "result"}:
         raise AssertionError("operation evidence mismatch")
     plan = evidence["plan"]
@@ -217,12 +262,7 @@ def _inventory(client, prefix: str) -> tuple[tuple[str, str, int], ...]:
     response = client.list_objects_v2(Bucket="checkpoints", Prefix=prefix, MaxKeys=1000)
     if response.get("IsTruncated") is not False:
         raise AssertionError("live inventory exceeded one bounded page")
-    return tuple(
-        sorted(
-            (item["Key"], item["ETag"].strip('"'), item["Size"])
-            for item in response.get("Contents", [])
-        )
-    )
+    return tuple(sorted((item["Key"], item["ETag"].strip('"'), item["Size"]) for item in response.get("Contents", [])))
 
 
 def _production_snapshot(client) -> dict[str, object]:
@@ -329,7 +369,7 @@ def test_checkpoint_retention_live_acceptance():
     os.environ["CHECKPOINT_RETENTION_DESTRUCTIVE_ENABLED"] = "true"
     os.environ["MINIO_RETENTION_ACCESS_KEY"] = "retention86live"
     try:
-        with _owned_stack():
+        with _owned_stack(), ExitStack() as owned_resources:
             health = _wait_service()
             assert health == {
                 "capability_profile": "minio-2025-09-manual-verified-readback",
@@ -340,21 +380,20 @@ def test_checkpoint_retention_live_acceptance():
             if not endpoint:
                 endpoint_file = ROOT / "atlas-consumer.env"
                 values = dict(
-                    line.split("=", 1)
-                    for line in endpoint_file.read_text(encoding="utf-8").splitlines()
-                    if "=" in line
+                    line.split("=", 1) for line in endpoint_file.read_text(encoding="utf-8").splitlines() if "=" in line
                 )
                 endpoint = values["ATLAS_MINIO_HOST_ENDPOINT"]
             root = _client(endpoint, _env("MINIO_ROOT_USER"), _env("MINIO_ROOT_PASSWORD"))
+            put_owned = owned_resources.enter_context(_owned_fixture_objects(root))
             before = _production_snapshot(root)
             denied_key = f"unknown-retention/{uuid.uuid4()}/sentinel"
-            root.put_object(Bucket="checkpoints", Key=denied_key, Body=b"preserve")
+            put_owned(denied_key, b"preserve")
 
             identities = [_fixture_identity(str(uuid.uuid4())) for _ in range(2)]
             for index, identity in enumerate(identities):
                 prefix = identity["prefix"]
-                root.put_object(Bucket="checkpoints", Key=f"{prefix}state/offset", Body=f"state-{index}".encode())
-                root.put_object(Bucket="checkpoints", Key=f"{prefix}commits/0", Body=f"commit-{index}".encode())
+                put_owned(f"{prefix}state/offset", f"state-{index}".encode())
+                put_owned(f"{prefix}commits/0", f"commit-{index}".encode())
 
             active = _service("POST", "/v1/leases/acquire", _lease_payload(identities[0], "issue86-live-active"))
             active_plan, _active_sha = _plan(identities[0], datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
@@ -362,8 +401,8 @@ def test_checkpoint_retention_live_acceptance():
             assert "lease_active" in active_plan["summary"]["refusal_codes"]
             _service("POST", "/v1/leases/terminal", _terminal_payload(identities[0], active["epoch"]))
 
-            evaluated_at = (datetime.now(timezone.utc) + timedelta(days=2)).replace(microsecond=0).strftime(
-                "%Y-%m-%dT%H:%M:%SZ"
+            evaluated_at = (
+                (datetime.now(timezone.utc) + timedelta(days=2)).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
             )
             first_plan, first_sha = _plan(identities[0], evaluated_at)
             repeated_plan, repeated_sha = _plan(identities[0], evaluated_at)
@@ -371,9 +410,7 @@ def test_checkpoint_retention_live_acceptance():
             assert first_plan["summary"]["decision"] == "eligible"
             first_prepared = _prepare(first_plan, first_sha)
 
-            second_lease = _service(
-                "POST", "/v1/leases/acquire", _lease_payload(identities[1], "issue86-live-success")
-            )
+            second_lease = _service("POST", "/v1/leases/acquire", _lease_payload(identities[1], "issue86-live-success"))
             _service("POST", "/v1/leases/terminal", _terminal_payload(identities[1], second_lease["epoch"]))
             second_plan, second_sha = _plan(identities[1], evaluated_at)
             assert second_plan["summary"]["decision"] == "eligible"
@@ -385,7 +422,7 @@ def test_checkpoint_retention_live_acceptance():
                 {"confirm_prefix": identities[1]["prefix"], "plan_sha256": second_sha},
             )
             assert not_ready["state"] == "not_ready"
-            root.put_object(Bucket="checkpoints", Key=f"{identities[0]['prefix']}state/changed", Body=b"changed")
+            put_owned(f"{identities[0]['prefix']}state/changed", b"changed")
 
             deadline = time.monotonic() + 930
             while time.monotonic() < deadline:
@@ -424,7 +461,6 @@ def test_checkpoint_retention_live_acceptance():
             assert metrics['checkpoint_retention_plans_total{decision="refused"}'] >= 1
             assert metrics['checkpoint_retention_deleted_objects_total{outcome="completed"}'] == 2
             _assert_stable_snapshot(before, _production_snapshot(root))
-            root.delete_object(Bucket="checkpoints", Key=denied_key)
     finally:
         if previous_destructive is None:
             os.environ.pop("CHECKPOINT_RETENTION_DESTRUCTIVE_ENABLED", None)

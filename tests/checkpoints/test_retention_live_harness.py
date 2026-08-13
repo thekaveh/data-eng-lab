@@ -67,6 +67,74 @@ def test_owned_stack_preserves_body_primary_and_sanitizes_cleanup_note():
     assert "cleanup_failed" in rendered
 
 
+def test_owned_fixture_objects_delete_only_registered_exact_keys_on_failure():
+    live = _live()
+    deleted = []
+
+    class Client:
+        def put_object(self, *, Bucket, Key, Body):
+            assert Bucket == "checkpoints"
+            assert Body in {b"state", b"sentinel"}
+
+        def delete_objects(self, *, Bucket, Delete):
+            assert Bucket == "checkpoints"
+            keys = [item["Key"] for item in Delete["Objects"]]
+            deleted.extend(keys)
+            return {"Deleted": [{"Key": key} for key in keys]}
+
+        def list_objects_v2(self, *, Bucket, Prefix, MaxKeys):
+            assert Bucket == "checkpoints"
+            assert MaxKeys == 1000
+            assert Prefix.endswith("/")
+            return {"IsTruncated": False}
+
+    fixture = "streaming_test/550e8400-e29b-41d4-a716-446655440000/state/offset"
+    sentinel = "unknown-retention/11111111-1111-4111-8111-111111111111/sentinel"
+    with pytest.raises(RuntimeError, match="primary"):
+        with live._owned_fixture_objects(Client()) as put:
+            put(fixture, b"state")
+            put(sentinel, b"sentinel")
+            raise RuntimeError("primary")
+    assert deleted == [fixture, sentinel]
+
+
+def test_owned_fixture_objects_reject_broad_or_foreign_cleanup_targets_before_put():
+    live = _live()
+
+    class Client:
+        def put_object(self, **_kwargs):
+            raise AssertionError("must not mutate")
+
+    with live._owned_fixture_objects(Client()) as put:
+        for key in (
+            "streaming_test/",
+            "streaming_test/not-a-uuid/state/offset",
+            "events/550e8400-e29b-41d4-a716-446655440000/state/offset",
+            "_retention/leases/go-live-streaming-test-v1.json",
+        ):
+            with pytest.raises(AssertionError, match="owned fixture key"):
+                put(key, b"x")
+
+
+def test_owned_fixture_cleanup_failure_cannot_replace_body_primary():
+    live = _live()
+    primary = KeyboardInterrupt()
+
+    class Client:
+        def put_object(self, **_kwargs):
+            return None
+
+        def delete_objects(self, **_kwargs):
+            raise RuntimeError("credential=must-not-escape")
+
+    with pytest.raises(KeyboardInterrupt) as failure:
+        with live._owned_fixture_objects(Client()) as put:
+            put("unknown-retention/11111111-1111-4111-8111-111111111111/sentinel", b"x")
+            raise primary
+    assert failure.value is primary
+    assert getattr(primary, "__notes__", ()) == ["owned_fixture_cleanup_failed"]
+
+
 def test_disposable_identity_and_review_facts_are_exact_and_bounded():
     live = _live()
     identity = live._fixture_identity("550e8400-e29b-41d4-a716-446655440000")
@@ -124,13 +192,16 @@ def test_operation_evidence_requires_exact_plan_prepare_result_and_audit_identit
 
 def test_metrics_and_logs_are_bounded_fixed_and_redacted():
     live = _live()
-    body = b"\n".join(
-        [
-            b"checkpoint_retention_plans_total 3",
-            b"checkpoint_retention_apply_total{decision=\"completed\"} 1",
-            b"checkpoint_retention_deleted_objects_total 4",
-        ]
-    ) + b"\n"
+    body = (
+        b"\n".join(
+            [
+                b"checkpoint_retention_plans_total 3",
+                b'checkpoint_retention_apply_total{decision="completed"} 1',
+                b"checkpoint_retention_deleted_objects_total 4",
+            ]
+        )
+        + b"\n"
+    )
     metrics = live._parse_metrics(body)
     assert metrics["checkpoint_retention_plans_total"] == 3
     assert metrics['checkpoint_retention_apply_total{decision="completed"}'] == 1
