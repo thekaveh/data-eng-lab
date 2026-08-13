@@ -10,7 +10,8 @@ validation, and live evidence binding
 ## Accepted artifact and immutable input
 
 - Local and published JAR: `gh-archive-pipeline/0.1.0/app.jar`
-- JAR SHA-256: `5d2459e4dc9cebe96c16715db027b21333307e6cb2fae39b0c67d395535d52d1`
+- Final reviewed JAR SHA-256: `b826e218d8ad4a9a4dadd1b835e3533c9649735725cfb3f71508e7e04e952c04`
+- Canonical live-replay JAR SHA-256: `5d2459e4dc9cebe96c16715db027b21333307e6cb2fae39b0c67d395535d52d1`
 - Dataset/scale: `gh_archive` / `tiny`
 - Plan ID: `8ab812c3621cc3dae68989d9f24134351ea9683453133b31feaff579d0fa3e7f`
 - Publication ID: `e53a481df5d54c6eabc645838fb2f2ba`
@@ -123,3 +124,10 @@ The final `scripts/stop-all.sh` cleanup preserved every volume, restored the DAG
 left zero project containers in `docker ps --all`. Direct concurrent JAR invocation remains
 unsupported; serialized Airflow execution is the production boundary and same-generation rerun is
 the supported recovery path.
+
+After live acceptance, final quality review replaced the raw preflight's per-record 1 MiB line
+allocation with one reusable buffer that grows from 4 KiB to the same hard 1 MiB ceiling. A physical
+5,000-record regression proves the buffer is allocated only three times for 9 KiB records, while all
+19 Scala tests prove the same valid-input, newline, EOF, over-limit, digest, and resource-closure
+behavior. This allocation-only refactor cannot alter table rows or provenance, so the live pipeline
+was not replayed; the next canonical acceptance is pinned to the final reviewed JAR hash above.

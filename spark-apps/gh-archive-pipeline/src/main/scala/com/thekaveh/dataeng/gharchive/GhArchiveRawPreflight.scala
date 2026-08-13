@@ -5,10 +5,9 @@ import com.fasterxml.jackson.databind.{JsonNode, ObjectMapper}
 import org.apache.hadoop.fs.Path
 import org.apache.spark.sql.SparkSession
 
-import java.io.{BufferedInputStream, ByteArrayInputStream, FilterInputStream, InputStream}
+import java.io.{BufferedInputStream, FilterInputStream, InputStream}
 import java.security.{DigestInputStream, MessageDigest}
 import java.time.Instant
-import java.util.Arrays
 import java.util.zip.GZIPInputStream
 
 object GhArchiveRawPreflight {
@@ -20,6 +19,44 @@ object GhArchiveRawPreflight {
   private val JsonFactoryInstance = new JsonFactory()
     .enable(JsonParser.Feature.STRICT_DUPLICATE_DETECTION)
   private val Mapper = new ObjectMapper(JsonFactoryInstance)
+
+  private[gharchive] final case class PreflightStats(
+      records: Long, bufferCapacity: Int, bufferAllocations: Int)
+
+  private final class ReusableLineReader(stream: InputStream) {
+    private var buffer = new Array[Byte](4096)
+    private var allocations = 1
+
+    def next(): Int = {
+      var length = 0
+      var value = stream.read()
+      if (value < 0) return -1
+      while (value >= 0 && value != '\n') {
+        if (length == MaxLineBytes)
+          throw new IllegalArgumentException("GitHub Archive source contains an oversized JSON line")
+        if (length == buffer.length) grow()
+        buffer(length) = value.toByte
+        length += 1
+        value = stream.read()
+      }
+      if (value < 0)
+        throw new IllegalArgumentException("GitHub Archive source contains an unterminated JSON line")
+      require(length > 0, "GitHub Archive source contains a blank JSON line")
+      length
+    }
+
+    def bytes: Array[Byte] = buffer
+    def capacity: Int = buffer.length
+    def allocationCount: Int = allocations
+
+    private def grow(): Unit = {
+      val capacity = Math.min(buffer.length * 2, MaxLineBytes)
+      val replacement = new Array[Byte](capacity)
+      System.arraycopy(buffer, 0, replacement, 0, buffer.length)
+      buffer = replacement
+      allocations += 1
+    }
+  }
 
   private final class CountingInputStream(delegate: InputStream, maximum: Long)
       extends FilterInputStream(delegate) {
@@ -57,8 +94,8 @@ object GhArchiveRawPreflight {
     }
   }
 
-  private def validateLine(line: Array[Byte]): Unit = {
-    val parser = JsonFactoryInstance.createParser(new ByteArrayInputStream(line))
+  private def validateLine(line: Array[Byte], length: Int): Unit = {
+    val parser = JsonFactoryInstance.createParser(line, 0, length)
     try {
       val document = Mapper.readTree[JsonNode](parser)
       require(document != null && document.isObject, "GitHub Archive source record must be one object")
@@ -80,25 +117,7 @@ object GhArchiveRawPreflight {
     } finally parser.close()
   }
 
-  private def nextLine(stream: InputStream): Array[Byte] = {
-    val buffer = new Array[Byte](MaxLineBytes)
-    var length = 0
-    var value = stream.read()
-    if (value < 0) return null
-    while (value >= 0 && value != '\n') {
-      if (length == MaxLineBytes)
-        throw new IllegalArgumentException("GitHub Archive source contains an oversized JSON line")
-      buffer(length) = value.toByte
-      length += 1
-      value = stream.read()
-    }
-    if (value < 0)
-      throw new IllegalArgumentException("GitHub Archive source contains an unterminated JSON line")
-    require(length > 0, "GitHub Archive source contains a blank JSON line")
-    Arrays.copyOf(buffer, length)
-  }
-
-  def validateGzip(input: InputStream, lock: SourceLock): Long = {
+  private[gharchive] def validateGzipWithStats(input: InputStream, lock: SourceLock): PreflightStats = {
     require(lock.sizeBytes > 0 && lock.sha256.matches("[0-9a-f]{64}"), "invalid GH Archive source lock")
     val digest = MessageDigest.getInstance("SHA-256")
     val counted = new CountingInputStream(input, lock.sizeBytes)
@@ -107,20 +126,21 @@ object GhArchiveRawPreflight {
     try {
       val expanded = new CountingInputStream(new GZIPInputStream(digested), MaxExpandedBytes)
       buffered = new BufferedInputStream(expanded, 64 * 1024)
+      val lines = new ReusableLineReader(buffered)
       var records = 0L
-      var line = nextLine(buffered)
-      while (line != null) {
+      var length = lines.next()
+      while (length >= 0) {
         records += 1
         require(records <= MaxRecords, "GitHub Archive source exceeds maximum record count")
-        validateLine(line)
-        line = nextLine(buffered)
+        validateLine(lines.bytes, length)
+        length = lines.next()
       }
       require(records > 0, "GitHub Archive source must be nonempty")
       while (digested.read() >= 0) {}
       val actualSha = digest.digest().map(value => f"${value & 0xff}%02x").mkString
       require(counted.count == lock.sizeBytes, "GitHub Archive source size does not match registry lock")
       require(actualSha == lock.sha256, "GitHub Archive source digest does not match registry lock")
-      records
+      PreflightStats(records, lines.capacity, lines.allocationCount)
     } catch {
       case failure: IllegalArgumentException => throw failure
       case failure: Exception => throw new IllegalArgumentException("GitHub Archive raw source preflight failed", failure)
@@ -128,6 +148,9 @@ object GhArchiveRawPreflight {
       if (buffered != null) buffered.close() else input.close()
     }
   }
+
+  def validateGzip(input: InputStream, lock: SourceLock): Long =
+    validateGzipWithStats(input, lock).records
 
   def validate(spark: SparkSession, sources: ResolvedSources): Long = {
     sources.sparkUris.zip(GhArchiveSources.ExpectedNames(sources.provenance.scale)).map {

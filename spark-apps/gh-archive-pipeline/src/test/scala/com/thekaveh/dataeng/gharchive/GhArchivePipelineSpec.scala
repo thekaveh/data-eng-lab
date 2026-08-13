@@ -208,6 +208,20 @@ class GhArchivePipelineSpec extends AnyFunSuite with BeforeAndAfterAll {
       new ByteArrayInputStream(Array[Byte](1, 2, 3)), SourceLock(3L, "0" * 64)))
   }
 
+  test("raw gzip preflight reuses bounded line storage across many records") {
+    val padding = "x" * 9000
+    val record =
+      s"""{"id":"1","type":"PushEvent","actor":{"login":"alice"},"repo":{"name":"a/r"},"created_at":"2023-01-01T00:00:00Z","extra":"$padding"}\n"""
+    val bytes = gzip(record * 5000)
+    val stats = GhArchiveRawPreflight.validateGzipWithStats(
+      new ByteArrayInputStream(bytes), sourceLock(bytes))
+
+    assert(stats.records == 5000L)
+    assert(stats.bufferCapacity >= record.getBytes("UTF-8").length - 1)
+    assert(stats.bufferCapacity < GhArchiveRawPreflight.MaxLineBytes)
+    assert(stats.bufferAllocations <= 3)
+  }
+
   test("sessionizes deterministically at the exact 1800 second boundary") {
     val events = eventRows(Seq(
       ("b", "PushEvent", "alice", "a/r", "2023-01-01T00:00:00Z"),

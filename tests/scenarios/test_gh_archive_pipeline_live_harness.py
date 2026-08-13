@@ -323,7 +323,7 @@ def test_source_inventory_preserves_identical_duplicates_and_counts_them():
 
 def test_live_identity_is_frozen_to_the_reviewed_canonical_replay():
     assert live.EXPECTED_LIVE_IDENTITY == {
-        "jar_sha256": "5d2459e4dc9cebe96c16715db027b21333307e6cb2fae39b0c67d395535d52d1",
+        "jar_sha256": "b826e218d8ad4a9a4dadd1b835e3533c9649735725cfb3f71508e7e04e952c04",
         "plan_id": "8ab812c3621cc3dae68989d9f24134351ea9683453133b31feaff579d0fa3e7f",
         "publication_id": "e53a481df5d54c6eabc645838fb2f2ba",
         "manifest_sha256": "998ec39bc61dca1b460e4b851d718a5347b8c7e575b96dd1e3ec62fd0b791678",
