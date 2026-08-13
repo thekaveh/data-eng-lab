@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
+from botocore.exceptions import ClientError
 
 from scripts.checkpoints.policy import load_policy
 from scripts.checkpoints.records import ObjectRecord
@@ -170,6 +171,19 @@ def test_control_reads_are_bounded_closed_and_exact_key_only():
     for key in ("_retention/", "_retention/../events/x", f"{PREFIX}data", "other/control.json"):
         with pytest.raises(GatewayFailure, match="control_key_invalid"):
             gateway.read_control(key, max_bytes=64)
+
+
+@pytest.mark.parametrize("code", ["NoSuchKey", "NoSuchObject", "404"])
+def test_missing_control_is_distinguished_from_ambiguous_transport_failure(code):
+    class MissingS3(FakeS3):
+        def get_object(self, **request):
+            self.calls.append(("get", request))
+            raise ClientError({"Error": {"Code": code, "Message": "secret must not escape"}}, "GetObject")
+
+    with pytest.raises(GatewayFailure, match="control_missing") as failure:
+        S3Gateway(MissingS3(), POLICY, monotonic=lambda: 0.0).read_control(CONTROL, max_bytes=64)
+
+    assert failure.value.__cause__ is None
 
 
 def test_create_and_replace_use_conditions_and_verify_exact_readback():

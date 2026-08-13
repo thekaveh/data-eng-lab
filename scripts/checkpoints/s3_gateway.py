@@ -9,6 +9,7 @@ from typing import Callable, Iterable, Mapping
 
 import boto3
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 from scripts.checkpoints.policy import CheckpointPolicy, PolicyError
 from scripts.checkpoints.records import ObjectRecord, RecordFailure, canonical_records
@@ -155,6 +156,11 @@ class S3Gateway:
             response = self._client.get_object(Bucket=self._policy.bucket, Key=key)
         except (KeyboardInterrupt, SystemExit):
             raise
+        except ClientError as error:
+            code = error.response.get("Error", {}).get("Code") if isinstance(error.response, Mapping) else None
+            if code in {"NoSuchKey", "NoSuchObject", "404"}:
+                raise GatewayFailure("control_missing") from None
+            raise GatewayFailure("control_read_failed") from None
         except BaseException:
             raise GatewayFailure("control_read_failed") from None
         if not isinstance(response, Mapping):
