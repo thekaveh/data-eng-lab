@@ -95,3 +95,23 @@ harness now performs this bounded recovery only for the one run created by its o
 `dags test`, only after every task is stopped, and verifies the exact PATCH response and readback.
 Foreign or actively executing runs remain fail-closed. This attempt made no quality write and its
 owned stack again stopped volume-preserving with zero containers.
+
+## Third replay and Iceberg property-readback diagnosis
+
+The next replay proved the timestamp correction in the real catalog and passed the first quality
+schema/source evaluation. Both quality attempts then failed immediately after replacing the clean
+table. The exact event-log exception was `TABLE_OR_VIEW_NOT_FOUND` for
+`lakehouse.silver.nyc_taxi_clean.properties`: Spark Iceberg exposes table configuration through
+`SHOW TBLPROPERTIES`, not a `.properties` metadata table. The repository's three established
+production writers already use that command; the quality store's recording fake had returned a
+generic key/value frame without asserting the SQL and therefore hid the dialect error.
+
+The preserved partial state is clean-only and recoverable: Bronze snapshot
+`3083283024212730022` committed at `2026-08-13T07:55:45.507Z`; clean contains 2,917,820 rows and
+the exact five quality properties for run `0fad4d95b2bcd9927790bccb9f1926c3525163d96d3e244a2e9fa62ff5a58b75`;
+quarantine is absent; Gold facts remains zero rows. The exact application JAR SHA-256 was
+`45a1fb63616131507b86f445dff74ed27c870f754b4f4d5ce89a40c8d1267448`. The failure occurred before
+the quarantine write and fact MERGE. The strict fix uses the fixed Silver allowlist and exact
+`SHOW TBLPROPERTIES <identifier>` statement. A real local Spark syntax test proves its key/value
+shape and proves the old `.properties` relation fails; the partial-state regression proves a
+clean-only retry converges both Silver tables and one idempotent eight-fact set.

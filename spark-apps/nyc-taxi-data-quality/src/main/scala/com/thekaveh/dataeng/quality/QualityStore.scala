@@ -93,7 +93,8 @@ final class SparkQualityStore(backend: QualityStorageBackend) extends QualitySto
   }
 
   private def readProperties(identifier: String): Map[String, String] = {
-    val rows = backend.query(s"SELECT key, value FROM $identifier.properties").collect().toSeq
+    require(SilverTables.contains(identifier), "quality Silver table is invalid")
+    val rows = backend.query(s"SHOW TBLPROPERTIES $identifier").collect().toSeq
     val pairs = rows.map(row => row.getAs[String]("key") -> row.getAs[String]("value"))
     require(pairs.map(_._1).distinct.size == pairs.size, "quality Silver properties are duplicated")
     pairs.toMap.filter { case (key, _) => key.startsWith("data_eng_lab.quality.") }

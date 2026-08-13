@@ -61,6 +61,7 @@ class NycTaxiDataQualitySpec extends AnyFunSuite with BeforeAndAfterAll {
     val actions = ArrayBuffer.empty[String]
     var clean: DataFrame = null
     var quarantine: DataFrame = null
+    var silverProperties = Map.empty[String, Map[String, String]]
     var facts = Seq.empty[QualityFact]
 
     private def action(name: String): Unit = {
@@ -74,6 +75,7 @@ class NycTaxiDataQualitySpec extends AnyFunSuite with BeforeAndAfterAll {
       val name = if (identifier == QualityContract.CleanTable) "replaceClean" else "replaceQuarantine"
       action(name)
       if (identifier == QualityContract.CleanTable) clean = frame else quarantine = frame
+      silverProperties += identifier -> properties
     }
     override def readSilver(identifier: String): DataFrame = {
       val name = if (identifier == QualityContract.CleanTable) "readClean" else "readQuarantine"
@@ -152,12 +154,15 @@ class NycTaxiDataQualitySpec extends AnyFunSuite with BeforeAndAfterAll {
     val store = new RecordingStore(failAt = "replaceQuarantine")
     assertThrows[RuntimeException](new QualityPipeline(store).run(Arguments))
     assert(store.clean != null && store.quarantine == null && store.facts.isEmpty)
+    assert(store.silverProperties.keySet == Set(QualityContract.CleanTable))
     store.failAt = ""
     val first = new QualityPipeline(store).run(Arguments)
     val second = new QualityPipeline(store).run(Arguments)
     assert(first.qualityRunId == second.qualityRunId)
     assert(store.facts.size == 8)
     assert(store.facts.map(fact => fact.qualityRunId -> fact.ruleId).distinct.size == 8)
+    assert(store.silverProperties.keySet == Set(QualityContract.CleanTable, QualityContract.QuarantineTable))
+    assert(store.silverProperties.values.toSet.size == 1)
   }
 
   test("fact readback rejects missing, duplicate, or mismatched accepted rows") {

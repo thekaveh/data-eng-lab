@@ -146,6 +146,8 @@ class QualityStoreSpec extends AnyFunSuite with BeforeAndAfterAll {
     store.replaceSilver(QualityContract.CleanTable, sourceFrame, intended)
     assert(backend.actions.indexOf(s"replace:${QualityContract.CleanTable}") <
       backend.actions.indexWhere(_.startsWith(s"properties:${QualityContract.CleanTable}:")))
+    assert(backend.actions.contains(s"query:SHOW TBLPROPERTIES ${QualityContract.CleanTable}"))
+    assert(!backend.actions.exists(_.contains(".properties")))
 
     val mismatch = new RecordingBackend(source = sourceFrame, metadata = metadataFrame(),
       properties = propertyFrame(intended.updated("data_eng_lab.quality.run_id", "c" * 64)))
@@ -153,6 +155,21 @@ class QualityStoreSpec extends AnyFunSuite with BeforeAndAfterAll {
       new SparkQualityStore(mismatch).replaceSilver(QualityContract.CleanTable, sourceFrame, intended))
     assertThrows[IllegalArgumentException](
       store.replaceSilver("lakehouse.silver.other", sourceFrame, intended))
+  }
+
+  test("Spark SHOW TBLPROPERTIES returns the key-value shape used by production readback") {
+    val identifier = "default.quality_properties_syntax"
+    spark.sql(s"DROP TABLE IF EXISTS $identifier")
+    try {
+      spark.sql(s"CREATE TABLE $identifier (id BIGINT) USING parquet")
+      spark.sql(s"ALTER TABLE $identifier SET TBLPROPERTIES ('data_eng_lab.quality.run_id'='${"f" * 64}')")
+      val backend = new SparkQualityStorageBackend(spark)
+      val rows = backend.query(s"SHOW TBLPROPERTIES $identifier").collect().toSeq
+      assert(rows.exists(row => row.getAs[String]("key") == "data_eng_lab.quality.run_id" &&
+        row.getAs[String]("value") == "f" * 64))
+      assertThrows[org.apache.spark.sql.AnalysisException](
+        backend.query(s"SELECT key, value FROM $identifier.properties").collect())
+    } finally spark.sql(s"DROP TABLE IF EXISTS $identifier")
   }
 
   test("facts table setup is exact and validates an existing schema") {
