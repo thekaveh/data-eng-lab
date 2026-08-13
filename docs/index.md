@@ -72,6 +72,7 @@ Every curated table is an Apache Iceberg table accessed through the Atlas Iceber
 | [Lakehouse design](lakehouse.md) | Landing, bronze, silver, gold, namespaces, buckets, and catalog behavior |
 | [Atlas enablement](atlas-enablement.md) | Accepted consumer configuration and the A1–A9 infrastructure record |
 | [Go-live runbook](go-live.md) | Reproducible platform, notebook, DAG, and Spark-application acceptance |
+| [Checkpoint retention](checkpoint-retention.md) | Owned streaming state, fail-closed recovery, and the disabled scheduling boundary pending issue #86 |
 
 ## 4. Scenario catalog
 

@@ -95,9 +95,7 @@ def test_render_site_and_wiki_are_complete(tmp_repo, manifest):
     assert "http" not in (tmp_repo / "generated/wiki/_Footer.md").read_text(encoding="utf-8")
 
 
-def test_renderer_independently_rejects_destination_outside_surface_root(
-    tmp_repo, manifest, monkeypatch
-):
+def test_renderer_independently_rejects_destination_outside_surface_root(tmp_repo, manifest, monkeypatch):
     monkeypatch.setattr(
         "scripts.docs.build_docs.build_source_map",
         lambda _manifest, _surface: {Path("docs/index.md"): Path("../escaped.md")},
@@ -123,9 +121,9 @@ def test_repository_manifest_projects_all_public_pages_and_assets(tmp_path):
         for path in (repo_root / "docs").rglob("*.md")
         if "superpowers" not in path.parts
     }
-    assert len(tuple(iter_leaf_sections(manifest.sections))) == 60
+    assert len(tuple(iter_leaf_sections(manifest.sections))) == 61
     assert {path.relative_to(site) for path in site.rglob("*.md")} == public_sources
-    assert len(tuple(wiki.glob("*.md"))) == 62
+    assert len(tuple(wiki.glob("*.md"))) == 63
     assert len(tuple((site / "assets/img").glob("*.svg"))) == len(manifest.diagrams)
     assert len(tuple((wiki / "img").glob("*.png"))) == len(manifest.diagrams)
     assert "data-eng-lab-hero" in {diagram.id for diagram in manifest.diagrams}
