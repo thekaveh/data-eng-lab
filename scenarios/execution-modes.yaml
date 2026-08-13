@@ -44,21 +44,21 @@ scenarios:
       - Preserve and monitor the owned checkpoint; fail rather than launch a second writer with ambiguous ownership.
     child_issue: null
   - scenario_id: data_quality-nyc_taxi-spark-iceberg
-    classification: approved new production DAG
-    justification: Quality enforcement is operational work that requires durable quality facts, reviewed thresholds, dashboard visibility, and operator failure semantics.
+    classification: existing production DAG
+    justification: The reviewed application binds one Bronze snapshot, conserves every row through a null-safe Silver split, persists eight governed Gold facts, and passed matching-ETL, same-date retry, dashboard, Airflow, and Spark live acceptance.
     owner: Data Quality Engineering
-    runtime: "Production Atlas Airflow and Spark standalone application owned by child issue #91"
-    schedule_policy: "No schedule until #91 passes terminal live Airflow and Spark acceptance; proposed after the matching NYC Taxi Bronze load"
-    execution_entrypoint: null
+    runtime: "Production Atlas Airflow and Spark standalone application"
+    schedule_policy: "Serialized @daily after the matching successful nyc_taxi_etl logical date"
+    execution_entrypoint: spark-apps/nyc-taxi-data-quality/dag.py
     dependencies:
       - "#82 execution-mode matrix"
       - "#81 verified dataset provenance"
       - "#91 durable quality monitoring"
       - nyc_taxi_etl Bronze table
     acceptance_contract:
-      - Persist versioned Bronze, Silver, and Gold quality facts with owners, thresholds, severity, lineage, and a durable dashboard or query surface.
-      - "Prove pass, warn, fail, missing, stale, recovery, and operator-response behavior in a terminally successful live Atlas Airflow and Spark run owned by #91."
-    child_issue: 91
+      - Bind the exact Bronze snapshot and schema, preserve its null-safe row multiset across clean and quarantine, and read back eight deterministic versioned Gold facts.
+      - Serialize after the same-logical-date NYC Taxi ETL, converge a same-date rerun without duplicate facts, and expose three fixed bounded Trino dashboard queries.
+    child_issue: null
   - scenario_id: feature_engineering-movielens-spark-iceberg
     classification: existing production DAG
     justification: The reviewed application preserves the notebook aggregations, binds both Gold tables to one verified MovieLens generation, and passed repeatable Airflow and Spark acceptance.

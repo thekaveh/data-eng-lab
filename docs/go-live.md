@@ -642,8 +642,9 @@ After a successful go-live run:
 1. **Scenario execution:** Use the [execution-mode matrix](scenarios/execution-modes.md)
    delivered by [issue #82](https://github.com/thekaveh/data-eng-lab/issues/82)
    as the authority for all 19 validated paired scenarios. `nyc_taxi_etl`,
-   `nyc_taxi_medallion`, `tpch_star_schema`, `movielens_feature_pipeline`, and
-   `gh_archive_flatten_sessionization` are production DAGs today; approved children must
+   `nyc_taxi_medallion`, `nyc_taxi_data_quality`, `tpch_star_schema`,
+   `movielens_feature_pipeline`, and `gh_archive_flatten_sessionization` are production Spark DAGs
+   today. The quality contract lives at `spark-apps/nyc-taxi-data-quality/README.md`; approved children must
    pass their own implementation and live-acceptance gates before this runbook
    advertises another Airflow entrypoint.
 2. **Automation:** Integrate this runbook into CI/CD so every Atlas release is validated end-to-end.

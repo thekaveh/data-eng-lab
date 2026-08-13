@@ -4,6 +4,7 @@ All notable changes to this project are documented here (Keep a Changelog format
 
 ## 1. [Unreleased]
 ### Added
+- NYC Taxi data-quality now runs as the serialized `nyc_taxi_data_quality` production DAG after a successful matching ETL logical date. The snapshot-bound Spark application conserves every Bronze row across clean and quarantine, idempotently records eight governed Gold facts, and exposes three fixed Trino dashboard queries. Canonical live acceptance proved same-date recovery, terminal Spark drivers, deterministic dashboards, unchanged source pointer, and volume-preserving cleanup.
 - The two Trino scenarios now run as staggered, serialized, read-only production DAGs through a
   bounded same-origin statement-protocol client. TPC-H fails closed on exact five-key provenance;
   NYC is explicitly snapshot-bound. Both return canonical metadata-DB XCom artifacts, preserve
@@ -29,16 +30,16 @@ All notable changes to this project are documented here (Keep a Changelog format
   sizes, gives downstream #83 an exact five-property fail-closed preflight, warns that notebooks are
   not production writers, and replaces report-string acceptance with an executable live lifecycle.
 - The TPC-H star-schema scenario now has a daily operator-owned production DAG and Jenkins-published Scala application. Two live tiny-scale Airflow runs ended in success with Spark `FINISHED` and `success=true`; `dim_customer` and `fct_orders` reproduced identical logical checksums and carry matching scale, plan, publication, and manifest properties for downstream Trino generation checks.
-- All 19 scenarios now have one tested execution-mode contract. Seven current production DAGs
-  cover eight scenarios: `nyc_taxi_etl`, `nyc_taxi_medallion`, `tpch_star_schema`,
+- All 19 scenarios now have one tested execution-mode contract. Eight current production DAGs
+  cover nine scenarios: `nyc_taxi_etl`, `nyc_taxi_medallion`, `nyc_taxi_data_quality`, `tpch_star_schema`,
   `movielens_feature_pipeline`, `gh_archive_flatten_sessionization`, `tpch_bi_query`, and
-  `nyc_taxi_trino_daily`; one row remains approved behind child issue #91, seven remain intentionally
+  `nyc_taxi_trino_daily`; seven remain intentionally
   notebook-only, and three remain unscheduled continuous streams. The 19
   scenario-local no-op DAGs were removed so Airflow and public
   documentation cannot report successful no-op work.
-- Scenario documentation now distinguishes current notebook behavior from
-  approved production scope. Data quality documents its exact Bronze read,
-  filter, and two Silver writes; maintenance and time-travel pages describe
+- Scenario documentation now distinguishes educational notebook behavior from
+  production trust boundaries. Data quality documents its exact Bronze snapshot, null-safe
+  Silver split, governed Gold facts, and dashboard queries; maintenance and time-travel pages describe
   only their executable cells. All 19 scenario diagram masters use portable
   ASCII visible text so committed PNG and wiki projections do not depend on
   CairoSVG finding optional Unicode glyphs.
