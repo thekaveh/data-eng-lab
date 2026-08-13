@@ -98,7 +98,9 @@ requests use:
 - `X-Trino-Schema` when the registered query has a fixed schema context.
 
 The client rejects redirects. Every `nextUri` must retain the initial `http` scheme, `trino` host,
-and port `8080`; credentials, fragments, unexpected paths, origin changes, or malformed URIs fail
+and port `8080`; its nonempty `/v1/statement/` path segments may contain only unreserved ASCII and
+must not be dot segments. Percent-encoded bytes, Unicode, matrix parameters, backslashes, duplicate
+separators, credentials, fragments, unexpected paths, origin changes, or malformed URIs fail
 closed. It follows pages only until the terminal document has no `nextUri` and validates every HTTP
 status, JSON object, query ID, column name/type declaration, row width, and data container.
 

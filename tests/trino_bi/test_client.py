@@ -15,6 +15,13 @@ AIRFLOW_DAGS = ROOT / "airflow-dags"
 MODULE = AIRFLOW_DAGS / "trino_bi" / "client.py"
 
 
+def _encoded_dotdot(depth: int) -> str:
+    token = "%2E%2E"
+    for _ in range(1, depth):
+        token = token.replace("%", "%25")
+    return token
+
+
 def _load_client():
     assert MODULE.is_file(), "bounded Trino HTTP client has not been implemented"
     sys.path.insert(0, str(AIRFLOW_DAGS))
@@ -158,6 +165,8 @@ def test_multipage_query_follows_same_origin_until_finished() -> None:
     ]
     _module, _client, session, _hook, _calls, execute = _run(responses)
     result = execute()
+    assert requests.Request("GET", next_one).prepare().url == next_one
+    assert requests.Request("GET", next_two).prepare().url == next_two
     assert result.rows == ((17,),)
     assert [(method, url) for method, url, _ in session.calls] == [
         ("POST", "http://trino:8080/v1/statement"),
@@ -218,10 +227,20 @@ def test_pagination_rejects_origin_or_path_escape_without_contacting_invalid_uri
         "http://trino:8080/v1/statement/../../v1/info",
         "http://trino:8080/v1/statement/%2e%2e/%2e%2e/v1/info",
         "http://trino:8080/v1/statement/%252e%252e/%252e%252e/v1/info",
+        "http://trino:8080/v1/statement/%2525252e%2525252e/v1/info",
         "http://trino:8080/v1/statement/..%2f..%2fv1/info",
+        "http://trino:8080/v1/statement/%ZZ/q/1",
+        "http://trino:8080/v1/statement/%71/1",
+        "http://trino:8080/v1/statement/..;/..;/v1/info",
         "http://trino:8080/v1/statement/..\\..\\v1\\info",
         "http://trino:8080/v1/statement//q/1",
         "http://trino:8080/v1/statement/q/%00",
+        "http://trino:8080/v1/statement/q/café",
+        "http://trino:8080/v1/statement/q/café",
+    ]
+    + [
+        f"http://trino:8080/v1/statement/{_encoded_dotdot(depth)}/q"
+        for depth in range(1, 9)
     ],
 )
 def test_next_uri_rejects_raw_encoded_or_requests_normalized_path_escape(next_uri: str) -> None:
@@ -490,6 +509,60 @@ def test_keyboard_interrupt_remains_primary_when_cleanup_fails_without_secret_no
         client.execute(module.QueryName.NYC_SOURCE_COUNT)
     rendered = "".join(traceback.format_exception(failure.type, failure.value, failure.tb))
     assert secret not in rendered
+
+
+@pytest.mark.parametrize("signal", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("boundary", ["response_close", "session_close"])
+def test_process_control_from_successful_cleanup_is_preserved(signal, boundary: str) -> None:
+    module = _load_client()
+    marker = "operator process control"
+
+    class ProcessControlResponse(FakeResponse):
+        def close(self):
+            super().close()
+            if boundary == "response_close":
+                raise signal(marker)
+
+    response = ProcessControlResponse(
+        _doc(columns=(("source_count", "bigint"),), data=[[1]])
+    )
+    session_error = signal(marker) if boundary == "session_close" else None
+    session = FakeSession([response], close_error=session_error)
+    client = module.TrinoHttpClient(hook_factory=_factory(FakeHook(session), []))
+
+    with pytest.raises(signal, match=marker):
+        client.execute(module.QueryName.NYC_SOURCE_COUNT)
+    assert response.closed is True
+    assert session.closed is True
+
+
+@pytest.mark.parametrize("signal", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("boundary", ["response_close", "session_close"])
+def test_process_control_from_cleanup_never_masks_existing_primary(signal, boundary: str) -> None:
+    marker = "primary transport failure"
+
+    class PrimaryFailureResponse(FakeResponse):
+        def iter_content(self, _chunk_size):
+            raise RuntimeError(marker)
+            yield b""  # pragma: no cover
+
+        def close(self):
+            super().close()
+            if boundary == "response_close":
+                raise signal("cleanup process control")
+
+    response = PrimaryFailureResponse(chunks=[])
+    session_error = signal("cleanup process control") if boundary == "session_close" else None
+    module = _load_client()
+    session = FakeSession([response], close_error=session_error)
+    client = module.TrinoHttpClient(hook_factory=_factory(FakeHook(session), []))
+
+    with pytest.raises(module.TrinoProtocolError, match="transport failed") as failure:
+        client.execute(module.QueryName.NYC_SOURCE_COUNT)
+    rendered = "".join(traceback.format_exception(failure.type, failure.value, failure.tb))
+    assert marker not in rendered and "cleanup process control" not in rendered
+    assert response.closed is True
+    assert session.closed is True
 
 
 def test_page_and_total_byte_bounds_cannot_allocate_or_loop_unboundedly() -> None:

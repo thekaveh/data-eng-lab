@@ -9,7 +9,7 @@ import sys
 import time
 from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
-from urllib.parse import unquote, urlparse
+from urllib.parse import urlparse
 
 from .contracts import QUERIES, QueryName, QuerySpec
 
@@ -27,6 +27,10 @@ MAX_JSON_DEPTH = 16
 _BASE_URL = "http://trino:8080"
 _STATEMENT_URL = f"{_BASE_URL}/v1/statement"
 _QUERY_ID = re.compile(r"^[A-Za-z0-9_]+$")
+_NEXT_URI = re.compile(
+    r"^http://trino:8080/v1/statement/"
+    r"[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*$"
+)
 _HEADERS = {
     "X-Trino-User": "data_eng_lab_bi",
     "X-Trino-Source": "data-eng-lab-airflow",
@@ -97,32 +101,25 @@ def _validate_base_url(value: Any) -> None:
 def _validate_next_uri(value: Any) -> str:
     if not isinstance(value, str):
         raise TrinoProtocolError("Trino next page URI is invalid")
-    parsed = urlparse(value)
-    decoded_path = parsed.path
-    for _ in range(3):
-        next_decoded = unquote(decoded_path)
-        if next_decoded == decoded_path:
-            break
-        decoded_path = next_decoded
-    segments = decoded_path.split("/")
-    canonical_path = (
-        decoded_path.startswith("/v1/statement/")
-        and "" not in segments[1:]
-        and all(segment not in {".", ".."} for segment in segments)
-        and "\\" not in decoded_path
-        and all(ord(character) >= 32 and ord(character) != 127 for character in decoded_path)
-    )
-    if (
-        parsed.scheme != "http"
-        or parsed.hostname != "trino"
-        or parsed.port != 8080
-        or parsed.username is not None
-        or parsed.password is not None
-        or not canonical_path
-        or parsed.params
-        or parsed.query
-        or parsed.fragment
-    ):
+    try:
+        parsed = urlparse(value)
+        segments = parsed.path.split("/")[3:]
+        canonical = (
+            _NEXT_URI.fullmatch(value) is not None
+            and parsed.scheme == "http"
+            and parsed.netloc == "trino:8080"
+            and parsed.hostname == "trino"
+            and parsed.port == 8080
+            and parsed.username is None
+            and parsed.password is None
+            and all(segment not in {".", ".."} for segment in segments)
+            and not parsed.params
+            and not parsed.query
+            and not parsed.fragment
+        )
+    except ValueError:
+        canonical = False
+    if not canonical:
         raise TrinoProtocolError("Trino next page URI leaves the reviewed origin or path")
     return value
 
@@ -172,6 +169,9 @@ class TrinoHttpClient:
                 primary_active = sys.exc_info()[0] is not None
                 try:
                     session.close()
+                except (KeyboardInterrupt, SystemExit):
+                    if not primary_active:
+                        raise
                 except BaseException:
                     if not primary_active:
                         raise TrinoProtocolError(
@@ -239,6 +239,9 @@ class TrinoHttpClient:
                         primary_active = sys.exc_info()[0] is not None
                         try:
                             response.close()
+                        except (KeyboardInterrupt, SystemExit):
+                            if not primary_active:
+                                raise
                         except BaseException:
                             if not primary_active:
                                 raise TrinoProtocolError(
