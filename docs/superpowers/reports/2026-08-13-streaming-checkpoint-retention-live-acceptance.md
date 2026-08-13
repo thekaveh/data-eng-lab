@@ -147,6 +147,35 @@ expected live skip in 0.11s`. This layered proof exercises the final partial-res
 runtime bytes without another 900-second wait and without changing the immutable
 prepare/quiescence protocol.
 
+## Final repository verification
+
+The final service/runtime commit is `aab5a96`; the subsequent evidence commit changes
+documentation only. The exact final validation set was:
+
+| Gate | Result |
+|---|---|
+| Full offline Python suite | 3,274 passed, 43 expected live skips, 0 failures/errors in 58.817 s |
+| Checkpoint-focused suite | 292 passed, 2 expected skips |
+| Final split-token live replay | 1 passed, 0 skipped/failures/errors in 146.446 s |
+| Pinned-MinIO operation/restart integration | 2 passed in 2.49 s |
+| GH Archive Maven suite, Java 17 | 19 passed |
+| MovieLens Maven suite, Java 17 | 12 passed |
+| NYC quality Maven suite, Java 17 | 37 passed |
+| NYC ETL Maven suite, Java 17 | 4 passed |
+| NYC medallion Maven suite, Java 17 | 2 passed |
+| TPC-H Maven suite, Java 17 | 9 passed |
+| `make verify` | 0 findings, 0 errors |
+| `make docs-check` and `make docs-wiki` | strict site build and deterministic wiki check passed |
+| Ruff check and format check | passed |
+| Compose validation with both explicit non-secret token classes | `Compose config is valid.` |
+| Range `git diff --check` | passed |
+
+The Maven runs used the pinned `maven:3.9.11-eclipse-temurin-17` image at digest
+`sha256:e4a7ace3dc0d645ed97f8d9ad0b0d3f0b14fa8d150138f27f116d7105a639b82`
+with isolated test-owned Maven state. Expected injected Spark action failures appeared
+only inside their negative tests; every suite completed with zero failed, aborted,
+canceled, ignored, or pending tests.
+
 ## Cleanup and preserved state
 
 - Every test-owned data object and non-immutable capability control was removed by
