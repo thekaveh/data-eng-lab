@@ -402,7 +402,7 @@ def test_task_log_bounded_reader_rejects_single_huge_and_too_many_attempts_early
         def __init__(self, chunks):
             self.chunks = list(chunks)
             self.requests = []
-            self.closed = False
+            self.close_count = 0
 
         def read(self, size=-1):
             assert size >= 0, "unbounded read is forbidden"
@@ -410,18 +410,19 @@ def test_task_log_bounded_reader_rejects_single_huge_and_too_many_attempts_early
             return self.chunks.pop(0) if self.chunks else b""
 
         def close(self):
-            self.closed = True
+            self.close_count += 1
 
     huge = GuardedBody([b"x" * 65, b""])
     with pytest.raises(AssertionError, match="byte bound"):
         live._read_bounded_log_streams([huge], limit=64)
     assert huge.requests and max(huge.requests) <= 65
-    assert huge.closed is True
+    assert huge.close_count == 1
 
     streams = [GuardedBody([b"x", b""]) for _ in range(live._MAX_TASK_LOG_ATTEMPTS + 1)]
     with pytest.raises(AssertionError, match="attempt bound"):
         live._read_bounded_log_streams(streams, limit=64)
     assert all(not stream.requests for stream in streams)
+    assert all(stream.close_count == 1 for stream in streams)
 
 
 def test_fixed_live_source_contains_no_refresh_or_arbitrary_sql_inputs():

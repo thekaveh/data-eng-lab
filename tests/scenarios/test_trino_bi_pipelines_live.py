@@ -485,6 +485,11 @@ for path in files:
 
 def _read_bounded_log_streams(streams, *, limit: int) -> bytes:
     if len(streams) > _MAX_TASK_LOG_ATTEMPTS:
+        for stream in streams:
+            try:
+                stream.close()
+            except BaseException:
+                pass
         raise AssertionError("task log exceeds attempt bound")
     remaining = limit
     chunks: list[bytes] = []
