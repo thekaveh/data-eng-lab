@@ -4,6 +4,58 @@
 # This overlay adds one consumer-owned internal service and patches existing
 # Atlas consumers; Atlas source remains unchanged.
 services:
+  checkpoint-retention-init:
+    image: ${MINIO_INIT_IMAGE}
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:?MINIO_ROOT_USER is required}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?MINIO_ROOT_PASSWORD is required}
+      MINIO_RETENTION_ACCESS_KEY: ${MINIO_RETENTION_ACCESS_KEY:?MINIO_RETENTION_ACCESS_KEY is required}
+      MINIO_RETENTION_SECRET_KEY: ${MINIO_RETENTION_SECRET_KEY:?MINIO_RETENTION_SECRET_KEY is required}
+    volumes:
+      - ../checkpoints/provision-retention.sh:/config/provision-retention.sh:ro
+      - ../checkpoints/retention-policy.json:/config/retention-policy.json:ro
+    entrypoint: ["/bin/sh", "/config/provision-retention.sh"]
+    networks:
+      - backend-network
+
+  checkpoint-retention:
+    build:
+      context: ..
+      dockerfile: checkpoints/retention.Dockerfile
+    platform: linux/amd64
+    user: "65532:65532"
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    environment:
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_RETENTION_ACCESS_KEY: ${MINIO_RETENTION_ACCESS_KEY:?MINIO_RETENTION_ACCESS_KEY is required}
+      MINIO_RETENTION_SECRET_KEY: ${MINIO_RETENTION_SECRET_KEY:?MINIO_RETENTION_SECRET_KEY is required}
+      CHECKPOINT_RETENTION_API_TOKEN: ${CHECKPOINT_RETENTION_API_TOKEN:?CHECKPOINT_RETENTION_API_TOKEN is required}
+      DESTRUCTIVE_ENABLED: "false"
+    depends_on:
+      checkpoint-retention-init:
+        condition: service_completed_successfully
+    deploy:
+      replicas: 1
+    networks:
+      - backend-network
+    healthcheck:
+      test:
+        - CMD
+        - /opt/venv/bin/python
+        - -c
+        - import socket,urllib.request; host=socket.inet_ntoa(bytes((127,0,0,1))); urllib.request.urlopen('http://'+host+':8080/healthz', timeout=2).read()
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
   dataset-resolver:
     build:
       context: ..

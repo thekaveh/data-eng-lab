@@ -1,0 +1,143 @@
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowListOwnedPrefixes",
+      "Effect": "Allow",
+      "Action": ["s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::checkpoints"],
+      "Condition": {
+        "StringLike": {
+          "s3:prefix": [
+            "events/*",
+            "event_windows/*",
+            "online_retail_cdc/*",
+            "gh_events_file/tiny/*/*/*",
+            "gh_events_file/small/*/*/*",
+            "gh_events_file/medium/*/*/*",
+            "streaming_test/*/*",
+            "_retention/leases/*",
+            "_retention/terminals/*",
+            "_retention/tombstones/*",
+            "_retention/audits/*",
+            "_retention/capability/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "AllowReadOwnedObjects",
+      "Effect": "Allow",
+      "Action": ["s3:GetObject"],
+      "Resource": [
+        "arn:aws:s3:::checkpoints/events/*",
+        "arn:aws:s3:::checkpoints/event_windows/*",
+        "arn:aws:s3:::checkpoints/online_retail_cdc/*",
+        "arn:aws:s3:::checkpoints/gh_events_file/tiny/*/*/*",
+        "arn:aws:s3:::checkpoints/gh_events_file/small/*/*/*",
+        "arn:aws:s3:::checkpoints/gh_events_file/medium/*/*/*",
+        "arn:aws:s3:::checkpoints/streaming_test/*/*",
+        "arn:aws:s3:::checkpoints/_retention/leases/*",
+        "arn:aws:s3:::checkpoints/_retention/terminals/*",
+        "arn:aws:s3:::checkpoints/_retention/tombstones/*",
+        "arn:aws:s3:::checkpoints/_retention/audits/*",
+        "arn:aws:s3:::checkpoints/_retention/capability/*"
+      ]
+    },
+    {
+      "Sid": "AllowDeleteCheckpointData",
+      "Effect": "Allow",
+      "Action": ["s3:DeleteObject"],
+      "Resource": [
+        "arn:aws:s3:::checkpoints/events/*",
+        "arn:aws:s3:::checkpoints/event_windows/*",
+        "arn:aws:s3:::checkpoints/online_retail_cdc/*",
+        "arn:aws:s3:::checkpoints/gh_events_file/tiny/*/*/*",
+        "arn:aws:s3:::checkpoints/gh_events_file/small/*/*/*",
+        "arn:aws:s3:::checkpoints/gh_events_file/medium/*/*/*",
+        "arn:aws:s3:::checkpoints/streaming_test/*/*"
+      ]
+    },
+    {
+      "Sid": "AllowWriteRetentionControls",
+      "Effect": "Allow",
+      "Action": ["s3:PutObject"],
+      "Resource": [
+        "arn:aws:s3:::checkpoints/_retention/leases/*",
+        "arn:aws:s3:::checkpoints/_retention/terminals/*",
+        "arn:aws:s3:::checkpoints/_retention/tombstones/*",
+        "arn:aws:s3:::checkpoints/_retention/audits/*",
+        "arn:aws:s3:::checkpoints/_retention/capability/*"
+      ]
+    },
+    {
+      "Sid": "DenyUnknownPrefixListing",
+      "Effect": "Deny",
+      "Action": ["s3:ListBucket"],
+      "Resource": ["arn:aws:s3:::checkpoints"],
+      "Condition": {
+        "StringNotLike": {
+          "s3:prefix": [
+            "events/*",
+            "event_windows/*",
+            "online_retail_cdc/*",
+            "gh_events_file/tiny/*/*/*",
+            "gh_events_file/small/*/*/*",
+            "gh_events_file/medium/*/*/*",
+            "streaming_test/*/*",
+            "_retention/leases/*",
+            "_retention/terminals/*",
+            "_retention/tombstones/*",
+            "_retention/audits/*",
+            "_retention/capability/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "DenyCheckpointDataWrites",
+      "Effect": "Deny",
+      "Action": ["s3:PutObject"],
+      "Resource": [
+        "arn:aws:s3:::checkpoints/events/*",
+        "arn:aws:s3:::checkpoints/event_windows/*",
+        "arn:aws:s3:::checkpoints/online_retail_cdc/*",
+        "arn:aws:s3:::checkpoints/gh_events_file/tiny/*/*/*",
+        "arn:aws:s3:::checkpoints/gh_events_file/small/*/*/*",
+        "arn:aws:s3:::checkpoints/gh_events_file/medium/*/*/*",
+        "arn:aws:s3:::checkpoints/streaming_test/*/*"
+      ]
+    },
+    {
+      "Sid": "DenyRetentionControlDeletes",
+      "Effect": "Deny",
+      "Action": ["s3:DeleteObject"],
+      "Resource": [
+        "arn:aws:s3:::checkpoints/_retention/leases/*",
+        "arn:aws:s3:::checkpoints/_retention/terminals/*",
+        "arn:aws:s3:::checkpoints/_retention/tombstones/*",
+        "arn:aws:s3:::checkpoints/_retention/audits/*",
+        "arn:aws:s3:::checkpoints/_retention/capability/*"
+      ]
+    },
+    {
+      "Sid": "DenyUnknownObjectAccess",
+      "Effect": "Deny",
+      "Action": ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"],
+      "NotResource": [
+        "arn:aws:s3:::checkpoints/events/*",
+        "arn:aws:s3:::checkpoints/event_windows/*",
+        "arn:aws:s3:::checkpoints/online_retail_cdc/*",
+        "arn:aws:s3:::checkpoints/gh_events_file/tiny/*/*/*",
+        "arn:aws:s3:::checkpoints/gh_events_file/small/*/*/*",
+        "arn:aws:s3:::checkpoints/gh_events_file/medium/*/*/*",
+        "arn:aws:s3:::checkpoints/streaming_test/*/*",
+        "arn:aws:s3:::checkpoints/_retention/leases/*",
+        "arn:aws:s3:::checkpoints/_retention/terminals/*",
+        "arn:aws:s3:::checkpoints/_retention/tombstones/*",
+        "arn:aws:s3:::checkpoints/_retention/audits/*",
+        "arn:aws:s3:::checkpoints/_retention/capability/*"
+      ]
+    }
+  ]
+}
