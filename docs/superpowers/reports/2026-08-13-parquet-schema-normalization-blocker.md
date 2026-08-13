@@ -67,8 +67,10 @@ VendorID and non-UTC `timestamp` pickup/dropoff.
 ```text
 focused new cases: 15 passed
 full schema-inspection suite: 130 passed
+isolated no-live schema-inspection suite: 130 passed
 full datasets suite: 2116 passed
 Ruff (changed files): passed
+isolated no-live Ruff (changed files): passed
 git diff --check: passed
 ```
 
