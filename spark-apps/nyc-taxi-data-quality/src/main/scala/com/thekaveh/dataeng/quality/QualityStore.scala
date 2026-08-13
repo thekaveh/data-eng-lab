@@ -2,7 +2,7 @@ package com.thekaveh.dataeng.quality
 
 import java.time.Instant
 
-import org.apache.spark.sql.{DataFrame, SparkSession}
+import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 
 trait QualityStorageBackend {
   def tableExists(identifier: String): Boolean
@@ -139,11 +139,38 @@ object SparkQualityStorageBackend {
        |WHEN MATCHED THEN UPDATE SET $Assignments
        |WHEN NOT MATCHED THEN INSERT (${FactColumns.mkString(", ")})
        |VALUES (${FactColumns.map(name => s"source.$name").mkString(", ")})""".stripMargin
+
+  private[quality] def factFrame(spark: SparkSession, values: Seq[QualityFact]): DataFrame = {
+    val rows = values.map { value => Row(
+      value.qualityRunId,
+      value.logicalDate,
+      value.dataIntervalEnd,
+      value.datasetId,
+      value.bindingType,
+      value.upstreamDagId,
+      value.sourceTable,
+      value.sourceSnapshotId,
+      value.sourceSnapshotCommittedAt,
+      value.sourceSchemaSha256,
+      value.layer,
+      value.ruleId,
+      value.ruleVersion,
+      value.owner,
+      value.metricName,
+      value.metricNumerator,
+      value.metricDenominator,
+      value.metricValue,
+      value.warnThreshold,
+      value.failThreshold,
+      value.severity,
+      value.status,
+      value.diagnosticCode
+    ) }
+    spark.createDataFrame(spark.sparkContext.parallelize(rows), QualityContract.factsSchema)
+  }
 }
 
 final class SparkQualityStorageBackend(spark: SparkSession) extends QualityStorageBackend {
-  private val FactColumns = QualityContract.factsSchema.fieldNames.toSeq
-
   override def tableExists(identifier: String): Boolean = spark.catalog.tableExists(identifier)
   override def table(identifier: String): DataFrame = spark.table(identifier)
   override def query(statement: String): DataFrame = spark.sql(statement)
@@ -170,8 +197,8 @@ final class SparkQualityStorageBackend(spark: SparkSession) extends QualityStora
   }
 
   override def mergeFacts(values: Seq[QualityFact]): Unit = {
-    import spark.implicits._
-    val frame = values.toDF().select(FactColumns.head, FactColumns.tail: _*)
+    val frame = SparkQualityStorageBackend.factFrame(spark, values)
+    require(frame.schema == QualityContract.factsSchema, "quality fact conversion schema is invalid")
     frame.createOrReplaceTempView("quality_facts_source")
     var primary: Throwable = null
     try spark.sql(SparkQualityStorageBackend.MergeFactsSql)

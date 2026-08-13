@@ -209,4 +209,25 @@ class QualityStoreSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(sql.contains("WHEN NOT MATCHED THEN INSERT"))
     assert(!sql.contains("data_eng_lab.dataset"))
   }
+
+  test("production fact conversion binds exact snake-case schema before MERGE") {
+    val runId = "9" * 64
+    val values = QualityContract.ExpectedRuleIds.map(fact(runId, _))
+    val frame = SparkQualityStorageBackend.factFrame(spark, values)
+    assert(frame.schema == QualityContract.factsSchema)
+    assert(frame.columns.toSeq == QualityContract.factsSchema.fieldNames.toSeq)
+    assert(frame.count() == 8L)
+    frame.createOrReplaceTempView("quality_fact_binding_probe")
+    try {
+      val keys = spark.sql(
+        "SELECT quality_run_id, rule_id, metric_value, logical_date " +
+          "FROM quality_fact_binding_probe ORDER BY rule_id"
+      ).collect()
+      assert(keys.length == 8)
+      assert(keys.forall(_.getAs[String]("quality_run_id") == runId))
+      assert(keys.forall(_.getAs[java.math.BigDecimal]("metric_value").scale() == 9))
+      assert(keys.forall(_.getAs[Timestamp]("logical_date").toInstant ==
+        Instant.parse("2026-08-13T01:00:00Z")))
+    } finally spark.catalog.dropTempView("quality_fact_binding_probe")
+  }
 }

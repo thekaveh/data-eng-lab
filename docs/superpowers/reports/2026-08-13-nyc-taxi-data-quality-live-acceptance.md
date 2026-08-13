@@ -115,3 +115,20 @@ the quarantine write and fact MERGE. The strict fix uses the fixed Silver allowl
 `SHOW TBLPROPERTIES <identifier>` statement. A real local Spark syntax test proves its key/value
 shape and proves the old `.properties` relation fails; the partial-state regression proves a
 clean-only retry converges both Silver tables and one idempotent eight-fact set.
+
+## Fourth replay and Gold fact binding diagnosis
+
+The property-readback correction allowed both Silver tables to converge in the real stack. Both
+attempts then failed before the Gold MERGE because Spark's case-class encoder named the fact frame
+columns `qualityRunId`, `logicalDate`, and the other Scala camelCase member names, while production
+selected the exact snake-case Gold contract beginning with `quality_run_id`. The event-log failure
+was `UNRESOLVED_COLUMN.WITH_SUGGESTION`, explicitly suggesting `qualityRunId` for
+`quality_run_id`. Bronze snapshot `3969634704401179188` stayed stable; clean contained 2,917,820
+rows, quarantine contained 26,039 rows, both had matching intended quality properties, and facts
+remained zero rows. This is a safely converged Silver/facts-empty recovery point.
+
+The correction constructs explicit Spark Rows under the exact 23-field
+`QualityContract.factsSchema` before creating the MERGE source view. Its executable regression
+materializes all eight real `QualityFact` values and proves exact names/order/types/nullability,
+scale-nine decimals, UTC timestamps, row count, and snake-case temp-view binding. The Gold MERGE
+SQL and idempotent `(quality_run_id, rule_id)` key remain unchanged.
