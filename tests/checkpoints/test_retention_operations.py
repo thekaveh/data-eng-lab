@@ -182,6 +182,12 @@ def test_apply_returns_not_ready_at_899_seconds_without_sleep_or_mutation():
     ).apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
 
     assert status.state == "not_ready"
+    assert json.loads(status.body) == {
+        "operation_id": OPERATION_ID,
+        "plan_sha256": artifact.sha256,
+        "schema_version": 1,
+        "state": "not_ready",
+    }
     assert not any(call[0] in {"head", "delete", "inventory", "create"} for call in gateway.calls)
 
 

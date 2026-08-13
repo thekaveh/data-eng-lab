@@ -118,7 +118,16 @@ class OperationManager:
         if prepared_at is None or evaluated_at is None:
             raise OperationFailure("prepared_invalid")
         if now < prepared_at + timedelta(seconds=self._quiescence_seconds):
-            return OperationStatus(request.operation_id, "not_ready", prepared_body)
+            body = canonical_json_bytes(
+                {
+                    "operation_id": request.operation_id,
+                    "plan_sha256": request.plan_sha256,
+                    "schema_version": 1,
+                    "state": "not_ready",
+                },
+                max_bytes=self._max_summary_bytes,
+            )
+            return OperationStatus(request.operation_id, "not_ready", body)
         records = self._read_manifest(base, prepared["manifest_shards"])
         prior_status = self._statuses.get(request.operation_id)
         prior_deleted: set[str] = set()
