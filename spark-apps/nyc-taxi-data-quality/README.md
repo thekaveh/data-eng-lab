@@ -80,6 +80,10 @@ dataset, and rule version `nyc_taxi_quality_v1`. The exact rule set includes
 below 1%, warn above 1% through 5%, and fail above 5%. Missing and stale outrank fail, which outranks
 warn and pass.
 
+Logical date and interval end are canonical whole-second UTC instants. The source snapshot commit
+retains exact Iceberg millisecond precision; freshness uses Java `Duration.getSeconds` semantics,
+including floor behavior when the matching ETL commits fractionally after its logical boundary.
+
 ## Failure and recovery
 
 Silver replacements and the Gold MERGE are non-atomic across tables. The application validates

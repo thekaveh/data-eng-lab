@@ -4,6 +4,7 @@ import ast
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import subprocess
@@ -835,7 +836,7 @@ def _snapshot_id(namespace: str, table: str) -> str:
 
 def _snapshot_binding(namespace: str, table: str) -> tuple[str, str]:
     rows = _trino(
-        f'SELECT snapshot_id, format_datetime(committed_at, \'yyyy-MM-dd\'\'T\'\'HH:mm:ss\'\'Z\'\'\') '
+        f'SELECT snapshot_id, format_datetime(committed_at, \'yyyy-MM-dd\'\'T\'\'HH:mm:ss.SSS\'\'Z\'\'\') '
         f'AS committed_at_utc FROM lakehouse.{namespace}."{table}$snapshots" '
         "ORDER BY committed_at DESC, snapshot_id DESC LIMIT 1"
     )
@@ -858,13 +859,19 @@ def _utc_second(value: str) -> str:
     return parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
+def _duration_seconds(committed_at: str, interval_end: str) -> int:
+    committed = datetime.fromisoformat(committed_at.replace("Z", "+00:00"))
+    end = datetime.fromisoformat(interval_end.replace("Z", "+00:00"))
+    return math.floor((end - committed).total_seconds())
+
+
 def _facts_for_runs(run_ids: tuple[str, ...]) -> list[dict]:
     values = ",".join(f"'{value}'" for value in run_ids)
     return _trino(
         "SELECT quality_run_id, format_datetime(logical_date, 'yyyy-MM-dd''T''HH:mm:ss''Z''') AS logical_date, "
         "format_datetime(data_interval_end, 'yyyy-MM-dd''T''HH:mm:ss''Z''') AS data_interval_end, "
         "dataset_id, binding_type, upstream_dag_id, source_table, source_snapshot_id, "
-        "format_datetime(source_snapshot_committed_at, 'yyyy-MM-dd''T''HH:mm:ss''Z''') "
+        "format_datetime(source_snapshot_committed_at, 'yyyy-MM-dd''T''HH:mm:ss.SSS''Z''') "
         "AS source_snapshot_committed_at, "
         "source_schema_sha256, layer, rule_id, rule_version, owner, metric_name, metric_numerator, "
         "metric_denominator, CAST(metric_value AS varchar) AS metric_value, warn_threshold, fail_threshold, "
@@ -1096,13 +1103,8 @@ def test_nyc_taxi_data_quality_live_acceptance():
                     "data_interval_end": _utc_second(quality_evidence_1["run"]["data_interval_end"]),
                     "snapshot_id": first_bronze_binding[0],
                     "committed_at": first_bronze_binding[1],
-                    "age_seconds": int(
-                        (
-                            datetime.fromisoformat(
-                                quality_evidence_1["run"]["data_interval_end"].replace("Z", "+00:00")
-                            )
-                            - datetime.fromisoformat(first_bronze_binding[1].replace("Z", "+00:00"))
-                        ).total_seconds()
+                    "age_seconds": _duration_seconds(
+                        first_bronze_binding[1], quality_evidence_1["run"]["data_interval_end"]
                     ),
                     "source_count": int(first["bronze"]["row_count"]),
                     "clean_count": int(first["clean"]["row_count"]),
@@ -1113,13 +1115,8 @@ def test_nyc_taxi_data_quality_live_acceptance():
                     "data_interval_end": _utc_second(quality_evidence_2["run"]["data_interval_end"]),
                     "snapshot_id": second_bronze_binding[0],
                     "committed_at": second_bronze_binding[1],
-                    "age_seconds": int(
-                        (
-                            datetime.fromisoformat(
-                                quality_evidence_2["run"]["data_interval_end"].replace("Z", "+00:00")
-                            )
-                            - datetime.fromisoformat(second_bronze_binding[1].replace("Z", "+00:00"))
-                        ).total_seconds()
+                    "age_seconds": _duration_seconds(
+                        second_bronze_binding[1], quality_evidence_2["run"]["data_interval_end"]
                     ),
                     "source_count": int(second["bronze"]["row_count"]),
                     "clean_count": int(second["clean"]["row_count"]),
@@ -1614,11 +1611,18 @@ def test_snapshot_binding_uses_the_reviewed_trino_timestamp_literal(monkeypatch)
 
     def trino(sql):
         statements.append(sql)
-        return [{"snapshot_id": 123, "committed_at_utc": "2026-08-13T10:08:41Z"}]
+        return [{"snapshot_id": 123, "committed_at_utc": "2026-08-13T10:08:41.664Z"}]
 
     monkeypatch.setitem(_snapshot_binding.__globals__, "_trino", trino)
-    assert _snapshot_binding("bronze", "nyc_taxi_trips") == ("123", "2026-08-13T10:08:41Z")
-    assert "format_datetime(committed_at, 'yyyy-MM-dd''T''HH:mm:ss''Z''')" in statements[0]
+    assert _snapshot_binding("bronze", "nyc_taxi_trips") == ("123", "2026-08-13T10:08:41.664Z")
+    assert "format_datetime(committed_at, 'yyyy-MM-dd''T''HH:mm:ss.SSS''Z''')" in statements[0]
+
+
+def test_freshness_oracle_matches_java_duration_floor_for_fractional_negative_seconds():
+    committed = "2026-08-13T10:12:27.664Z"
+    interval_end = "2026-08-13T10:12:06Z"
+    assert _duration_seconds(committed, interval_end) == -22
+    assert _duration_seconds("2026-08-13T10:12:05.250Z", interval_end) == 0
 
 
 def test_failed_dag_test_terminalizes_only_its_exact_stopped_test_owned_run():

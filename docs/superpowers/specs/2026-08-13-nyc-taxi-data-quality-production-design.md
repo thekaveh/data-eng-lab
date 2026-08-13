@@ -212,7 +212,10 @@ schema:
 All strings use a strict printable-ASCII allowlist and fixed per-field bounds; diagnostic codes are
 from a closed registry and never include exception text, paths, endpoints, SQL, headers, or secrets.
 Decimals use scale 9 and Trino renders them as fixed nine-place canonical strings; counts remain
-exact longs. Dates/timestamps render as UTC whole-second ISO values in the query surface.
+exact longs. Logical date and interval end render as UTC whole-second ISO values. The immutable
+Iceberg source commit retains its exact millisecond precision; freshness uses Java
+`Duration.between(commit, intervalEnd).getSeconds`, including floor semantics for negative
+fractional durations when a matching ETL commits after its logical boundary.
 
 For an accepted snapshot, `quality_run_id` is the lowercase SHA-256 of the exact UTF-8 bytes:
 
