@@ -29,6 +29,7 @@ _MAX_RUN_INVENTORY = 1000
 _MAX_RUN_REQUESTS = 10
 _MAX_XCOM_BYTES = 256 * 1024
 _MAX_POINTER_BYTES = 1024 * 1024
+_MAX_TASK_LOG_BYTES = 1024 * 1024
 _AIRFLOW_TOKEN = ""
 
 pytestmark = pytest.mark.infra
@@ -248,10 +249,32 @@ def _pointer_snapshot(client, dataset: str) -> tuple[bytes, str]:
         Bucket=_env("MINIO_BUCKET_LANDING", "landing"),
         Key=f"_data-eng-locks/current/{dataset}.json",
     )
-    body = response["Body"].read()
-    etag = response.get("ETag")
-    if not isinstance(body, bytes) or not body or not isinstance(etag, str) or not etag:
-        raise AssertionError(f"{dataset} pointer body/ETag must be nonempty")
+    body_stream = response.get("Body") if isinstance(response, dict) else None
+    etag = response.get("ETag") if isinstance(response, dict) else None
+    if body_stream is None or not callable(getattr(body_stream, "read", None)):
+        raise AssertionError(f"{dataset} pointer response is malformed")
+    try:
+        body = body_stream.read(_MAX_POINTER_BYTES + 1)
+    except Exception as error:
+        raise AssertionError(f"{dataset} pointer response is malformed") from error
+    finally:
+        close = getattr(body_stream, "close", None)
+        if callable(close):
+            close()
+    if (
+        not isinstance(body, bytes)
+        or not body
+        or len(body) > _MAX_POINTER_BYTES
+        or not isinstance(etag, str)
+        or not etag
+    ):
+        raise AssertionError(f"{dataset} pointer response is malformed")
+    try:
+        document = json.loads(body)
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise AssertionError(f"{dataset} pointer response is malformed") from error
+    if not isinstance(document, dict):
+        raise AssertionError(f"{dataset} pointer response is malformed")
     return body, etag
 
 
@@ -340,6 +363,140 @@ def _trino(sql: str) -> list[list]:
         sql,
     )
     return [list(row.values()) for row in (json.loads(line) for line in result.stdout.splitlines() if line.strip())]
+
+
+def _runtime_queries() -> list[list]:
+    return _trino(
+        "SELECT query_id,state,error_type,error_code FROM system.runtime.queries "
+        "WHERE source='data-eng-lab-airflow' ORDER BY query_id"
+    )
+
+
+def _assert_runtime_queries(
+    rows: list[list], *, baseline: set[str], expected: set[str]
+) -> dict[str, dict]:
+    observed: dict[str, dict] = {}
+    for row in rows:
+        if not isinstance(row, list) or len(row) != 4 or not isinstance(row[0], str) or not row[0]:
+            raise AssertionError("Trino runtime query inventory row is malformed")
+        query_id, state, error_type, error_code = row
+        if query_id in observed:
+            raise AssertionError(f"Trino runtime query inventory has duplicate query ID {query_id}")
+        observed[query_id] = {
+            "state": state,
+            "error_type": error_type,
+            "error_code": error_code,
+        }
+    current = set(observed) - baseline
+    if current != expected:
+        raise AssertionError(
+            f"Trino runtime query inventory mismatch: unexpected={sorted(current - expected)}, "
+            f"missing={sorted(expected - current)}"
+        )
+    bad = {
+        query_id: observed[query_id]
+        for query_id in expected
+        if observed[query_id] != {"state": "FINISHED", "error_type": None, "error_code": None}
+    }
+    if bad:
+        raise AssertionError(f"Trino queries did not reach terminal FINISHED without errors: {bad}")
+    return {query_id: observed[query_id] for query_id in sorted(expected)}
+
+
+def _runtime_import_probe(runner=None) -> dict:
+    execute = runner or _run
+    script = """
+import importlib.util, json
+def available(name):
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ModuleNotFoundError, ValueError):
+        return False
+import airflow.providers.http.hooks.http
+import requests
+print(json.dumps({
+    'http_hook': True,
+    'requests': True,
+    'trino_client': available('trino'),
+    'trino_provider': available('airflow.providers.trino'),
+}, sort_keys=True))
+""".strip()
+    result = execute(
+        "docker",
+        "exec",
+        f"{_env('PROJECT_NAME', 'data-eng-lab')}-airflow-scheduler",
+        "python",
+        "-c",
+        script,
+        timeout=30,
+    )
+    try:
+        observed = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise AssertionError("pinned runtime import contract returned malformed evidence") from error
+    expected = {
+        "http_hook": True,
+        "requests": True,
+        "trino_client": False,
+        "trino_provider": False,
+    }
+    if observed != expected:
+        raise AssertionError(f"pinned runtime import contract mismatch: {observed}")
+    return observed
+
+
+def _task_log(dag_id: str, run_id: str, runner=None) -> str:
+    execute = runner or _run
+    script = """
+import pathlib, sys
+root = pathlib.Path('/opt/airflow/logs')
+root = root / ('dag_id=' + sys.argv[1]) / ('run_id=' + sys.argv[2]) / ('task_id=' + sys.argv[3])
+files = sorted(root.glob('attempt=*.log'))
+if not files:
+    raise SystemExit('owned task log is missing')
+data = b''.join(path.read_bytes() for path in files)
+if len(data) > 1048576:
+    raise SystemExit('owned task log exceeds byte bound')
+sys.stdout.buffer.write(data)
+""".strip()
+    return execute(
+        "docker",
+        "exec",
+        f"{_env('PROJECT_NAME', 'data-eng-lab')}-airflow-scheduler",
+        "python",
+        "-c",
+        script,
+        dag_id,
+        run_id,
+        TASK_ID,
+        timeout=30,
+    ).stdout
+
+
+def _assert_task_log_clean(value: str) -> None:
+    if not isinstance(value, str) or len(value.encode("utf-8")) > _MAX_TASK_LOG_BYTES:
+        raise AssertionError("task log exceeds safe bound")
+    lowered = value.casefold()
+    sensitive = (
+        "http://trino:8080/v1/statement",
+        "x-trino-user",
+        "x-trino-source",
+        "data_eng_lab_bi",
+        "select ",
+    )
+    secrets = tuple(
+        secret.casefold()
+        for secret in (
+            _env("AIRFLOW_ADMIN_PASSWORD"),
+            _env("MINIO_ROOT_PASSWORD"),
+            _env("MINIO_ICEBERG_SECRET_KEY"),
+        )
+        if secret
+    )
+    if any(token in lowered for token in sensitive + secrets):
+        raise AssertionError("task log contains sensitive Trino request material")
+    if "traceback (most recent call last):" in lowered:
+        raise AssertionError("successful task log contains a failure traceback")
 
 
 def _table_state() -> dict:
@@ -468,6 +625,7 @@ def test_trino_bi_pipelines_live_acceptance():
     """Prove four paused Trino-only DAG runs, durable artifacts, and zero source mutation."""
     with _owned_stack():
         _wait_for_dags()
+        runtime_imports = _runtime_import_probe()
         with _paused_dags():
             baselines = {dag_id: {run["dag_run_id"] for run in _list_runs(_airflow, dag_id)} for dag_id in DAG_IDS}
             for dag_id in DAG_IDS:
@@ -489,10 +647,18 @@ def test_trino_bi_pipelines_live_acceptance():
             }
             tables_before = _table_state()
             drivers_before = _driver_ids()
+            runtime_before_rows = _runtime_queries()
+            runtime_baseline = {
+                row[0]
+                for row in runtime_before_rows
+                if isinstance(row, list) and len(row) == 4 and isinstance(row[0], str)
+            }
 
             owned = {dag_id: set() for dag_id in DAG_IDS}
             artifacts: dict[str, list[dict]] = {dag_id: [] for dag_id in DAG_IDS}
             runs = {}
+            expected_query_ids: set[str] = set()
+            runtime_evidence: dict[str, dict] = {}
             logical = datetime.now(timezone.utc).replace(microsecond=0)
             for iteration in range(2):
                 for dag_index, dag_id in enumerate(DAG_IDS):
@@ -506,6 +672,11 @@ def test_trino_bi_pipelines_live_acceptance():
                     artifacts[dag_id].append(artifact)
                     runs[(dag_id, iteration)] = run
                     _assert_artifact(artifact, dag_id)
+                    expected_query_ids.update(artifact["query_ids"])
+                    runtime_evidence = _assert_runtime_queries(
+                        _runtime_queries(), baseline=runtime_baseline, expected=expected_query_ids
+                    )
+                    _assert_task_log_clean(_task_log(dag_id, run["dag_run_id"]))
 
             for dag_id in DAG_IDS:
                 assert len(owned[dag_id]) == 2
@@ -541,6 +712,8 @@ def test_trino_bi_pipelines_live_acceptance():
                         "source": {"tpch": tpch, "nyc_pointer_state": pointers_before["nyc_taxi"][0]},
                         "snapshots": tables_before["snapshots"],
                         "spark_driver_delta": [],
+                        "runtime_imports": runtime_imports,
+                        "runtime_queries": runtime_evidence,
                     },
                     sort_keys=True,
                 )

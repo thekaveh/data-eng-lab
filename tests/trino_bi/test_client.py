@@ -3,6 +3,7 @@ from __future__ import annotations
 import importlib
 import json
 import sys
+import traceback
 from collections.abc import Iterable
 from pathlib import Path
 
@@ -38,11 +39,13 @@ class FakeResponse:
 
 
 class FakeSession:
-    def __init__(self, responses, *, delete_error=None):
+    def __init__(self, responses, *, delete_error=None, close_error=None):
         self.responses = list(responses)
         self.calls = []
         self.delete_error = delete_error
+        self.close_error = close_error
         self.closed = False
+        self.trust_env = True
 
     def post(self, url, **kwargs):
         self.calls.append(("POST", url, kwargs))
@@ -62,16 +65,21 @@ class FakeSession:
 
     def close(self):
         self.closed = True
+        if self.close_error:
+            raise self.close_error
 
 
 class FakeHook:
-    def __init__(self, session, *, base_url="http://trino:8080"):
+    def __init__(self, session, *, base_url="http://trino:8080", get_conn_error=None):
         self.session = session
         self.base_url = base_url
         self.headers = None
+        self.get_conn_error = get_conn_error
 
     def get_conn(self, headers=None):
         self.headers = headers
+        if self.get_conn_error:
+            raise self.get_conn_error
         return self.session
 
 
@@ -94,10 +102,19 @@ def _doc(*, query_id="20260812_000001_00001_x", next_uri=None, columns=None, dat
     return result
 
 
-def _run(responses, *, base_url="http://trino:8080", name="nyc_source_count", clock=None, delete_error=None):
+def _run(
+    responses,
+    *,
+    base_url="http://trino:8080",
+    name="nyc_source_count",
+    clock=None,
+    delete_error=None,
+    close_error=None,
+    get_conn_error=None,
+):
     module = _load_client()
-    session = FakeSession(responses, delete_error=delete_error)
-    hook = FakeHook(session, base_url=base_url)
+    session = FakeSession(responses, delete_error=delete_error, close_error=close_error)
+    hook = FakeHook(session, base_url=base_url, get_conn_error=get_conn_error)
     factory_calls = []
     client = module.TrinoHttpClient(
         hook_factory=_factory(hook, factory_calls),
@@ -127,6 +144,7 @@ def test_single_page_query_uses_exact_connection_headers_and_fixed_sql() -> None
     assert result.columns == (("source_count", "bigint"),)
     assert result.rows == ((17,),)
     assert session.closed is True
+    assert session.trust_env is False
 
 
 def test_multipage_query_follows_same_origin_until_finished() -> None:
@@ -179,7 +197,7 @@ def test_connection_rejects_every_noncanonical_origin(base_url: str) -> None:
         "/v1/statement/q/1",
     ],
 )
-def test_pagination_rejects_origin_or_path_escape_and_cancels(next_uri: str) -> None:
+def test_pagination_rejects_origin_or_path_escape_without_contacting_invalid_uri(next_uri: str) -> None:
     valid_cancel = "http://trino:8080/v1/statement/q/0"
     first = _doc(next_uri=valid_cancel, columns=(("source_count", "bigint"),), state="QUEUED")
     second = _doc(next_uri=next_uri, state="RUNNING")
@@ -187,7 +205,10 @@ def test_pagination_rejects_origin_or_path_escape_and_cancels(next_uri: str) -> 
     with pytest.raises(module.TrinoProtocolError, match="next page") as failure:
         execute()
     assert next_uri not in str(failure.value) and "secret" not in str(failure.value)
-    assert session.calls[-1][0:2] == ("DELETE", valid_cancel)
+    assert [(method, url) for method, url, _ in session.calls] == [
+        ("POST", "http://trino:8080/v1/statement"),
+        ("GET", valid_cancel),
+    ]
     assert session.closed is True
 
 
@@ -235,7 +256,7 @@ def test_query_id_cannot_change_between_pages() -> None:
     module, _client, session, _hook, _calls, execute = _run(responses)
     with pytest.raises(module.TrinoProtocolError, match="query ID changed"):
         execute()
-    assert session.calls[-1][0] == "DELETE"
+    assert [call[0] for call in session.calls] == ["POST", "GET"]
 
 
 def test_each_streamed_response_is_bounded_before_the_next_chunk() -> None:
@@ -281,11 +302,134 @@ def test_total_page_row_column_cell_depth_and_deadline_bounds_are_fail_closed() 
         _doc(next_uri=next_uri, columns=(("source_count", "bigint"),), state="QUEUED"),
         _doc(data=[[1]], state="FINISHED"),
     ]
-    clock_values = iter([0.0, module.QUERY_DEADLINE_SECONDS + 1])
-    _, _, deadline_session, _, _, execute_deadline = _run(responses, clock=lambda: next(clock_values))
+    now = [0.0]
+
+    class DeadlineResponse(FakeResponse):
+        def iter_content(self, chunk_size: int):
+            yield from super().iter_content(chunk_size)
+            now[0] = module.QUERY_DEADLINE_SECONDS + 1
+
+    responses[0] = DeadlineResponse(responses[0])
+    _, _, deadline_session, _, _, execute_deadline = _run(responses, clock=lambda: now[0])
     with pytest.raises(module.TrinoProtocolError, match="deadline"):
         execute_deadline()
-    assert deadline_session.calls[-1][0] == "DELETE"
+    assert [call[0] for call in deadline_session.calls] == ["POST"]
+
+
+def test_global_deadline_rejects_terminal_page_and_stream_overrun() -> None:
+    module = _load_client()
+    now = [0.0]
+
+    class AdvancingResponse(FakeResponse):
+        def iter_content(self, chunk_size: int):
+            yield b'{"id":"20260812_000001_00001_x","stats":{"state":"FINISHED"},'
+            now[0] = module.QUERY_DEADLINE_SECONDS + 1
+            yield b'"columns":[{"name":"source_count","type":"bigint"}],"data":[[1]]}'
+
+    _, _, stream_session, _, _, execute_stream = _run(
+        [AdvancingResponse(chunks=[])], clock=lambda: now[0]
+    )
+    with pytest.raises(module.TrinoProtocolError, match="deadline"):
+        execute_stream()
+    assert stream_session.closed is True
+
+    now[0] = 0.0
+
+    class TerminalResponse(FakeResponse):
+        def iter_content(self, chunk_size: int):
+            yield from super().iter_content(chunk_size)
+            now[0] = module.QUERY_DEADLINE_SECONDS + 1
+
+    _, _, terminal_session, _, _, execute_terminal = _run(
+        [TerminalResponse(_doc(columns=(("source_count", "bigint"),), data=[[1]]))],
+        clock=lambda: now[0],
+    )
+    with pytest.raises(module.TrinoProtocolError, match="deadline"):
+        execute_terminal()
+    assert terminal_session.closed is True
+
+
+def test_request_timeout_is_clamped_to_remaining_global_deadline() -> None:
+    module = _load_client()
+    now = [0.0]
+    session = FakeSession([_doc(columns=(("source_count", "bigint"),), data=[[1]])])
+    hook = FakeHook(session)
+
+    def factory(**_kwargs):
+        now[0] = module.QUERY_DEADLINE_SECONDS - 0.25
+        return hook
+
+    client = module.TrinoHttpClient(hook_factory=factory, monotonic=lambda: now[0])
+    client.execute(module.QueryName.NYC_SOURCE_COUNT)
+    assert 0 < session.calls[0][2]["timeout"] <= 0.25
+
+
+def test_current_valid_next_uri_is_cancellation_target_before_page_validation() -> None:
+    next_uri = "http://trino:8080/v1/statement/q/current"
+    malformed = _doc(
+        next_uri=next_uri,
+        columns=(("wrong", "bigint"),),
+        data=[[1]],
+        state="RUNNING",
+    )
+    module, _, session, _, _, execute = _run([malformed])
+    with pytest.raises(module.TrinoProtocolError, match="columns"):
+        execute()
+    assert session.calls[-1][0:2] == ("DELETE", next_uri)
+
+
+@pytest.mark.parametrize("boundary", ["factory", "get_conn", "request", "stream", "session_close"])
+def test_transport_and_cleanup_tracebacks_never_expose_raw_exception_text(boundary: str) -> None:
+    module = _load_client()
+    secret = "credential=super-secret"
+
+    if boundary == "factory":
+        def factory(**_kwargs):
+            raise RuntimeError(secret)
+
+        client = module.TrinoHttpClient(hook_factory=factory)
+    elif boundary == "get_conn":
+        _, client, _, _, _, _ = _run([], get_conn_error=RuntimeError(secret))
+    elif boundary == "request":
+        class RequestFailureSession(FakeSession):
+            def post(self, *_args, **_kwargs):
+                raise RuntimeError(secret)
+
+        session = RequestFailureSession([])
+        client = module.TrinoHttpClient(hook_factory=_factory(FakeHook(session), []))
+    elif boundary == "stream":
+        class StreamFailureResponse(FakeResponse):
+            def iter_content(self, _chunk_size):
+                raise RuntimeError(secret)
+                yield b""  # pragma: no cover
+
+        _, client, _, _, _, _ = _run([StreamFailureResponse(chunks=[])])
+    else:
+        _, client, _, _, _, _ = _run(
+            [_doc(columns=(("source_count", "bigint"),), data=[[1]])],
+            close_error=RuntimeError(secret),
+        )
+
+    with pytest.raises(module.TrinoProtocolError) as failure:
+        client.execute(module.QueryName.NYC_SOURCE_COUNT)
+    rendered = "".join(traceback.format_exception(failure.type, failure.value, failure.tb))
+    assert secret not in rendered
+
+
+def test_keyboard_interrupt_remains_primary_when_cleanup_fails_without_secret_note() -> None:
+    module = _load_client()
+    secret = "cleanup credential=super-secret"
+
+    class InterruptSession(FakeSession):
+        def post(self, *_args, **_kwargs):
+            raise KeyboardInterrupt("operator interrupt")
+
+    session = InterruptSession([], close_error=RuntimeError(secret))
+    client = module.TrinoHttpClient(hook_factory=_factory(FakeHook(session), []))
+    with pytest.raises(KeyboardInterrupt, match="operator interrupt") as failure:
+        client.execute(module.QueryName.NYC_SOURCE_COUNT)
+    rendered = "".join(traceback.format_exception(failure.type, failure.value, failure.tb))
+    assert secret not in rendered
 
 
 def test_page_and_total_byte_bounds_cannot_allocate_or_loop_unboundedly() -> None:

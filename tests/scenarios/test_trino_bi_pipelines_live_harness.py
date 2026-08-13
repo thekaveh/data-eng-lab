@@ -183,12 +183,16 @@ class _Body:
     def __init__(self, payload: bytes):
         self.payload = payload
         self.closed = False
+        self.close_count = 0
+        self.read_sizes = []
 
     def read(self, size=-1):
+        self.read_sizes.append(size)
         return self.payload if size < 0 else self.payload[:size]
 
     def close(self):
         self.closed = True
+        self.close_count += 1
 
 
 class _S3Error(Exception):
@@ -226,6 +230,19 @@ def test_nyc_pointer_negative_control_captures_exact_present_body_and_etag():
         '"etag"',
     )
     assert body.closed is True
+
+
+def test_mandatory_pointer_capture_is_bounded_validated_and_closed_once():
+    body = _Body(b'{"dataset":"tpch"}')
+    client = _S3(response={"Body": body, "ETag": '"etag"'})
+    assert live._pointer_snapshot(client, "tpch") == (b'{"dataset":"tpch"}', '"etag"')
+    assert body.read_sizes == [live._MAX_POINTER_BYTES + 1]
+    assert body.close_count == 1
+
+    overlong = _Body(b"{" + b"x" * live._MAX_POINTER_BYTES + b"}")
+    with pytest.raises(AssertionError, match="malformed"):
+        live._pointer_snapshot(_S3(response={"Body": overlong, "ETag": '"etag"'}), "tpch")
+    assert overlong.close_count == 1
 
 
 @pytest.mark.parametrize(
@@ -293,6 +310,78 @@ def test_artifact_inventory_is_exact_and_has_no_spark_driver_delta():
     assert live._artifact_result_bytes(first) == live._artifact_result_bytes(second)
     with pytest.raises(AssertionError, match="Spark driver delta"):
         live._assert_no_spark_driver_delta({"driver-1"}, {"driver-1", "driver-2"})
+
+
+def test_runtime_query_inventory_requires_exact_owned_finished_queries_without_errors():
+    rows = [
+        ["q1", "FINISHED", None, None],
+        ["q2", "FINISHED", None, None],
+    ]
+    assert live._assert_runtime_queries(rows, baseline=set(), expected={"q1", "q2"}) == {
+        "q1": {"state": "FINISHED", "error_type": None, "error_code": None},
+        "q2": {"state": "FINISHED", "error_type": None, "error_code": None},
+    }
+    with pytest.raises(AssertionError, match="unexpected"):
+        live._assert_runtime_queries(
+            rows + [["foreign", "RUNNING", None, None]],
+            baseline=set(),
+            expected={"q1", "q2"},
+        )
+    with pytest.raises(AssertionError, match="terminal FINISHED"):
+        live._assert_runtime_queries(
+            [["q1", "FAILED", "USER_ERROR", "1"]], baseline=set(), expected={"q1"}
+        )
+    with pytest.raises(AssertionError, match="duplicate"):
+        live._assert_runtime_queries([rows[0], rows[0]], baseline=set(), expected={"q1"})
+
+
+def test_pinned_runtime_probe_requires_http_stack_and_forbids_trino_clients():
+    expected = {
+        "http_hook": True,
+        "requests": True,
+        "trino_client": False,
+        "trino_provider": False,
+    }
+
+    def valid_runner(*_command, **_kwargs):
+        return subprocess.CompletedProcess([], 0, json.dumps(expected), "")
+
+    assert live._runtime_import_probe(runner=valid_runner) == expected
+
+    def invalid_runner(*_command, **_kwargs):
+        return subprocess.CompletedProcess([], 0, json.dumps({**expected, "trino_client": True}), "")
+
+    with pytest.raises(AssertionError, match="runtime import contract"):
+        live._runtime_import_probe(runner=invalid_runner)
+
+
+def test_task_log_scan_rejects_endpoint_headers_sql_secrets_and_tracebacks(monkeypatch):
+    monkeypatch.setenv("AIRFLOW_ADMIN_PASSWORD", "airflow-secret")
+    clean = "Task exited with return code 0\nMarking task as SUCCESS"
+    live._assert_task_log_clean(clean)
+    for leaked in (
+        "http://trino:8080/v1/statement",
+        "X-Trino-User",
+        "data_eng_lab_bi",
+        "SELECT source_table FROM lakehouse.gold",
+        "airflow-secret",
+        "Traceback (most recent call last):",
+    ):
+        with pytest.raises(AssertionError, match="sensitive|failure"):
+            live._assert_task_log_clean(clean + "\n" + leaked)
+
+
+def test_task_log_reader_is_bounded_and_uses_exact_owned_task_path():
+    calls = []
+
+    def runner(*command, **_kwargs):
+        calls.append((command, _kwargs))
+        return subprocess.CompletedProcess(command, 0, "clean log", "")
+
+    assert live._task_log("tpch_bi_query", "owned-run", runner=runner) == "clean log"
+    command, kwargs = calls[0]
+    assert command[-3:] == ("tpch_bi_query", "owned-run", live.TASK_ID)
+    assert kwargs["timeout"] <= 30
 
 
 def test_fixed_live_source_contains_no_refresh_or_arbitrary_sql_inputs():

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import sys
 import time
 from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
@@ -125,29 +126,47 @@ class TrinoHttpClient:
         self.max_total_bytes = MAX_TOTAL_BYTES
 
     def execute(self, name: QueryName) -> QueryResult:
+        started = self._monotonic()
         try:
             spec = QUERIES[name]
-        except (KeyError, TypeError) as error:
-            raise TrinoProtocolError("query is absent from the reviewed registry") from error
+        except (KeyError, TypeError):
+            raise TrinoProtocolError("query is absent from the reviewed registry") from None
 
-        hook = self._hook_factory(method="POST", http_conn_id="trino_default")
-        headers = dict(_HEADERS)
-        if spec.schema is not None:
-            headers["X-Trino-Schema"] = spec.schema
-        session = hook.get_conn(headers=headers)
+        session = None
+        result = None
         try:
+            self._check_deadline(started)
+            hook = self._hook_factory(method="POST", http_conn_id="trino_default")
+            self._check_deadline(started)
+            headers = dict(_HEADERS)
+            if spec.schema is not None:
+                headers["X-Trino-Schema"] = spec.schema
+            session = hook.get_conn(headers=headers)
+            session.trust_env = False
+            self._check_deadline(started)
             _validate_base_url(hook.base_url)
-            return self._execute(session, spec)
-        except TrinoProtocolError:
-            # _execute owns cancellation because it has the current valid URI.
+            result = self._execute(session, spec, started)
+        except (KeyboardInterrupt, SystemExit):
             raise
-        except Exception as error:
-            raise TrinoProtocolError(f"{spec.name.value}: Trino transport failed") from error
+        except TrinoProtocolError as error:
+            raise error from None
+        except BaseException:
+            raise TrinoProtocolError(f"{spec.name.value}: Trino transport failed") from None
         finally:
-            session.close()
+            if session is not None:
+                primary_active = sys.exc_info()[0] is not None
+                try:
+                    session.close()
+                except BaseException:
+                    if not primary_active:
+                        raise TrinoProtocolError(
+                            f"{spec.name.value}: Trino session cleanup failed"
+                        ) from None
+        self._check_deadline(started)
+        assert result is not None
+        return result
 
-    def _execute(self, session: Any, spec: QuerySpec) -> QueryResult:
-        started = self._monotonic()
+    def _execute(self, session: Any, spec: QuerySpec, started: float) -> QueryResult:
         request_url = _STATEMENT_URL
         method = "POST"
         seen: set[str] = set()
@@ -172,22 +191,25 @@ class TrinoHttpClient:
 
                 response = None
                 try:
+                    timeout = self._request_timeout(started)
                     kwargs = {
                         "allow_redirects": False,
                         "stream": True,
-                        "timeout": REQUEST_TIMEOUT_SECONDS,
+                        "timeout": timeout,
                     }
                     if method == "POST":
                         response = session.post(request_url, data=spec.sql.encode("utf-8"), **kwargs)
                     else:
                         response = session.get(request_url, **kwargs)
                     request_count += 1
+                    self._check_deadline(started)
                     if response.status_code != 200:
                         raise TrinoProtocolError(
                             f"{spec.name.value}: Trino returned HTTP status {response.status_code}"
                         )
                     payload = bytearray()
                     for chunk in response.iter_content(chunk_size=16 * 1024):
+                        self._check_deadline(started)
                         if not chunk:
                             continue
                         if len(payload) + len(chunk) > MAX_RESPONSE_BYTES:
@@ -196,12 +218,27 @@ class TrinoHttpClient:
                             raise TrinoProtocolError("Trino response exceeds total byte bound")
                         payload.extend(chunk)
                         total_bytes += len(chunk)
+                        self._check_deadline(started)
                 finally:
                     if response is not None:
-                        response.close()
+                        primary_active = sys.exc_info()[0] is not None
+                        try:
+                            response.close()
+                        except BaseException:
+                            if not primary_active:
+                                raise TrinoProtocolError(
+                                    f"{spec.name.value}: Trino response cleanup failed"
+                                ) from None
 
+                self._check_deadline(started)
                 page_count += 1
                 document = self._decode_document(bytes(payload))
+                self._check_deadline(started)
+                # The prior request is complete. Only a newly validated current URI may be cancelled.
+                cancel_uri = None
+                raw_next = document.get("nextUri")
+                next_uri = _validate_next_uri(raw_next) if raw_next is not None else None
+                cancel_uri = next_uri
                 current_query_id = document.get("id")
                 if not isinstance(current_query_id, str) or not _QUERY_ID.fullmatch(current_query_id):
                     raise TrinoProtocolError("Trino response has an invalid query ID")
@@ -227,27 +264,37 @@ class TrinoHttpClient:
                 if not isinstance(state, str):
                     raise TrinoProtocolError("Trino response has invalid query state")
 
-                raw_next = document.get("nextUri")
-                if raw_next is None:
+                self._check_deadline(started)
+                if next_uri is None:
                     if state != "FINISHED":
                         raise TrinoProtocolError("Trino response did not reach terminal FINISHED state")
                     if columns is None:
                         raise TrinoProtocolError("Trino response is missing columns")
-                    cancel_uri = None
+                    self._check_deadline(started)
                     return QueryResult(query_id, columns, tuple(rows))
 
-                next_uri = _validate_next_uri(raw_next)
                 if next_uri in seen:
                     raise TrinoProtocolError("Trino returned a repeated next page URI")
-                cancel_uri = next_uri
-                if self._monotonic() - started > QUERY_DEADLINE_SECONDS:
-                    raise TrinoProtocolError("Trino query exceeded deadline")
+                self._check_deadline(started)
                 request_url = next_uri
                 method = "GET"
-        except Exception:
+        except BaseException:
             if cancel_uri is not None:
-                self._cancel(session, cancel_uri)
+                self._cancel(session, cancel_uri, started)
             raise
+
+    def _remaining(self, started: float) -> float:
+        return QUERY_DEADLINE_SECONDS - (self._monotonic() - started)
+
+    def _check_deadline(self, started: float) -> None:
+        if self._remaining(started) <= 0:
+            raise TrinoProtocolError("Trino query exceeded deadline")
+
+    def _request_timeout(self, started: float) -> float:
+        remaining = self._remaining(started)
+        if remaining <= 0:
+            raise TrinoProtocolError("Trino query exceeded deadline")
+        return min(float(REQUEST_TIMEOUT_SECONDS), remaining)
 
     @staticmethod
     def _decode_document(payload: bytes) -> dict[str, Any]:
@@ -257,8 +304,8 @@ class TrinoHttpClient:
                 object_pairs_hook=_reject_duplicate_keys,
                 parse_constant=_reject_constant,
             )
-        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
-            raise TrinoProtocolError("Trino returned malformed JSON") from error
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
+            raise TrinoProtocolError("Trino returned malformed JSON") from None
         _json_depth(value)
         if not isinstance(value, dict):
             raise TrinoProtocolError("Trino response must be a JSON object")
@@ -313,25 +360,30 @@ class TrinoHttpClient:
                     size = len(
                         json.dumps(cell, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
                     )
-                except (TypeError, ValueError) as error:
-                    raise TrinoProtocolError("Trino response cell has invalid type") from error
+                except (TypeError, ValueError):
+                    raise TrinoProtocolError("Trino response cell has invalid type") from None
                 if size > MAX_CELL_BYTES:
                     raise TrinoProtocolError("Trino result exceeds cell bound")
             parsed.append(tuple(row))
         return tuple(parsed)
 
-    @staticmethod
-    def _cancel(session: Any, uri: str) -> None:
+    def _cancel(self, session: Any, uri: str, started: float) -> None:
         response = None
         try:
+            remaining = self._remaining(started)
+            if remaining <= 0:
+                return
             response = session.delete(
                 uri,
                 allow_redirects=False,
                 stream=True,
-                timeout=REQUEST_TIMEOUT_SECONDS,
+                timeout=min(float(REQUEST_TIMEOUT_SECONDS), remaining),
             )
-        except Exception:
+        except BaseException:
             return
         finally:
             if response is not None:
-                response.close()
+                try:
+                    response.close()
+                except BaseException:
+                    return
