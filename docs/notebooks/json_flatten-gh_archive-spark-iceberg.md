@@ -2,6 +2,10 @@
 Documents the scenario's paired Jupyter (`notebook.ipynb`) and Zeppelin (`notebook.zpln`) implementations.
 Both notebooks implement identical logic in PySpark and Scala.
 
+> **Production-risk warning:** these educational notebooks directly replace
+> `lakehouse.silver.gh_events`, do not write production provenance, and are not serialized with
+> sessionization. Production writes must use `gh_archive_flatten_sessionization`.
+
 ## 1. Section map
 
 | Subsection | Scala (Zeppelin) | PySpark (Jupyter) |

@@ -35,6 +35,7 @@ object GhArchiveFlatten {
       .config("spark.sql.legacy.timeParserPolicy", "CORRECTED")
       .getOrCreate()
     try {
+      GhArchiveRawPreflight.validate(spark, sources)
       val source = spark.read.option("mode", "FAILFAST").json(sources.sparkUris: _*)
       val result = runResolved(sources, source, new IcebergTableWriter(spark))
       // scalastyle:off println

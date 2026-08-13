@@ -11,6 +11,7 @@ final case class Provenance(scale: String, planId: String, publicationId: String
 }
 
 final case class ResolvedSources(canonicalUris: Seq[String], sparkUris: Seq[String], provenance: Provenance)
+final case class SourceLock(sizeBytes: Long, sha256: String)
 
 object GhArchiveSources {
   val ExpectedNames: Map[String, Vector[String]] = Map(
@@ -20,6 +21,14 @@ object GhArchiveSources {
       "2023-01-01-0.json.gz", "2023-01-01-1.json.gz", "2023-01-01-2.json.gz",
       "2023-01-01-3.json.gz", "2023-01-01-4.json.gz", "2023-01-01-5.json.gz"
     )
+  )
+  val ExpectedLocks: Map[String, SourceLock] = Map(
+    "2023-01-01-0.json.gz" -> SourceLock(59785519L, "2b0c0cc3b067f61c0f39d7623517904d95d22ef9d5c998953050a0b78adb6258"),
+    "2023-01-01-1.json.gz" -> SourceLock(58874988L, "7678be46177c930be4fb8aa9d65d3ca0e5e681bd9666979ef34d02f844948ad8"),
+    "2023-01-01-2.json.gz" -> SourceLock(50819547L, "9dc312f528a95d495894638bb32071732f463c2dea4a0d515d8127ab112456aa"),
+    "2023-01-01-3.json.gz" -> SourceLock(81106532L, "86f7da6d43f4d8b0473e6f4c1c915d5d7d498ba358170e9bf88baf3938931c68"),
+    "2023-01-01-4.json.gz" -> SourceLock(73807500L, "da115ff022576517702f866370acca06322897c01fe5784d9dcb923d1c58d4f0"),
+    "2023-01-01-5.json.gz" -> SourceLock(66302326L, "6b0735f2495752510e36e35ecd087993414f8d48d87080d75e16c6fa306cf271")
   )
   private val Sha256 = "[0-9a-f]{64}"
   private val Uuid4 = "[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}"

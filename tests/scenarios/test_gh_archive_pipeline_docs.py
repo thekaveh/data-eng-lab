@@ -48,6 +48,33 @@ def test_session_notebooks_consume_flat_table_with_exact_deterministic_contract(
         assert "gh_archive_flatten_sessionization" in text
 
 
+def test_all_four_educational_notebooks_warn_against_production_writes():
+    for scenario in SCENARIOS:
+        jupyter = json.loads(
+            (ROOT / f"scenarios/{scenario}/jupyter/notebook.ipynb").read_text()
+        )
+        zeppelin = json.loads(
+            (ROOT / f"scenarios/{scenario}/zeppelin/notebook.zpln").read_text()
+        )
+        texts = (
+            "\n".join("".join(cell.get("source", [])) for cell in jupyter["cells"]),
+            "\n".join(paragraph["text"] for paragraph in zeppelin["paragraphs"]),
+        )
+        for text in texts:
+            assert "Production-risk warning" in text
+            assert "does not write production provenance" in text
+            assert "not serialized" in text
+            assert "gh_archive_flatten_sessionization" in text
+
+
+def test_notebook_index_names_both_gh_archive_production_prototypes():
+    index = (ROOT / "docs/notebooks/index.md").read_text(encoding="utf-8")
+    assert "json_flatten-gh_archive-spark-iceberg" in index
+    assert "sessionization-gh_archive-spark-iceberg" in index
+    assert "gh_archive_flatten_sessionization" in index
+    assert "educational" in index
+
+
 def test_public_counts_and_diagrams_describe_five_production_dags():
     for path in (ROOT / "README.md", ROOT / "docs/index.md", ROOT / "docs/scenarios/index.md"):
         text = path.read_text(encoding="utf-8")

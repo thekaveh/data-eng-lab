@@ -7,6 +7,9 @@ import org.scalatest.funsuite.AnyFunSuite
 
 import java.sql.Timestamp
 import java.time.Instant
+import java.io.{ByteArrayInputStream, ByteArrayOutputStream}
+import java.security.MessageDigest
+import java.util.zip.GZIPOutputStream
 import scala.collection.mutable
 
 class GhArchivePipelineSpec extends AnyFunSuite with BeforeAndAfterAll {
@@ -45,6 +48,18 @@ class GhArchivePipelineSpec extends AnyFunSuite with BeforeAndAfterAll {
 
   private def eventRows(rows: Seq[(String, String, String, String, String)]): DataFrame =
     GhArchiveTransforms.flatten(nested(rows))
+
+  private def gzip(text: String): Array[Byte] = {
+    val bytes = new ByteArrayOutputStream()
+    val compressed = new GZIPOutputStream(bytes)
+    try compressed.write(text.getBytes("UTF-8")) finally compressed.close()
+    bytes.toByteArray
+  }
+
+  private def sourceLock(bytes: Array[Byte]): SourceLock = SourceLock(
+    bytes.length.toLong,
+    MessageDigest.getInstance("SHA-256").digest(bytes).map(value => f"${value & 0xff}%02x").mkString
+  )
 
   override def beforeAll(): Unit = {
     spark = SparkSession.builder().appName("gh-archive-pipeline-test").master("local[2]")
@@ -137,6 +152,62 @@ class GhArchivePipelineSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
   }
 
+  test("raw gzip preflight requires physical JSON strings and closes every source") {
+    val valid = gzip(
+      """{"id":"1","type":"PushEvent","actor":{"login":"alice"},"repo":{"name":"a/r"},"created_at":"2023-01-01T00:00:00Z","extra":{"allowed":true}}""" + "\n"
+    )
+    final class TrackedInput(bytes: Array[Byte]) extends ByteArrayInputStream(bytes) {
+      var closed = false
+      override def close(): Unit = { closed = true; super.close() }
+    }
+    val tracked = new TrackedInput(valid)
+    assert(GhArchiveRawPreflight.validateGzip(tracked, sourceLock(valid)) == 1L)
+    assert(tracked.closed)
+
+    val invalid = Seq(
+      """{"id":2,"type":"PushEvent","actor":{"login":"alice"},"repo":{"name":"a/r"},"created_at":"2023-01-01T00:00:00Z"}""" + "\n",
+      """{"id":"1","type":true,"actor":{"login":"alice"},"repo":{"name":"a/r"},"created_at":"2023-01-01T00:00:00Z"}""" + "\n",
+      """{"id":"1","type":"PushEvent","actor":{"login":null},"repo":{"name":"a/r"},"created_at":"2023-01-01T00:00:00Z"}""" + "\n",
+      """{"id":"1","type":"PushEvent","actor":"alice","repo":{"name":"a/r"},"created_at":"2023-01-01T00:00:00Z"}""" + "\n",
+      """{"id":"1","type":"PushEvent","actor":{"login":"alice"},"repo":{},"created_at":"2023-01-01T00:00:00Z"}""" + "\n",
+      """{"type":"PushEvent","actor":{"login":"alice"},"repo":{"name":"a/r"},"created_at":"2023-01-01T00:00:00Z"}""" + "\n",
+      """{"id":"1","type":"PushEvent","actor":{"login":false},"repo":{"name":"a/r"},"created_at":"2023-01-01T00:00:00Z"}""" + "\n",
+      """{"id":"1","type":"PushEvent","actor":{"login":"alice"},"repo":{"name":7},"created_at":"2023-01-01T00:00:00Z"}""" + "\n",
+      """{"id":"1","id":"1","type":"PushEvent","actor":{"login":"alice"},"repo":{"name":"a/r"},"created_at":"2023-01-01T00:00:00Z"}""" + "\n",
+      """{"id":"1","type":"PushEvent","actor":{"login":"alice"},"repo":{"name":"a/r"},"created_at":"2023-01-01T00:00:00.000Z"}""" + "\n",
+      """{"id":"1","type":"PushEvent","actor":{"login":"alice"},"repo":{"name":"a/r"},"created_at":"2023-01-01T00:00:00Z"} trailing""" + "\n",
+      """[{"id":"1"}]""" + "\n"
+    )
+    invalid.foreach { text =>
+      val bytes = gzip(text)
+      assertThrows[IllegalArgumentException](
+        GhArchiveRawPreflight.validateGzip(new ByteArrayInputStream(bytes), sourceLock(bytes)))
+    }
+  }
+
+  test("raw gzip preflight rejects oversized unterminated and deeply nested records") {
+    val prefix = """{"id":"1","type":"PushEvent","actor":{"login":"alice"},"repo":{"name":"a/r"},"created_at":"2023-01-01T00:00:00Z","extra":""""
+    val oversized = gzip(prefix + ("x" * GhArchiveRawPreflight.MaxLineBytes) + "\"}\n")
+    val unterminated = gzip(prefix + "value")
+    val deep = gzip(
+      """{"id":"1","type":"PushEvent","actor":{"login":"alice"},"repo":{"name":"a/r"},"created_at":"2023-01-01T00:00:00Z","extra":""" +
+        ("[" * (GhArchiveRawPreflight.MaxDepth + 1)) + ("]" * (GhArchiveRawPreflight.MaxDepth + 1)) + "}\n"
+    )
+    Seq(oversized, unterminated, deep).foreach { bytes =>
+      assertThrows[IllegalArgumentException](
+        GhArchiveRawPreflight.validateGzip(new ByteArrayInputStream(bytes), sourceLock(bytes)))
+    }
+    val valid = gzip(
+      """{"id":"1","type":"PushEvent","actor":{"login":"alice"},"repo":{"name":"a/r"},"created_at":"2023-01-01T00:00:00Z"}""" + "\n"
+    )
+    assertThrows[IllegalArgumentException](GhArchiveRawPreflight.validateGzip(
+      new ByteArrayInputStream(valid), sourceLock(valid).copy(sizeBytes = valid.length + 1L)))
+    assertThrows[IllegalArgumentException](GhArchiveRawPreflight.validateGzip(
+      new ByteArrayInputStream(valid), sourceLock(valid).copy(sha256 = "0" * 64)))
+    assertThrows[IllegalArgumentException](GhArchiveRawPreflight.validateGzip(
+      new ByteArrayInputStream(Array[Byte](1, 2, 3)), SourceLock(3L, "0" * 64)))
+  }
+
   test("sessionizes deterministically at the exact 1800 second boundary") {
     val events = eventRows(Seq(
       ("b", "PushEvent", "alice", "a/r", "2023-01-01T00:00:00Z"),
@@ -211,6 +282,38 @@ class GhArchivePipelineSpec extends AnyFunSuite with BeforeAndAfterAll {
     ))
   }
 
+  test("session validation derives the exact duplicate-aware annotation multiset") {
+    val events = eventRows(Seq(
+      ("same", "IssuesEvent", "alice", "a/r", "2023-01-01T00:00:00Z"),
+      ("same", "IssuesEvent", "alice", "a/r", "2023-01-01T00:00:00Z"),
+      ("later", "PushEvent", "alice", "a/r", "2023-01-01T01:00:01Z")
+    ))
+    val valid = GhArchiveTransforms.sessionize(events)
+    (1 to 20).foreach { partitions =>
+      GhArchiveTransforms.validateSessions(valid.repartition((partitions % 4) + 1), events.repartition(3))
+    }
+
+    val wrongPredecessor = valid.withColumn(
+      "previous_created_at",
+      org.apache.spark.sql.functions.when(org.apache.spark.sql.functions.col("id") === "later",
+        org.apache.spark.sql.functions.to_timestamp(org.apache.spark.sql.functions.lit("2023-01-01 00:30:00")))
+        .otherwise(org.apache.spark.sql.functions.col("previous_created_at"))
+    )
+    val wrongFlag = valid.withColumn(
+      "new_session",
+      org.apache.spark.sql.functions.when(org.apache.spark.sql.functions.col("id") === "later", 0)
+        .otherwise(org.apache.spark.sql.functions.col("new_session"))
+    )
+    val wrongId = valid.withColumn(
+      "session_id",
+      org.apache.spark.sql.functions.when(org.apache.spark.sql.functions.col("id") === "later", 3L)
+        .otherwise(org.apache.spark.sql.functions.col("session_id"))
+    )
+    Seq(wrongPredecessor, wrongFlag, wrongId).foreach { invalid =>
+      assertThrows[IllegalArgumentException](GhArchiveTransforms.validateSessions(invalid, events))
+    }
+  }
+
   test("flatten replaces the exact event table and verifies rows schema key and provenance") {
     val source = nested(Seq(
       ("1", "PushEvent", "alice", "a/r", "2023-01-01T00:00:00Z"),
@@ -226,6 +329,28 @@ class GhArchivePipelineSpec extends AnyFunSuite with BeforeAndAfterAll {
     assert(writer.properties(GhArchiveFlatten.EventsTable) == resolved.provenance.properties)
   }
 
+  test("flatten preserves the primary failure and stops at every source write and readback boundary") {
+    val resolved = GhArchiveSources.parse(args("tiny", names.take(1)))
+    val good = nested(Seq(("1", "PushEvent", "alice", "a/r", "2023-01-01T00:00:00Z")))
+    val sourceFailure = good.withColumn(
+      "id",
+      org.apache.spark.sql.functions.raise_error(
+        org.apache.spark.sql.functions.lit("injected source failure")
+      ).cast(StringType)
+    )
+    val sourceWriter = new MemoryWriter
+    assertThrows[Exception](GhArchiveFlatten.runResolved(resolved, sourceFailure, sourceWriter))
+    assert(sourceWriter.calls.isEmpty)
+
+    Seq(2, 3, 4).foreach { failOn =>
+      val writer = new MemoryWriter
+      writer.failOnCall = Some(failOn)
+      assertThrows[RuntimeException](GhArchiveFlatten.runResolved(resolved, good, writer))
+      assert(writer.calls.size == failOn)
+      assert(!writer.calls.drop(failOn).exists(_.startsWith("properties:")))
+    }
+  }
+
   test("sessionization checks matching event properties before reading rows or writing") {
     val resolved = GhArchiveSources.parse(args("tiny", names.take(1)))
     val writer = new MemoryWriter
@@ -239,6 +364,22 @@ class GhArchivePipelineSpec extends AnyFunSuite with BeforeAndAfterAll {
       ("data_eng_lab.dataset.unexpected" -> "forbidden")
     assertThrows[IllegalStateException](GhArchiveSessionization.runResolved(resolved, writer))
     assert(writer.calls == Seq(s"properties:${GhArchiveFlatten.EventsTable}"))
+  }
+
+  test("sessionization stops at every source property read write and readback boundary") {
+    val resolved = GhArchiveSources.parse(args("tiny", names.take(1)))
+    val events = eventRows(Seq(
+      ("1", "PushEvent", "alice", "a/r", "2023-01-01T00:00:00Z"),
+      ("2", "PushEvent", "alice", "a/r", "2023-01-01T00:45:00Z")
+    ))
+    (1 to 7).foreach { failOn =>
+      val writer = new MemoryWriter
+      writer.frames(GhArchiveFlatten.EventsTable) = events
+      writer.properties(GhArchiveFlatten.EventsTable) = resolved.provenance.properties
+      writer.failOnCall = Some(failOn)
+      assertThrows[RuntimeException](GhArchiveSessionization.runResolved(resolved, writer))
+      assert(writer.calls.size == failOn)
+    }
   }
 
   test("same-generation rerun converges after failure between flatten and session writes") {
@@ -267,11 +408,17 @@ class GhArchivePipelineSpec extends AnyFunSuite with BeforeAndAfterAll {
     val frames = mutable.Map.empty[String, DataFrame]
     val properties = mutable.Map.empty[String, Map[String, String]]
     var failNextSessionWrite = false
+    var failOnCall: Option[Int] = None
 
-    def createNamespace(): Unit = calls += "namespace"
+    private def record(call: String): Unit = {
+      calls += call
+      if (failOnCall.contains(calls.size)) throw new RuntimeException(s"injected failure at $call")
+    }
+
+    def createNamespace(): Unit = record("namespace")
 
     def replace(table: String, frame: DataFrame, provenance: Provenance): Unit = {
-      calls += s"replace:$table"
+      record(s"replace:$table")
       if (table == GhArchiveSessionization.SessionsTable && failNextSessionWrite) {
         failNextSessionWrite = false
         throw new RuntimeException("injected session write failure")
@@ -281,12 +428,12 @@ class GhArchivePipelineSpec extends AnyFunSuite with BeforeAndAfterAll {
     }
 
     def readFrame(table: String): DataFrame = {
-      calls += s"read:$table"
+      record(s"read:$table")
       frames.getOrElse(table, throw new IllegalStateException(s"missing table $table"))
     }
 
     def readProperties(table: String): Map[String, String] = {
-      calls += s"properties:$table"
+      record(s"properties:$table")
       properties.getOrElse(table, Map.empty)
     }
   }

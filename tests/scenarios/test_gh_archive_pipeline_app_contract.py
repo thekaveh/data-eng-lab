@@ -24,3 +24,22 @@ def test_runbook_freezes_coupled_contract_and_recovery():
     ):
         assert value in text
     assert ".readStream(" not in text
+
+
+def test_flatten_main_runs_bounded_raw_preflight_before_spark_json_inference():
+    flatten = (APP / "src/main/scala/com/thekaveh/dataeng/gharchive/GhArchiveFlatten.scala").read_text()
+    preflight = (APP / "src/main/scala/com/thekaveh/dataeng/gharchive/GhArchiveRawPreflight.scala").read_text()
+    assert flatten.index("GhArchiveRawPreflight.validate(spark, sources)") < flatten.index(
+        'spark.read.option("mode", "FAILFAST").json'
+    )
+    for phrase in (
+        "MaxLineBytes",
+        "MaxDepth",
+        "MaxRecords",
+        "MaxExpandedBytes",
+        "STRICT_DUPLICATE_DETECTION",
+        "ExpectedLocks",
+        "MessageDigest",
+        "GZIPInputStream",
+    ):
+        assert phrase in preflight

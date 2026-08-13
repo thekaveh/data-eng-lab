@@ -31,12 +31,14 @@
 - Create: `spark-apps/gh-archive-pipeline/pom.xml`
 - Create: `spark-apps/gh-archive-pipeline/src/main/resources/log4j2.properties`
 - Create: `spark-apps/gh-archive-pipeline/src/main/scala/com/thekaveh/dataeng/gharchive/GhArchiveSources.scala`
+- Create: `spark-apps/gh-archive-pipeline/src/main/scala/com/thekaveh/dataeng/gharchive/GhArchiveRawPreflight.scala`
 - Create: `spark-apps/gh-archive-pipeline/src/main/scala/com/thekaveh/dataeng/gharchive/GhArchiveTransforms.scala`
 - Create: `spark-apps/gh-archive-pipeline/src/test/scala/com/thekaveh/dataeng/gharchive/GhArchivePipelineSpec.scala`
 
 **Interfaces:**
-- Produces: `GhArchiveSources.parse(args: Array[String]): ResolvedSources` with exact canonical URIs and `Provenance(dataset, scale, planId, publicationId, manifestSha256)`; object size/digest/schema metadata remains in the Airflow-validated canonical XCom and is not invented as a Scala flag.
-- Produces: `GhArchiveTransforms.validateNestedSource(frame)`, `flatten(frame)`, `validateEvents(frame)`, `sessionize(frame)`, and `validateSessions(frame, sourceRows)`.
+- Produces: `GhArchiveSources.parse(args: Array[String]): ResolvedSources` with exact canonical URIs and `Provenance(dataset, scale, planId, publicationId, manifestSha256)`; object metadata remains in the Airflow-validated canonical XCom while current registry names/sizes/digests are frozen for raw application preflight rather than invented as flags.
+- Produces: bounded `GhArchiveRawPreflight.validate(spark, sources)` before Spark inference.
+- Produces: `GhArchiveTransforms.validateNestedSource(frame)`, `flatten(frame)`, `validateEvents(frame)`, `sessionize(frame)`, and duplicate-aware `validateSessions(frame, events)`.
 - Produces exact ordered `EventsSchema` and `SessionsSchema` constants.
 
 - [ ] **Step 1: Write failing immutable-parser tests**
@@ -83,6 +85,12 @@
   rejection of fractional seconds, `+00:00`, other offsets, missing `Z`, lowercase `z`, whitespace,
   invalid dates, leap normalization, local/ambiguous forms, and formatter round-trip mismatch.
 
+  Before DataFrame tests, exercise physical gzip JSON lines: exact required string tokens, mixed
+  numeric/string primitives, booleans/nulls, missing and wrong nested shapes, duplicate keys,
+  malformed/trailing/multiple documents, oversized/unterminated/deep records, allowed extra fields,
+  exact compressed size/SHA locks, and resource closure. Require production main to invoke this
+  preflight before `spark.read.json`.
+
 - [ ] **Step 5: Verify flatten RED**
 
   Run the app Maven test and confirm the absent `GhArchiveTransforms` behavior is the failure cause.
@@ -110,6 +118,9 @@
   Use one window ordered by timestamp and ID for `lag`, and a rows-based cumulative window for
   `sum(new_session).cast(LongType)`. Retain the five event columns and append
   `previous_created_at`, `new_session`, and `session_id`.
+  Independently rederive that exact output from the original five event columns and validate the
+  complete duplicate-aware multiset with bidirectional `exceptAll`, so physical repartitioning of
+  indistinguishable duplicates cannot cause a false rejection.
 
 - [ ] **Step 9: Run Task 1 GREEN gates and commit**
 

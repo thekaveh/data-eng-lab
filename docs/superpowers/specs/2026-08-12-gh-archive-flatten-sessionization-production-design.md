@@ -147,9 +147,12 @@ automatic dataset refresh.
 
 ### 5.1 Source validation
 
-Spark reads every exact resolver URI as a finite gzip JSON-lines batch in resolver order with
-`mode=FAILFAST`. The application validates the inferred nested schema rather than accepting
-position- or coercion-based parsing. These consumed fields must exist with these exact source types:
+Before Spark inference, the application opens every exact resolver URI in resolver order and runs a
+bounded raw gzip JSON-lines preflight. It freezes each current registry object name, compressed byte
+size, and SHA-256; limits records to 2,000,000, each decompressed line to 1 MiB, and JSON nesting to
+32; rejects duplicate JSON keys, blank/unterminated/extra documents, malformed gzip/UTF-8/JSON, and
+closes every Hadoop/gzip/parser resource. Each line must be exactly one JSON object and these paths
+must be physical JSON string tokens, never Spark-coerced numbers, booleans, or nulls:
 
 | JSON path | Source type | Required |
 |---|---|---|
@@ -159,9 +162,11 @@ position- or coercion-based parsing. These consumed fields must exist with these
 | `repo.name` | string | yes |
 | `created_at` | string | yes |
 
-The registry schema is deliberately `minimum`, so unrelated GitHub payload fields are allowed and
-ignored. A malformed JSON record, missing or wrongly typed required path, or null or blank required
-value rejects the complete stage before any table replacement. Canonical GH Archive data can repeat
+Only after raw preflight succeeds does Spark read every finite gzip object with `mode=FAILFAST`; its
+inferred-schema validation is defense in depth, not the physical type trust boundary. The registry
+schema is deliberately `minimum`, so unrelated GitHub payload fields are allowed and ignored. A
+malformed JSON record, missing or wrongly typed required path, or null or blank required value
+rejects the complete stage before Spark transformation or table replacement. Canonical GH Archive data can repeat
 an event. Repeated IDs are accepted only when all five required flattened fields are identical;
 conflicting records sharing an ID reject the stage before replacement. Exact duplicates remain
 distinct rows. `id` is therefore a required source identifier, not a primary key.
@@ -245,10 +250,11 @@ The sessionization stage deterministically replaces exactly
 | `session_id` | long | non-null |
 
 The output preserves every flat-event row exactly once, including exact duplicates. Before writing,
-the application validates the exact schema, multiset row conservation, conflicting-ID guard,
-ordering-derived columns, and a positive row count. After replacement it reads back and verifies the
-exact schema, multiplicity-aware row multiset, row count, session invariants, and provenance
-properties.
+the application independently derives the complete expected eight-column result from the original
+five event columns and compares both `exceptAll` directions plus count. This multiplicity-aware
+oracle enforces exact predecessors, the strict 1,800-second boundary, flags, and contiguous actor
+session IDs without assigning identity to tied exact duplicates. The same oracle validates a
+repartitioned readback before provenance properties are accepted.
 
 ## 7. Provenance and downstream trust
 

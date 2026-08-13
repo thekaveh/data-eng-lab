@@ -108,12 +108,35 @@ object GhArchiveTransforms {
       .withColumn("session_id", F.sum(F.col("new_session")).over(cumulative).cast(LongType))
       .select(SessionsSchema.fieldNames.map(F.col): _*)
     val exact = events.sparkSession.createDataFrame(calculated.rdd, SessionsSchema)
-    validateSessions(exact, events.count())
+    validateSessions(exact, events)
     exact
   }
 
-  def validateSessions(frame: DataFrame, sourceRows: Long): Unit = {
+  private def independentlyDerivedSessions(events: DataFrame): DataFrame = {
+    val ordering = Window.partitionBy("actor_login").orderBy(F.col("created_at"), F.col("id"))
+    val fromStart = ordering.rowsBetween(Window.unboundedPreceding, Window.currentRow)
+    val withPrevious = events.withColumn(
+      "previous_created_at",
+      F.lag(F.col("created_at"), 1).over(ordering)
+    )
+    val withBoundary = withPrevious.withColumn(
+      "new_session",
+      F.when(F.col("previous_created_at").isNull, F.lit(1))
+        .when(
+          F.col("created_at").cast(LongType) - F.col("previous_created_at").cast(LongType) > 1800L,
+          F.lit(1)
+        ).otherwise(F.lit(0)).cast(IntegerType)
+    )
+    val derived = withBoundary
+      .withColumn("session_id", F.sum(F.col("new_session")).over(fromStart).cast(LongType))
+      .select(SessionsSchema.fieldNames.map(F.col): _*)
+    events.sparkSession.createDataFrame(derived.rdd, SessionsSchema)
+  }
+
+  def validateSessions(frame: DataFrame, events: DataFrame): Unit = {
     requireNamesAndTypes(frame, SessionsSchema, "gh_sessions")
+    validateEvents(events)
+    val sourceRows = events.count()
     require(sourceRows > 0 && frame.count() == sourceRows, "gh_sessions must conserve event rows")
     requireNonBlank(frame, Seq("id", "type", "actor_login", "repo_name"), "gh_sessions")
     require(frame.where(F.col("created_at").isNull || F.col("new_session").isNull ||
@@ -121,12 +144,10 @@ object GhArchiveTransforms {
     require(frame.where(!F.col("new_session").isin(0, 1) || F.col("session_id") < 1L).limit(1).count() == 0,
       "gh_sessions has invalid session values")
     requireNoConflictingIds(frame, "gh_sessions")
-    val firstWindow = Window.partitionBy("actor_login").orderBy(F.col("created_at"), F.col("id"))
-    val checked = frame.withColumn("expected_row", F.row_number().over(firstWindow))
-    require(checked.where(
-      (F.col("expected_row") === 1 &&
-        (F.col("previous_created_at").isNotNull || F.col("new_session") =!= 1 || F.col("session_id") =!= 1L)) ||
-      (F.col("expected_row") > 1 && F.col("previous_created_at").isNull)
-    ).limit(1).count() == 0, "gh_sessions has invalid first-event semantics")
+    val eventProjection = frame.select(EventsSchema.fieldNames.map(F.col): _*)
+    require(IcebergTables.sameRows(events, eventProjection), "gh_sessions event rows do not match gh_events")
+    val expected = independentlyDerivedSessions(events)
+    require(IcebergTables.sameRows(expected, frame),
+      "gh_sessions annotations do not match the deterministic duplicate-aware session contract")
   }
 }

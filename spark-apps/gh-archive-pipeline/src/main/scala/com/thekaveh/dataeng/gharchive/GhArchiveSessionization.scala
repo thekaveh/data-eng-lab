@@ -20,12 +20,12 @@ object GhArchiveSessionization {
       val sessions = GhArchiveTransforms.sessionize(events).cache()
       try {
         val sessionRows = sessions.count()
-        GhArchiveTransforms.validateSessions(sessions, eventRows)
+        GhArchiveTransforms.validateSessions(sessions, events)
         writer.createNamespace()
         writer.replace(SessionsTable, sessions, sources.provenance)
         val actual = writer.readFrame(SessionsTable)
         try {
-          GhArchiveTransforms.validateSessions(actual, eventRows)
+          GhArchiveTransforms.validateSessions(actual, events)
           if (actual.count() != sessionRows || !IcebergTables.sameRows(sessions, actual))
             throw new IllegalStateException(s"$SessionsTable readback rows do not match the intended sessions")
         } catch {

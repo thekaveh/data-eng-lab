@@ -2,7 +2,7 @@
   "paragraphs": [
     {
       "title": "1. Overview",
-      "text": "%md\n## 1. Overview",
+      "text": "%md\n## 1. Overview\n\n**Production-risk warning:** this educational notebook directly replaces `lakehouse.silver.gh_events`, does not write production provenance, and is not serialized with sessionization. Running it can invalidate the coupled production generation. Production writes must use the `gh_archive_flatten_sessionization` DAG/application.",
       "config": {},
       "settings": {
         "params": {},
