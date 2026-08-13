@@ -317,8 +317,49 @@ def test_source_inventory_preserves_identical_duplicates_and_counts_them():
         [duplicate, duplicate, _event("other", "2023-01-01T00:00:01Z")]
     )
     assert live._source_inventory(client, resolved) == live.SourceEvidence(
-        row_count=3, distinct_ids=2, exact_duplicate_rows=1,
+        row_count=3, distinct_ids=2, exact_duplicate_rows=1, distinct_actors=1,
     )
+
+
+def test_live_identity_is_frozen_to_the_reviewed_canonical_replay():
+    assert live.EXPECTED_LIVE_IDENTITY == {
+        "jar_sha256": "5d2459e4dc9cebe96c16715db027b21333307e6cb2fae39b0c67d395535d52d1",
+        "plan_id": "8ab812c3621cc3dae68989d9f24134351ea9683453133b31feaff579d0fa3e7f",
+        "publication_id": "e53a481df5d54c6eabc645838fb2f2ba",
+        "manifest_sha256": "998ec39bc61dca1b460e4b851d718a5347b8c7e575b96dd1e3ec62fd0b791678",
+        "source_size_bytes": 59_785_519,
+        "source_sha256": "2b0c0cc3b067f61c0f39d7623517904d95d22ef9d5c998953050a0b78adb6258",
+        "row_count": 101_917,
+        "distinct_ids": 101_916,
+        "exact_duplicate_rows": 1,
+        "distinct_actors": 16_331,
+        "session_starts": 16_767,
+        "events_checksum": "7ea82e3d0b5bad96",
+        "sessions_checksum": "36136a1cab232348",
+    }
+
+
+def test_full_session_oracle_requires_exact_duplicate_aware_multiset_equality():
+    captured = []
+
+    def query(sql):
+        captured.append(sql)
+        return [[0]]
+
+    assert live._session_oracle(query=query) == 0
+    sql = captured[0]
+    for required in (
+        "lag(created_at)",
+        "date_diff('second', previous_created_at, created_at) > 1800",
+        "sum(new_session)",
+        "GROUP BY id, type, actor_login, repo_name, created_at",
+        "IS NOT DISTINCT FROM",
+        "expected_multiplicity",
+        "actual_multiplicity",
+        'lakehouse.silver.gh_events',
+        'lakehouse.silver.gh_sessions',
+    ):
+        assert required in sql
 
 
 @pytest.mark.parametrize(
@@ -406,8 +447,11 @@ def test_live_harness_is_gh_archive_specific_and_never_refreshes_the_pointer():
         "first_snapshot_ids",
         "second_snapshot_ids",
         "date_diff('second', previous_created_at, created_at) > 1800",
-        "int(session_measures[2]) == int(event_measures[2]) > 0",
-        "int(session_measures[3]) >= int(session_measures[2])",
+        'EXPECTED_LIVE_IDENTITY["distinct_actors"]',
+        'EXPECTED_LIVE_IDENTITY["session_starts"]',
+        'EXPECTED_LIVE_IDENTITY["events_checksum"]',
+        'EXPECTED_LIVE_IDENTITY["sessions_checksum"]',
+        "_session_oracle() == 0",
         "len(set(first_drivers + second_drivers)) == 4",
     ):
         assert value in text

@@ -34,6 +34,21 @@ _RUN_PAGE_LIMIT = 100
 _MAX_RUN_INVENTORY = 1000
 _MAX_RUN_REQUESTS = 10
 _MAX_SOURCE_LINE_BYTES = 1 << 20
+EXPECTED_LIVE_IDENTITY = {
+    "jar_sha256": "5d2459e4dc9cebe96c16715db027b21333307e6cb2fae39b0c67d395535d52d1",
+    "plan_id": "8ab812c3621cc3dae68989d9f24134351ea9683453133b31feaff579d0fa3e7f",
+    "publication_id": "e53a481df5d54c6eabc645838fb2f2ba",
+    "manifest_sha256": "998ec39bc61dca1b460e4b851d718a5347b8c7e575b96dd1e3ec62fd0b791678",
+    "source_size_bytes": 59_785_519,
+    "source_sha256": "2b0c0cc3b067f61c0f39d7623517904d95d22ef9d5c998953050a0b78adb6258",
+    "row_count": 101_917,
+    "distinct_ids": 101_916,
+    "exact_duplicate_rows": 1,
+    "distinct_actors": 16_331,
+    "session_starts": 16_767,
+    "events_checksum": "7ea82e3d0b5bad96",
+    "sessions_checksum": "36136a1cab232348",
+}
 
 pytestmark = pytest.mark.infra
 
@@ -42,6 +57,7 @@ class SourceEvidence(NamedTuple):
     row_count: int
     distinct_ids: int
     exact_duplicate_rows: int
+    distinct_actors: int
 
 
 def _env(key: str, default: str = "") -> str:
@@ -349,6 +365,7 @@ def _source_inventory(client, resolved: dict) -> SourceEvidence:
 
     count = 0
     event_values: dict[str, tuple[str, str, str, str]] = {}
+    actors: set[str] = set()
     exact_duplicate_rows = 0
     try:
         with gzip.GzipFile(fileobj=io.BytesIO(payload), mode="rb") as stream:
@@ -369,6 +386,7 @@ def _source_inventory(client, resolved: dict) -> SourceEvidence:
                 event_id = required_string(document, "id")
                 event_type = required_string(document, "type")
                 actor_login = required_string(document, "actor", "login")
+                actors.add(actor_login)
                 repo_name = required_string(document, "repo", "name")
                 created_at = required_string(document, "created_at")
                 try:
@@ -391,7 +409,7 @@ def _source_inventory(client, resolved: dict) -> SourceEvidence:
         raise AssertionError("GH Archive source is not a valid gzip stream") from error
     if count <= 0:
         raise AssertionError("GH Archive source must contain at least one event")
-    return SourceEvidence(count, len(event_values), exact_duplicate_rows)
+    return SourceEvidence(count, len(event_values), exact_duplicate_rows, len(actors))
 
 
 def _driver_ids() -> set[str]:
@@ -459,6 +477,45 @@ def _properties(table: str) -> dict[str, str]:
         f"WHERE key IN ({keys}) ORDER BY key"
     )
     return {str(key): str(value) for key, value in rows}
+
+
+def _session_oracle(query=None) -> int:
+    """Return the number of multiplicity mismatches against an independent session derivation."""
+    execute = query or _trino
+    rows = execute(
+        "WITH ordered AS ("
+        "SELECT id, type, actor_login, repo_name, created_at, "
+        "lag(created_at) OVER (PARTITION BY actor_login ORDER BY created_at, id "
+        "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS previous_created_at "
+        "FROM lakehouse.silver.gh_events), "
+        "annotated AS ("
+        "SELECT *, CASE WHEN previous_created_at IS NULL OR "
+        "date_diff('second', previous_created_at, created_at) > 1800 THEN 1 ELSE 0 END "
+        "AS new_session FROM ordered), "
+        "expected_rows AS ("
+        "SELECT id, type, actor_login, repo_name, created_at, previous_created_at, new_session, "
+        "sum(new_session) OVER (PARTITION BY actor_login ORDER BY created_at, id "
+        "ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS session_id FROM annotated), "
+        "expected_counts AS ("
+        "SELECT id, type, actor_login, repo_name, created_at, previous_created_at, new_session, "
+        "session_id, count(*) AS expected_multiplicity FROM expected_rows "
+        "GROUP BY id, type, actor_login, repo_name, created_at, previous_created_at, "
+        "new_session, session_id), "
+        "actual_counts AS ("
+        "SELECT id, type, actor_login, repo_name, created_at, previous_created_at, new_session, "
+        "session_id, count(*) AS actual_multiplicity FROM lakehouse.silver.gh_sessions "
+        "GROUP BY id, type, actor_login, repo_name, created_at, previous_created_at, "
+        "new_session, session_id) "
+        "SELECT count(*) FROM expected_counts e FULL OUTER JOIN actual_counts a ON "
+        "e.id = a.id AND e.type = a.type AND e.actor_login = a.actor_login AND "
+        "e.repo_name = a.repo_name AND e.created_at = a.created_at AND "
+        "e.previous_created_at IS NOT DISTINCT FROM a.previous_created_at AND "
+        "e.new_session = a.new_session AND e.session_id = a.session_id "
+        "WHERE coalesce(e.expected_multiplicity, 0) <> coalesce(a.actual_multiplicity, 0)"
+    )
+    if len(rows) != 1 or len(rows[0]) != 1:
+        raise AssertionError("session oracle must return exactly one mismatch count")
+    return int(rows[0][0])
 
 
 def _execute_dag_test(
@@ -585,10 +642,14 @@ def test_gh_archive_flatten_sessionization_live_acceptance():
             minio.upload_file(str(jar), bucket, key)
             published = minio.get_object(Bucket=bucket, Key=key)["Body"].read()
             assert hashlib.sha256(published).hexdigest() == jar_sha256
+            assert jar_sha256 == EXPECTED_LIVE_IDENTITY["jar_sha256"]
 
             pointer_before = _pointer_snapshot(minio)
             resolved = _resolve_or_publish_tiny()
             assert resolved["dataset"] == "gh_archive" and resolved["scale"] == "tiny"
+            assert resolved["plan_id"] == EXPECTED_LIVE_IDENTITY["plan_id"]
+            assert resolved["publication_id"] == EXPECTED_LIVE_IDENTITY["publication_id"]
+            assert resolved["manifest_sha256"] == EXPECTED_LIVE_IDENTITY["manifest_sha256"]
             assert [
                 (item["object_name"], item["schema_id"])
                 for item in resolved["objects"]
@@ -596,8 +657,15 @@ def test_gh_archive_flatten_sessionization_live_acceptance():
                 ("2023-01-01-0.json.gz", "gh_archive_consumed_fields"),
             ]
             assert all(item["size_bytes"] > 0 for item in resolved["objects"])
+            assert resolved["objects"][0]["size_bytes"] == EXPECTED_LIVE_IDENTITY["source_size_bytes"]
+            assert resolved["objects"][0]["sha256"] == EXPECTED_LIVE_IDENTITY["source_sha256"]
             source = _source_inventory(minio, resolved)
-            assert source.exact_duplicate_rows == 1
+            assert source == SourceEvidence(
+                EXPECTED_LIVE_IDENTITY["row_count"],
+                EXPECTED_LIVE_IDENTITY["distinct_ids"],
+                EXPECTED_LIVE_IDENTITY["exact_duplicate_rows"],
+                EXPECTED_LIVE_IDENTITY["distinct_actors"],
+            )
 
             _assert_owned_runs(_airflow, window_start, set(), baseline=baseline)
             first_run, first_drivers = _execute_paused_test_run(
@@ -663,6 +731,8 @@ def test_gh_archive_flatten_sessionization_live_acceptance():
                  "previous_created_at:timestamptz", "new_session:int", "session_id:long"]
             )
             assert first["events"]["row_count"] == first["sessions"]["row_count"] == source.row_count
+            assert first["events"]["checksum"] == EXPECTED_LIVE_IDENTITY["events_checksum"]
+            assert first["sessions"]["checksum"] == EXPECTED_LIVE_IDENTITY["sessions_checksum"]
             expected_properties = {
                 "data_eng_lab.dataset": "gh_archive",
                 "data_eng_lab.dataset.scale": "tiny",
@@ -688,12 +758,14 @@ def test_gh_archive_flatten_sessionization_live_acceptance():
             assert int(event_measures[0]) == source.row_count
             assert int(event_measures[1]) == source.distinct_ids
             assert int(event_measures[0]) - int(event_measures[1]) == source.exact_duplicate_rows
-            assert int(event_measures[2]) > 0 and event_measures[3] <= event_measures[4]
+            assert int(event_measures[2]) == source.distinct_actors
+            assert event_measures[3] <= event_measures[4]
             assert int(session_measures[0]) == source.row_count
             assert int(session_measures[1]) == source.distinct_ids
-            assert int(session_measures[2]) == int(event_measures[2]) > 0
-            assert int(session_measures[3]) >= int(session_measures[2])
+            assert int(session_measures[2]) == EXPECTED_LIVE_IDENTITY["distinct_actors"]
+            assert int(session_measures[3]) == EXPECTED_LIVE_IDENTITY["session_starts"]
             assert int(session_measures[4]) == int(session_measures[5]) == 0
+            assert _session_oracle() == 0
             assert len(set(first_drivers + second_drivers)) == 4
             assert datetime.fromisoformat(second_run["start_date"]) >= datetime.fromisoformat(first_run["end_date"])
             _assert_owned_runs(
@@ -704,3 +776,15 @@ def test_gh_archive_flatten_sessionization_live_acceptance():
                 baseline=baseline,
             )
             assert _pointer_snapshot(minio) == pointer_before
+            print(json.dumps({
+                "first_run_id": first_run_id,
+                "second_run_id": second_run_id,
+                "first_drivers": first_drivers,
+                "second_drivers": second_drivers,
+                "first_snapshot_ids": first_snapshot_ids,
+                "second_snapshot_ids": second_snapshot_ids,
+                "events_checksum": first["events"]["checksum"],
+                "sessions_checksum": first["sessions"]["checksum"],
+                "session_oracle_mismatches": 0,
+                "pointer_etag": pointer_before[1],
+            }, sort_keys=True))
