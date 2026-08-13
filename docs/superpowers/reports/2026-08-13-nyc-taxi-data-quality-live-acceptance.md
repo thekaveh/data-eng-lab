@@ -83,3 +83,15 @@ end, and source snapshot commit fields remain UTC `TimestampType`. Paired produc
 quality-consumer tests freeze the exact 20-column schema, reject the legacy timestamp type, and the
 live harness checks the actual post-ETL Iceberg schema before starting quality. Diagnostic cleanup
 left zero project containers and preserved all volumes.
+
+The next canonical attempt correctly refused to proceed after its first matching ETL because the
+persisted Airflow baseline still contained the earlier test-owned quality DagRun
+`manual__2026-08-13T07:32:25.647385+00:00` in `running`. Read-only inspection proved exact tiny
+conf, `triggered_by=test`, `triggering_user_name=dag_test`, a successful sensor, a stopped
+`up_for_retry` Spark task ending at `2026-08-13T07:32:45.785977Z`, complete Spark application-end
+event logs, and no active quality driver. The exact run alone was terminalized to `failed` through
+Airflow API v2 at `2026-08-13T07:50:55.892792Z`; no production or foreign run was changed. The
+harness now performs this bounded recovery only for the one run created by its own failed
+`dags test`, only after every task is stopped, and verifies the exact PATCH response and readback.
+Foreign or actively executing runs remain fail-closed. This attempt made no quality write and its
+owned stack again stopped volume-preserving with zero containers.

@@ -259,6 +259,42 @@ def _validate_tiny_run_conf(run: dict) -> None:
         raise AssertionError("owned DagRun did not preserve the exact tiny dataset scale")
 
 
+def _terminalize_failed_dag_test(api, dag_id: str, run: dict) -> None:
+    run_id = str(run.get("dag_run_id", ""))
+    if not (
+        run_id.startswith("manual__")
+        and run.get("triggered_by") == "test"
+        and run.get("triggering_user_name") == "dag_test"
+        and run.get("conf") == {"dataset_scale": "tiny"}
+    ):
+        raise AssertionError("failed DagRun is not test-owned")
+    path = f"/dags/{dag_id}/dagRuns/{run_id}"
+    tasks = api("GET", path + "/taskInstances").get("task_instances")
+    if not isinstance(tasks, list) or not tasks:
+        raise AssertionError("failed test-owned DagRun has no bounded task inventory")
+    stopped_states = {
+        "success",
+        "failed",
+        "upstream_failed",
+        "skipped",
+        "removed",
+        "up_for_retry",
+        "up_for_reschedule",
+    }
+    states = {str(task.get("state", "")).lower() for task in tasks}
+    if not states or not states.issubset(stopped_states):
+        raise AssertionError(f"failed test-owned DagRun still active: {sorted(states)}")
+    updated = api("PATCH", path, {"state": "failed"})
+    confirmed = api("GET", path)
+    for document in (updated, confirmed):
+        if (
+            document.get("dag_run_id") != run_id
+            or document.get("state") != "failed"
+            or not document.get("end_date")
+        ):
+            raise AssertionError("Airflow did not terminalize the exact failed test-owned DagRun")
+
+
 def _resolve_existing_tiny(runner=None) -> dict:
     execute = runner or _run
     resolve = ("uv", "run", "python", "scripts/resolve_dataset.py", "nyc_taxi", "--scale", "tiny")
@@ -382,7 +418,20 @@ def _execute_owned_run(
     _validate_runs(before_runs, baseline, owned)
     before_ids = {run["dag_run_id"] for run in before_runs}
     before_drivers = _driver_ids()
-    _execute_dag_test(dag_id, logical_date)
+    try:
+        _execute_dag_test(dag_id, logical_date)
+    except BaseException as primary:
+        try:
+            after_failure = _list_runs(_airflow, dag_id)
+            created = [run for run in after_failure if run["dag_run_id"] not in before_ids]
+            if len(created) != 1:
+                raise AssertionError(
+                    f"failed {dag_id} test created {len(created)} runs; exact recovery is unsafe"
+                )
+            _terminalize_failed_dag_test(_airflow, dag_id, created[0])
+        except BaseException as cleanup:
+            primary.add_note(f"failed DagRun terminalization also failed: {cleanup}")
+        raise
     after_runs = _list_runs(_airflow, dag_id)
     new_runs = {run["dag_run_id"] for run in after_runs} - before_ids
     if len(new_runs) != 1:
@@ -773,6 +822,60 @@ def test_live_catalog_contract_requires_exact_ntz_producer_schema():
     ]
     with pytest.raises(AssertionError, match="exact producer/quality contract"):
         _assert_bronze_schema({"schema": legacy_utc})
+
+
+def test_failed_dag_test_terminalizes_only_its_exact_stopped_test_owned_run():
+    run_id = "manual__2026-08-13T07:32:25.647385+00:00"
+    run = {
+        "dag_run_id": run_id,
+        "state": "running",
+        "triggered_by": "test",
+        "triggering_user_name": "dag_test",
+        "conf": {"dataset_scale": "tiny"},
+    }
+    calls = []
+    current_state = "running"
+
+    def api(method, path, body=None):
+        nonlocal current_state
+        calls.append((method, path, body))
+        if path.endswith("/taskInstances"):
+            return {"task_instances": [{"state": "success"}, {"state": "up_for_retry"}]}
+        if method == "PATCH":
+            assert body == {"state": "failed"}
+            current_state = "failed"
+        return {**run, "state": current_state, "end_date": "2026-08-13T07:50:55Z"}
+
+    _terminalize_failed_dag_test(api, "nyc_taxi_data_quality", run)
+    assert [call[0] for call in calls] == ["GET", "PATCH", "GET"]
+
+
+def test_failed_dag_test_rejects_foreign_or_still_executing_runs_without_mutation():
+    base = {
+        "dag_run_id": "manual__owned",
+        "state": "running",
+        "triggered_by": "test",
+        "triggering_user_name": "dag_test",
+        "conf": {"dataset_scale": "tiny"},
+    }
+    patches = []
+
+    def api_for(run, task_state):
+        def api(method, path, body=None):
+            if method == "PATCH":
+                patches.append((path, body))
+            if path.endswith("/taskInstances"):
+                return {"task_instances": [{"state": task_state}]}
+            return run
+
+        return api
+
+    foreign = {**base, "triggering_user_name": "operator"}
+    with pytest.raises(AssertionError, match="not test-owned"):
+        _terminalize_failed_dag_test(api_for(foreign, "failed"), "nyc_taxi_data_quality", foreign)
+    with pytest.raises(AssertionError, match="still active"):
+        _terminalize_failed_dag_test(api_for(base, "running"), "nyc_taxi_data_quality", base)
+    assert patches == []
 
 
 def test_resolver_failure_never_refreshes_or_attempts_a_second_command():
