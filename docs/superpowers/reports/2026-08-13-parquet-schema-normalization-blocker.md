@@ -50,7 +50,9 @@ RED was four intended failures with eleven guard cases already passing:
 - a real PyArrow Parquet file read through `/dev/fd`; and
 - `TIMESTAMP_MICROS` plus authoritative `isAdjustedToUTC=0` microsecond logical metadata.
 
-GREEN is fifteen focused cases. Bare signed integers are accepted only for exact
+GREEN is fifteen focused cases. The physical Parquet regression is stored as bounded fixture bytes
+and therefore runs in the dev-only CI environment without relying on the optional live dependency
+group. Bare signed integers are accepted only for exact
 `INT32/INTEGER` or `INT64/BIGINT` agreement. Width mismatch, unsigned DuckDB types, missing physical
 or DuckDB type, conflicting annotations, malformed timestamps, and converted/logical unit mismatch
 continue to fail. A matching logical timestamp controls timezone semantics, while any duplicated
