@@ -393,6 +393,8 @@ def test_lease_clock_order_and_exact_ttl_are_mandatory(policy, lease):
     [
         ("lease", "conflicting", "false", "invalid_fact_type"),
         ("lease", "malformed", 0, "invalid_fact_type"),
+        ("lease", "state", [], "invalid_fact_type"),
+        ("lease", "state", {}, "invalid_fact_type"),
         ("terminal", "recovery_approved", "yes", "invalid_fact_type"),
         ("terminal", "source_available", 1, "invalid_fact_type"),
         ("terminal", "sink_disposition_approved", "approved", "invalid_fact_type"),

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib
 import io
+import traceback
 from pathlib import Path
 
 import pytest
@@ -319,6 +320,30 @@ def test_policy_file_reader_stops_at_the_same_byte_bound():
 
     with pytest.raises(_api().PolicyError, match="policy_too_large"):
         _api().load_policy(BoundedReadOnlyPath())
+
+
+def test_malformed_yaml_exception_chain_never_contains_source_payload():
+    secret = "AKIAIOSFODNN7EXAMPLE"
+
+    with pytest.raises(_api().PolicyError, match="invalid_yaml") as failure:
+        _api().parse_policy(f'version: "{secret}\n')
+
+    assert secret not in "".join(traceback.format_exception(failure.value))
+    assert failure.value.__cause__ is None
+
+
+def test_direct_string_size_guard_rejects_before_utf8_encoding(monkeypatch):
+    class OversizedString(str):
+        def encode(self, *_args, **_kwargs):
+            raise AssertionError("oversized input must reject before encoding")
+
+    with pytest.raises(_api().PolicyError, match="policy_too_large"):
+        _api().parse_policy(OversizedString("x" * 262_145))
+
+
+def test_multibyte_policy_is_still_bounded_by_encoded_bytes():
+    with pytest.raises(_api().PolicyError, match="policy_too_large"):
+        _api().parse_policy("é" * 131_073)
 
 
 @pytest.mark.parametrize(

@@ -333,6 +333,8 @@ def load_policy(path: Path) -> CheckpointPolicy:
 def parse_policy(text: str) -> CheckpointPolicy:
     if not isinstance(text, str):
         raise PolicyError("invalid_type")
+    if len(text) > _MAX_POLICY_BYTES:
+        raise PolicyError("policy_too_large")
     try:
         encoded_size = len(text.encode("utf-8"))
     except UnicodeError as error:
@@ -343,8 +345,8 @@ def parse_policy(text: str) -> CheckpointPolicy:
         raw = yaml.load(text, Loader=_UniqueKeyLoader)
     except PolicyError:
         raise
-    except yaml.YAMLError as error:
-        raise PolicyError("invalid_yaml") from error
+    except yaml.YAMLError:
+        raise PolicyError("invalid_yaml") from None
     root = _require_mapping(raw, "invalid_type")
     _require_exact_keys(root, _TOP_KEYS)
     _require_exact(root["version"], 1, "invalid_type")
@@ -665,16 +667,17 @@ def _evaluate_lease(
             and lease.expires_at - lease.heartbeat_at == timedelta(seconds=policy.lease.ttl_seconds)
         ):
             refusal_codes.append("lease_clock_invalid")
-    if not isinstance(lease.state, str):
+    lease_state = lease.state if isinstance(lease.state, str) else None
+    if lease_state is None:
         refusal_codes.append("invalid_fact_type")
-    if lease.state == "active":
+    if lease_state == "active":
         if evaluated_at_valid and _is_exact_utc(lease.expires_at):
             refusal_codes.append(
                 "lease_active" if lease.expires_at >= facts.evaluated_at else "lease_expired_active_uncertain"
             )
         else:
             refusal_codes.append("lease_active")
-    elif lease.state not in ("stopped", "completed", "retired"):
+    elif lease_state not in ("stopped", "completed", "retired"):
         refusal_codes.append("lease_state_invalid")
 
     expected_states = {
@@ -683,7 +686,7 @@ def _evaluate_lease(
         "disposable_acceptance": {"stopped"},
     }[entry.durability]
     terminal_state = terminal.state if terminal is not None and isinstance(terminal.state, str) else None
-    if lease.state not in expected_states or terminal_state not in expected_states or lease.state != terminal_state:
+    if lease_state not in expected_states or terminal_state not in expected_states or lease_state != terminal_state:
         refusal_codes.append("invalid_lease_terminal_state")
     if (
         terminal is not None

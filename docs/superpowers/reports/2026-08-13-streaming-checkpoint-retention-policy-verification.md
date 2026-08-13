@@ -47,13 +47,20 @@ reasons, deep generation immutability, exhaustive executable checkpoint discover
 and deterministic runbook examples. The corrected focused parser/evaluator/ownership
 suite passes these cases without adding a network or mutation path.
 
+The first re-review narrowed the residual boundary to an unhashable lease-state raw
+exception, a malformed-YAML cause-chain payload leak, and a direct-string allocation
+before the byte bound. A microscopic RED reproduced all four adversarial cases (list
+and mapping states, traceback payload, and pre-encode allocation). The final boundary
+uses a sanitized local state, suppresses PyYAML causes, performs a cheap character
+guard before the authoritative UTF-8 byte guard, and retains multibyte enforcement.
+
 ## Fresh verification
 
 | Gate | Result |
 |---|---|
 | `uv run ruff check . --exclude graphify-out` | pass |
 | `uv run pytest -m 'not infra and not network' -q --junitxml=/tmp/issue85-review-fix-pytest.xml` | 3,062 passed, 71 deselected, 51.56 s |
-| `uv run pytest -q tests/checkpoints` | 110 passed, 0 failed, 0 skipped, 0.77 s |
+| `uv run pytest -q tests/checkpoints` | 115 passed, 0 failed, 0 skipped, 0.53 s |
 | focused checkpoint and documentation projections | 356 passed, 0 failed, 0 skipped, 4.58 s |
 | `make verify` | 0 findings, 0 errors |
 | `make docs-check` | pass; strict MkDocs build |
@@ -108,6 +115,7 @@ volume-preserving cleanup using disposable fixtures.
 7. `f958e7c` — canonical runbook and all public documentation surfaces
 8. `a79b2c5` — initial verification report and immutable review handoff
 9. `db5b17b` — close fail-closed evaluator, parser, ownership, and runbook review gaps
+10. `b3b2257` — record the first review-fix verification evidence
 
 The branch has not been pushed and no pull request exists. Independent specification
 and quality/security reviews must use the exact immutable diff package produced after
