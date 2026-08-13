@@ -88,15 +88,15 @@ def _facts_connection(rows):
 
 def _accepted_rows():
     logical_date = datetime(2026, 8, 13, 10, 0, 0)
-    interval_end = datetime(2026, 8, 13, 11, 0, 0)
-    committed_at = datetime(2026, 8, 13, 10, 55, 0)
+    interval_end = logical_date
+    committed_at = datetime(2026, 8, 13, 10, 0, 21, 731000)
     run_id = hashlib.sha256(
         f"nyc_taxi\n{logical_date.strftime('%Y-%m-%dT%H:%M:%SZ')}\n123\nnyc_taxi_quality_v1".encode()
     ).hexdigest()
     metrics = {
         "bronze.source_available.v1": (100, None, "100.000000000"),
         "bronze.schema.v1": (20, 20, "1.000000000"),
-        "bronze.snapshot_freshness.v1": (300, 21600, "300.000000000"),
+        "bronze.snapshot_freshness.v1": (-22, 21600, "-22.000000000"),
         "bronze.invalid_ratio.v1": (1, 100, "0.010000000"),
         "silver.partition_conservation.v1": (100, 100, "1.000000000"),
         "silver.clean_nonempty.v1": (99, 100, "99.000000000"),
@@ -319,6 +319,21 @@ def test_complete_run_cte_admits_the_exact_warning_band_and_conserved_partition(
             changed[20:23] = [severity, status, diagnostic]
             rows[index] = tuple(changed)
     assert _facts_connection(rows).execute(_complete_run_query()).fetchall() == [(rows[0][0],)]
+
+
+def test_complete_run_cte_rejects_stale_or_non_floor_freshness_values():
+    for numerator, committed_at in (
+        (21601, datetime(2026, 8, 13, 3, 59, 59)),
+        (-21, datetime(2026, 8, 13, 10, 0, 21, 731000)),
+    ):
+        rows = _accepted_rows()
+        rows = [tuple(committed_at if column == 8 else value for column, value in enumerate(row)) for row in rows]
+        index = next(index for index, row in enumerate(rows) if row[11] == "bronze.snapshot_freshness.v1")
+        changed = list(rows[index])
+        changed[15] = numerator
+        changed[17] = f"{numerator}.000000000"
+        rows[index] = tuple(changed)
+        assert _facts_connection(rows).execute(_complete_run_query()).fetchall() == []
 
 
 @pytest.mark.parametrize(

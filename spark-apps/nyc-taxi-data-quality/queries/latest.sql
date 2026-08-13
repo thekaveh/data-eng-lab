@@ -61,7 +61,6 @@ complete_runs AS (
        AND count(DISTINCT f.logical_date) = 1
        AND count(f.data_interval_end) = 8
        AND count(DISTINCT f.data_interval_end) = 1
-       AND max(f.data_interval_end) = max(f.logical_date) + INTERVAL '1' HOUR
        AND f.quality_run_id = lower(to_hex(sha256(to_utf8(concat(
            'nyc_taxi', chr(10),
            format_datetime(max(f.logical_date), 'yyyy-MM-dd''T''HH:mm:ss''Z'''), chr(10),
@@ -83,10 +82,10 @@ complete_runs AS (
        ) = 1
        AND count_if(
            f.rule_id = 'bronze.snapshot_freshness.v1'
-           AND f.metric_numerator BETWEEN 0 AND 21600 AND f.metric_denominator = 21600
-           AND f.metric_numerator = date_diff(
-               'second', f.source_snapshot_committed_at, f.data_interval_end
-           )
+           AND f.metric_numerator <= 21600 AND f.metric_denominator = 21600
+           AND f.metric_numerator = cast(floor(
+               date_diff('millisecond', f.source_snapshot_committed_at, f.data_interval_end) / 1000.0
+           ) AS bigint)
            AND f.metric_value = cast(f.metric_numerator AS decimal(38, 9))
            AND f.status = 'pass' AND f.severity = 'info' AND f.diagnostic_code = 'ok'
        ) = 1

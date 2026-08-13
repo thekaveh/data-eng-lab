@@ -328,11 +328,13 @@ Three checked-in fixed Trino queries read the durable Gold facts:
 Latest and trend admit a run only when it has exactly one row for each of the eight frozen rule
 definitions, no duplicate or foreign row, exact rule metadata, and eight non-null equal bindings
 to the expected dataset, binding type, upstream DAG, source table, positive source snapshot,
-snapshot commit, logical date, one-hour data interval, and frozen schema fingerprint. The queries
+snapshot commit, logical date, exact common data interval, and frozen schema fingerprint. The queries
 recompute the canonical SHA-256 `quality_run_id`, require every rule's exact numerator,
 denominator, decimal value, severity, status, and diagnostic semantics, and require source,
 invalid, clean, quarantine, and partition counts to conserve the same row population. This
 deliberately filters structurally complete legacy or malformed sets rather than rewriting history.
+Freshness recomputation floors the exact millisecond difference to match Java `Duration.getSeconds`,
+including a valid negative age when a matching manual ETL commit follows its logical boundary.
 Operator attention instead joins the same governed rule registry directly and enforces the closed
 rule/status/diagnostic mapping so bounded missing, stale, warning, and failure diagnostics remain
 visible even when only a safe partial fact set could be persisted. Each query is one literal
