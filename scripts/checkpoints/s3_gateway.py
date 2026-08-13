@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import time
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, Mapping
 
 import boto3
@@ -31,6 +32,18 @@ _CONTROL_KEY = re.compile(
     r")"
 )
 _ETAG = re.compile(r"[0-9a-f]{32}(?:-[1-9][0-9]{0,9})?")
+
+
+def _normalize_s3_timestamp(value: object) -> datetime:
+    if not isinstance(value, datetime):
+        raise RecordFailure("object_timestamp_invalid")
+    try:
+        offset = value.utcoffset()
+    except BaseException:
+        raise RecordFailure("object_timestamp_invalid") from None
+    if offset != timedelta(0):
+        raise RecordFailure("object_timestamp_invalid")
+    return value.astimezone(timezone.utc).replace(microsecond=0)
 
 
 def build_s3_client(access_key: str, secret_key: str):
@@ -121,7 +134,7 @@ class S3Gateway:
                         key,
                         _parse_etag(item.get("ETag")),
                         item.get("Size"),
-                        item.get("LastModified"),
+                        _normalize_s3_timestamp(item.get("LastModified")),
                     )
                 except RecordFailure:
                     raise GatewayFailure("inventory_record_invalid") from None
@@ -300,9 +313,7 @@ class S3Gateway:
                 match = re.match(r"(streaming_test/[0-9a-f-]{36}/)", key)
                 prefix = match.group(1) if match else ""
             elif "{scale}" in entry.prefix:
-                match = re.match(
-                    r"(gh_events_file/(?:tiny|small|medium)/[0-9a-f]{32}/[0-9a-f]{64}/)", key
-                )
+                match = re.match(r"(gh_events_file/(?:tiny|small|medium)/[0-9a-f]{32}/[0-9a-f]{64}/)", key)
                 prefix = match.group(1) if match else ""
             else:
                 prefix = entry.prefix if key.startswith(entry.prefix) else ""

@@ -3,7 +3,7 @@ from __future__ import annotations
 import io
 import traceback
 from dataclasses import replace
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -112,6 +112,47 @@ def test_inventory_uses_exact_prefix_and_canonical_order_across_pages():
             {"Bucket": "checkpoints", "Prefix": PREFIX, "MaxKeys": 1000, "ContinuationToken": "page-2"},
         ),
     ]
+
+
+def test_inventory_normalizes_real_s3_utc_timezone_and_fractional_seconds():
+    client = FakeS3()
+    s3_utc = timezone(timedelta(0), "tzlocal")
+    client.pages = [
+        {
+            "IsTruncated": False,
+            "Contents": [
+                {
+                    "Key": f"{PREFIX}state/offset",
+                    "ETag": f'"{"a" * 32}"',
+                    "Size": 7,
+                    "LastModified": datetime(2026, 8, 13, 17, 13, 25, 698000, tzinfo=s3_utc),
+                }
+            ],
+        }
+    ]
+
+    records = S3Gateway(client, POLICY, monotonic=lambda: 0.0).inventory(PREFIX)
+
+    assert records[0].last_modified == datetime(2026, 8, 13, 17, 13, 25, tzinfo=timezone.utc)
+    assert records[0].last_modified.tzinfo is timezone.utc
+
+
+@pytest.mark.parametrize(
+    "modified",
+    [
+        datetime(2026, 8, 13, 17, 13, 25),
+        datetime(2026, 8, 13, 17, 13, 25, tzinfo=timezone(timedelta(hours=1))),
+        "2026-08-13T17:13:25Z",
+    ],
+)
+def test_inventory_rejects_untrusted_non_utc_or_untyped_s3_timestamps(modified):
+    client = FakeS3()
+    page = _page(f"{PREFIX}state/offset")
+    page["Contents"][0]["LastModified"] = modified
+    client.pages = [page]
+
+    with pytest.raises(GatewayFailure, match="inventory_record_invalid"):
+        S3Gateway(client, POLICY, monotonic=lambda: 0.0).inventory(PREFIX)
 
 
 @pytest.mark.parametrize(
