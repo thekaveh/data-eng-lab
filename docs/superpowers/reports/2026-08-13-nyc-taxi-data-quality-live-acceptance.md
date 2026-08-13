@@ -259,3 +259,63 @@ Trino 482 rendered decimal fields as `decimal(38, 9)` and inferred trend `overal
 `varchar(4)`; every other textual output field was `varchar` and all count/snapshot fields were
 `bigint`. Pagination accepted only the exact configured internal or loopback Trino origin and the
 canonical statement path.
+
+## Final diagnostic-contract replay
+
+The post-review artifact at commit `3609452` completed the unchanged canonical harness with
+`32 passed in 552.17s`. Both production DAGs stayed paused during controlled execution, then
+returned to their initial states: ETL unpaused and quality paused. Standard teardown preserved all
+volumes, and the final all-state Docker probe found zero project containers.
+
+Immutable inputs and artifacts remained exact:
+
+- resolver plan `66929ee59188f5a2deb8e29e8593fbe9bad1ad6dc1c4daadd7aeb45b51916189`;
+- publication `16e280e900a84d1b9d617743472b8ada`;
+- manifest SHA-256 `3b678261e704aeb6dee3ae981d699bf81db5696fa9da64abfbce6fe2bd7f6c12`;
+- active pointer ETag `"204190c685574dfa91c330acb64dfb82"`, unchanged before/after;
+- ETL JAR SHA-256 `cc50a4352de371151ddec2dcc66ab73a7e9af3c4b69d8b45fe7471bedef84b74`;
+  and
+- quality JAR SHA-256 `569320db7510d891c86f3a98b940effcd1da1f68c6f9eefff5c1318c4548f99b`.
+
+Airflow and Spark evidence was exactly:
+
+- ETL runs `manual__2026-08-13T11:27:34.166677+00:00` and
+  `manual__2026-08-13T11:31:39.135521+00:00`;
+- first quality run `manual__2026-08-13T11:28:22.049612+00:00`, replaced under pinned same-date
+  semantics by `manual__2026-08-13T11:30:12.935869+00:00`;
+- final quality run `manual__2026-08-13T11:32:03.345200+00:00`; and
+- five distinct REST-confirmed terminal drivers: `driver-20260813112739-0000`,
+  `driver-20260813112825-0001`, `driver-20260813113016-0002`,
+  `driver-20260813113142-0003`, and `driver-20260813113207-0004`.
+
+The first accepted source snapshot was `5989237067513271004`, committed at
+`2026-08-13T11:27:51.181Z`, and produced deterministic quality run
+`593843271477d30c9416aa8e6696a4e2975d845effd0812cfb10c71abcf2e682`. Its same-date retry
+advanced clean snapshot `5051434589101096761` to `8030645671831296095` and quarantine snapshot
+`5367696590882175467` to `5481628481191702516`, while preserving exact clean/quarantine
+multisets and the 112-row fact table checksum `36f42e46e4c84123`. The second ETL committed source
+snapshot `1555947243003706568` at `2026-08-13T11:31:52.794Z` and produced deterministic quality
+run `47289684ef73bc7f82a7c121f6ad1c4ace6ec7b46a77afbb616b92c1c6231c8e`. Final Gold state was
+120 rows with checksum `30d9523e9bc632fd`.
+
+The harness selected those two exact owned run IDs, compared all 23 fields of all 16 facts, and
+required exact lineage, rule metadata, nullable fields, UTC timestamps, scale-nine decimals,
+statuses, severities, and closed diagnostic codes. Both runs had exactly eight governed keys and
+zero rejected statuses. In particular, `silver.output_readback.v1` was exactly numerator 8,
+denominator 8, value `1.000000000`, status `pass`, and diagnostic `ok` in each owned run.
+
+Source and output contents remained deterministic:
+
+- Bronze 2,943,859 rows, checksum `b66a4c29486af278`;
+- clean 2,917,820 rows, checksum `330b0a56eb827b24`; and
+- quarantine 26,039 rows, checksum `d4c2179946371cbd`.
+
+The hardened fixed dashboards executed read-only with exact protocol metadata. Latest returned
+eight rows/checksum `97fd81540b79ef8423d760acdc8520db0da3fd489d46cbdffc254152d4017294`;
+trend returned ten complete accepted runs/checksum
+`def147f29f83b53686e483535e8a5f7770dbfe27d95a2f367870c5468ade2a8f`; and operator attention
+returned zero current warning/failure rows with the canonical empty checksum
+`4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945`. Offline executable
+adversarial tests separately prove that operator attention surfaces a governed partial
+missing-source diagnostic while latest/trend reject null, wrong-fingerprint, wrong-lineage,
+wrong-rule-metadata, missing, duplicate, and foreign fact sets.
