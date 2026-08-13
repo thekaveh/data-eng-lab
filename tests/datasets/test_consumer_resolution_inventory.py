@@ -23,10 +23,18 @@ RESOLVED_NOTEBOOKS = {
     "feature_engineering-movielens-spark-iceberg": "movielens",
     "join_optimization-tpch-spark-iceberg": "tpch",
     "json_flatten-gh_archive-spark-iceberg": "gh_archive",
-    "sessionization-gh_archive-spark-iceberg": "gh_archive",
     "star_schema-tpch-spark-iceberg": "tpch",
     "streaming_ingest-gh_archive-spark-iceberg": "gh_archive",
 }
+
+
+def test_sessionization_notebooks_consume_the_typed_flatten_table_without_second_resolution():
+    root = ROOT / "scenarios/sessionization-gh_archive-spark-iceberg"
+    text = (root / "jupyter/notebook.ipynb").read_text(encoding="utf-8")
+    text += (root / "zeppelin/notebook.zpln").read_text(encoding="utf-8")
+    assert "lakehouse.silver.gh_events" in text
+    assert "/v1/resolve" not in text
+    assert "spark.read.json" not in text
 
 
 def _runtime_sources() -> tuple[Path, ...]:

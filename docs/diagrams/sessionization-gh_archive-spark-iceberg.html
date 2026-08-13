@@ -21,7 +21,7 @@
 
         <!-- Title -->
         <text x="640" y="40" fill="#ffffff" font-size="22" font-weight="700" text-anchor="middle">sessionization - GH Archive (Spark window to Iceberg Silver)</text>
-        <text x="640" y="62" fill="#94a3b8" font-size="12" text-anchor="middle">LAG gap detection + cumulative-sum session IDs over actor_login, ordered by created_at - 30-min inactivity threshold</text>
+        <text x="640" y="62" fill="#94a3b8" font-size="12" text-anchor="middle">LAG gap detection + cumulative-sum session IDs per actor, ordered by (created_at, id) - 30-min inactivity threshold</text>
 
         <!-- ================= STAGE 1: SOURCE (silver.gh_events) ================= -->
         <rect x="40" y="120" width="230" height="320" rx="12" fill="rgba(30, 41, 59, 0.35)" stroke="#334155" stroke-width="1" stroke-dasharray="8,4"/>
@@ -33,9 +33,9 @@
         <text x="155" y="224" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">gh_events</text>
         <line x1="75" y1="242" x2="235" y2="242" stroke="#334155" stroke-width="1"/>
         <text x="155" y="262" fill="#fb923c" font-size="9" font-weight="600" text-anchor="middle">EVENT SCHEMA</text>
-        <text x="155" y="284" fill="#ffffff" font-size="10" text-anchor="middle">actor_login  string</text>
-        <text x="155" y="302" fill="#ffffff" font-size="10" text-anchor="middle">type         string</text>
-        <text x="155" y="320" fill="#22d3ee" font-size="10" text-anchor="middle">created_at   timestamp</text>
+        <text x="155" y="280" fill="#ffffff" font-size="9" text-anchor="middle">id, type</text>
+        <text x="155" y="298" fill="#ffffff" font-size="9" text-anchor="middle">actor_login, repo_name</text>
+        <text x="155" y="316" fill="#22d3ee" font-size="9" text-anchor="middle">created_at timestamp</text>
         <text x="155" y="352" fill="#94a3b8" font-size="9" text-anchor="middle">flattened by</text>
         <text x="155" y="368" fill="#94a3b8" font-size="9" text-anchor="middle">json_flatten scenario</text>
         <text x="155" y="396" fill="#22d3ee" font-size="9" text-anchor="middle">spark.table("...gh_events")</text>
@@ -46,20 +46,20 @@
 
         <!-- window definition banner -->
         <rect x="320" y="158" width="430" height="48" rx="6" fill="#0a0f1f" stroke="#22d3ee" stroke-width="1"/>
-        <text x="535" y="178" fill="#22d3ee" font-size="10" font-weight="700" text-anchor="middle">Window w = partitionBy("actor_login").orderBy("ts")</text>
+        <text x="535" y="178" fill="#22d3ee" font-size="10" font-weight="700" text-anchor="middle">Window w = partitionBy("actor_login").orderBy("created_at", "id")</text>
         <text x="535" y="196" fill="#94a3b8" font-size="9" text-anchor="middle">per-actor event stream ordered chronologically</text>
 
         <!-- step 1: LAG -->
         <rect x="320" y="218" width="430" height="58" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
         <text x="335" y="240" fill="#fb923c" font-size="10" font-weight="700">1 | LAG</text>
-        <text x="535" y="240" fill="#ffffff" font-size="10" text-anchor="middle">prev_ts = lag("ts", 1).over(w)</text>
+        <text x="535" y="240" fill="#ffffff" font-size="10" text-anchor="middle">previous_created_at = lag("created_at", 1).over(w)</text>
         <text x="535" y="260" fill="#94a3b8" font-size="9" text-anchor="middle">previous event timestamp per actor (null on first row)</text>
 
         <!-- step 2: gap detect -->
         <rect x="320" y="284" width="430" height="66" rx="8" fill="#334155" stroke="#22d3ee" stroke-width="1.5"/>
         <text x="335" y="306" fill="#fb923c" font-size="10" font-weight="700">2 | GAP</text>
-        <text x="535" y="306" fill="#ffffff" font-size="10" text-anchor="middle">new_session = when(prev_ts is null</text>
-        <text x="535" y="324" fill="#ffffff" font-size="10" text-anchor="middle">  OR (ts - prev_ts) &gt; 1800s, 1).otherwise(0)</text>
+        <text x="535" y="306" fill="#ffffff" font-size="10" text-anchor="middle">new_session = when(previous_created_at is null</text>
+        <text x="535" y="324" fill="#ffffff" font-size="10" text-anchor="middle">  OR (created_at - previous_created_at) &gt; 1800s, 1).otherwise(0)</text>
         <text x="535" y="342" fill="#94a3b8" font-size="9" text-anchor="middle">inactivity &gt; 30 min marks a new session boundary</text>
 
         <!-- step 3: cumulative sum -->
@@ -89,9 +89,9 @@
         <text x="1115" y="224" fill="#22d3ee" font-size="11" font-weight="700" text-anchor="middle">gh_sessions</text>
         <line x1="1025" y1="242" x2="1205" y2="242" stroke="#334155" stroke-width="1"/>
         <text x="1115" y="262" fill="#fb923c" font-size="9" font-weight="600" text-anchor="middle">SESSION SCHEMA</text>
-        <text x="1115" y="284" fill="#ffffff" font-size="10" text-anchor="middle">actor_login  string</text>
-        <text x="1115" y="302" fill="#ffffff" font-size="10" text-anchor="middle">ts           timestamp</text>
-        <text x="1115" y="320" fill="#22d3ee" font-size="10" text-anchor="middle">session_id   bigint</text>
+        <text x="1115" y="280" fill="#ffffff" font-size="9" text-anchor="middle">id, type, actor_login, repo_name</text>
+        <text x="1115" y="298" fill="#ffffff" font-size="9" text-anchor="middle">created_at, previous_created_at</text>
+        <text x="1115" y="316" fill="#22d3ee" font-size="9" text-anchor="middle">new_session int, session_id bigint</text>
         <text x="1115" y="352" fill="#94a3b8" font-size="9" text-anchor="middle">query-ready</text>
         <text x="1115" y="368" fill="#94a3b8" font-size="9" text-anchor="middle">sessions per actor</text>
         <text x="1115" y="396" fill="#22d3ee" font-size="9" text-anchor="middle">writeTo("...gh_sessions")</text>
@@ -112,9 +112,10 @@
         <!-- ================= ORCHESTRATOR STRIP ================= -->
         <rect x="40" y="468" width="1200" height="62" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1"/>
         <text x="70" y="494" fill="#22d3ee" font-size="11" font-weight="600">Orchestration</text>
-        <text x="70" y="514" fill="#94a3b8" font-size="9">Execution: approved new production DAG | child #109</text>
+        <text x="70" y="508" fill="#94a3b8" font-size="9">existing production DAG: gh_archive_flatten_sessionization | @daily | serialized</text>
+        <text x="70" y="522" fill="#94a3b8" font-size="9">spark-apps/gh-archive-pipeline/dag.py</text>
         <text x="560" y="494" fill="#22d3ee" font-size="11" font-weight="600">Runtime</text>
-        <text x="560" y="514" fill="#94a3b8" font-size="9">PySpark (Jupyter) | Spark Connect sc://spark-connect:15002</text>
+        <text x="560" y="514" fill="#94a3b8" font-size="9">Scala Spark | provenance preflight | REST-confirmed</text>
         <text x="930" y="494" fill="#22d3ee" font-size="11" font-weight="600">Verify</text>
         <text x="930" y="514" fill="#94a3b8" font-size="9">count(distinct session_id) per actor_login</text>
       </svg>

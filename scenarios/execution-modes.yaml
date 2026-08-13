@@ -118,20 +118,20 @@ scenarios:
       - Treat timing as observational evidence rather than a fixed pass threshold.
     child_issue: null
   - scenario_id: json_flatten-gh_archive-spark-iceberg
-    classification: approved new production DAG
-    justification: Typed flattening is the governed first stage of the approved GH Archive analytics pipeline and supplies the sessionization input contract.
+    classification: existing production DAG
+    justification: The reviewed flatten application preserves canonical duplicate events, rejects conflicting IDs, replaces the typed event table from one verified generation, and passed repeatable Airflow and Spark acceptance.
     owner: Data Engineering
-    runtime: "Atlas Airflow and Spark standalone application delivered by child issue #109"
-    schedule_policy: "No schedule until #109 passes stage-specific live acceptance; proposed daily with explicit dataset_scale"
-    execution_entrypoint: null
+    runtime: Atlas Airflow and Spark standalone via the gh-archive-pipeline JAR
+    schedule_policy: "@daily with manual trigger and explicit dataset_scale supported; max_active_runs=1 serializes flatten and sessionization"
+    execution_entrypoint: spark-apps/gh-archive-pipeline/dag.py
     dependencies:
       - "#82 execution-mode matrix"
       - "#81 verified GH Archive generations"
       - "#109 coupled flatten and sessionization pipeline"
     acceptance_contract:
-      - Independently validate nested source records and deterministically replace lakehouse.silver.gh_events.
-      - Freeze the flat schema, timestamp behavior, malformed-record policy, and generation lineage before releasing the downstream stage.
-    child_issue: 109
+      - Independently validate nested source records and deterministically replace lakehouse.silver.gh_events with exact source-row multiplicity.
+      - Freeze schema, timestamps, duplicate/conflict behavior, five-key provenance, readback, and terminal Airflow/Spark success before sessionization.
+    child_issue: null
   - scenario_id: medallion-nyc_taxi-spark-iceberg
     classification: existing production DAG
     justification: The reviewed medallion application replaces Silver and Gold NYC Taxi tables from Bronze; the former scenario-local DAG was a superseded no-op with a misleading identifier.
@@ -176,20 +176,20 @@ scenarios:
       - Run only against the scenario-owned table and preserve Scala/PySpark parity after reset.
     child_issue: null
   - scenario_id: sessionization-gh_archive-spark-iceberg
-    classification: approved new production DAG
-    justification: Sessionization is the independently reviewable second stage of the approved GH Archive pipeline and consumes the typed flat-event contract from the first stage.
+    classification: existing production DAG
+    justification: The reviewed sessionization application consumes the matching-provenance event table, preserves row multiplicity, applies the exact 30-minute boundary, and passed repeatable Airflow and Spark acceptance.
     owner: Analytics Data Engineering
-    runtime: "Atlas Airflow and Spark standalone application delivered by child issue #109"
-    schedule_policy: "No schedule until #109 proves ordered stage orchestration; proposed daily after matching flatten success"
-    execution_entrypoint: null
+    runtime: Atlas Airflow and Spark standalone via the gh-archive-pipeline JAR
+    schedule_policy: "@daily after matching flatten success with manual trigger and explicit dataset_scale supported; max_active_runs=1 serializes both stages"
+    execution_entrypoint: spark-apps/gh-archive-pipeline/dag.py
     dependencies:
       - "#82 execution-mode matrix"
       - "#109 coupled flatten and sessionization pipeline"
       - lakehouse.silver.gh_events from the matching flatten stage
     acceptance_contract:
-      - Independently validate ordering, gap boundaries, null handling, and deterministic replacement of lakehouse.silver.gh_sessions.
-      - Refuse to run before a successful matching flatten stage and propagate either stage failure.
-    child_issue: 109
+      - Independently validate ordering, gap boundaries, null handling, row conservation, and deterministic replacement of lakehouse.silver.gh_sessions.
+      - Refuse mismatched gh_events provenance before reading rows, propagate either stage failure, and prove four REST-confirmed drivers across two reruns.
+    child_issue: null
   - scenario_id: star_schema-tpch-spark-iceberg
     classification: existing production DAG
     justification: The reviewed production application preserves notebook transform semantics, binds both tables to one verified TPC-H generation, and passed repeatable Airflow and Spark acceptance.

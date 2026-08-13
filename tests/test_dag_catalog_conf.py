@@ -32,6 +32,20 @@ def _string_literal(node: ast.expr | None) -> str | None:
     return node.value if isinstance(node, ast.Constant) and isinstance(node.value, str) else None
 
 
+def _resolved_string(module: ast.Module, node: ast.expr | None) -> str | None:
+    literal = _string_literal(node)
+    if literal is not None:
+        return literal
+    if isinstance(node, ast.Name):
+        for candidate in module.body:
+            if (
+                isinstance(candidate, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == node.id for target in candidate.targets)
+            ):
+                return _string_literal(candidate.value)
+    return None
+
+
 def _literal_dict_assignment(module: ast.Module, name: str) -> ast.Dict:
     for node in ast.walk(module):
         if not isinstance(node, ast.Assign):
@@ -178,10 +192,25 @@ def test_cluster_jar_dags_use_operator_owned_rest_confirmation():
             "java_class": "com.thekaveh.dataeng.tpch.TpchStarSchema",
             "application_args": [],
         },
+        "gh-archive-pipeline": (
+            {
+                "task_id": "submit_gh_archive_flatten",
+                "application": "s3a://jars/gh-archive-pipeline/0.1.0/app.jar",
+                "java_class": "com.thekaveh.dataeng.gharchive.GhArchiveFlatten",
+                "application_args": [],
+            },
+            {
+                "task_id": "submit_gh_archive_sessionization",
+                "application": "s3a://jars/gh-archive-pipeline/0.1.0/app.jar",
+                "java_class": "com.thekaveh.dataeng.gharchive.GhArchiveSessionization",
+                "application_args": [],
+            },
+        ),
     }
     for path in sorted((ROOT / "spark-apps").rglob("dag.py")):
         module = ast.parse(path.read_text(), filename=str(path))
-        expected = expected_apps[path.parent.name]
+        raw_expected = expected_apps[path.parent.name]
+        expected = raw_expected if isinstance(raw_expected, tuple) else (raw_expected,)
         assert _imports_name(
             module,
             "airflow.providers.apache.spark.operators.spark_submit",
@@ -197,10 +226,25 @@ def test_cluster_jar_dags_use_operator_owned_rest_confirmation():
             f"{path} must not restore TaskFlow submission ownership"
         )
 
-        operator_class = _class_definition(module, "AtlasSparkSubmitOperator")
+        operator_name = (
+            "AtlasResolvedSparkSubmitOperator"
+            if path.parent.name == "gh-archive-pipeline"
+            else "AtlasSparkSubmitOperator"
+        )
+        operator_class = _class_definition(module, operator_name)
         assert len(operator_class.bases) == 1
         assert isinstance(operator_class.bases[0], ast.Name)
         assert operator_class.bases[0].id == "SparkSubmitOperator"
+        if path.parent.name == "gh-archive-pipeline":
+            initializer = _method_definition(operator_class, "__init__")
+            defaults = dict(
+                zip(
+                    (argument.arg for argument in initializer.args.kwonlyargs),
+                    initializer.args.kw_defaults,
+                    strict=True,
+                )
+            )
+            assert _string_literal(defaults["rest_host"]) == "spark-master"
         get_hook = _method_definition(operator_class, "_get_hook")
         returns = [node for node in ast.walk(get_hook) if isinstance(node, ast.Return)]
         assert len(returns) == 1
@@ -221,21 +265,29 @@ def test_cluster_jar_dags_use_operator_owned_rest_confirmation():
         operator_calls = [
             node
             for node in ast.walk(module)
-            if isinstance(node, ast.Call) and _called_name(node) == "AtlasSparkSubmitOperator"
+            if isinstance(node, ast.Call) and _called_name(node) == operator_name
         ]
-        assert len(operator_calls) == 1, f"{path} must instantiate exactly one AtlasSparkSubmitOperator"
-        operator_call = operator_calls[0]
-        assert _string_literal(_keyword(operator_call, "task_id")) == expected["task_id"]
-        assert _string_literal(_keyword(operator_call, "conn_id")) == "spark_default"
-        assert _string_literal(_keyword(operator_call, "application")) == expected["application"]
-        assert _string_literal(_keyword(operator_call, "java_class")) == expected["java_class"]
-        assert _string_literal(_keyword(operator_call, "deploy_mode")) == "cluster"
-        assert ast.literal_eval(_keyword(operator_call, "application_args")) == expected["application_args"]
-        assert _string_literal(_keyword(operator_call, "rest_host")) == "spark-master"
-        conf = _keyword(operator_call, "conf")
-        assert isinstance(conf, ast.Name) and conf.id == "spark_conf", (
-            f"{path} must pass its spark_conf to AtlasSparkSubmitOperator"
+        assert len(operator_calls) == len(expected), (
+            f"{path} must instantiate exactly {len(expected)} {operator_name} task(s)"
         )
+        calls_by_task = {
+            _string_literal(_keyword(operator_call, "task_id")): operator_call
+            for operator_call in operator_calls
+        }
+        for task in expected:
+            operator_call = calls_by_task[task["task_id"]]
+            assert _string_literal(_keyword(operator_call, "conn_id")) == "spark_default"
+            assert _string_literal(_keyword(operator_call, "application")) == task["application"]
+            assert _resolved_string(module, _keyword(operator_call, "java_class")) == task["java_class"]
+            assert _string_literal(_keyword(operator_call, "deploy_mode")) == "cluster"
+            assert ast.literal_eval(_keyword(operator_call, "application_args")) == task["application_args"]
+            rest_host = _keyword(operator_call, "rest_host")
+            if rest_host is not None:
+                assert _string_literal(rest_host) == "spark-master"
+            conf = _keyword(operator_call, "conf")
+            assert isinstance(conf, ast.Name) and conf.id == "spark_conf", (
+                f"{path} must pass its spark_conf to {operator_name}"
+            )
 
         spark_conf = _literal_dict_assignment(module, "spark_conf")
         spark_conf_keys = _literal_dict_keys(spark_conf)
@@ -269,11 +321,20 @@ def test_parent_dags_can_import_atlas_rest_adapter_from_the_shared_dags_root():
 def test_dataset_dags_resolve_only_inside_operator_execution_and_pass_frozen_uris():
     for path in sorted((ROOT / "spark-apps").rglob("dag.py")):
         module = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        operator = _class_definition(module, "AtlasSparkSubmitOperator")
+        operator_name = (
+            "AtlasResolvedSparkSubmitOperator"
+            if path.parent.name == "gh-archive-pipeline"
+            else "AtlasSparkSubmitOperator"
+        )
+        operator = _class_definition(module, operator_name)
         execute = _method_definition(operator, "execute")
         execute_text = ast.unparse(execute)
         assert "_effective_scale(context)" in execute_text
-        assert "_resolve_dataset(self.dataset" in execute_text
+        assert (
+            "_parse_resolution(payload, scale)" in execute_text
+            if path.parent.name == "gh-archive-pipeline"
+            else "_resolve_dataset(self.dataset" in execute_text
+        )
         assert "super().execute(context)" in execute_text
         assert "self.application_args" in execute_text
         module_level_calls = [
@@ -293,7 +354,7 @@ def test_dataset_dags_freeze_valid_scale_precedence_and_exact_request_contract()
         assert "DATASET_SCALE" in text
         assert "tiny, small, medium" in text
         assert text.count("/v1/resolve") == 1
-        assert '"dataset": dataset' in text
+        assert '"dataset": dataset' in text or '"dataset": "gh_archive"' in text
         assert '"expected_scale": scale' in text
         assert "_generations/" in text
 
@@ -305,6 +366,6 @@ def test_dataset_dags_bound_and_strictly_parse_resolution_documents():
         assert "object_pairs_hook=_unique_mapping" in text
         assert "parse_constant=_reject_constant" in text
         assert "_json_depth(document) > _MAX_JSON_DEPTH" in text
-        assert "not objects" in text
+        assert "not objects" in text or "len(objects) != len(expected_names)" in text
         assert 'not isinstance(item["object_name"], str)' in text
         assert 'not isinstance(item["uri"], str)' in text

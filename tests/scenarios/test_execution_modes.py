@@ -42,11 +42,19 @@ EXPECTED = {
     "federated_query-nyc_taxi-trino-iceberg": (APPROVED, 83, None),
     "incremental_upsert-online_retail-spark-iceberg": (NOTEBOOK_ONLY, None, None),
     "join_optimization-tpch-spark-iceberg": (NOTEBOOK_ONLY, None, None),
-    "json_flatten-gh_archive-spark-iceberg": (APPROVED, 109, None),
+    "json_flatten-gh_archive-spark-iceberg": (
+        EXISTING,
+        None,
+        "spark-apps/gh-archive-pipeline/dag.py",
+    ),
     "medallion-nyc_taxi-spark-iceberg": (EXISTING, None, "spark-apps/nyc-taxi-medallion/dag.py"),
     "scd2-online_retail-spark-iceberg": (NOTEBOOK_ONLY, None, None),
     "schema_evolution-gh_archive-spark-iceberg": (NOTEBOOK_ONLY, None, None),
-    "sessionization-gh_archive-spark-iceberg": (APPROVED, 109, None),
+    "sessionization-gh_archive-spark-iceberg": (
+        EXISTING,
+        None,
+        "spark-apps/gh-archive-pipeline/dag.py",
+    ),
     "star_schema-tpch-spark-iceberg": (EXISTING, None, "spark-apps/tpch-star-schema/dag.py"),
     "streaming_ingest-events-spark-iceberg": (UNSCHEDULED, None, None),
     "streaming_ingest-gh_archive-spark-iceberg": (NOTEBOOK_ONLY, None, None),
@@ -95,8 +103,8 @@ def test_reviewed_classifications_children_and_entrypoints_are_frozen():
     for mode in modes:
         counts[mode.classification] += 1
     assert counts == {
-        EXISTING: 4,
-        APPROVED: 5,
+        EXISTING: 6,
+        APPROVED: 3,
         NOTEBOOK_ONLY: 7,
         UNSCHEDULED: 3,
         DEPRECATED: 0,
@@ -104,7 +112,6 @@ def test_reviewed_classifications_children_and_entrypoints_are_frozen():
     assert {mode.child_issue for mode in modes if mode.child_issue is not None} == {
         83,
         91,
-        109,
     }
 
 
@@ -234,6 +241,7 @@ def test_no_scenario_local_dag_or_runtime_empty_operator_remains():
     assert list((ROOT / "scenarios").rglob("dag.py")) == []
     production_dags = sorted((ROOT / "spark-apps").rglob("dag.py"))
     assert [path.relative_to(ROOT).as_posix() for path in production_dags] == [
+        "spark-apps/gh-archive-pipeline/dag.py",
         "spark-apps/movielens-feature-pipeline/dag.py",
         "spark-apps/nyc-taxi-etl/dag.py",
         "spark-apps/nyc-taxi-medallion/dag.py",
@@ -309,7 +317,13 @@ def test_current_public_docs_never_publish_no_op_dags_or_false_triggers():
         match.group(1)
         for match in re.finditer(r"airflow dags trigger ([a-z0-9_]+)", text)
     }
-    assert obsolete <= {"nyc_taxi_etl", "nyc_taxi_medallion"}
+    assert obsolete <= {
+        "gh_archive_flatten_sessionization",
+        "movielens_feature_pipeline",
+        "nyc_taxi_etl",
+        "nyc_taxi_medallion",
+        "tpch_star_schema",
+    }
 
 
 def test_indexes_and_every_scenario_surface_link_the_matrix():

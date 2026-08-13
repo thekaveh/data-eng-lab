@@ -4,6 +4,9 @@ All notable changes to this project are documented here (Keep a Changelog format
 
 ## [Unreleased]
 ### Added
+- Production GH Archive flatten and sessionization Spark stages, one serialized daily Airflow DAG,
+  Jenkins publication, strict immutable resolver handoff, equal five-key table provenance, and a
+  repeatable live gate proving source-to-events-to-sessions multiset conservation.
 - Production MovieLens feature Spark application, serialized daily Airflow DAG, Jenkins publication,
   equal five-key table provenance, deterministic two-table recovery, and repeatable live acceptance
   for `ml_user_features` and `ml_movie_features`.
