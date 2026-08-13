@@ -59,7 +59,7 @@ guard before the authoritative UTF-8 byte guard, and retains multibyte enforceme
 | Gate | Result |
 |---|---|
 | `uv run ruff check . --exclude graphify-out` | pass |
-| `uv run pytest -m 'not infra and not network' -q --junitxml=/tmp/issue85-review-fix-pytest.xml` | 3,062 passed, 71 deselected, 51.56 s |
+| `uv run pytest -m 'not infra and not network' -q --junitxml=/tmp/issue85-final-pytest.xml` | 3,067 passed, 71 deselected, 52.28 s |
 | `uv run pytest -q tests/checkpoints` | 115 passed, 0 failed, 0 skipped, 0.53 s |
 | focused checkpoint and documentation projections | 356 passed, 0 failed, 0 skipped, 4.58 s |
 | `make verify` | 0 findings, 0 errors |
@@ -116,6 +116,7 @@ volume-preserving cleanup using disposable fixtures.
 8. `a79b2c5` — initial verification report and immutable review handoff
 9. `db5b17b` — close fail-closed evaluator, parser, ownership, and runbook review gaps
 10. `b3b2257` — record the first review-fix verification evidence
+11. `27d50c5` — harden untyped state, traceback-redaction, and direct-input bounds
 
 The branch has not been pushed and no pull request exists. Independent specification
 and quality/security reviews must use the exact immutable diff package produced after
