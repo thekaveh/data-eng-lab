@@ -226,6 +226,49 @@ def test_issue_references_survive_yaml_parse_and_markdown_projection_exactly():
     assert all(phrase in rendered for phrase in issue_phrases)
 
 
+def test_nyc_quality_notebooks_use_null_safe_conservation_and_warn_against_production_writes():
+    scenario = ROOT / "scenarios/data_quality-nyc_taxi-spark-iceberg"
+    jupyter = json.loads((scenario / "jupyter/notebook.ipynb").read_text(encoding="utf-8"))
+    zeppelin = json.loads((scenario / "zeppelin/notebook.zpln").read_text(encoding="utf-8"))
+    python = "\n".join("".join(cell.get("source", [])) for cell in jupyter["cells"])
+    scala = "\n".join(paragraph.get("text", "") for paragraph in zeppelin["paragraphs"])
+    exact_columns = {
+        "VendorID",
+        "tpep_pickup_datetime",
+        "tpep_dropoff_datetime",
+        "passenger_count",
+        "trip_distance",
+        "RatecodeID",
+        "store_and_fwd_flag",
+        "PULocationID",
+        "DOLocationID",
+        "payment_type",
+        "fare_amount",
+        "extra",
+        "mta_tax",
+        "tip_amount",
+        "tolls_amount",
+        "improvement_surcharge",
+        "total_amount",
+        "congestion_surcharge",
+        "airport_fee",
+        "trip_date",
+    }
+    for text in (python, scala):
+        assert "coalesce" in text and "source_count" in text
+        assert "valid_count + quarantine_count == source_count" in text
+        assert "NOT (" not in text and "fare_amount IS NULL" not in text
+        assert all(column in text for column in exact_columns)
+        assert "lakehouse.bronze.nyc_taxi_trips" in text
+        assert "lakehouse.silver.nyc_taxi_clean" in text
+        assert "lakehouse.silver.nyc_taxi_quarantine" in text
+        warning = text.casefold()
+        assert "production writes must use" in warning
+        assert "without production provenance" in warning
+        assert "bypass airflow serialization" in warning
+        assert "invalidate" in warning and "quality facts" in warning
+
+
 def test_classification_semantics_and_paths_validate():
     modes = load_execution_modes(MATRIX, ROOT)
     validate_execution_modes(modes, ROOT)
