@@ -276,6 +276,19 @@ def test_head_and_delete_require_every_exact_original_record_result():
     with pytest.raises(GatewayFailure, match="delete_partial"):
         gateway.delete_records((record,))
 
+    other = ObjectRecord(f"{PREFIX}other", "b" * 32, 5, NOW)
+    client.delete_response = {
+        "Deleted": [{"Key": record.key}],
+        "Errors": [{"Key": other.key, "Code": "InternalError"}],
+    }
+    with pytest.raises(GatewayFailure, match="delete_partial") as partial:
+        gateway.delete_records((record, other))
+    assert partial.value.deleted_keys == (record.key,)
+
+    client.delete_response = {"Deleted": [{"Key": f"{PREFIX}foreign"}], "Errors": []}
+    with pytest.raises(GatewayFailure, match="delete_response_invalid"):
+        gateway.delete_records((record,))
+
     client.delete_response = {"Deleted": [{"Key": record.key}, {"Key": record.key}], "Errors": []}
     with pytest.raises(GatewayFailure, match="delete_response_invalid"):
         gateway.delete_records((record,))

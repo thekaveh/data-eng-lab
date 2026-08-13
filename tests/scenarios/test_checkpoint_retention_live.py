@@ -15,6 +15,7 @@ from pathlib import Path
 import boto3
 import pytest
 from botocore.config import Config
+from botocore.exceptions import ClientError
 
 from scripts.checkpoints.policy import _policy_sha256, load_policy
 
@@ -321,6 +322,52 @@ def _production_snapshot(client) -> dict[str, object]:
     }
 
 
+def _prove_maintenance_iam(root, maintenance, fixture_prefix: str, denied_key: str) -> dict[str, object]:
+    capability_key = f"_retention/capability/{uuid.uuid4()}/proof.json"
+    primary = None
+
+    def denied(call) -> None:
+        try:
+            call()
+        except ClientError as error:
+            code = error.response.get("Error", {}).get("Code")
+            if code not in {"AccessDenied", "AllAccessDisabled"}:
+                raise AssertionError("unexpected IAM refusal") from None
+        else:
+            raise AssertionError("forbidden IAM call succeeded")
+
+    try:
+        listed = maintenance.list_objects_v2(Bucket="checkpoints", Prefix=fixture_prefix, MaxKeys=1000)
+        if listed.get("IsTruncated") is not False or len(listed.get("Contents", [])) != 2:
+            raise AssertionError("exact-prefix IAM list failed")
+        key = f"{fixture_prefix}state/offset"
+        response = maintenance.get_object(Bucket="checkpoints", Key=key)
+        body = response["Body"]
+        try:
+            if body.read(65) == b"":
+                raise AssertionError("exact-prefix IAM get failed")
+        finally:
+            body.close()
+        maintenance.put_object(Bucket="checkpoints", Key=capability_key, Body=b'{"schema_version":1}')
+        denied(lambda: maintenance.list_objects_v2(Bucket="checkpoints", Prefix="streaming_test/", MaxKeys=1))
+        denied(lambda: maintenance.get_object(Bucket="checkpoints", Key=denied_key))
+        denied(lambda: maintenance.put_object(Bucket="checkpoints", Key=f"{fixture_prefix}forbidden", Body=b"x"))
+        denied(lambda: maintenance.delete_object(Bucket="checkpoints", Key=capability_key))
+        return {"allowed": 3, "denied": 4, "control_key": capability_key}
+    except BaseException as error:
+        primary = error
+        raise
+    finally:
+        try:
+            root.delete_object(Bucket="checkpoints", Key=capability_key)
+            if _inventory(root, capability_key):
+                raise RuntimeError("iam_probe_cleanup_failed")
+        except BaseException:
+            if primary is None:
+                raise RuntimeError("iam_probe_cleanup_failed") from None
+            primary.add_note("iam_probe_cleanup_failed")
+
+
 def _lease_payload(identity: dict[str, object], session_id: str) -> dict[str, object]:
     return {
         "checkpoint_id": identity["checkpoint_id"],
@@ -434,6 +481,13 @@ def test_checkpoint_retention_live_acceptance():
                 prefix = identity["prefix"]
                 put_owned(f"{prefix}state/offset", f"state-{index}".encode())
                 put_owned(f"{prefix}commits/0", f"commit-{index}".encode())
+
+            maintenance = _client(
+                endpoint,
+                _env("MINIO_RETENTION_ACCESS_KEY", "retention86live"),
+                _env("MINIO_RETENTION_SECRET_KEY"),
+            )
+            assert _prove_maintenance_iam(root, maintenance, identities[0]["prefix"], denied_key)["denied"] == 4
 
             active = _service("POST", "/v1/leases/acquire", _lease_payload(identities[0], "issue86-live-active"))
             active_plan, _active_sha = _plan(identities[0], datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))

@@ -13,6 +13,7 @@ from scripts.checkpoints.records import (
     inventory_sha256,
     shard_inventory,
 )
+from scripts.checkpoints.s3_gateway import GatewayFailure
 
 NOW = datetime(2026, 8, 13, 12, 0, 0, tzinfo=timezone.utc)
 OPERATION_ID = "550e8400-e29b-41d4-a716-446655440000"
@@ -290,6 +291,37 @@ def test_partial_delete_stops_before_later_batch_and_retry_uses_only_original_re
     deleted_keys = tuple(key for call in gateway.calls if call[0] == "delete" for key in call[1])
     assert first_deleted_key not in deleted_keys
     assert f"{PREFIX}foreign-after-plan" not in deleted_keys
+
+
+def test_mixed_partial_response_persists_successful_keys_for_original_set_retry():
+    artifact = _artifact()
+    gateway = FakeGateway()
+    _prepared_manager(gateway, artifact)
+    first_key = artifact.shards[0].records[0].key
+
+    def partial(records):
+        gateway.data = tuple(record for record in gateway.data if record.key != first_key)
+        failure = GatewayFailure("delete_partial", deleted_keys=(first_key,))
+        raise failure
+
+    gateway.delete_records = partial
+    manager = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda _prefix, _evaluated_at: artifact,
+    )
+
+    with pytest.raises(OperationFailure, match="delete_partial"):
+        manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+
+    partial_body = json.loads(manager.status(OPERATION_ID).body)
+    assert partial_body["deleted_objects"] == 1
+    gateway.delete_records = FakeGateway.delete_records.__get__(gateway)
+    gateway.data += (ObjectRecord(f"{PREFIX}foreign-after-plan", "f" * 32, 4, NOW),)
+    with pytest.raises(OperationFailure, match="postflight_not_empty"):
+        manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    assert first_key not in tuple(key for call in gateway.calls if call[0] == "delete" for key in call[1])
 
 
 def test_head_failure_prevents_every_delete_and_control_flow_is_not_wrapped():

@@ -7,6 +7,7 @@ import sys
 from pathlib import Path
 
 import pytest
+from botocore.exceptions import ClientError
 
 ROOT = Path(__file__).resolve().parents[2]
 LIVE = ROOT / "tests/scenarios/test_checkpoint_retention_live.py"
@@ -135,6 +136,52 @@ def test_owned_fixture_cleanup_failure_cannot_replace_body_primary():
     assert getattr(primary, "__notes__", ()) == ["owned_fixture_cleanup_failed"]
 
 
+def test_maintenance_iam_probe_executes_exact_allowed_and_denied_calls_with_cleanup():
+    live = _live()
+    fixture = "streaming_test/550e8400-e29b-41d4-a716-446655440000/"
+    deleted = []
+
+    class Body:
+        def read(self, size):
+            assert size == 65
+            return b"state"
+
+        def close(self):
+            return None
+
+    class Root:
+        def delete_object(self, *, Bucket, Key):
+            assert Bucket == "checkpoints"
+            deleted.append(Key)
+
+        def list_objects_v2(self, **_kwargs):
+            return {"IsTruncated": False}
+
+    class Maintenance:
+        def list_objects_v2(self, *, Bucket, Prefix, MaxKeys):
+            if Prefix == "streaming_test/":
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "ListObjectsV2")
+            return {"IsTruncated": False, "Contents": [{}, {}]}
+
+        def get_object(self, *, Bucket, Key):
+            if Key.startswith("unknown-retention/"):
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "GetObject")
+            return {"Body": Body()}
+
+        def put_object(self, *, Bucket, Key, Body):
+            if Key.startswith(fixture):
+                raise ClientError({"Error": {"Code": "AccessDenied"}}, "PutObject")
+
+        def delete_object(self, *, Bucket, Key):
+            raise ClientError({"Error": {"Code": "AccessDenied"}}, "DeleteObject")
+
+    evidence = live._prove_maintenance_iam(
+        Root(), Maintenance(), fixture, "unknown-retention/11111111-1111-4111-8111-111111111111/sentinel"
+    )
+    assert evidence["allowed"] == 3 and evidence["denied"] == 4
+    assert deleted == [evidence["control_key"]]
+
+
 def test_disposable_identity_and_review_facts_are_exact_and_bounded():
     live = _live()
     identity = live._fixture_identity("550e8400-e29b-41d4-a716-446655440000")
@@ -224,5 +271,6 @@ def test_live_module_is_a_genuine_run_infra_opt_in_with_no_refresh_or_family_del
     assert "@pytest.mark.skipif" in source
     assert "download_datasets.py" not in source
     assert "--refresh" not in source
-    assert '"streaming_test/"' not in source
+    assert 'delete_object(Bucket="checkpoints", Key="streaming_test/"' not in source
+    assert 'delete_objects(Bucket="checkpoints", Delete={"Prefix"' not in source
     assert "remove_volume" not in source

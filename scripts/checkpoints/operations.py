@@ -10,6 +10,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Callable
 
 from scripts.checkpoints.records import ObjectRecord, PlanArtifact, RecordFailure, canonical_json_bytes
+from scripts.checkpoints.s3_gateway import GatewayFailure
 
 
 class OperationFailure(ValueError):
@@ -176,6 +177,11 @@ class OperationManager:
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException as error:
+            if isinstance(error, GatewayFailure) and error.deleted_keys:
+                by_key = {record.key: record for record in remaining_records}
+                if any(key not in by_key for key in error.deleted_keys):
+                    raise OperationFailure("delete_response_invalid") from None
+                deleted.extend(by_key[key] for key in error.deleted_keys)
             primary = error if isinstance(error, OperationFailure) else OperationFailure("delete_partial")
             self._record_status(request.operation_id, "partial", request.plan_sha256, deleted, records)
             raise primary from None

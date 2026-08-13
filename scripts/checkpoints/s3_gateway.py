@@ -19,9 +19,10 @@ from scripts.checkpoints.records import ObjectRecord, RecordFailure, canonical_r
 class GatewayFailure(ValueError):
     """A closed, sanitized S3 gateway failure category."""
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, *, deleted_keys: tuple[str, ...] = ()) -> None:
         super().__init__(code)
         self.code = code
+        self.deleted_keys = deleted_keys
 
 
 _CONTROL_KEY = re.compile(
@@ -276,10 +277,11 @@ class S3Gateway:
             or len(error_keys) != len(errors)
             or len(deleted_keys) != len(set(deleted_keys))
             or any(not isinstance(key, str) for key in (*deleted_keys, *error_keys))
+            or any(key not in expected for key in (*deleted_keys, *error_keys))
         ):
             raise GatewayFailure("delete_response_invalid")
         if errors or len(deleted_keys) != len(expected) or set(deleted_keys) != set(expected):
-            raise GatewayFailure("delete_partial")
+            raise GatewayFailure("delete_partial", deleted_keys=deleted_keys)
         return expected
 
     def probe_capabilities(self) -> Mapping[str, object]:
