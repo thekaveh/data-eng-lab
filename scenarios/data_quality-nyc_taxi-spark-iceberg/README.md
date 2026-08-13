@@ -17,9 +17,13 @@ The production entrypoint is `spark-apps/nyc-taxi-data-quality/dag.py`, DAG `nyc
 
 Duplicates and rows with null rule operands are preserved. The application verifies exact schema, null-safe multiset conservation, readback counts, and source snapshot stability. Silver replacement and Gold MERGE are not cross-table atomic; a same-date rerun is the supported recovery and converges without duplicate facts.
 
-## 3. Governed Rules
+## 3. Architecture
+
+![Architecture](../../docs/diagrams/img/data_quality-nyc_taxi-spark-iceberg.png)
 
 The fixed rule version records owners, severity, thresholds, numerator/denominator, canonical decimal metrics, and status:
+
+### 3.1 Governed Rules
 
 - `bronze.source_available.v1`
 - `bronze.schema.v1`
@@ -32,13 +36,17 @@ The fixed rule version records owners, severity, thresholds, numerator/denominat
 
 Invalid and quarantine ratios pass through 1%, warn above 1% through 5%, and fail above 5%. Missing and stale outrank fail, then warn, then pass. A task succeeds only after the exact accepted fact set is read back.
 
-## 4. Orchestration
+## 4. Notebooks
+
+The paired Zeppelin and Jupyter notebooks read with `spark.table("lakehouse.bronze.nyc_taxi_trips")`, preserve the original rule `fare_amount > 0 AND passenger_count BETWEEN 1 AND 6`, perform the null-safe two-table split with `createOrReplace`, and assert row conservation. They directly replace the production Silver tables without production provenance, bypass Airflow serialization, and do not persist the governed fact set. Run them only in an isolated learning environment; production writes must use the DAG/application.
+
+## 5. Orchestration
 
 The `@daily` DAG uses `max_active_runs=1`. `wait_for_nyc_taxi_etl` is a bounded rescheduling `ExternalTaskSensor` for `nyc_taxi_etl.submit_nyc_taxi_etl` at the same logical date; `submit_nyc_taxi_data_quality` submits the Jenkins-published JAR through Atlas's REST-confirming Spark operator. Concurrent direct JAR execution is unsupported.
 
 The final artifact passed matching-ETL execution, a same-date Airflow replacement/retry, distinct terminal Spark-driver confirmation, exact fact idempotence, fixed-dashboard validation, unchanged source pointer, and volume-preserving cleanup. The tracked evidence record is `2026-08-13-nyc-taxi-data-quality-live-acceptance.md` in the repository's internal report directory.
 
-## 5. Dashboard and Operations
+### 5.1 Dashboard and Operations
 
 The durable dashboard source is the Gold facts table. Operators retrieve bounded, deterministically ordered results with:
 
@@ -48,11 +56,7 @@ The durable dashboard source is the Gold facts table. Operators retrieve bounded
 
 These are fixed SELECT-only queries; thresholds and arbitrary SQL are not DagRun inputs. For recovery, correct the primary failure and rerun the same logical date. Inspect the exact accepted eight-fact set before treating the run as complete.
 
-## 6. Educational Notebooks
-
-The paired Zeppelin and Jupyter notebooks read with `spark.table("lakehouse.bronze.nyc_taxi_trips")`, preserve the original rule `fare_amount > 0 AND passenger_count BETWEEN 1 AND 6`, perform the null-safe two-table split with `createOrReplace`, and assert row conservation. They directly replace the production Silver tables without production provenance, bypass Airflow serialization, and do not persist the governed fact set. Run them only in an isolated learning environment; production writes must use the DAG/application.
-
-## 7. Usage
+## 6. Usage
 
 Build and test the application:
 
@@ -63,7 +67,17 @@ mvn -q -B -f spark-apps/nyc-taxi-data-quality/pom.xml package
 
 Airflow schedules the production path daily. A manual run must share a logical date with a successful `nyc_taxi_etl` run so the sensor contract is exercised rather than bypassed.
 
-## 8. See Also
+## 7. Dependencies
+
+- Successful matching `nyc_taxi_etl.submit_nyc_taxi_etl` task and stable Bronze snapshot
+- Jenkins-published NYC Taxi quality JAR
+- Atlas Airflow, Spark standalone, Iceberg REST catalog, MinIO, and Trino
+
+## 8. Known Issues & Caveats
+
+Bronze lacks the standard five-key dataset-generation property set, so this pipeline intentionally claims snapshot binding only. Silver and Gold writes are not atomic as a unit; use the serialized Airflow path and same-date recovery. The notebooks are educational writers and can invalidate production monitoring if run against shared tables.
+
+### 8.1 See Also
 
 - [Production application](../../spark-apps/nyc-taxi-data-quality/README.md)
 - [Execution-mode matrix](../../docs/scenarios/execution-modes.md)
