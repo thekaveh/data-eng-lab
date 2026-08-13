@@ -6,8 +6,8 @@ from collections.abc import Callable, Sequence
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from trino_bi.client import QUERIES, QueryName, QueryResult, TrinoHttpClient
-from trino_bi.contracts import (
+from .client import QUERIES, QueryName, QueryResult, TrinoHttpClient
+from .contracts import (
     ContractError,
     build_nyc_artifact,
     build_tpch_artifact,

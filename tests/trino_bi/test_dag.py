@@ -54,6 +54,13 @@ def _load(monkeypatch):
     for name, module in _fake_modules().items():
         monkeypatch.setitem(sys.modules, name, module)
     monkeypatch.syspath_prepend(str(AIRFLOW_DAGS))
+    tasks = __import__("trino_bi.tasks", fromlist=["run_tpch_bi"])
+    namespace = ModuleType("data_eng_lab_airflow_dags")
+    package = ModuleType("data_eng_lab_airflow_dags.trino_bi")
+    package.__path__ = [str(AIRFLOW_DAGS / "trino_bi")]
+    monkeypatch.setitem(sys.modules, "data_eng_lab_airflow_dags", namespace)
+    monkeypatch.setitem(sys.modules, "data_eng_lab_airflow_dags.trino_bi", package)
+    monkeypatch.setitem(sys.modules, "data_eng_lab_airflow_dags.trino_bi.tasks", tasks)
     monkeypatch.setattr(
         socket,
         "create_connection",

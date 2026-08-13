@@ -10,7 +10,7 @@ from collections.abc import Callable, Mapping
 from typing import Any, NamedTuple
 from urllib.parse import urlparse
 
-from trino_bi.contracts import QUERIES, QueryName, QuerySpec
+from .contracts import QUERIES, QueryName, QuerySpec
 
 REQUEST_TIMEOUT_SECONDS = 30
 QUERY_DEADLINE_SECONDS = 120

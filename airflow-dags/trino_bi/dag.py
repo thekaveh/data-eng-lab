@@ -7,8 +7,7 @@ from datetime import timedelta
 import pendulum
 from airflow import DAG
 from airflow.operators.python import PythonOperator
-
-from trino_bi.tasks import run_nyc_bi, run_tpch_bi
+from data_eng_lab_airflow_dags.trino_bi.tasks import run_nyc_bi, run_tpch_bi
 
 DEFAULT_ARGS = {
     "owner": "data-eng-lab",
