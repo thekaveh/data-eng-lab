@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import re
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import MappingProxyType
 from typing import Any, Mapping
@@ -62,6 +65,62 @@ class MatchedCheckpoint:
     checkpoint_id: str
     prefix: str
     generation: Mapping[str, str]
+
+
+@dataclass(frozen=True)
+class LeaseFacts:
+    checkpoint_id: str
+    prefix: str
+    state: str
+    acquired_at: datetime
+    heartbeat_at: datetime
+    expires_at: datetime
+    etag: str
+    conflicting: bool = False
+    malformed: bool = False
+
+
+@dataclass(frozen=True)
+class TerminalFacts:
+    state: str
+    occurred_at: datetime
+    recovery_approved: bool
+    source_available: bool
+    sink_disposition_approved: bool
+    retirement_review: str | None
+    generation: Mapping[str, str]
+    exclusive_run: bool = False
+    successful: bool = False
+
+
+@dataclass(frozen=True)
+class InventorySummary:
+    object_count: int
+    total_bytes: int
+    newest_last_modified: datetime
+    inventory_sha256: str
+    changed_since_plan: bool = False
+    partial_retry_confined: bool = True
+
+
+@dataclass(frozen=True)
+class EvaluationInput:
+    prefix: str
+    evaluated_at: datetime
+    lease: LeaseFacts | None
+    terminal: TerminalFacts | None
+    inventory: InventorySummary
+
+
+@dataclass(frozen=True)
+class RetentionDecision:
+    eligible: bool
+    refusal_codes: tuple[str, ...]
+    retention_anchor: datetime | None
+    eligible_after: datetime | None
+    policy_sha256: str
+    plan_json: str
+    plan_sha256: str
 
 
 @dataclass(frozen=True)
@@ -296,6 +355,76 @@ def parse_policy(text: str) -> CheckpointPolicy:
     )
 
 
+def evaluate_retention(policy: CheckpointPolicy, facts: EvaluationInput) -> RetentionDecision:
+    matched = policy.match_prefix(facts.prefix)
+    entry = policy.entries[matched.checkpoint_id]
+    refusal_codes: list[str] = []
+
+    evaluated_at_valid = _is_exact_utc(facts.evaluated_at)
+    if not evaluated_at_valid:
+        refusal_codes.append("invalid_utc_timestamp")
+
+    lease = facts.lease
+    terminal = facts.terminal
+    inventory = facts.inventory
+    if lease is None:
+        refusal_codes.append("lease_missing")
+    else:
+        _evaluate_lease(policy, facts, matched, evaluated_at_valid, lease, refusal_codes)
+    _evaluate_inventory(policy, facts, evaluated_at_valid, inventory, refusal_codes)
+
+    if terminal is None:
+        refusal_codes.append("terminal_missing")
+    else:
+        _evaluate_terminal(entry, matched, terminal, refusal_codes)
+        if (
+            _is_exact_utc(terminal.occurred_at)
+            and _is_exact_utc(inventory.newest_last_modified)
+            and inventory.newest_last_modified > terminal.occurred_at
+        ):
+            refusal_codes.append("object_after_terminal")
+
+    anchor = _retention_anchor(lease, terminal, inventory)
+    eligible_after = anchor + timedelta(seconds=entry.retention_seconds) if anchor else None
+
+    if entry.durability == "durable_stream" and entry.lifecycle == "active":
+        refusal_codes = ["registry_active_durable"]
+    elif evaluated_at_valid and eligible_after is not None and facts.evaluated_at < eligible_after:
+        refusal_codes.append("retention_quarantine")
+
+    ordered_codes = tuple(dict.fromkeys(refusal_codes))
+    eligible = not ordered_codes
+    policy_sha256 = _policy_sha256(policy)
+    plan_payload = {
+        "checkpoint_id": matched.checkpoint_id,
+        "decision": "eligible" if eligible else "refused",
+        "eligible_after": _format_utc(eligible_after),
+        "evaluated_at": _format_utc(facts.evaluated_at),
+        "inventory": {
+            "newest_last_modified": _format_utc(inventory.newest_last_modified),
+            "object_count": inventory.object_count,
+            "sha256": inventory.inventory_sha256,
+            "total_bytes": inventory.total_bytes,
+        },
+        "policy_sha256": policy_sha256,
+        "prefix": matched.prefix,
+        "refusal_codes": list(ordered_codes),
+        "retention_anchor": _format_utc(anchor),
+    }
+    plan_json = json.dumps(plan_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    if len(plan_json.encode("utf-8")) > policy.bounds.max_summary_bytes:
+        raise PolicyError("summary_bound_exceeded")
+    return RetentionDecision(
+        eligible=eligible,
+        refusal_codes=ordered_codes,
+        retention_anchor=anchor,
+        eligible_after=eligible_after,
+        policy_sha256=policy_sha256,
+        plan_json=plan_json,
+        plan_sha256=hashlib.sha256(plan_json.encode("utf-8")).hexdigest(),
+    )
+
+
 def _parse_entry(value: object) -> CheckpointEntry:
     raw = _require_mapping(value, "invalid_type")
     checkpoint_id = raw.get("checkpoint_id")
@@ -425,3 +554,158 @@ def _reject_overlapping_prefixes(prefixes: tuple[str, ...]) -> None:
         for other in roots[index + 1 :]:
             if root.startswith(other) or other.startswith(root):
                 raise PolicyError("overlapping_prefix")
+
+
+def _evaluate_lease(
+    policy: CheckpointPolicy,
+    facts: EvaluationInput,
+    matched: MatchedCheckpoint,
+    evaluated_at_valid: bool,
+    lease: LeaseFacts,
+    refusal_codes: list[str],
+) -> None:
+    if lease.malformed:
+        refusal_codes.append("lease_malformed")
+    if lease.conflicting:
+        refusal_codes.append("lease_conflicting")
+    if lease.checkpoint_id != matched.checkpoint_id or lease.prefix != facts.prefix:
+        refusal_codes.append("lease_identity_mismatch")
+    if not lease.etag or len(lease.etag) > 128:
+        refusal_codes.append("lease_etag_invalid")
+    for value in (lease.acquired_at, lease.heartbeat_at, lease.expires_at):
+        if not _is_exact_utc(value):
+            refusal_codes.append("invalid_utc_timestamp")
+        elif evaluated_at_valid and value > facts.evaluated_at + timedelta(
+            seconds=policy.lease.future_tolerance_seconds
+        ):
+            refusal_codes.append("future_clock")
+    if lease.state == "active":
+        if evaluated_at_valid and _is_exact_utc(lease.expires_at):
+            refusal_codes.append(
+                "lease_active" if lease.expires_at >= facts.evaluated_at else "lease_expired_active_uncertain"
+            )
+        else:
+            refusal_codes.append("lease_active")
+    elif lease.state not in {"stopped", "completed", "retired"}:
+        refusal_codes.append("lease_state_invalid")
+
+
+def _evaluate_inventory(
+    policy: CheckpointPolicy,
+    facts: EvaluationInput,
+    evaluated_at_valid: bool,
+    inventory: InventorySummary,
+    refusal_codes: list[str],
+) -> None:
+    if (
+        type(inventory.object_count) is not int
+        or inventory.object_count < 1
+        or inventory.object_count > policy.bounds.max_objects
+        or type(inventory.total_bytes) is not int
+        or inventory.total_bytes < 1
+        or inventory.total_bytes > policy.bounds.max_bytes
+        or re.fullmatch(r"[0-9a-f]{64}", inventory.inventory_sha256) is None
+    ):
+        refusal_codes.append("inventory_invalid")
+    if not _is_exact_utc(inventory.newest_last_modified):
+        refusal_codes.append("invalid_utc_timestamp")
+    elif evaluated_at_valid and inventory.newest_last_modified > facts.evaluated_at + timedelta(
+        seconds=policy.lease.future_tolerance_seconds
+    ):
+        refusal_codes.append("future_clock")
+    if inventory.changed_since_plan:
+        refusal_codes.append("inventory_changed")
+    if not inventory.partial_retry_confined:
+        refusal_codes.append("partial_retry_broadened")
+
+
+def _evaluate_terminal(
+    entry: CheckpointEntry,
+    matched: MatchedCheckpoint,
+    terminal: TerminalFacts,
+    refusal_codes: list[str],
+) -> None:
+    if not _is_exact_utc(terminal.occurred_at):
+        refusal_codes.append("invalid_utc_timestamp")
+    if terminal.state not in entry.terminal_states:
+        refusal_codes.append("invalid_terminal_state")
+    if not terminal.recovery_approved:
+        refusal_codes.append("recovery_not_approved")
+    if not terminal.source_available:
+        refusal_codes.append("source_unavailable")
+    if not terminal.sink_disposition_approved:
+        refusal_codes.append("sink_disposition_not_approved")
+
+    if entry.durability == "durable_stream":
+        if not terminal.retirement_review:
+            refusal_codes.append("retirement_review_missing")
+    elif entry.durability == "generation_reproducibility":
+        if dict(terminal.generation) != dict(matched.generation):
+            refusal_codes.append("generation_identity_mismatch")
+    elif entry.durability == "disposable_acceptance":
+        if not terminal.exclusive_run:
+            refusal_codes.append("exclusive_run_required")
+        if not terminal.successful:
+            refusal_codes.append("successful_run_required")
+
+
+def _retention_anchor(
+    lease: LeaseFacts | None,
+    terminal: TerminalFacts | None,
+    inventory: InventorySummary,
+) -> datetime | None:
+    values = [inventory.newest_last_modified]
+    if lease is not None:
+        values.append(lease.heartbeat_at)
+    if terminal is not None:
+        values.append(terminal.occurred_at)
+    if not all(_is_exact_utc(value) for value in values):
+        return None
+    return max(values)
+
+
+def _is_exact_utc(value: object) -> bool:
+    return (
+        isinstance(value, datetime)
+        and value.tzinfo is not None
+        and value.utcoffset() == timedelta(0)
+        and value.microsecond == 0
+    )
+
+
+def _format_utc(value: datetime | None) -> str | None:
+    if value is None or not _is_exact_utc(value):
+        return None
+    return value.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _policy_sha256(policy: CheckpointPolicy) -> str:
+    payload = {
+        "version": policy.version,
+        "bucket": policy.bucket,
+        "control_prefix": policy.control_prefix,
+        "lease": {key: getattr(policy.lease, key) for key in _LEASE_VALUES},
+        "bounds": {key: getattr(policy.bounds, key) for key in _BOUND_VALUES},
+        "checkpoints": [
+            {
+                "checkpoint_id": entry.checkpoint_id,
+                "prefix": entry.prefix,
+                "owner": entry.owner,
+                "workload": entry.workload,
+                "source": entry.source,
+                "sink": entry.sink,
+                "lifecycle": entry.lifecycle,
+                "durability": entry.durability,
+                "terminal_states": list(entry.terminal_states),
+                "retention_seconds": entry.retention_seconds,
+                "recovery_class": entry.recovery_class,
+                "sink_disposition": entry.sink_disposition,
+                "concurrent_writers": entry.concurrent_writers,
+                "retirement_authorization": entry.retirement_authorization,
+                **({"scales": list(entry.scales)} if entry.scales else {}),
+            }
+            for entry in policy.entries.values()
+        ],
+    }
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
