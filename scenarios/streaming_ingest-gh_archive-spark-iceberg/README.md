@@ -21,6 +21,10 @@ Source: compressed GitHub Archive JSON objects from one resolver-verified immuta
 
 Checkpoint: `s3a://checkpoints/gh_events_file/<scale>/<publication-id>/<manifest-sha256>`
 
+### Checkpoint policy (#85)
+
+Checkpoint ID `streaming-gh-archive-file-v1` is owned by **Streaming Data Engineering Education** and classified as **generation reproducibility** state. Its concrete leaf binds the exact resolver generation by scale, publication ID, and manifest SHA-256. While active or uncertain it is retained; a completed or stopped leaf waits 14 days. Recovery must re-resolve that exact resolver generation and reset `lakehouse.bronze.gh_events_stream` before replay. Automated deletion remains disabled until issue #86 implements the lease, tombstone, credential, and live-validation boundary.
+
 ### 2.2 Output Tables
 
 | Table | Layer | Key Columns |

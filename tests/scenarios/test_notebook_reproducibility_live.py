@@ -74,12 +74,21 @@ CHECKPOINTS = {
     "cdc_streaming-online_retail-spark-iceberg": "online_retail_cdc",
 }
 
+# This legacy reset exists only to give paired notebooks equivalent state on an
+# exclusive disposable stack. The GH Archive value is deliberately identified as
+# an unsafe family-root reset: issue #86 must replace it with the approved exact-
+# generation, lease/tombstone-controlled implementation before any schedule exists.
+CHECKPOINT_RESET_POLICY = {
+    "mode": "exclusive_disposable_stack_only",
+    "unsafe_roots": ("gh_events_file",),
+    "networked_replacement_issue": 86,
+    "schedule": "disabled",
+}
+
 DISCOVERED = {
     path.name
     for path in (ROOT / "scenarios").iterdir()
-    if path.is_dir()
-    and (path / "zeppelin/notebook.zpln").is_file()
-    and (path / "jupyter/notebook.ipynb").is_file()
+    if path.is_dir() and (path / "zeppelin/notebook.zpln").is_file() and (path / "jupyter/notebook.ipynb").is_file()
 }
 assert len(SCENARIOS) == 19
 assert len(set(SCENARIOS)) == 19
@@ -116,10 +125,6 @@ def test_paired_notebooks_reexecute_to_completion(scenario: str):
     root = ROOT / "scenarios" / scenario
     bounded_stream = scenario in CHECKPOINTS
     _reset_scenario(live_exec, scenario)
-    live_exec.run_zeppelin_note(
-        str(root / "zeppelin/notebook.zpln"), bounded_stream=bounded_stream
-    )
+    live_exec.run_zeppelin_note(str(root / "zeppelin/notebook.zpln"), bounded_stream=bounded_stream)
     _reset_scenario(live_exec, scenario)
-    live_exec.run_jupyter_note(
-        str(root / "jupyter/notebook.ipynb"), bounded_stream=bounded_stream
-    )
+    live_exec.run_jupyter_note(str(root / "jupyter/notebook.ipynb"), bounded_stream=bounded_stream)

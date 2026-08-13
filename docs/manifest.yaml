@@ -77,6 +77,7 @@ sections:
       - {id: atlas-go-live-findings, number: '8.5', title: Atlas Go-Live Findings, source: docs/atlas-feedback-go-live.md}
       - {id: atlas-enablement, number: '8.6', title: Atlas Enablement, source: docs/atlas-enablement.md}
       - {id: atlas-pin-bump-runbook, number: '8.7', title: Atlas Pin-Bump Runbook, source: docs/atlas-pin-bump-runbook.md}
+      - {id: checkpoint-retention, number: '8.8', title: Streaming Checkpoint Retention, source: docs/checkpoint-retention.md}
   - {id: changelog, number: '9', title: Changelog, source: docs/CHANGELOG.md}
 diagrams:
   - {id: data-eng-lab-hero, master: docs/diagrams/data-eng-lab-hero.html}
