@@ -105,17 +105,30 @@ services:
     environment:
       DATASET_RESOLVER_URI: http://dataset-resolver:8080
       DATASET_SCALE: ${DATASET_SCALE:-small}
+      CHECKPOINT_RETENTION_URI: http://checkpoint-retention:8080
+      CHECKPOINT_RETENTION_API_TOKEN: ${CHECKPOINT_RETENTION_API_TOKEN:?CHECKPOINT_RETENTION_API_TOKEN is required}
+      PYTHONPATH: /opt/data-eng-lab
     depends_on:
       dataset-resolver:
         condition: service_healthy
+      checkpoint-retention:
+        condition: service_healthy
     volumes:
       - ../datasets:/home/jovyan/data-eng-lab/datasets:ro
+      - ../scripts/checkpoints:/opt/data-eng-lab/scripts/checkpoints:ro
       - ../tests/infra/probes:/opt/probes:ro
 
   zeppelin:
     environment:
       DATASET_RESOLVER_URI: http://dataset-resolver:8080
       DATASET_SCALE: ${DATASET_SCALE:-small}
+      CHECKPOINT_RETENTION_URI: http://checkpoint-retention:8080
+      CHECKPOINT_RETENTION_API_TOKEN: ${CHECKPOINT_RETENTION_API_TOKEN:?CHECKPOINT_RETENTION_API_TOKEN is required}
+      PYTHONPATH: /opt/data-eng-lab
     depends_on:
       dataset-resolver:
         condition: service_healthy
+      checkpoint-retention:
+        condition: service_healthy
+    volumes:
+      - ../scripts/checkpoints:/opt/data-eng-lab/scripts/checkpoints:ro

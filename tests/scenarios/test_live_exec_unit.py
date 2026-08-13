@@ -7,9 +7,7 @@ either form and pyiceberg receives the 2-part identifier it expects.
 """
 import importlib.util
 import json
-import sys
 from pathlib import Path
-from types import SimpleNamespace
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -65,8 +63,8 @@ def _min_env(monkeypatch, **extra):
     """Set the four keys _rest_catalog_kwargs requires so it doesn't raise."""
     monkeypatch.setenv("ICEBERG_REST_PORT", "64110")
     monkeypatch.setenv("MINIO_PORT", "64093")
-    monkeypatch.setenv("MINIO_ROOT_USER", "minioadmin")
-    monkeypatch.setenv("MINIO_ROOT_PASSWORD", "secret")
+    monkeypatch.setenv("MINIO_ICEBERG_ACCESS_KEY", "iceberg-client")
+    monkeypatch.setenv("MINIO_ICEBERG_SECRET_KEY", "iceberg-secret")
     for k, v in extra.items():
         monkeypatch.setenv(k, v)
 
@@ -84,13 +82,13 @@ def test_rest_catalog_kwargs_region_override(monkeypatch):
 
 def test_zeppelin_stream_is_bounded_in_its_start_paragraph():
     source = json.dumps(
-        {"paragraphs": [{"text": "%spark\nval query = data.writeStream.start()"}]}
+        {"paragraphs": [{"text": "%spark\nval query = data.writeStream.start()\nquery.awaitTermination()"}]}
     )
     rendered = json.loads(le._bound_zeppelin_stream(source))
 
     start = rendered["paragraphs"][0]["text"]
     assert "query.processAllAvailable()" in start
-    assert "finally { query.stop() }" in start
+    assert "query.awaitTermination()" not in start
     assert "streams.active" not in start
 
 
@@ -98,7 +96,10 @@ def test_jupyter_stream_is_bounded_in_its_start_cell():
     source = json.dumps(
         {
             "cells": [
-                {"cell_type": "code", "source": ["query = data.writeStream.start()\n"]}
+                {
+                    "cell_type": "code",
+                    "source": ["query = data.writeStream.start()\n", "query.awaitTermination()"],
+                }
             ]
         }
     )
@@ -106,7 +107,7 @@ def test_jupyter_stream_is_bounded_in_its_start_cell():
 
     start = "".join(rendered["cells"][0]["source"])
     assert "query.processAllAvailable()" in start
-    assert "finally:\n    query.stop()" in start
+    assert "query.awaitTermination()" not in start
 
 
 def test_every_streaming_pair_accepts_the_bounded_execution_transform():
@@ -126,31 +127,3 @@ def test_every_streaming_pair_accepts_the_bounded_execution_transform():
         )
         assert "query.processAllAvailable()" in zeppelin
         assert "query.processAllAvailable()" in jupyter
-
-
-def test_clear_checkpoint_deletes_only_matching_prefix(monkeypatch):
-    _min_env(monkeypatch)
-    calls = []
-
-    class FakePaginator:
-        def paginate(self, **kwargs):
-            calls.append(("paginate", kwargs))
-            return [{"Contents": [{"Key": "events/offsets/0"}, {"Key": "events/commits/0"}]}]
-
-    class FakeClient:
-        def get_paginator(self, name):
-            calls.append(("paginator", name))
-            return FakePaginator()
-
-        def delete_objects(self, **kwargs):
-            calls.append(("delete", kwargs))
-
-    monkeypatch.setitem(sys.modules, "boto3", SimpleNamespace(client=lambda *args, **kwargs: FakeClient()))
-    le.clear_checkpoint("/events/")
-
-    assert ("paginate", {"Bucket": "checkpoints", "Prefix": "events/"}) in calls
-    delete = next(value for action, value in calls if action == "delete")
-    assert delete == {
-        "Bucket": "checkpoints",
-        "Delete": {"Objects": [{"Key": "events/offsets/0"}, {"Key": "events/commits/0"}]},
-    }

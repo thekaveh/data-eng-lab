@@ -64,8 +64,8 @@ def _rest_catalog_kwargs() -> dict:
         export_key="ATLAS_MINIO_HOST_ENDPOINT",
         export_file=ROOT / "atlas-consumer.env",
     )
-    user = _env_val("MINIO_ROOT_USER")
-    password = _env_val("MINIO_ROOT_PASSWORD")
+    user = _env_val("MINIO_ICEBERG_ACCESS_KEY")
+    password = _env_val("MINIO_ICEBERG_SECRET_KEY")
     return {
         "uri": iceberg_endpoint,
         "warehouse": "s3a://lakehouse/",
@@ -158,37 +158,6 @@ def drop_table(table: str) -> None:
         pass  # table may not exist yet on first run
 
 
-def clear_checkpoint(prefix: str, bucket: str = "checkpoints") -> None:
-    """Delete one scenario-owned checkpoint prefix from MinIO.
-
-    The reproducibility gate deliberately scopes cleanup to the checkpoint
-    namespace declared by the scenario under test. Other scenario state and
-    user-created objects are left untouched.
-    """
-    import boto3  # noqa: PLC0415
-
-    minio_endpoint = resolve_http_endpoint(
-        "MINIO_HOST_ENDPOINT",
-        "MINIO_PORT",
-        env_file=INFRA_ENV,
-        export_key="ATLAS_MINIO_HOST_ENDPOINT",
-        export_file=ROOT / "atlas-consumer.env",
-    )
-    client = boto3.client(
-        "s3",
-        endpoint_url=minio_endpoint,
-        aws_access_key_id=_env_val("MINIO_ROOT_USER"),
-        aws_secret_access_key=_env_val("MINIO_ROOT_PASSWORD"),
-        region_name=_env_val("MINIO_REGION", "us-east-1"),
-    )
-    object_prefix = f"{prefix.strip('/')}/"
-    paginator = client.get_paginator("list_objects_v2")
-    for page in paginator.paginate(Bucket=bucket, Prefix=object_prefix):
-        objects = [{"Key": item["Key"]} for item in page.get("Contents", [])]
-        if objects:
-            client.delete_objects(Bucket=bucket, Delete={"Objects": objects})
-
-
 # ---------------------------------------------------------------------------
 # run_zeppelin_note
 # ---------------------------------------------------------------------------
@@ -204,9 +173,11 @@ def _bound_zeppelin_stream(note_content: str) -> str:
     ]
     if len(candidates) != 1:
         raise ValueError(f"expected one Zeppelin streaming start paragraph, found {len(candidates)}")
-    candidates[0]["text"] += (
-        "\ntry { query.processAllAvailable() } finally { query.stop() }"
-    )
+    source = candidates[0]["text"]
+    bounded = source.replace("query.awaitTermination()", "query.processAllAvailable()")
+    if bounded == source:
+        raise ValueError("streaming paragraph lacks lease-owned awaitTermination")
+    candidates[0]["text"] = bounded
     return json.dumps(note)
 
 
@@ -297,15 +268,11 @@ def _bound_jupyter_stream(note_content: str) -> str:
     ]
     if len(candidates) != 1:
         raise ValueError(f"expected one Jupyter streaming start cell, found {len(candidates)}")
-    candidates[0]["source"].extend(
-        [
-            "\n",
-            "try:\n",
-            "    query.processAllAvailable()\n",
-            "finally:\n",
-            "    query.stop()\n",
-        ]
-    )
+    source = "".join(candidates[0]["source"])
+    bounded = source.replace("query.awaitTermination()", "query.processAllAvailable()")
+    if bounded == source:
+        raise ValueError("streaming cell lacks lease-owned awaitTermination")
+    candidates[0]["source"] = bounded.splitlines(keepends=True)
     return json.dumps(note)
 
 
