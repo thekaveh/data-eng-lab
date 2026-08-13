@@ -53,7 +53,7 @@ TPCH_FACT_SCHEMA = (
     ("o_orderkey", "bigint"),
     ("o_custkey", "bigint"),
     ("o_orderdate", "date"),
-    ("revenue", "decimal(25, 2)"),
+    ("revenue", "decimal(25,2)"),
     ("line_count", "bigint"),
 )
 TPCH_RESULT_COLUMNS = (

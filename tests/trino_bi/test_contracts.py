@@ -59,7 +59,7 @@ def test_registry_freezes_actual_trino_482_declared_type_spelling():
         "total_revenue",
         "decimal(38, 2)",
     )
-    assert c.TPCH_FACT_SCHEMA[3] == ("revenue", "decimal(25, 2)")
+    assert c.TPCH_FACT_SCHEMA[3] == ("revenue", "decimal(25,2)")
 
 
 DIM_SCHEMA = [
@@ -72,7 +72,7 @@ FACT_SCHEMA = [
     ["o_orderkey", "bigint"],
     ["o_custkey", "bigint"],
     ["o_orderdate", "date"],
-    ["revenue", "decimal(25, 2)"],
+    ["revenue", "decimal(25,2)"],
     ["line_count", "bigint"],
 ]
 TPC_ROWS = [

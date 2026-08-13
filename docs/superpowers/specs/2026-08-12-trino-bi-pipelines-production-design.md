@@ -171,7 +171,7 @@ The task also captures the current snapshot ID of both tables and validates the 
 - `dim_customer(c_custkey bigint, c_name varchar, c_nationkey integer,
   c_mktsegment varchar)`; and
 - `fct_orders(o_orderkey bigint, o_custkey bigint, o_orderdate date,
-  revenue decimal(25, 2), line_count bigint)` using Trino 482's exact declared type spelling.
+  revenue decimal(25,2), line_count bigint)` using Trino 482's information-schema value spelling.
 
 ### 6.2 BI result and reconciliation
 
