@@ -1,8 +1,8 @@
 # Issue #86 streaming checkpoint retention live acceptance
 
-**Date:** 2026-08-13  
-**Branch:** `codex/86-streaming-checkpoint-retention`  
-**Base:** `3b3d4e272cbe2021e30512047d959f5a792bc512`  
+**Date:** 2026-08-13
+**Branch:** `codex/86-streaming-checkpoint-retention`
+**Base:** `3b3d4e272cbe2021e30512047d959f5a792bc512`
 **Boundary:** manual-only exact-leaf apply; automatic and scheduled destructive apply remain disabled
 
 ## Final artifacts

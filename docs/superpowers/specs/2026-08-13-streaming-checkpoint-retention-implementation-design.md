@@ -1,9 +1,9 @@
 # Dry-run-first streaming checkpoint retention implementation design
 
-**Issue:** #86  
-**Parent:** #84  
-**Policy dependency:** #85  
-**Date:** 2026-08-13  
+**Issue:** #86
+**Parent:** #84
+**Policy dependency:** #85
+**Date:** 2026-08-13
 **Status:** Approved design
 
 ## 1. Purpose and boundary
@@ -531,4 +531,3 @@ rollback; source-and-sink recovery remains mandatory for any non-disposable stat
 
 The parent epic #84 remains Open/Todo until #86 is reviewed, promoted through both
 protected branches, live-evidenced, and closed.
-
