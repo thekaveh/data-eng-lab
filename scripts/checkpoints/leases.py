@@ -109,9 +109,9 @@ class LeaseManager:
                 existing = None
             else:
                 existing = (self._decode_lease(body), etag)
+            replace_etag: str | None = None
             if existing is not None:
-                current, _etag = existing
-                self._require_identity(current, matched.checkpoint_id, request.prefix)
+                current, replace_etag = existing
                 expires = _parse_utc(current["expires_at"])
                 heartbeat = _parse_utc(current["heartbeat_at"])
                 if heartbeat is None or expires is None:
@@ -119,9 +119,15 @@ class LeaseManager:
                 if heartbeat > now + timedelta(seconds=self._policy.lease.future_tolerance_seconds):
                     raise LeaseFailure("lease_future_clock")
                 if current["state"] == "active":
+                    self._require_identity(current, matched.checkpoint_id, request.prefix)
                     code = "lease_active" if expires >= now else "lease_expired_active_uncertain"
                     raise LeaseFailure(code)
-                raise LeaseFailure("lease_exists")
+                try:
+                    prior = self._policy.match_prefix(current["prefix"])
+                except (PolicyError, TypeError):
+                    raise LeaseFailure("lease_identity_mismatch") from None
+                if prior.checkpoint_id != matched.checkpoint_id:
+                    raise LeaseFailure("lease_identity_mismatch")
             epoch = self._uuid_factory()
             if not isinstance(epoch, str) or _UUID.fullmatch(epoch) is None:
                 raise LeaseFailure("epoch_invalid")
@@ -141,9 +147,13 @@ class LeaseManager:
             }
             body = canonical_json_bytes(value, max_bytes=self._policy.bounds.max_summary_bytes)
             try:
-                etag = self._gateway.create_control(key, body)
+                etag = (
+                    self._gateway.create_control(key, body)
+                    if replace_etag is None
+                    else self._gateway.replace_lease(key, replace_etag, body)
+                )
             except GatewayFailure:
-                raise LeaseFailure("lease_create_failed") from None
+                raise LeaseFailure("lease_create_failed" if replace_etag is None else "lease_replace_failed") from None
             return LeaseResult(epoch, etag, body)
 
     def heartbeat(self, request: HeartbeatRequest) -> LeaseResult:
@@ -166,7 +176,66 @@ class LeaseManager:
             request.evidence.get("successful") is not True or request.evidence.get("exclusive_run") is not True
         ):
             raise LeaseFailure("terminal_evidence_invalid")
-        return self._transition(request, state=request.state, evidence=request.evidence)
+        key = self._lease_key(request.checkpoint_id)
+        try:
+            current_body, current_etag = self._gateway.read_control(
+                key, max_bytes=self._policy.bounds.max_summary_bytes
+            )
+        except GatewayFailure:
+            raise LeaseFailure("lease_read_failed") from None
+        current = self._decode_lease(current_body)
+        self._require_identity(current, request.checkpoint_id, request.prefix)
+        if current["epoch"] != request.epoch:
+            raise LeaseFailure("lease_identity_mismatch")
+        if current["state"] == "active":
+            result = self._transition(request, state=request.state, evidence=request.evidence)
+        elif current["state"] == request.state and current["terminal_evidence"] == dict(request.evidence):
+            result = LeaseResult(request.epoch, current_etag, current_body)
+        else:
+            raise LeaseFailure("lease_not_active")
+        self._persist_terminal(request, result.body)
+        return result
+
+    def _persist_terminal(self, request: TerminalRequest, lease_body: bytes) -> None:
+        lease = self._decode_lease(lease_body)
+        evidence = request.evidence
+        value = {
+            "checkpoint_id": request.checkpoint_id,
+            "exclusive_run": evidence.get("exclusive_run", False),
+            "generation": dict(evidence["generation"]),
+            "occurred_at": lease["heartbeat_at"],
+            "prefix": request.prefix,
+            "recovery_approved": evidence.get("recovery_approved", False),
+            "schema_version": 1,
+            "sink_disposition_approved": evidence.get("sink_disposition_approved", False),
+            "source_available": evidence.get("source_available", False),
+            "state": request.state,
+            "successful": evidence.get("successful", False),
+        }
+        if any(type(value[field]) is not bool for field in {
+            "exclusive_run",
+            "recovery_approved",
+            "sink_disposition_approved",
+            "source_available",
+            "successful",
+        }):
+            raise LeaseFailure("terminal_evidence_invalid")
+        body = canonical_json_bytes(value, max_bytes=self._policy.bounds.max_summary_bytes)
+        key = f"_retention/terminals/{request.checkpoint_id}.json"
+        try:
+            try:
+                existing, etag = self._gateway.read_control(key, max_bytes=self._policy.bounds.max_summary_bytes)
+            except GatewayFailure as error:
+                if error.code != "control_missing":
+                    raise
+                self._gateway.create_control(key, body)
+            else:
+                if existing != body:
+                    self._gateway.replace_lease(key, etag, body)
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            raise LeaseFailure("terminal_record_failed") from None
 
     def _transition(
         self,

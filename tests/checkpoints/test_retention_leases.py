@@ -25,6 +25,7 @@ RUN_UUID = "550e8400-e29b-41d4-a716-446655440000"
 PREFIX = f"streaming_test/{RUN_UUID}/"
 CHECKPOINT_ID = "go-live-streaming-test-v1"
 LEASE_KEY = f"_retention/leases/{CHECKPOINT_ID}.json"
+TERMINAL_KEY = f"_retention/terminals/{CHECKPOINT_ID}.json"
 EPOCH = "11111111-1111-4111-8111-111111111111"
 
 
@@ -199,7 +200,14 @@ def test_terminal_transition_binds_exact_generation_and_class_state():
         PREFIX,
         EPOCH,
         "stopped",
-        {"generation": {"run_uuid": RUN_UUID}, "successful": True, "exclusive_run": True},
+        {
+            "generation": {"run_uuid": RUN_UUID},
+            "successful": True,
+            "exclusive_run": True,
+            "recovery_approved": True,
+            "source_available": True,
+            "sink_disposition_approved": True,
+        },
     )
 
     result = _manager(gateway, NOW + timedelta(seconds=60)).terminal(request)
@@ -209,6 +217,20 @@ def test_terminal_transition_binds_exact_generation_and_class_state():
     assert value["terminal_evidence"] == request.evidence
     assert value["heartbeat_at"] == "2026-08-13T12:01:00Z"
     assert value["expires_at"] == "2026-08-13T12:11:00Z"
+    terminal = json.loads(gateway.controls[TERMINAL_KEY][0])
+    assert terminal == {
+        "checkpoint_id": CHECKPOINT_ID,
+        "exclusive_run": True,
+        "generation": {"run_uuid": RUN_UUID},
+        "occurred_at": "2026-08-13T12:01:00Z",
+        "prefix": PREFIX,
+        "recovery_approved": True,
+        "schema_version": 1,
+        "sink_disposition_approved": True,
+        "source_available": True,
+        "state": "stopped",
+        "successful": True,
+    }
 
     with pytest.raises(LeaseFailure, match="terminal_state_invalid"):
         _manager(gateway).terminal(replace(request, state="completed"))
@@ -216,6 +238,69 @@ def test_terminal_transition_binds_exact_generation_and_class_state():
         _manager(gateway).terminal(
             replace(request, evidence={**request.evidence, "generation": {"run_uuid": "0" * 36}})
         )
+
+
+def test_terminal_defaults_missing_recovery_facts_to_false_and_rotates_completed_generation_conditionally():
+    gateway = FakeGateway()
+    gateway.controls[LEASE_KEY] = (_active_body(), "a" * 32)
+    manager = _manager(gateway, NOW + timedelta(seconds=60))
+    request = TerminalRequest(
+        CHECKPOINT_ID,
+        PREFIX,
+        EPOCH,
+        "stopped",
+        {"generation": {"run_uuid": RUN_UUID}, "successful": True, "exclusive_run": True},
+    )
+    manager.terminal(request)
+    assert json.loads(gateway.controls[TERMINAL_KEY][0])["recovery_approved"] is False
+
+    next_uuid = "22222222-2222-4222-8222-222222222222"
+    next_prefix = f"streaming_test/{next_uuid}/"
+    rotated = manager.acquire(
+        replace(_acquire(), prefix=next_prefix, session_id="issue86-live-002")
+    )
+
+    assert rotated.epoch == EPOCH
+    assert json.loads(rotated.body)["prefix"] == next_prefix
+    assert gateway.calls[-1][0] == "replace"
+
+
+def test_terminal_control_failure_is_fail_closed_and_retry_can_finish_missing_evidence():
+    class TerminalFailGateway(FakeGateway):
+        fail_terminal = True
+
+        def create_control(self, key, body):
+            if key == TERMINAL_KEY and self.fail_terminal:
+                raise GatewayFailure("control_write_failed")
+            return super().create_control(key, body)
+
+    gateway = TerminalFailGateway()
+    gateway.controls[LEASE_KEY] = (_active_body(), "a" * 32)
+    manager = _manager(gateway, NOW + timedelta(seconds=60))
+    request = TerminalRequest(
+        CHECKPOINT_ID,
+        PREFIX,
+        EPOCH,
+        "stopped",
+        {
+            "generation": {"run_uuid": RUN_UUID},
+            "successful": True,
+            "exclusive_run": True,
+            "recovery_approved": True,
+            "source_available": True,
+            "sink_disposition_approved": True,
+        },
+    )
+
+    with pytest.raises(LeaseFailure, match="terminal_record_failed"):
+        manager.terminal(request)
+    assert json.loads(gateway.controls[LEASE_KEY][0])["state"] == "stopped"
+    gateway.fail_terminal = False
+
+    result = manager.terminal(request)
+
+    assert result.body == gateway.controls[LEASE_KEY][0]
+    assert TERMINAL_KEY in gateway.controls
 
 
 def test_per_checkpoint_lock_serializes_competing_acquires():
