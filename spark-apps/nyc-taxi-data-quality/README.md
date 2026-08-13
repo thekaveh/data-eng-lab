@@ -14,7 +14,8 @@ Adding the upstream dataset/scale/plan/publication/manifest properties to `nyc_t
 producer hardening; this application does not invent those properties or claim that the Bronze
 table can be traced to one resolver generation.
 
-Airflow's `ExternalTaskSensor` waits for the successful `nyc_taxi_etl.submit_nyc_taxi_etl` task at
+Airflow's `wait_for_matching_nyc_taxi_etl` `ExternalTaskSensor` waits for the successful
+`nyc_taxi_etl.submit_nyc_taxi_etl` task at
 the same logical date. The quality task then captures and rechecks the Bronze snapshot. Missing,
 inaccessible, empty, stale, schema-changing, or concurrently changing Bronze state fails closed.
 
@@ -49,8 +50,14 @@ The two source-derived trip timestamps are local civil timestamps and therefore 
 `TimestampNTZType`. Gold logical-date, interval-end, and source-commit fields remain UTC
 `TimestampType` instants.
 
-Rows are clean only when `fare_amount >= 0`, `passenger_count > 0`, and `trip_distance >= 0` all
-evaluate true. Null, NaN, and infinite rule operands are quarantined. Duplicates are preserved, and
+The schema fingerprint is SHA-256 over compact UTF-8 JSON in field order. Every field object has
+the sorted keys `name`, `nullable`, and `type`, with Spark canonical type names and no whitespace or
+terminal newline. The frozen 20-field digest is
+`5a8d2916cc5967c0eeb8318136c1262156cd616105dad67a713f1cb1cc872fc5`.
+
+Rows are clean only when finite `fare_amount > 0` and finite `passenger_count BETWEEN 1 AND 6`
+both evaluate true. `trip_distance` is not a governed rule operand. Null, NaN, and infinite rule
+operands are quarantined. Duplicates are preserved, and
 the null-safe clean/quarantine multisets must exactly conserve the Bronze multiset.
 
 The Gold schema is:
@@ -87,8 +94,10 @@ it bypasses this serialization boundary.
 
 ## Dashboard and operations
 
-The durable dashboard source is the Gold Iceberg table. These fixed SELECT-only Trino queries are
-bounded and deterministically ordered:
+The durable dashboard source is the Gold Iceberg table. A run is complete only when it has exactly
+one row for every frozen `(rule_id, rule_version)` pair with consistent dataset, binding, source
+table, snapshot, and schema fingerprint. These fixed SELECT-only Trino queries are bounded and
+deterministically ordered:
 
 - `queries/latest.sql`: latest complete accepted eight-row fact set;
 - `queries/trend.sql`: at most 90 complete accepted runs; and

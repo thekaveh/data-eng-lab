@@ -12,15 +12,15 @@ The input binding is the exact `lakehouse.bronze.nyc_taxi_trips` snapshot ID, co
 - `lakehouse.silver.nyc_taxi_quarantine`
 - `lakehouse.gold.nyc_taxi_quality_facts`
 
-Clean and quarantine preserve the exact nullable 20-column Bronze schema, duplicate multiplicity, and all rows with null rule operands. The deterministic Gold MERGE key is `(quality_run_id, rule_id)`.
+Clean requires finite `fare_amount > 0` and finite `passenger_count BETWEEN 1 AND 6`; `trip_distance` is not a governed operand. Clean and its null-safe quarantine complement preserve the exact nullable 20-column Bronze schema, duplicate multiplicity, and all rows with null rule operands. The deterministic Gold MERGE key is `(quality_run_id, rule_id)`.
 
 ## 3. Quality Contract
 
-The application evaluates source availability, exact schema, snapshot freshness, invalid ratio, Silver partition conservation, nonempty clean output, quarantine ratio, and output readback. Invalid/quarantine ratios pass through 1%, warn through 5%, and fail above 5%. Facts record exact rule versions, owners, thresholds, severity, canonical decimal metrics, and diagnostic codes.
+The application evaluates source availability, exact schema, snapshot freshness, invalid ratio, Silver partition conservation, nonempty clean output, quarantine ratio, and output readback. The schema fingerprint is SHA-256 over compact UTF-8 JSON in field order with sorted `name`, `nullable`, and `type` keys; the frozen digest is `5a8d2916cc5967c0eeb8318136c1262156cd616105dad67a713f1cb1cc872fc5`. Invalid/quarantine ratios pass through 1%, warn through 5%, and fail above 5%. Facts record exact rule versions, owners, thresholds, severity, canonical decimal metrics, and diagnostic codes.
 
 ## 4. Orchestration and Recovery
 
-`wait_for_nyc_taxi_etl` requires the successful same-logical-date `nyc_taxi_etl.submit_nyc_taxi_etl` task before `submit_nyc_taxi_data_quality` starts. The `@daily` DAG sets `max_active_runs=1`. Because the two Silver replacements and Gold MERGE are not cross-table atomic, direct concurrent JAR execution is unsupported; a deterministic same-date rerun is the supported recovery.
+`wait_for_matching_nyc_taxi_etl` requires the successful same-logical-date `nyc_taxi_etl.submit_nyc_taxi_etl` task before `submit_nyc_taxi_data_quality` starts. The `@daily` DAG sets `max_active_runs=1`. Because the two Silver replacements and Gold MERGE are not cross-table atomic, direct concurrent JAR execution is unsupported; a deterministic same-date rerun is the supported recovery.
 
 ## 5. Dashboard
 

@@ -133,7 +133,8 @@ class NycTaxiDataQualitySpec extends AnyFunSuite with BeforeAndAfterAll {
     boundaries.foreach { boundary =>
       val store = new RecordingStore(failAt = boundary)
       assertThrows[RuntimeException](new QualityPipeline(store).run(Arguments))
-      assert(store.actions.last == boundary)
+      assert(store.actions.contains(boundary))
+      assert(!store.actions.dropWhile(_ != boundary).drop(1).exists(_.startsWith("replace")))
     }
   }
 
@@ -147,13 +148,15 @@ class NycTaxiDataQualitySpec extends AnyFunSuite with BeforeAndAfterAll {
       }
     }
     assertThrows[QualityFailure](new QualityPipeline(store).run(Arguments))
-    assert(!store.actions.contains("mergeFacts"))
+    assert(store.facts.map(_.ruleId) == Seq("silver.output_readback.v1"))
+    assert(store.facts.head.diagnosticCode == "source_changed")
   }
 
   test("failure between Silver writes converges on same-snapshot retry without duplicate facts") {
     val store = new RecordingStore(failAt = "replaceQuarantine")
     assertThrows[RuntimeException](new QualityPipeline(store).run(Arguments))
-    assert(store.clean != null && store.quarantine == null && store.facts.isEmpty)
+    assert(store.clean != null && store.quarantine == null)
+    assert(store.facts.map(_.ruleId) == Seq("silver.output_readback.v1"))
     assert(store.silverProperties.keySet == Set(QualityContract.CleanTable))
     store.failAt = ""
     val first = new QualityPipeline(store).run(Arguments)
@@ -181,5 +184,98 @@ class NycTaxiDataQualitySpec extends AnyFunSuite with BeforeAndAfterAll {
       }
     }
     assertThrows[QualityFailure](new QualityPipeline(duplicate).run(Arguments))
+  }
+
+  test("fact readback compares all 23 fields including timestamps decimals nulls and lineage") {
+    val corruptions: Seq[(Int, Any)] = Seq(
+      0 -> ("f" * 64),
+      1 -> Timestamp.from(Instant.parse("2026-08-13T01:00:01Z")),
+      2 -> Timestamp.from(Instant.parse("2026-08-13T06:00:01Z")),
+      3 -> "other_dataset",
+      4 -> "other_binding",
+      5 -> "other_upstream",
+      6 -> "lakehouse.bronze.other",
+      7 -> Long.box(Snapshot.id + 1L),
+      8 -> null,
+      9 -> ("f" * 64),
+      10 -> "Other",
+      11 -> "other.rule.v1",
+      12 -> "other_rule_version",
+      13 -> "Other Owner",
+      14 -> "wrong_metric",
+      15 -> Long.box(999L),
+      16 -> Long.box(999L),
+      17 -> new java.math.BigDecimal("0.999999999"),
+      18 -> "ratio>0.999999999",
+      19 -> "wrong_fail_threshold",
+      20 -> "error",
+      21 -> "fail",
+      22 -> "wrong_diagnostic"
+    )
+    corruptions.foreach { case (index, replacement) =>
+      val store = new RecordingStore() {
+        override def readFacts(runId: String): DataFrame = {
+          actions += "readFacts"
+          val original = factsFrame(facts).collect().toSeq
+          val values = original.head.toSeq.updated(index, replacement)
+          spark.createDataFrame(
+            spark.sparkContext.parallelize(Row.fromSeq(values) +: original.tail),
+            QualityContract.factsSchema
+          )
+        }
+      }
+      val failure = intercept[QualityFailure](new QualityPipeline(store).run(Arguments))
+      assert(failure.category == "facts_readback")
+      assert(failure.diagnosticCode == "facts_exact_mismatch")
+    }
+  }
+
+  test("fact readback evaluation failures are bounded and categorized") {
+    val store = new RecordingStore() {
+      override def readFacts(runId: String): DataFrame = {
+        actions += "readFacts"
+        spark.createDataFrame(
+          spark.sparkContext.emptyRDD[Row],
+          org.apache.spark.sql.types.StructType(QualityContract.factsSchema.fields.reverse)
+        )
+      }
+    }
+    val failure = intercept[QualityFailure](new QualityPipeline(store).run(Arguments))
+    assert(failure.category == "facts_readback")
+    assert(failure.diagnosticCode == "facts_exact_mismatch")
+    assert(failure.getMessage == "Quality facts readback does not match the intended rows")
+  }
+
+  test("controlled boundary failures expose bounded categories and persist only safe diagnostics") {
+    val scenarios = Seq(
+      "captureSource" -> "source_metadata",
+      "readBronze" -> "source_read",
+      "replaceClean" -> "silver_write",
+      "readClean" -> "silver_readback",
+      "replaceQuarantine" -> "silver_write",
+      "readQuarantine" -> "silver_readback"
+    )
+    scenarios.foreach { case (boundary, category) =>
+      val store = new RecordingStore(failAt = boundary)
+      val failure = intercept[QualityFailure](new QualityPipeline(store).run(Arguments))
+      assert(failure.category == category)
+      assert(failure.diagnosticCode.matches("[a-z0-9_]{1,64}"))
+      assert(failure.getMessage.length <= 160 && !failure.getMessage.contains("failure:"))
+      assert(!store.actions.dropWhile(_ != boundary).drop(1).exists(_.startsWith("replace")))
+      if (boundary != "captureSource") assert(store.facts.nonEmpty)
+    }
+  }
+
+  test("schema mismatch persists the schema diagnostic before any Silver mutation") {
+    val wrong = spark.createDataFrame(
+      spark.sparkContext.emptyRDD[Row],
+      org.apache.spark.sql.types.StructType(QualityContract.bronzeSchema.fields.reverse)
+    )
+    val store = new RecordingStore(source = wrong)
+    val failure = intercept[QualityFailure](new QualityPipeline(store).run(Arguments))
+    assert(failure.category == "source_schema")
+    assert(failure.diagnosticCode == "schema_mismatch")
+    assert(store.facts.map(_.ruleId) == Seq("bronze.schema.v1"))
+    assert(!store.actions.exists(_.startsWith("replace")))
   }
 }

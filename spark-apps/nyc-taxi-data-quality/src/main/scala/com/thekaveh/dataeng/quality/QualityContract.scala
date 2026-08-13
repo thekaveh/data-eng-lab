@@ -163,9 +163,20 @@ object QualityContract {
       .map(byte => f"${byte & 0xff}%02x")
       .mkString
 
-  val schemaSha256: String = sha256(bronzeSchema.fields.map { field =>
-    s"${field.name}:${field.dataType.sql}:${field.nullable}"
-  }.mkString("\n"))
+  private def jsonString(value: String): String =
+    "\"" + value.flatMap {
+      case '\\' => "\\\\"
+      case '"' => "\\\""
+      case character => character.toString
+    } + "\""
+
+  val canonicalSchemaJson: String = bronzeSchema.fields.map { field =>
+    val canonicalType = field.dataType.typeName
+    s"{\"name\":${jsonString(field.name)},\"nullable\":${field.nullable}," +
+      s"\"type\":${jsonString(canonicalType)}}"
+  }.mkString("[", ",", "]")
+
+  val schemaSha256: String = sha256(canonicalSchemaJson)
 
   def qualityRunId(logicalDate: Instant, snapshot: Option[Long]): String = {
     snapshot.foreach(value => require(value > 0, "source snapshot must be positive"))

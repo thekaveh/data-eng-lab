@@ -42,7 +42,7 @@ The paired Zeppelin and Jupyter notebooks read with `spark.table("lakehouse.bron
 
 ## 5. Orchestration
 
-The `@daily` DAG uses `max_active_runs=1`. `wait_for_nyc_taxi_etl` is a bounded rescheduling `ExternalTaskSensor` for `nyc_taxi_etl.submit_nyc_taxi_etl` at the same logical date; `submit_nyc_taxi_data_quality` submits the Jenkins-published JAR through Atlas's REST-confirming Spark operator. Concurrent direct JAR execution is unsupported.
+The `@daily` DAG uses `max_active_runs=1`. `wait_for_matching_nyc_taxi_etl` is a bounded rescheduling `ExternalTaskSensor` for `nyc_taxi_etl.submit_nyc_taxi_etl` at the same logical date; `submit_nyc_taxi_data_quality` submits the Jenkins-published JAR through Atlas's REST-confirming Spark operator. Concurrent direct JAR execution is unsupported.
 
 The final artifact passed matching-ETL execution, a same-date Airflow replacement/retry, distinct terminal Spark-driver confirmation, exact fact idempotence, fixed-dashboard validation, unchanged source pointer, and volume-preserving cleanup. The tracked evidence record is `2026-08-13-nyc-taxi-data-quality-live-acceptance.md` in the repository's internal report directory.
 

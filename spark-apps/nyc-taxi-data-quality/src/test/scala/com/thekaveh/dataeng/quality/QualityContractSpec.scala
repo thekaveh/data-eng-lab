@@ -63,7 +63,10 @@ class QualityContractSpec extends AnyFunSuite {
     )
     assert(QualityContract.bronzeSchema.fields.map(field => field.name -> field.dataType).toSeq == expected)
     assert(QualityContract.bronzeSchema.fields.forall(_.nullable))
-    assert(QualityContract.schemaSha256.matches("[0-9a-f]{64}"))
+    assert(QualityContract.canonicalSchemaJson.startsWith("[{\"name\":\"VendorID\",\"nullable\":true,\"type\":\"long\"}"))
+    assert(!QualityContract.canonicalSchemaJson.contains("\n"))
+    assert(QualityContract.schemaSha256 ==
+      "5a8d2916cc5967c0eeb8318136c1262156cd616105dad67a713f1cb1cc872fc5")
   }
 
   test("freezes the exact non-nullable and nullable facts schema") {

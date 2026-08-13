@@ -130,8 +130,10 @@ class QualityStoreSpec extends AnyFunSuite with BeforeAndAfterAll {
       new RecordingBackend(source = sourceFrame, metadata = metadataFrame(0L))).captureSource())
 
     val drift = empty(StructType(QualityContract.bronzeSchema.fields.reverse))
-    assertThrows[IllegalArgumentException](new SparkQualityStore(
+    val schemaFailure = intercept[QualityFailure](new SparkQualityStore(
       new RecordingBackend(source = drift, metadata = metadataFrame())).captureSource())
+    assert(schemaFailure.category == "source_schema")
+    assert(schemaFailure.diagnosticCode == "schema_mismatch")
   }
 
   test("replaces one Silver table then requires the exact property readback") {

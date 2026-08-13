@@ -31,6 +31,8 @@ def test_jenkins_tests_packages_and_publishes_exact_reviewed_jar():
     ):
         assert fragment in text
     assert "set -x" not in text and "echo $MINIO" not in text
+    assert "set +x" in text
+    assert text.index("set +x") < text.index("mc alias set atlas")
 
 
 def test_runbook_freezes_snapshot_only_policy_rules_and_recovery_contract():

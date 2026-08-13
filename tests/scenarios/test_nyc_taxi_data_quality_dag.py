@@ -105,7 +105,7 @@ def test_sensor_requires_exact_same_logical_date_successful_upstream_task(dag_mo
     assert len(sensor_class.instances) == 1
     sensor = sensor_class.instances[0]
     assert sensor.kwargs == {
-        "task_id": "wait_for_nyc_taxi_etl",
+        "task_id": "wait_for_matching_nyc_taxi_etl",
         "external_dag_id": "nyc_taxi_etl",
         "external_task_id": "submit_nyc_taxi_etl",
         "allowed_states": ["success"],
@@ -116,7 +116,7 @@ def test_sensor_requires_exact_same_logical_date_successful_upstream_task(dag_mo
         "timeout": 3600,
     }
     assert "execution_delta" not in sensor.kwargs and "execution_date_fn" not in sensor.kwargs
-    assert edges == [("wait_for_nyc_taxi_etl", "submit_nyc_taxi_data_quality")]
+    assert edges == [("wait_for_matching_nyc_taxi_etl", "submit_nyc_taxi_data_quality")]
 
 
 def test_spark_task_uses_exact_fixed_arguments_and_runtime_contract(dag_module):

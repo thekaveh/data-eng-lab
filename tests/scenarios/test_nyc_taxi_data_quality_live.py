@@ -9,9 +9,11 @@ import re
 import subprocess
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
+from decimal import ROUND_HALF_UP, Decimal
 from pathlib import Path
 
 import pytest
@@ -36,8 +38,10 @@ _MAX_POINTER_BYTES = 1 << 20
 _MAX_TASK_LOG_BYTES = 1 << 20
 _MAX_TASK_LOG_ATTEMPTS = 4
 _MAX_TRINO_ERROR_BYTES = 4096
-BRONZE_SCHEMA = sorted(
-    (
+_TRINO_NEXT_URI = re.compile(
+    r"\Ahttp://trino:8080/v1/statement/[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*\Z"
+)
+BRONZE_FIELDS = (
         "VendorID:long",
         "tpep_pickup_datetime:timestamp",
         "tpep_dropoff_datetime:timestamp",
@@ -58,8 +62,66 @@ BRONZE_SCHEMA = sorted(
         "congestion_surcharge:double",
         "airport_fee:double",
         "trip_date:date",
-    )
 )
+BRONZE_SCHEMA = sorted(BRONZE_FIELDS)
+CANONICAL_BRONZE_FIELDS = tuple(
+    value.replace(":timestamp", ":timestamp_ntz")
+    if value.startswith(("tpep_pickup_datetime:", "tpep_dropoff_datetime:"))
+    else value
+    for value in BRONZE_FIELDS
+)
+SCHEMA_JSON = json.dumps(
+    [
+        {"name": value.split(":", 1)[0], "nullable": True, "type": value.split(":", 1)[1]}
+        for value in CANONICAL_BRONZE_FIELDS
+    ],
+    sort_keys=True,
+    separators=(",", ":"),
+)
+SCHEMA_SHA256 = "5a8d2916cc5967c0eeb8318136c1262156cd616105dad67a713f1cb1cc872fc5"
+QUERY_COLUMNS = {
+    "latest": [
+        ("quality_run_id", "varchar"), ("logical_date_utc", "varchar"),
+        ("source_snapshot_id", "bigint"), ("layer", "varchar"), ("rule_id", "varchar"),
+        ("owner", "varchar"), ("metric_name", "varchar"), ("metric_numerator", "bigint"),
+        ("metric_denominator", "bigint"), ("metric_value", "decimal(38,9)"),
+        ("warn_threshold", "varchar"), ("fail_threshold", "varchar"),
+        ("severity", "varchar"), ("status", "varchar"), ("diagnostic_code", "varchar"),
+    ],
+    "trend": [
+        ("quality_run_id", "varchar"), ("logical_date_utc", "varchar"),
+        ("source_snapshot_id", "bigint"), ("source_row_count", "bigint"),
+        ("invalid_row_count", "bigint"), ("invalid_ratio", "decimal(38,9)"),
+        ("clean_row_count", "bigint"), ("quarantine_row_count", "bigint"),
+        ("quarantine_ratio", "decimal(38,9)"), ("overall_status", "varchar"),
+    ],
+    "operator_attention": [
+        ("quality_run_id", "varchar"), ("logical_date_utc", "varchar"),
+        ("source_snapshot_id", "bigint"), ("layer", "varchar"), ("rule_id", "varchar"),
+        ("status", "varchar"), ("severity", "varchar"), ("diagnostic_code", "varchar"),
+        ("owner", "varchar"), ("metric_name", "varchar"), ("metric_numerator", "bigint"),
+        ("metric_denominator", "bigint"), ("metric_value", "decimal(38,9)"),
+        ("warn_threshold", "varchar"), ("fail_threshold", "varchar"),
+    ],
+}
+RULE_METADATA = {
+    "bronze.source_available.v1": ("Bronze", "Data Engineering", "source_row_count", None, "rows=0"),
+    "bronze.schema.v1": ("Bronze", "Data Engineering", "schema_match_ratio", None, "ratio<1.000000000"),
+    "bronze.snapshot_freshness.v1": ("Bronze", "Data Engineering", "snapshot_age_seconds", None, "seconds>21600"),
+    "bronze.invalid_ratio.v1": (
+        "Bronze", "Data Quality Engineering", "invalid_row_ratio", "ratio>0.010000000", "ratio>0.050000000"
+    ),
+    "silver.partition_conservation.v1": (
+        "Silver", "Data Quality Engineering", "partition_row_ratio", None, "ratio!=1.000000000"
+    ),
+    "silver.clean_nonempty.v1": ("Silver", "Data Quality Engineering", "clean_row_count", None, "rows=0"),
+    "silver.quarantine_ratio.v1": (
+        "Silver", "Data Quality Engineering", "quarantine_row_ratio", "ratio>0.010000000", "ratio>0.050000000"
+    ),
+    "silver.output_readback.v1": (
+        "Silver", "Data Platform Engineering", "readback_check_ratio", None, "ratio<1.000000000"
+    ),
+}
 
 pytestmark = pytest.mark.infra
 
@@ -108,25 +170,38 @@ def _owned_stack(runner=None, probe=None):
     if existing:
         raise RuntimeError(f"exclusive acceptance refused; project containers exist: {existing}")
     primary = None
-    started = False
+    cleanup_required = False
     try:
+        cleanup_required = True
         execute("./scripts/start-all.sh")
-        started = True
         yield
     except BaseException as error:
         primary = error
         raise
     finally:
+        cleanup_failures = []
         try:
-            if started:
+            if cleanup_required:
                 execute("./scripts/stop-all.sh")
+        except BaseException as cleanup:
+            cleanup_failures.append(cleanup)
+        try:
             remaining = tuple(inspect())
             if remaining:
                 raise RuntimeError(f"volume-preserving cleanup left project containers: {remaining}")
         except BaseException as cleanup:
-            if primary is None:
-                raise
-            primary.add_note(f"volume-preserving stack cleanup also failed: {cleanup}")
+            cleanup_failures.append(cleanup)
+        if cleanup_failures:
+            if primary is not None:
+                primary.add_note("volume-preserving stack cleanup also failed")
+            else:
+                control = next(
+                    (failure for failure in cleanup_failures if isinstance(failure, (KeyboardInterrupt, SystemExit))),
+                    None,
+                )
+                if control is not None:
+                    raise control
+                raise RuntimeError("volume-preserving stack cleanup failed") from None
 
 
 def _airflow(method: str, path: str, body: dict | None = None) -> dict:
@@ -183,20 +258,30 @@ def _paused_dags(api=None):
     primary = None
     try:
         for dag_id in DAG_IDS:
-            request("PATCH", f"/dags/{dag_id}", {"is_paused": True})
             mutated.append(dag_id)
+            request("PATCH", f"/dags/{dag_id}", {"is_paused": True})
         yield initial
     except BaseException as error:
         primary = error
         raise
     finally:
+        cleanup_failures = []
         for dag_id in reversed(mutated):
             try:
                 request("PATCH", f"/dags/{dag_id}", {"is_paused": initial[dag_id]})
             except BaseException as cleanup:
-                if primary is None:
-                    raise
-                primary.add_note(f"DAG pause restoration failed for {dag_id}: {cleanup}")
+                cleanup_failures.append((dag_id, cleanup))
+                if primary is not None:
+                    primary.add_note(f"DAG pause restoration failed for {dag_id}")
+        if primary is None and cleanup_failures:
+            control = next(
+                (failure for _, failure in cleanup_failures if isinstance(failure, (KeyboardInterrupt, SystemExit))),
+                None,
+            )
+            if control is not None:
+                raise control
+            failed_ids = ",".join(dag_id for dag_id, _ in cleanup_failures)
+            raise RuntimeError(f"DAG pause restoration failed for: {failed_ids}") from None
 
 
 def _list_runs(api, dag_id: str) -> list[dict]:
@@ -399,7 +484,7 @@ def _quality_run_evidence(run_id: str, driver_id: str, logical_date: datetime) -
         "run": matches[0],
         "driver_id": driver_id,
         "driver": _spark_terminal(driver_id),
-        "sensor_log": _task_log(run_id, "wait_for_nyc_taxi_etl"),
+        "sensor_log": _task_log(run_id, "wait_for_matching_nyc_taxi_etl"),
         "spark_log": _task_log(run_id, "submit_nyc_taxi_data_quality"),
         "logical_date": logical_date.isoformat(),
     }
@@ -668,6 +753,64 @@ def _trino(sql: str, runner=None) -> list[dict]:
     return [json.loads(line) for line in result.stdout.splitlines() if line.strip()]
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, request, file_pointer, code, message, headers, new_url):
+        raise AssertionError("Trino protocol redirects are forbidden")
+
+
+def _local_trino_next_uri(raw_next: object, port: str) -> str:
+    if not isinstance(raw_next, str) or not _TRINO_NEXT_URI.fullmatch(raw_next):
+        raise AssertionError("Trino next URI escaped the reviewed statement origin")
+    parsed = urllib.parse.urlsplit(raw_next)
+    if any(segment in {".", ".."} for segment in parsed.path.split("/")):
+        raise AssertionError("Trino next URI escaped the reviewed statement origin")
+    return f"http://127.0.0.1:{port}{parsed.path}"
+
+
+def _trino_typed(sql: str) -> tuple[list[tuple[str, str]], list[dict]]:
+    port = _env("TRINO_PORT", "20029")
+    local_statement = f"http://127.0.0.1:{port}/v1/statement"
+    headers = {
+        "X-Trino-User": "data_eng_lab_quality_acceptance",
+        "X-Trino-Source": "data-eng-lab-quality-acceptance",
+        "X-Trino-Catalog": "lakehouse",
+    }
+    next_url = local_statement
+    payload = sql.encode("utf-8")
+    columns = None
+    rows: list[list] = []
+    total_bytes = 0
+    opener = urllib.request.build_opener(_NoRedirect)
+    for _ in range(32):
+        request = urllib.request.Request(next_url, data=payload, headers=headers, method="POST" if payload else "GET")
+        with opener.open(request, timeout=30) as response:
+            raw = response.read((256 * 1024) + 1)
+        if len(raw) > 256 * 1024:
+            raise AssertionError("Trino protocol page exceeds byte bound")
+        total_bytes += len(raw)
+        if total_bytes > 1024 * 1024:
+            raise AssertionError("Trino protocol result exceeds byte bound")
+        document = json.loads(raw)
+        if document.get("error"):
+            raise AssertionError("fixed Trino protocol query failed")
+        page_columns = document.get("columns")
+        if page_columns is not None:
+            observed = [(item["name"], item["type"]) for item in page_columns]
+            if columns is not None and columns != observed:
+                raise AssertionError("Trino protocol columns changed between pages")
+            columns = observed
+        rows.extend(document.get("data") or [])
+        raw_next = document.get("nextUri")
+        if raw_next is None:
+            if columns is None or document.get("stats", {}).get("state") != "FINISHED":
+                raise AssertionError("Trino protocol result is not terminal and typed")
+            names = [name for name, _ in columns]
+            return columns, [dict(zip(names, row, strict=True)) for row in rows]
+        next_url = _local_trino_next_uri(raw_next, port)
+        payload = None
+    raise AssertionError("Trino protocol result exceeds page bound")
+
+
 def _snapshot_table(table: str) -> dict:
     spec = importlib.util.spec_from_file_location("quality_live_exec", ROOT / "tests/scenarios/live_exec.py")
     module = importlib.util.module_from_spec(spec)
@@ -690,6 +833,108 @@ def _snapshot_id(namespace: str, table: str) -> str:
     return str(rows[0]["snapshot_id"])
 
 
+def _snapshot_binding(namespace: str, table: str) -> tuple[str, str]:
+    rows = _trino(
+        f'SELECT snapshot_id, format_datetime(committed_at, \'yyyy-MM-dd\'\'T\'\'HH:mm:ss\'\'Z\'\') '
+        f'AS committed_at_utc FROM lakehouse.{namespace}."{table}$snapshots" '
+        "ORDER BY committed_at DESC, snapshot_id DESC LIMIT 1"
+    )
+    if len(rows) != 1:
+        raise AssertionError(f"{table} current snapshot binding is invalid")
+    return str(rows[0]["snapshot_id"]), str(rows[0]["committed_at_utc"])
+
+
+def _expected_quality_run_id(logical_date: datetime, snapshot_id: str) -> str:
+    canonical = logical_date.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return hashlib.sha256(
+        f"nyc_taxi\n{canonical}\n{snapshot_id}\nnyc_taxi_quality_v1".encode()
+    ).hexdigest()
+
+
+def _utc_second(value: str) -> str:
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.microsecond != 0:
+        raise AssertionError("owned timestamp is not whole-second UTC")
+    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _facts_for_runs(run_ids: tuple[str, ...]) -> list[dict]:
+    values = ",".join(f"'{value}'" for value in run_ids)
+    return _trino(
+        "SELECT quality_run_id, format_datetime(logical_date, 'yyyy-MM-dd''T''HH:mm:ss''Z''') AS logical_date, "
+        "format_datetime(data_interval_end, 'yyyy-MM-dd''T''HH:mm:ss''Z''') AS data_interval_end, "
+        "dataset_id, binding_type, upstream_dag_id, source_table, source_snapshot_id, "
+        "format_datetime(source_snapshot_committed_at, 'yyyy-MM-dd''T''HH:mm:ss''Z''') "
+        "AS source_snapshot_committed_at, "
+        "source_schema_sha256, layer, rule_id, rule_version, owner, metric_name, metric_numerator, "
+        "metric_denominator, CAST(metric_value AS varchar) AS metric_value, warn_threshold, fail_threshold, "
+        "severity, status, diagnostic_code FROM lakehouse.gold.nyc_taxi_quality_facts "
+        f"WHERE quality_run_id IN ({values}) ORDER BY quality_run_id, rule_id"
+    )
+
+
+def _ratio(numerator: int, denominator: int) -> str:
+    value = Decimal(numerator) / Decimal(denominator)
+    return str(value.quantize(Decimal("0.000000001"), rounding=ROUND_HALF_UP))
+
+
+def _assert_owned_facts(rows: list[dict], expected_runs: dict[str, dict]) -> None:
+    if len(rows) != 8 * len(expected_runs):
+        raise AssertionError("Gold facts do not contain the exact owned rows")
+    for run_id, binding in expected_runs.items():
+        observed = [row for row in rows if row["quality_run_id"] == run_id]
+        if {row["rule_id"] for row in observed} != set(RULE_METADATA) or len(observed) != 8:
+            raise AssertionError("Gold facts do not contain the exact governed rule set")
+        source = binding["source_count"]
+        clean = binding["clean_count"]
+        quarantine = binding["quarantine_count"]
+        age = binding["age_seconds"]
+        metrics = {
+            "bronze.source_available.v1": (source, None, f"{source}.000000000"),
+            "bronze.schema.v1": (20, 20, "1.000000000"),
+            "bronze.snapshot_freshness.v1": (age, 21600, f"{age}.000000000"),
+            "bronze.invalid_ratio.v1": (quarantine, source, _ratio(quarantine, source)),
+            "silver.partition_conservation.v1": (source, source, "1.000000000"),
+            "silver.clean_nonempty.v1": (clean, source, f"{clean}.000000000"),
+            "silver.quarantine_ratio.v1": (quarantine, source, _ratio(quarantine, source)),
+            "silver.output_readback.v1": (source, source, "1.000000000"),
+        }
+        ratio_status = "warn" if float(_ratio(quarantine, source)) > 0.01 else "pass"
+        for row in observed:
+            layer, owner, metric_name, warn, fail = RULE_METADATA[row["rule_id"]]
+            numerator, denominator, metric_value = metrics[row["rule_id"]]
+            status = ratio_status if row["rule_id"] in {
+                "bronze.invalid_ratio.v1", "silver.quarantine_ratio.v1"
+            } else "pass"
+            expected = {
+                "quality_run_id": run_id,
+                "logical_date": binding["logical_date"],
+                "data_interval_end": binding["data_interval_end"],
+                "dataset_id": "nyc_taxi",
+                "binding_type": "iceberg_snapshot",
+                "upstream_dag_id": "nyc_taxi_etl",
+                "source_table": "lakehouse.bronze.nyc_taxi_trips",
+                "source_snapshot_id": int(binding["snapshot_id"]),
+                "source_snapshot_committed_at": binding["committed_at"],
+                "source_schema_sha256": SCHEMA_SHA256,
+                "layer": layer,
+                "rule_id": row["rule_id"],
+                "rule_version": "nyc_taxi_quality_v1",
+                "owner": owner,
+                "metric_name": metric_name,
+                "metric_numerator": numerator,
+                "metric_denominator": denominator,
+                "metric_value": metric_value,
+                "warn_threshold": warn,
+                "fail_threshold": fail,
+                "severity": "warning" if status == "warn" else "info",
+                "status": status,
+                "diagnostic_code": "threshold_warn" if status == "warn" else "ok",
+            }
+            if row != expected:
+                raise AssertionError(f"Gold fact differs from exact owned expectation for {row['rule_id']}")
+
+
 def _quality_properties(table: str) -> dict[str, str]:
     keys = ",".join(f"'{key}'" for key in QUALITY_PROPERTIES)
     rows = _trino(
@@ -699,10 +944,9 @@ def _quality_properties(table: str) -> dict[str, str]:
     return {str(row["key"]): str(row["value"]) for row in rows}
 
 
-def _query_file(name: str) -> tuple[list[str], list[dict], str]:
+def _query_file(name: str) -> tuple[list[tuple[str, str]], list[dict], str]:
     sql = (APP / "queries" / f"{name}.sql").read_text(encoding="utf-8")
-    rows = _trino(sql)
-    columns = list(rows[0]) if rows else []
+    columns, rows = _trino_typed(sql)
     canonical = json.dumps(rows, sort_keys=True, separators=(",", ":")).encode()
     return columns, rows, hashlib.sha256(canonical).hexdigest()
 
@@ -757,6 +1001,7 @@ def test_nyc_taxi_data_quality_live_acceptance():
             )
             owned["nyc_taxi_etl"].add(etl_run_1)
             _assert_bronze_schema(_snapshot_table("lakehouse.bronze.nyc_taxi_trips"))
+            first_bronze_binding = _snapshot_binding("bronze", "nyc_taxi_trips")
             quality_run_1, quality_driver_1 = _execute_owned_run(
                 "nyc_taxi_data_quality",
                 first_logical,
@@ -807,6 +1052,7 @@ def test_nyc_taxi_data_quality_live_acceptance():
                 "nyc_taxi_etl", second_logical, baseline=baseline["nyc_taxi_etl"], owned=owned["nyc_taxi_etl"]
             )
             owned["nyc_taxi_etl"].add(etl_run_2)
+            second_bronze_binding = _snapshot_binding("bronze", "nyc_taxi_trips")
             quality_run_2, quality_driver_2 = _execute_owned_run(
                 "nyc_taxi_data_quality",
                 second_logical,
@@ -814,6 +1060,7 @@ def test_nyc_taxi_data_quality_live_acceptance():
                 owned=owned["nyc_taxi_data_quality"],
             )
             owned["nyc_taxi_data_quality"].add(quality_run_2)
+            quality_evidence_2 = _quality_run_evidence(quality_run_2, quality_driver_2, second_logical)
             second = {
                 "bronze": _snapshot_table("lakehouse.bronze.nyc_taxi_trips"),
                 "clean": _snapshot_table("lakehouse.silver.nyc_taxi_clean"),
@@ -841,19 +1088,62 @@ def test_nyc_taxi_data_quality_live_acceptance():
                 "count_if(status NOT IN ('pass','warn')) AS rejected "
                 "FROM lakehouse.gold.nyc_taxi_quality_facts GROUP BY quality_run_id ORDER BY quality_run_id"
             )
-            if len(facts) < 2 or any(
-                int(row["fact_count"]) != 8 or int(row["rule_count"]) != 8 or int(row["rejected"]) != 0
-                for row in facts[-2:]
-            ):
-                raise AssertionError("Gold facts do not contain two exact complete accepted runs")
+            first_fact_run_id = _expected_quality_run_id(first_logical, first_bronze_binding[0])
+            second_fact_run_id = _expected_quality_run_id(second_logical, second_bronze_binding[0])
+            expected_runs = {
+                first_fact_run_id: {
+                    "logical_date": first_logical.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "data_interval_end": _utc_second(quality_evidence_1["run"]["data_interval_end"]),
+                    "snapshot_id": first_bronze_binding[0],
+                    "committed_at": first_bronze_binding[1],
+                    "age_seconds": int(
+                        (
+                            datetime.fromisoformat(
+                                quality_evidence_1["run"]["data_interval_end"].replace("Z", "+00:00")
+                            )
+                            - datetime.fromisoformat(first_bronze_binding[1].replace("Z", "+00:00"))
+                        ).total_seconds()
+                    ),
+                    "source_count": int(first["bronze"]["row_count"]),
+                    "clean_count": int(first["clean"]["row_count"]),
+                    "quarantine_count": int(first["quarantine"]["row_count"]),
+                },
+                second_fact_run_id: {
+                    "logical_date": second_logical.strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "data_interval_end": _utc_second(quality_evidence_2["run"]["data_interval_end"]),
+                    "snapshot_id": second_bronze_binding[0],
+                    "committed_at": second_bronze_binding[1],
+                    "age_seconds": int(
+                        (
+                            datetime.fromisoformat(
+                                quality_evidence_2["run"]["data_interval_end"].replace("Z", "+00:00")
+                            )
+                            - datetime.fromisoformat(second_bronze_binding[1].replace("Z", "+00:00"))
+                        ).total_seconds()
+                    ),
+                    "source_count": int(second["bronze"]["row_count"]),
+                    "clean_count": int(second["clean"]["row_count"]),
+                    "quarantine_count": int(second["quarantine"]["row_count"]),
+                },
+            }
+            exact_owned_facts = _facts_for_runs((first_fact_run_id, second_fact_run_id))
+            _assert_owned_facts(exact_owned_facts, expected_runs)
             invalid_membership = _trino(
                 "SELECT count(*) AS violations FROM lakehouse.silver.nyc_taxi_clean "
-                "WHERE fare_amount IS NULL OR passenger_count IS NULL OR trip_distance IS NULL "
-                "OR NOT is_finite(fare_amount) OR NOT is_finite(passenger_count) OR NOT is_finite(trip_distance) "
-                "OR fare_amount < 0 OR passenger_count <= 0 OR trip_distance < 0"
+                "WHERE fare_amount IS NULL OR passenger_count IS NULL "
+                "OR NOT is_finite(fare_amount) OR NOT is_finite(passenger_count) "
+                "OR fare_amount <= 0 OR passenger_count NOT BETWEEN 1 AND 6"
             )
             if int(invalid_membership[0]["violations"]) != 0:
                 raise AssertionError("clean Silver contains a rule-invalid row")
+            valid_quarantine = _trino(
+                "SELECT count(*) AS violations FROM lakehouse.silver.nyc_taxi_quarantine "
+                "WHERE fare_amount IS NOT NULL AND passenger_count IS NOT NULL "
+                "AND is_finite(fare_amount) AND is_finite(passenger_count) "
+                "AND fare_amount > 0 AND passenger_count BETWEEN 1 AND 6"
+            )
+            if int(valid_quarantine[0]["violations"]) != 0:
+                raise AssertionError("quarantine Silver contains a rule-valid row")
             query_evidence = {name: _query_file(name) for name in ("latest", "trend", "operator_attention")}
             if (
                 len(query_evidence["latest"][1]) != 8
@@ -861,6 +1151,8 @@ def test_nyc_taxi_data_quality_live_acceptance():
                 or len(query_evidence["operator_attention"][1]) > 100
             ):
                 raise AssertionError("fixed Trino dashboard queries violate their row bounds")
+            if any(value[0] != QUERY_COLUMNS[name] for name, value in query_evidence.items()):
+                raise AssertionError("fixed Trino dashboard protocol columns or types differ")
 
             for dag_id in DAG_IDS:
                 _validate_runs(_list_runs(_airflow, dag_id), baseline[dag_id], owned[dag_id])
@@ -896,6 +1188,7 @@ def test_nyc_taxi_data_quality_live_acceptance():
                         "retry": retry,
                         "second": second,
                         "facts": facts,
+                        "owned_facts": exact_owned_facts,
                         "queries": {
                             name: {"columns": value[0], "rows": len(value[1]), "checksum": value[2]}
                             for name, value in query_evidence.items()
@@ -922,6 +1215,41 @@ def test_stack_ownership_rejects_preexisting_and_cleans_owned_failure():
         with _owned_stack(runner=runner, probe=lambda: next(states)):
             raise ValueError("primary")
     assert calls[-2:] == [("./scripts/start-all.sh",), ("./scripts/stop-all.sh",)]
+
+
+def test_partial_stack_start_failure_still_runs_bounded_cleanup_and_preserves_primary():
+    calls = []
+    states = iter(((), ()))
+
+    def runner(*args):
+        calls.append(args)
+        if args == ("./scripts/start-all.sh",):
+            raise ValueError("primary-start")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    with pytest.raises(ValueError, match="primary-start"):
+        with _owned_stack(runner=runner, probe=lambda: next(states)):
+            pass
+    assert calls == [("./scripts/start-all.sh",), ("./scripts/stop-all.sh",)]
+
+
+def test_stack_cleanup_failure_never_masks_primary_and_preserves_control_flow_without_one():
+    states = iter(((), ()))
+
+    def primary_runner(*args):
+        if args == ("./scripts/stop-all.sh",):
+            raise KeyboardInterrupt("cleanup-control")
+        return subprocess.CompletedProcess(args, 0, stdout="", stderr="")
+
+    with pytest.raises(ValueError, match="body-primary") as failure:
+        with _owned_stack(runner=primary_runner, probe=lambda: next(states)):
+            raise ValueError("body-primary")
+    assert failure.value.__notes__ == ["volume-preserving stack cleanup also failed"]
+
+    no_primary_states = iter(((), ()))
+    with pytest.raises(KeyboardInterrupt, match="cleanup-control"):
+        with _owned_stack(runner=primary_runner, probe=lambda: next(no_primary_states)):
+            pass
 
 
 def test_pause_state_is_never_unpaused_during_body_and_is_restored():
@@ -961,6 +1289,73 @@ def test_pause_setup_failure_restores_every_dag_already_mutated():
         with _paused_dags(api):
             pass
     assert states == {dag_id: False for dag_id in DAG_IDS}
+
+
+def test_pause_setup_failure_after_remote_mutation_restores_that_dag_too():
+    states = {dag_id: False for dag_id in DAG_IDS}
+    failed = False
+
+    def api(method, path, body=None):
+        nonlocal failed
+        dag_id = path.split("/")[2]
+        if method == "GET":
+            return {"is_paused": states[dag_id]}
+        states[dag_id] = body["is_paused"]
+        if dag_id == "nyc_taxi_data_quality" and body["is_paused"] and not failed:
+            failed = True
+            raise RuntimeError("post-mutation pause failure")
+        return {}
+
+    with pytest.raises(RuntimeError, match="post-mutation pause failure"):
+        with _paused_dags(api):
+            pass
+    assert states == {dag_id: False for dag_id in DAG_IDS}
+
+
+def test_pause_restore_attempts_both_dags_when_first_reverse_restore_fails():
+    states = {dag_id: False for dag_id in DAG_IDS}
+    restored = []
+
+    def api(method, path, body=None):
+        dag_id = path.split("/")[2]
+        if method == "GET":
+            return {"is_paused": states[dag_id]}
+        if body["is_paused"] is False:
+            restored.append(dag_id)
+            if dag_id == "nyc_taxi_data_quality":
+                raise RuntimeError("restore-failed")
+        states[dag_id] = body["is_paused"]
+        return {}
+
+    with pytest.raises(RuntimeError, match="DAG pause restoration failed"):
+        with _paused_dags(api):
+            pass
+    assert restored == ["nyc_taxi_data_quality", "nyc_taxi_etl"]
+
+
+def test_pause_restore_preserves_body_primary_and_control_flow_cleanup():
+    states = {dag_id: False for dag_id in DAG_IDS}
+
+    def api(method, path, body=None):
+        dag_id = path.split("/")[2]
+        if method == "GET":
+            return {"is_paused": states[dag_id]}
+        if body["is_paused"] is False and dag_id == "nyc_taxi_data_quality":
+            raise SystemExit("restore-control")
+        states[dag_id] = body["is_paused"]
+        return {}
+
+    with pytest.raises(ValueError, match="body-primary") as failure:
+        with _paused_dags(api):
+            raise ValueError("body-primary")
+    assert failure.value.__notes__ == [
+        "DAG pause restoration failed for nyc_taxi_data_quality"
+    ]
+
+    states = {dag_id: False for dag_id in DAG_IDS}
+    with pytest.raises(SystemExit, match="restore-control"):
+        with _paused_dags(api):
+            pass
 
 
 def test_run_inventory_paginates_and_rejects_unexpected_active_run():
@@ -1144,7 +1539,7 @@ def test_retry_task_log_reader_is_attempt_and_byte_bounded():
         calls.append((command, kwargs))
         return subprocess.CompletedProcess(command, 0, stdout="bounded", stderr="")
 
-    assert _task_log("owned", "wait_for_nyc_taxi_etl", runner) == "bounded"
+    assert _task_log("owned", "wait_for_matching_nyc_taxi_etl", runner) == "bounded"
     command, kwargs = calls.pop()
     script = command[5]
     assert f"len(files) > {_MAX_TASK_LOG_ATTEMPTS}" in script
@@ -1185,7 +1580,26 @@ def test_trino_failure_preserves_only_bounded_sanitized_diagnostics(monkeypatch)
     assert len(rendered.encode("utf-8")) <= _MAX_TRINO_ERROR_BYTES + 128
 
 
+def test_typed_trino_protocol_rejects_every_noncanonical_next_uri():
+    assert _local_trino_next_uri(
+        "http://trino:8080/v1/statement/20260813_010203_00001_abcd/1", "20029"
+    ) == "http://127.0.0.1:20029/v1/statement/20260813_010203_00001_abcd/1"
+    for value in (
+        "http://trino:8080/v1/statement/../info",
+        "http://trino:8080/v1/statement/%2e%2e/info",
+        "http://trino:8080/v1/statement/query?token=x",
+        "http://trino:8080/v1/statement/query#fragment",
+        "http://trino:8080/v1/statement/query;matrix",
+        "http://other:8080/v1/statement/query",
+        "https://trino:8080/v1/statement/query",
+        None,
+    ):
+        with pytest.raises(AssertionError, match="reviewed statement origin"):
+            _local_trino_next_uri(value, "20029")
+
+
 def test_live_catalog_contract_requires_exact_ntz_producer_schema():
+    assert hashlib.sha256(SCHEMA_JSON.encode()).hexdigest() == SCHEMA_SHA256
     _assert_bronze_schema({"schema": BRONZE_SCHEMA})
     legacy_utc = [
         "tpep_pickup_datetime:timestamptz" if value == "tpep_pickup_datetime:timestamp" else value

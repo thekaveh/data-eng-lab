@@ -44,7 +44,7 @@ def test_scenario_surfaces_document_current_production_and_notebook_trust_bounda
             "nyc_taxi_data_quality",
             "@daily",
             "max_active_runs=1",
-            "wait_for_nyc_taxi_etl",
+            "wait_for_matching_nyc_taxi_etl",
             "submit_nyc_taxi_data_quality",
             "lakehouse.bronze.nyc_taxi_trips",
             "lakehouse.silver.nyc_taxi_clean",

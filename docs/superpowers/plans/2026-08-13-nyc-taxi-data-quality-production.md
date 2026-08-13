@@ -49,7 +49,8 @@
 - Produces: `QualityContract.qualityRunId(logicalDate: Instant, snapshot: Option[Long]): String`.
 - Produces: `SourceSnapshot(id: Long, committedAt: Instant, schemaSha256: String)`.
 - Produces: `QualityFact` with the exact 23 design fields and `RuleDefinition` registry of eight rows.
-- Produces: exact `bronzeSchema: StructType`, `factsSchema: StructType`, and `schemaSha256: String`.
+- Produces: exact `bronzeSchema: StructType`, `factsSchema: StructType`, compact sorted-key
+  `canonicalSchemaJson`, and its frozen `schemaSha256: String`.
 
 - [ ] **Step 1: Write RED contract tests**
 
@@ -358,7 +359,8 @@ Expected: failure because all query files are absent.
 
 - [ ] **Step 3: Add the three literal queries**
 
-Use CTEs to select only complete accepted eight-row run IDs for latest/trend. Cast decimals to
+Use an exact eight-pair values registry and CTEs to select only complete accepted eight-row run IDs
+for latest/trend; reject missing, duplicate, foreign, or lineage-inconsistent sets. Cast decimals to
 `decimal(38,9)` and timestamps to canonical UTC whole-second strings at the projection boundary.
 Operator attention includes diagnostic code, owner, source snapshot, and threshold fields without
 exception text.
@@ -726,4 +728,3 @@ parent authorizes promotion.
 - **Placeholder scan:** The plan contains no deferred implementation marker or generic test/error
   instruction; each task names files, interfaces, RED command, minimal implementation, GREEN command,
   and commit boundary.
-

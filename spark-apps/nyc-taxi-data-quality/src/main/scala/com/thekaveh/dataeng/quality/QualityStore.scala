@@ -58,7 +58,11 @@ final class SparkQualityStore(backend: QualityStorageBackend) extends QualitySto
     if (!backend.tableExists(QualityContract.SourceTable)) None
     else {
       val source = backend.table(QualityContract.SourceTable)
-      QualityTransforms.assertExactSchema(source)
+      try QualityTransforms.assertExactSchema(source)
+      catch {
+        case _: IllegalArgumentException =>
+          throw new QualityFailure("source_schema", "schema_mismatch", "Bronze source schema does not match")
+      }
       val statement =
         s"""SELECT r.snapshot_id, s.committed_at
            |FROM ${QualityContract.SourceTable}.refs r

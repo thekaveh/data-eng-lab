@@ -86,7 +86,7 @@ with DAG(
     tags=["data-eng-lab", "data-quality", "nyc-taxi"],
 ) as dag:
     wait_for_bronze = ExternalTaskSensor(
-        task_id="wait_for_nyc_taxi_etl",
+        task_id="wait_for_matching_nyc_taxi_etl",
         external_dag_id="nyc_taxi_etl",
         external_task_id="submit_nyc_taxi_etl",
         allowed_states=["success"],

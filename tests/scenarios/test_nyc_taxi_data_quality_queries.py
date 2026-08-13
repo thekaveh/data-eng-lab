@@ -37,7 +37,7 @@ def test_latest_returns_the_latest_complete_accepted_eight_fact_set():
     sql = _compact(_sql("latest"))
     for fragment in (
         "having count(*) = 8",
-        "count_if(status not in ('pass', 'warn')) = 0",
+        "count_if(f.status not in ('pass', 'warn')) = 0",
         "order by logical_date desc, source_snapshot_id desc, quality_run_id desc",
         "limit 1",
         "order by f.layer, f.rule_id",
@@ -46,13 +46,33 @@ def test_latest_returns_the_latest_complete_accepted_eight_fact_set():
     ):
         assert fragment in sql
     assert "limit 8" in sql
+    for rule in (
+        "bronze.source_available.v1",
+        "bronze.schema.v1",
+        "bronze.snapshot_freshness.v1",
+        "bronze.invalid_ratio.v1",
+        "silver.partition_conservation.v1",
+        "silver.clean_nonempty.v1",
+        "silver.quarantine_ratio.v1",
+        "silver.output_readback.v1",
+    ):
+        assert f"('{rule}', 'nyc_taxi_quality_v1')" in sql
+    for fragment in (
+        "count(distinct f.dataset_id) = 1",
+        "min(f.dataset_id) = 'nyc_taxi'",
+        "count(distinct f.binding_type) = 1",
+        "min(f.binding_type) = 'iceberg_snapshot'",
+        "count(distinct f.source_snapshot_id) = 1",
+        "count(distinct f.rule_id) = 8",
+    ):
+        assert fragment in sql
 
 
 def test_trend_returns_at_most_ninety_complete_runs_with_exact_measures():
     sql = _compact(_sql("trend"))
     for fragment in (
         "having count(*) = 8",
-        "count_if(status not in ('pass', 'warn')) = 0",
+        "count_if(f.status not in ('pass', 'warn')) = 0",
         "limit 90",
         "order by logical_date desc, source_snapshot_id desc, quality_run_id desc",
         "as source_row_count",
@@ -65,11 +85,13 @@ def test_trend_returns_at_most_ninety_complete_runs_with_exact_measures():
     ):
         assert fragment in sql
     assert sql.count("decimal(38, 9)") == 2
+    assert "count(distinct f.rule_id) = 8" in sql
+    assert "count(distinct f.source_snapshot_id) = 1" in sql
 
 
 def test_operator_attention_is_exact_and_status_ordered():
     sql = _compact(_sql("operator_attention"))
-    assert "where status in ('warn', 'fail', 'missing', 'stale')" in sql
+    assert "where f.status in ('warn', 'fail', 'missing', 'stale')" in sql
     assert "limit 100" in sql
     for column in (
         "diagnostic_code",
@@ -82,10 +104,10 @@ def test_operator_attention_is_exact_and_status_ordered():
     ):
         assert column in sql
     assert (
-        "case status when 'missing' then 4 when 'stale' then 3 when 'fail' then 2 when 'warn' then 1 end desc"
+        "case f.status when 'missing' then 4 when 'stale' then 3 when 'fail' then 2 when 'warn' then 1 end desc"
         in sql
     )
-    assert "order by logical_date desc" in sql and "layer, rule_id" in sql
+    assert "order by f.logical_date desc" in sql and "f.layer, f.rule_id" in sql
 
 
 @pytest.mark.parametrize("name", QUERY_NAMES)

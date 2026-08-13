@@ -1,6 +1,8 @@
 package com.thekaveh.dataeng.nyctaxi
 
 import java.nio.file.Files
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
 import java.sql.Timestamp
 import java.time.LocalDateTime
 
@@ -56,6 +58,13 @@ class TaxiTransformsSpec extends AnyFunSuite with BeforeAndAfterAll {
     val output = TaxiTransforms.clean(input)
     assert(output.schema == StructType(rawSchema.fields :+
       StructField("trip_date", DateType, nullable = true)))
+    val canonical = output.schema.fields.map { field =>
+      s"{\"name\":\"${field.name}\",\"nullable\":${field.nullable},\"type\":\"${field.dataType.typeName}\"}"
+    }.mkString("[", ",", "]")
+    val digest = MessageDigest.getInstance("SHA-256")
+      .digest(canonical.getBytes(StandardCharsets.UTF_8))
+      .map(byte => f"${byte & 0xff}%02x").mkString
+    assert(digest == "5a8d2916cc5967c0eeb8318136c1262156cd616105dad67a713f1cb1cc872fc5")
   }
 
   test("drops null pickup + non-positive passengers, adds trip_date") {
