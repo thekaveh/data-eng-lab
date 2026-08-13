@@ -19,6 +19,7 @@ CLASSIFICATIONS = (
     "intentionally unscheduled long-running streaming",
     "deprecated or superseded",
 )
+SUPPORT_DAGS = ("airflow-dags/checkpoint_retention/dag.py",)
 
 _TOP_LEVEL_FIELDS = {"version", "scenarios"}
 _ROW_FIELDS = {
@@ -229,10 +230,12 @@ def validate_execution_modes(modes: tuple[ExecutionMode, ...], root: Path) -> No
         for parent in (root / "spark-apps", root / "airflow-dags")
         for path in parent.rglob("dag.py")
     }
-    if declared_entrypoints != actual_entrypoints:
+    support_entrypoints = set(SUPPORT_DAGS)
+    if declared_entrypoints | support_entrypoints != actual_entrypoints:
         raise ExecutionModeError(
             "production DAG inventory mismatch: "
-            f"declared={sorted(declared_entrypoints)}, actual={sorted(actual_entrypoints)}"
+            f"declared={sorted(declared_entrypoints)}, support={sorted(support_entrypoints)}, "
+            f"actual={sorted(actual_entrypoints)}"
         )
     scenario_dags = sorted(path.relative_to(root).as_posix() for path in scenario_root.rglob("dag.py"))
     if scenario_dags:
@@ -251,7 +254,8 @@ def render_markdown(modes: tuple[ExecutionMode, ...]) -> str:
         "`nyc_taxi_etl`, `nyc_taxi_medallion`, `nyc_taxi_data_quality`, `tpch_star_schema`, "
         "`movielens_feature_pipeline`, `gh_archive_flatten_sessionization`, `tpch_bi_query`, "
         "and `nyc_taxi_trino_daily` are eight "
-        "production DAGs today. An "
+        "production pipeline DAGs today. The separate `checkpoint_retention` support DAG "
+        "is paused, manual, and dry-run-only with `schedule=None`. An "
         "approved child issue is a delivery boundary, not a runnable DAG. Notebook-only "
         "and continuous-stream scenarios run from their paired Zeppelin or Jupyter notebooks.",
         "",

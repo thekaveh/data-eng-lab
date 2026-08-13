@@ -274,3 +274,13 @@ def test_live_module_is_a_genuine_run_infra_opt_in_with_no_refresh_or_family_del
     assert 'delete_object(Bucket="checkpoints", Key="streaming_test/"' not in source
     assert 'delete_objects(Bucket="checkpoints", Delete={"Prefix"' not in source
     assert "remove_volume" not in source
+
+
+def test_live_identity_is_one_explicit_bounded_value_for_provisioning_and_probe():
+    live = _live()
+    source = LIVE.read_text(encoding="utf-8")
+
+    assert 3 <= len(live.LIVE_RETENTION_ACCESS_KEY) <= 20
+    assert source.count('LIVE_RETENTION_ACCESS_KEY = "retention86live"') == 1
+    assert 'os.environ["MINIO_RETENTION_ACCESS_KEY"] = LIVE_RETENTION_ACCESS_KEY' in source
+    assert "_client(\n                endpoint,\n                LIVE_RETENTION_ACCESS_KEY," in source

@@ -11,6 +11,7 @@ import yaml
 
 from scripts.scenario_execution import (
     CLASSIFICATIONS,
+    SUPPORT_DAGS,
     ExecutionModeError,
     check_projection,
     load_execution_modes,
@@ -303,6 +304,7 @@ def test_no_scenario_local_dag_or_runtime_empty_operator_remains():
     assert all("EmptyOperator" not in path.read_text(encoding="utf-8") for path in production_dags)
     consumer_dags = sorted((ROOT / "airflow-dags").rglob("dag.py"))
     assert [path.relative_to(ROOT).as_posix() for path in consumer_dags] == [
+        "airflow-dags/checkpoint_retention/dag.py",
         "airflow-dags/trino_bi/dag.py",
     ]
 
@@ -323,7 +325,7 @@ def test_production_dag_mount_and_matrix_entrypoints_agree():
         mode.execution_entrypoint
         for mode in modes
         if mode.execution_entrypoint is not None
-    } == {
+    } | set(SUPPORT_DAGS) == {
         path.relative_to(ROOT).as_posix()
         for parent in (ROOT / "spark-apps", ROOT / "airflow-dags")
         for path in parent.rglob("dag.py")

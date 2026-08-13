@@ -57,7 +57,8 @@ def test_all_streaming_surfaces_warn_about_exact_checkpoint_policy(scenario, con
         assert durability in text
         assert "Streaming Data Engineering" in text
         assert "active or uncertain" in text
-        assert "Automated deletion remains disabled" in text
+        assert "Manual exact-leaf retention is available" in text
+        assert "Automated and scheduled deletion remain disabled" in text
         assert "issue #86" in text
         assert recovery in text
 

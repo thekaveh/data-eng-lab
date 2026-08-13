@@ -17,7 +17,7 @@ All data persists in MinIO, an S3-compatible object storage service. MinIO provi
 | `landing/` | Raw dataset files from external sources (NYC Taxi Parquet, MovieLens CSV, GH Archive JSON, TPCH Parquet). Ingested via `make datasets` or external producers. |
 | `lakehouse/` | Iceberg table data and metadata. Contains `bronze/`, `silver/`, and `gold/` directories. Each table has a Parquet data directory and Iceberg `_metadata` + snapshot files. |
 | `jars/` | Compiled Spark application JARs (e.g. `nyc-taxi-etl/0.1.0/app.jar`). Published by Jenkins CI. Consumed by Airflow DAGs via `spark-submit`. |
-| `checkpoints/` | Structured streaming checkpoint state. Exact owned paths and recovery rules are defined by the [checkpoint retention policy](checkpoint-retention.md); scheduling remains disabled pending issue #86. |
+| `checkpoints/` | Structured streaming checkpoint state. The [checkpoint retention runbook](checkpoint-retention.md) defines exact ownership, leases, manual-only reviewed exact-leaf deletion, and the disabled automatic-scheduling boundary from issue #86. |
 
 Spark clients address storage as `s3a://lakehouse/` (S3A scheme); the REST catalog backend uses `s3://lakehouse/` (native S3).
 
@@ -106,7 +106,7 @@ This script loads a landing dataset (NYC Taxi) into `lakehouse.bronze.*` via Spa
 - [Atlas Expectations](atlas-expectations.md)
 - [Datasets](datasets.md)
 - [Atlas Go-Live Findings](atlas-feedback-go-live.md)
-- [Checkpoint Retention](checkpoint-retention.md) — issue #86 enforcement and scheduling remain disabled until live acceptance
+- [Checkpoint Retention](checkpoint-retention.md) — issue #86 manual-only enforcement is live-accepted; automatic and scheduled destructive apply remain disabled
 
 ## 8. Scenarios Using Lakehouse
 

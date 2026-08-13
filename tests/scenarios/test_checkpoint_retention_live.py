@@ -25,6 +25,7 @@ RUN_UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{
 SHA256 = re.compile(r"[0-9a-f]{64}")
 MAX_METRICS_BYTES = 65_536
 MAX_RESPONSE_BYTES = 65_536
+LIVE_RETENTION_ACCESS_KEY = "retention86live"
 PRODUCTION_PREFIXES = ("events/", "event_windows/", "online_retail_cdc/", "gh_events_file/")
 OWNED_FIXTURE_KEY = re.compile(
     rf"(?:streaming_test/{RUN_UUID.pattern}/(?:state/(?:offset|changed)|commits/0)"
@@ -454,7 +455,7 @@ def test_checkpoint_retention_live_acceptance():
     previous_destructive = os.environ.get("CHECKPOINT_RETENTION_DESTRUCTIVE_ENABLED")
     previous_access_key = os.environ.get("MINIO_RETENTION_ACCESS_KEY")
     os.environ["CHECKPOINT_RETENTION_DESTRUCTIVE_ENABLED"] = "true"
-    os.environ["MINIO_RETENTION_ACCESS_KEY"] = "retention86live"
+    os.environ["MINIO_RETENTION_ACCESS_KEY"] = LIVE_RETENTION_ACCESS_KEY
     try:
         with _owned_stack(), ExitStack() as owned_resources:
             health = _wait_service()
@@ -484,7 +485,7 @@ def test_checkpoint_retention_live_acceptance():
 
             maintenance = _client(
                 endpoint,
-                _env("MINIO_RETENTION_ACCESS_KEY", "retention86live"),
+                LIVE_RETENTION_ACCESS_KEY,
                 _env("MINIO_RETENTION_SECRET_KEY"),
             )
             assert _prove_maintenance_iam(root, maintenance, identities[0]["prefix"], denied_key)["denied"] == 4

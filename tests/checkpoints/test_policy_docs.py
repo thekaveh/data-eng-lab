@@ -33,8 +33,12 @@ REQUIRED_POLICY_TEXT = (
     "64 KiB",
     "1 MiB",
     "dedicated checkpoint-maintenance service account",
-    "scheduling remains disabled",
-    "issue #86",
+    "schedule=None",
+    "manual-only",
+    "conditional delete",
+    "cross-process",
+    "checkpoint_retention_partial_total",
+    "Issue #86",
 )
 
 
@@ -53,6 +57,12 @@ def test_canonical_runbook_contains_exact_policy_recovery_and_non_mutation_contr
     assert "cannot contact MinIO" in text
     assert "does not delete checkpoints" in text
     assert "break glass" in text.lower()
+    assert "uv run python -m scripts.checkpoints.retention plan" in text
+    assert "uv run python -m scripts.checkpoints.retention prepare" in text
+    assert "uv run python -m scripts.checkpoints.retention apply" in text
+    assert "uv run python -m scripts.checkpoints.retention status" in text
+    assert "dry-run only" in text
+    assert "MinIO root" in text
 
 
 def test_manifest_projects_checkpoint_runbook_to_site_and_wiki(tmp_path: Path):
@@ -83,7 +93,8 @@ def test_public_overviews_and_lakehouse_link_the_canonical_policy():
         assert "checkpoint retention" in text.lower()
         assert "checkpoint-retention.md" in text
         assert "issue #86" in text.lower()
-        assert "scheduling" in text.lower() and "disabled" in text.lower()
+        assert "manual-only" in text.lower()
+        assert "automatic" in text.lower() and "disabled" in text.lower()
 
 
 def test_execution_matrix_keeps_streams_unscheduled_and_binds_policy_issue():
