@@ -69,9 +69,7 @@ def _pinned_minio(tmp_path):
                         "Action": ["s3:ListBucket"],
                         "Resource": [f"arn:aws:s3:::{BUCKET}"],
                         "Condition": {
-                            "StringLike": {
-                                "s3:prefix": [f"{PREFIX}*", f"{CONTROL_PREFIX}*", f"{AUDIT_PREFIX}*"]
-                            }
+                            "StringLike": {"s3:prefix": [f"{PREFIX}*", f"{CONTROL_PREFIX}*", f"{AUDIT_PREFIX}*"]}
                         },
                     },
                     {
@@ -148,10 +146,10 @@ def _pinned_minio(tmp_path):
             "/bin/sh",
             MC_IMAGE,
             "-c",
-            "mc alias set local http://127.0.0.1:9000 \"$ROOT_USER\" \"$ROOT_PASSWORD\" >/dev/null && "
-            "mc admin user add local \"$ACCESS_KEY\" \"$SECRET_KEY\" >/dev/null && "
+            'mc alias set local http://127.0.0.1:9000 "$ROOT_USER" "$ROOT_PASSWORD" >/dev/null && '
+            'mc admin user add local "$ACCESS_KEY" "$SECRET_KEY" >/dev/null && '
             "mc admin policy create local retention-test /policy.json >/dev/null && "
-            "mc admin policy attach local retention-test --user \"$ACCESS_KEY\" >/dev/null",
+            'mc admin policy attach local retention-test --user "$ACCESS_KEY" >/dev/null',
         )
         yield endpoint, root, _client(endpoint, ACCESS_KEY, SECRET_KEY)
     finally:

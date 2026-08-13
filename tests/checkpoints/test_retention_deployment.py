@@ -97,7 +97,7 @@ def test_iam_policy_has_only_the_reviewed_action_resource_and_prefix_boundary():
     assert unknown["Action"] == ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
 
     serialized = json.dumps(policy, sort_keys=True)
-    assert f'{BUCKET}/*' not in serialized
+    assert f"{BUCKET}/*" not in serialized
     assert f'{BUCKET}"' in serialized
     assert "s3:PutObject" not in json.dumps(_statement(policy, "AllowDeleteCheckpointData"))
     assert "s3:DeleteObject" not in json.dumps(_statement(policy, "AllowWriteRetentionControls"))
@@ -115,8 +115,8 @@ def test_provisioner_uses_root_only_in_init_and_never_xtraces_credentials():
     assert "echo $" not in script
     assert "set -x" not in script
     assert "env" not in [line.strip() for line in script.splitlines()]
-    assert '${#MINIO_RETENTION_ACCESS_KEY}' in script
-    assert '${#MINIO_RETENTION_SECRET_KEY}' in script
+    assert "${#MINIO_RETENTION_ACCESS_KEY}" in script
+    assert "${#MINIO_RETENTION_SECRET_KEY}" in script
 
 
 def test_consumer_manifest_requires_the_ignored_operator_credential_overlay():
@@ -126,25 +126,20 @@ def test_consumer_manifest_requires_the_ignored_operator_credential_overlay():
     assert "/atlas.env.user" in ignored
 
     example = (ROOT / "atlas.env.user.example").read_text(encoding="utf-8")
-    assert set(
-        line.split("=", 1)[0]
-        for line in example.splitlines()
-        if line and not line.startswith("#")
-    ) == {
+    assert set(line.split("=", 1)[0] for line in example.splitlines() if line and not line.startswith("#")) == {
         "MINIO_RETENTION_ACCESS_KEY",
         "MINIO_RETENTION_SECRET_KEY",
-        "CHECKPOINT_RETENTION_API_TOKEN",
+        "CHECKPOINT_RETENTION_LEASE_TOKEN",
+        "CHECKPOINT_RETENTION_OPERATOR_TOKEN",
     }
     assert "CHANGE_ME" in example
     assert "MINIO_ROOT" not in example
-    values = dict(
-        line.split("=", 1)
-        for line in example.splitlines()
-        if line and not line.startswith("#")
-    )
+    values = dict(line.split("=", 1) for line in example.splitlines() if line and not line.startswith("#"))
     assert 3 <= len(values["MINIO_RETENTION_ACCESS_KEY"]) <= 20
     assert 8 <= len(values["MINIO_RETENTION_SECRET_KEY"]) <= 40
-    assert 16 <= len(values["CHECKPOINT_RETENTION_API_TOKEN"]) <= 256
+    assert 16 <= len(values["CHECKPOINT_RETENTION_LEASE_TOKEN"]) <= 256
+    assert 16 <= len(values["CHECKPOINT_RETENTION_OPERATOR_TOKEN"]) <= 256
+    assert values["CHECKPOINT_RETENTION_LEASE_TOKEN"] != values["CHECKPOINT_RETENTION_OPERATOR_TOKEN"]
 
 
 def test_compose_runtime_is_single_replica_internal_nonroot_and_fail_closed():
@@ -179,8 +174,11 @@ def test_compose_runtime_is_single_replica_internal_nonroot_and_fail_closed():
         "MINIO_ENDPOINT": "http://minio:9000",
         "MINIO_RETENTION_ACCESS_KEY": "${MINIO_RETENTION_ACCESS_KEY:?MINIO_RETENTION_ACCESS_KEY is required}",
         "MINIO_RETENTION_SECRET_KEY": "${MINIO_RETENTION_SECRET_KEY:?MINIO_RETENTION_SECRET_KEY is required}",
-        "CHECKPOINT_RETENTION_API_TOKEN": (
-            "${CHECKPOINT_RETENTION_API_TOKEN:?CHECKPOINT_RETENTION_API_TOKEN is required}"
+        "CHECKPOINT_RETENTION_LEASE_TOKEN": (
+            "${CHECKPOINT_RETENTION_LEASE_TOKEN:?CHECKPOINT_RETENTION_LEASE_TOKEN is required}"
+        ),
+        "CHECKPOINT_RETENTION_OPERATOR_TOKEN": (
+            "${CHECKPOINT_RETENTION_OPERATOR_TOKEN:?CHECKPOINT_RETENTION_OPERATOR_TOKEN is required}"
         ),
         "DESTRUCTIVE_ENABLED": "${CHECKPOINT_RETENTION_DESTRUCTIVE_ENABLED:-false}",
     }
@@ -193,7 +191,7 @@ def test_runtime_image_is_pinned_minimal_and_contains_only_required_code():
     assert "python@sha256:" in dockerfile
     assert "uv@sha256:" in dockerfile
     assert "uv sync --frozen --only-group dev --no-install-project" in dockerfile
-    assert 'USER 65532:65532' in dockerfile
+    assert "USER 65532:65532" in dockerfile
     assert 'ENTRYPOINT ["/opt/venv/bin/python", "-m", "scripts.checkpoints.service"]' in dockerfile
     assert "COPY infra" not in dockerfile
 

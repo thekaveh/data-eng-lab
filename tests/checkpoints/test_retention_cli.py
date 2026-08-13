@@ -38,7 +38,7 @@ def test_cli_plan_uses_fixed_origin_token_header_and_canonical_output(monkeypatc
         captured.update(url=request.full_url, headers=dict(request.header_items()), body=request.data, timeout=timeout)
         return response
 
-    monkeypatch.setenv("CHECKPOINT_RETENTION_API_TOKEN", "api-secret-token")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_OPERATOR_TOKEN", "api-secret-token")
     monkeypatch.setenv("CHECKPOINT_RETENTION_URI", "http://checkpoint-retention:8080")
     monkeypatch.setattr(retention, "_open", urlopen)
 
@@ -83,7 +83,7 @@ def test_cli_plan_uses_fixed_origin_token_header_and_canonical_output(monkeypatc
 def test_cli_plan_rejects_nonexact_review_facts_before_network(monkeypatch, tmp_path, facts_body):
     facts = tmp_path / "facts.json"
     facts.write_text(facts_body, encoding="utf-8")
-    monkeypatch.setenv("CHECKPOINT_RETENTION_API_TOKEN", "api-token")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_OPERATOR_TOKEN", "api-token")
     monkeypatch.setenv("CHECKPOINT_RETENTION_URI", "http://checkpoint-retention:8080")
     monkeypatch.setattr(retention, "_open", lambda *_args, **_kwargs: pytest.fail("network attempted"))
 
@@ -113,7 +113,7 @@ def test_cli_plan_rejects_nonexact_review_facts_before_network(monkeypatch, tmp_
     ],
 )
 def test_cli_stable_state_exit_codes(monkeypatch, capsys, payload, expected):
-    monkeypatch.setenv("CHECKPOINT_RETENTION_API_TOKEN", "api-token")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_OPERATOR_TOKEN", "api-token")
     monkeypatch.setenv("CHECKPOINT_RETENTION_URI", "http://checkpoint-retention:8080")
     monkeypatch.setattr(
         retention,
@@ -126,7 +126,7 @@ def test_cli_stable_state_exit_codes(monkeypatch, capsys, payload, expected):
 
 
 def test_cli_rejects_origin_override_invalid_env_and_never_prints_token(monkeypatch, capsys):
-    monkeypatch.setenv("CHECKPOINT_RETENTION_API_TOKEN", "never-print-this-token")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_OPERATOR_TOKEN", "never-print-this-token")
     monkeypatch.setenv("CHECKPOINT_RETENTION_URI", "http://attacker.invalid:8080")
 
     code = retention.main(["status", "--operation-id", "550e8400-e29b-41d4-a716-446655440000"])
@@ -141,7 +141,7 @@ def test_cli_rejects_origin_override_invalid_env_and_never_prints_token(monkeypa
 
 @pytest.mark.parametrize("close_error", [RuntimeError("secret cleanup"), KeyboardInterrupt()])
 def test_cli_response_close_failure_is_sanitized_and_control_flow_preserved(monkeypatch, close_error, capsys):
-    monkeypatch.setenv("CHECKPOINT_RETENTION_API_TOKEN", "api-token")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_OPERATOR_TOKEN", "api-token")
     monkeypatch.setenv("CHECKPOINT_RETENTION_URI", "http://checkpoint-retention:8080")
     monkeypatch.setattr(
         retention, "_open", lambda *_args, **_kwargs: Response(b'{"state":"accepted"}', close_error=close_error)
@@ -158,7 +158,7 @@ def test_cli_response_close_failure_is_sanitized_and_control_flow_preserved(monk
 
 
 def test_cli_rejects_duplicate_or_oversized_response_before_output(monkeypatch, capsys):
-    monkeypatch.setenv("CHECKPOINT_RETENTION_API_TOKEN", "api-token")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_OPERATOR_TOKEN", "api-token")
     monkeypatch.setenv("CHECKPOINT_RETENTION_URI", "http://checkpoint-retention:8080")
     arguments = ["status", "--operation-id", "550e8400-e29b-41d4-a716-446655440000"]
     for body in (b'{"state":"accepted","state":"partial"}', b"x" * 65_537):

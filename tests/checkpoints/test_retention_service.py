@@ -166,7 +166,8 @@ def test_main_builds_runtime_serves_forever_and_closes_server_and_runtime(monkey
             events.append("server.close")
 
     runtime = Runtime()
-    monkeypatch.setenv("CHECKPOINT_RETENTION_API_TOKEN", "runtime-token")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_LEASE_TOKEN", "runtime-lease-token")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_OPERATOR_TOKEN", "runtime-operator-token")
     monkeypatch.setattr(module, "build_runtime", lambda: runtime)
 
     def server_factory(address, application):
@@ -182,12 +183,14 @@ def test_main_builds_runtime_serves_forever_and_closes_server_and_runtime(monkey
 
 def test_main_fails_closed_before_server_for_missing_token_and_sanitizes_build_failure(monkeypatch):
     module = _service()
-    monkeypatch.delenv("CHECKPOINT_RETENTION_API_TOKEN", raising=False)
+    monkeypatch.delenv("CHECKPOINT_RETENTION_LEASE_TOKEN", raising=False)
+    monkeypatch.delenv("CHECKPOINT_RETENTION_OPERATOR_TOKEN", raising=False)
     monkeypatch.setattr(module, "build_runtime", lambda: pytest.fail("runtime must not build"))
     with pytest.raises(module.ServiceFailure, match="configuration_invalid"):
         module.main()
 
-    monkeypatch.setenv("CHECKPOINT_RETENTION_API_TOKEN", "runtime-token")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_LEASE_TOKEN", "runtime-lease-token")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_OPERATOR_TOKEN", "runtime-operator-token")
     monkeypatch.setattr(
         module,
         "build_runtime",
@@ -205,17 +208,25 @@ def test_runtime_backend_maps_exact_lease_requests_without_leaking_dependency_ob
     calls = []
 
     class Leases:
+        @staticmethod
+        def _body():
+            return b'{"heartbeat_at":"2026-08-13T12:00:00Z"}'
+
         def acquire(self, request):
             calls.append(("acquire", request))
-            return types.SimpleNamespace(epoch="550e8400-e29b-41d4-a716-446655440000", etag="a" * 32, body=b"{}")
+            return types.SimpleNamespace(
+                epoch="550e8400-e29b-41d4-a716-446655440000",
+                etag="a" * 32,
+                body=self._body(),
+            )
 
         def heartbeat(self, request):
             calls.append(("heartbeat", request))
-            return types.SimpleNamespace(epoch=request.epoch, etag="b" * 32, body=b"{}")
+            return types.SimpleNamespace(epoch=request.epoch, etag="b" * 32, body=self._body())
 
         def terminal(self, request):
             calls.append(("terminal", request))
-            return types.SimpleNamespace(epoch=request.epoch, etag="c" * 32, body=b"{}")
+            return types.SimpleNamespace(epoch=request.epoch, etag="c" * 32, body=self._body())
 
     backend = module.RuntimeBackend(
         gateway=types.SimpleNamespace(probe_capabilities=lambda: {"automatic_apply": False}),
@@ -281,7 +292,7 @@ def test_runtime_backend_routes_one_exact_plan_and_prepare_with_server_owned_ope
                 body=b'{"operation_id":"550e8400-e29b-41d4-a716-446655440000","state":"prepared"}'
             )
 
-    decoded = object()
+    decoded = types.SimpleNamespace(summary={"prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/"})
     monkeypatch.setattr(module, "decode_plan_artifact", lambda body, **_bounds: decoded, raising=False)
     backend = module.RuntimeBackend(
         gateway=types.SimpleNamespace(probe_capabilities=lambda: {"automatic_apply": False}),
@@ -293,6 +304,7 @@ def test_runtime_backend_routes_one_exact_plan_and_prepare_with_server_owned_ope
         now=lambda: datetime(2026, 8, 13, 12, 0, tzinfo=timezone.utc),
         operation_id=lambda: "550e8400-e29b-41d4-a716-446655440000",
     )
+    backend._require_disposable = lambda _prefix: None
 
     planned = backend.invoke(
         "plan",
@@ -419,7 +431,13 @@ def test_runtime_metrics_track_fixed_low_cardinality_plan_prepare_apply_outcomes
                 body=b'{"deleted_objects":2,"operation_id":"550e8400-e29b-41d4-a716-446655440000","state":"completed"}'
             )
 
-    monkeypatch.setattr(module, "decode_plan_artifact", lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(
+        module,
+        "decode_plan_artifact",
+        lambda *_args, **_kwargs: types.SimpleNamespace(
+            summary={"prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/"}
+        ),
+    )
     backend = module.RuntimeBackend(
         gateway=types.SimpleNamespace(probe_capabilities=lambda: {"automatic_apply": False}),
         leases=object(),
@@ -429,6 +447,7 @@ def test_runtime_metrics_track_fixed_low_cardinality_plan_prepare_apply_outcomes
         destructive_enabled=True,
         operation_id=lambda: "550e8400-e29b-41d4-a716-446655440000",
     )
+    backend._require_disposable = lambda _prefix: None
     backend.invoke(
         "plan",
         {

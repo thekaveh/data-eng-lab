@@ -110,12 +110,17 @@ class AuditRecord:
         object.__setattr__(self, "counts", MappingProxyType(dict(self.counts)))
 
 
-def canonical_json_bytes(value: object, *, max_bytes: int = _MAX_JSON_BYTES) -> bytes:
+def canonical_json_bytes(
+    value: object,
+    *,
+    max_bytes: int = _MAX_JSON_BYTES,
+    max_nodes: int = _MAX_JSON_NODES,
+) -> bytes:
     """Encode the supported JSON subset deterministically and within a byte bound."""
 
-    if type(max_bytes) is not int or max_bytes < 2:
+    if type(max_bytes) is not int or max_bytes < 2 or type(max_nodes) is not int or max_nodes < 1:
         raise RecordFailure("json_bound_invalid")
-    normalized = _normalize_json(value, depth=0, nodes=[0])
+    normalized = _normalize_json(value, depth=0, nodes=[0], max_nodes=max_nodes)
     try:
         body = json.dumps(normalized, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
     except (TypeError, ValueError, UnicodeError):
@@ -176,6 +181,7 @@ def decode_plan_artifact(
     *,
     max_body_bytes: int = _MAX_JSON_BYTES,
     max_shard_bytes: int = 1_048_576,
+    max_nodes: int = 600_128,
 ) -> PlanArtifact:
     """Reconstruct one canonical plan artifact without trusting caller objects."""
 
@@ -201,7 +207,8 @@ def decode_plan_artifact(
             or not value["shards"]
         ):
             raise RecordFailure("plan_shape_invalid")
-        if canonical_json_bytes(value, max_bytes=max_body_bytes) != body:
+        _check_decoded_bounds(value, max_depth=_MAX_JSON_DEPTH, depth=0, nodes=[0], max_nodes=max_nodes)
+        if canonical_json_bytes(value, max_bytes=max_body_bytes, max_nodes=max_nodes) != body:
             raise RecordFailure("plan_canonical_invalid")
         shards: list[ManifestShard] = []
         for index, raw_shard in enumerate(value["shards"]):
@@ -230,7 +237,7 @@ def decode_plan_artifact(
             ordered = canonical_records(records)
             if tuple(records) != ordered:
                 raise RecordFailure("plan_shard_order_invalid")
-            shard_body = canonical_json_bytes(raw_shard, max_bytes=max_shard_bytes)
+            shard_body = canonical_json_bytes(raw_shard, max_bytes=max_shard_bytes, max_nodes=max_nodes)
             shards.append(ManifestShard(index, ordered, shard_body, hashlib.sha256(shard_body).hexdigest()))
         expected = value["summary"].get("manifest_shards")
         if not isinstance(expected, list) or expected != [shard.sha256 for shard in shards]:
@@ -293,14 +300,18 @@ def shard_inventory(records: Iterable[ObjectRecord], max_bytes: int) -> tuple[Ma
 
     shards: list[ManifestShard] = []
     for index, group in enumerate(groups):
-        body = canonical_json_bytes([record.as_json() for record in group], max_bytes=max_bytes)
+        body = canonical_json_bytes(
+            [record.as_json() for record in group],
+            max_bytes=max_bytes,
+            max_nodes=max(4_096, len(group) * 6 + 1),
+        )
         shards.append(ManifestShard(index, group, body, hashlib.sha256(body).hexdigest()))
     return tuple(shards)
 
 
-def _normalize_json(value: object, *, depth: int, nodes: list[int]) -> object:
+def _normalize_json(value: object, *, depth: int, nodes: list[int], max_nodes: int) -> object:
     nodes[0] += 1
-    if nodes[0] > _MAX_JSON_NODES or depth > _MAX_JSON_DEPTH:
+    if nodes[0] > max_nodes or depth > _MAX_JSON_DEPTH:
         raise RecordFailure("json_structure_bound")
     if value is None or type(value) in (bool, int, str):
         return value
@@ -311,24 +322,33 @@ def _normalize_json(value: object, *, depth: int, nodes: list[int]) -> object:
     if isinstance(value, Mapping):
         if any(not isinstance(key, str) for key in value):
             raise RecordFailure("json_key_invalid")
-        return {key: _normalize_json(item, depth=depth + 1, nodes=nodes) for key, item in value.items()}
+        return {
+            key: _normalize_json(item, depth=depth + 1, nodes=nodes, max_nodes=max_nodes) for key, item in value.items()
+        }
     if isinstance(value, (list, tuple)):
-        return [_normalize_json(item, depth=depth + 1, nodes=nodes) for item in value]
+        return [_normalize_json(item, depth=depth + 1, nodes=nodes, max_nodes=max_nodes) for item in value]
     raise RecordFailure("json_value_invalid")
 
 
-def _check_decoded_bounds(value: object, *, max_depth: int, depth: int, nodes: list[int]) -> None:
+def _check_decoded_bounds(
+    value: object,
+    *,
+    max_depth: int,
+    depth: int,
+    nodes: list[int],
+    max_nodes: int = _MAX_JSON_NODES,
+) -> None:
     nodes[0] += 1
-    if nodes[0] > _MAX_JSON_NODES or depth > max_depth:
+    if nodes[0] > max_nodes or depth > max_depth:
         raise RecordFailure("json_structure_bound")
     if isinstance(value, dict):
         for key, item in value.items():
             if not isinstance(key, str):
                 raise RecordFailure("json_key_invalid")
-            _check_decoded_bounds(item, max_depth=max_depth, depth=depth + 1, nodes=nodes)
+            _check_decoded_bounds(item, max_depth=max_depth, depth=depth + 1, nodes=nodes, max_nodes=max_nodes)
     elif isinstance(value, list):
         for item in value:
-            _check_decoded_bounds(item, max_depth=max_depth, depth=depth + 1, nodes=nodes)
+            _check_decoded_bounds(item, max_depth=max_depth, depth=depth + 1, nodes=nodes, max_nodes=max_nodes)
     elif value is None or type(value) in (bool, int, str):
         return
     else:

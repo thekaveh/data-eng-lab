@@ -139,7 +139,7 @@ def test_task_posts_one_fixed_complete_registry_inventory_and_returns_safe_order
         captured.update(url=request.full_url, headers=dict(request.header_items()), body=request.data, timeout=timeout)
         return response
 
-    monkeypatch.setenv("CHECKPOINT_RETENTION_API_TOKEN", "task-secret-token")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_OPERATOR_TOKEN", "task-secret-token")
     monkeypatch.setenv("CHECKPOINT_RETENTION_URI", "http://checkpoint-retention:8080")
     monkeypatch.setattr(tasks, "_open", opener)
 
@@ -166,7 +166,7 @@ def test_task_posts_one_fixed_complete_registry_inventory_and_returns_safe_order
 )
 def test_task_rejects_incomplete_malformed_duplicate_and_oversized_responses(monkeypatch, body):
     tasks = _load_tasks()
-    monkeypatch.setenv("CHECKPOINT_RETENTION_API_TOKEN", "task-token")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_OPERATOR_TOKEN", "task-token")
     monkeypatch.setenv("CHECKPOINT_RETENTION_URI", "http://checkpoint-retention:8080")
     monkeypatch.setattr(tasks, "_open", lambda *_args, **_kwargs: _Response(body))
 
@@ -176,7 +176,7 @@ def test_task_rejects_incomplete_malformed_duplicate_and_oversized_responses(mon
 
 def test_task_failure_and_cleanup_are_sanitized_and_control_flow_is_preserved(monkeypatch):
     tasks = _load_tasks()
-    monkeypatch.setenv("CHECKPOINT_RETENTION_API_TOKEN", "task-token")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_OPERATOR_TOKEN", "task-token")
     monkeypatch.setenv("CHECKPOINT_RETENTION_URI", "http://checkpoint-retention:8080")
     monkeypatch.setattr(tasks, "_open", lambda *_args, **_kwargs: (_ for _ in ()).throw(RuntimeError("secret")))
     with pytest.raises(tasks.RetentionTaskFailure, match="service_failure") as failure:

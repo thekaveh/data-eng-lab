@@ -195,7 +195,7 @@ class StreamingLease:
 
 def _post(action: str, payload: Mapping[str, object]) -> Mapping[str, object]:
     path = _ROUTES.get(action)
-    token = os.environ.get("CHECKPOINT_RETENTION_API_TOKEN")
+    token = os.environ.get("CHECKPOINT_RETENTION_LEASE_TOKEN")
     origin = os.environ.get("CHECKPOINT_RETENTION_URI", _ORIGIN)
     if path is None or origin != _ORIGIN or not isinstance(token, str) or not token or len(token.encode()) > 256:
         raise NotebookLeaseFailure("lease_configuration_invalid")

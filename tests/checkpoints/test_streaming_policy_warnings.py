@@ -38,12 +38,8 @@ def _surfaces(scenario: str) -> tuple[str, str, str, str, str]:
     jupyter_text = "\n".join("".join(cell.get("source", [])) for cell in jupyter.get("cells", []))
     zeppelin = json.loads((root / "zeppelin/notebook.zpln").read_text(encoding="utf-8"))
     zeppelin_text = "\n".join(paragraph.get("text", "") for paragraph in zeppelin["paragraphs"])
-    scenario_doc = (ROOT / "docs/scenarios" / f"{scenario}.md").read_text(
-        encoding="utf-8"
-    )
-    notebook_doc = (ROOT / "docs/notebooks" / f"{scenario}.md").read_text(
-        encoding="utf-8"
-    )
+    scenario_doc = (ROOT / "docs/scenarios" / f"{scenario}.md").read_text(encoding="utf-8")
+    notebook_doc = (ROOT / "docs/notebooks" / f"{scenario}.md").read_text(encoding="utf-8")
     return readme, jupyter_text, zeppelin_text, scenario_doc, notebook_doc
 
 

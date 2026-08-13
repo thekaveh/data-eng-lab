@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable
@@ -47,6 +48,9 @@ class OperationStatus:
 _UUID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}")
 _IDENTIFIER = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
 _SHA256 = re.compile(r"[0-9a-f]{64}")
+_DISPOSABLE_PREFIX = re.compile(
+    r"streaming_test/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/"
+)
 
 
 class OperationManager:
@@ -60,8 +64,12 @@ class OperationManager:
         now: Callable[[], datetime],
         quiescence_seconds: int = 900,
         max_summary_bytes: int = 65_536,
+        max_result_shard_bytes: int = 1_048_576,
         max_delete_keys: int = 1_000,
         revalidate: Callable[[str, datetime], PlanArtifact] | None = None,
+        locks: object | None = None,
+        monotonic: Callable[[], float] = time.monotonic,
+        max_active_seconds: int = 900,
     ) -> None:
         if not isinstance(policy_sha256, str) or _SHA256.fullmatch(policy_sha256) is None:
             raise OperationFailure("policy_digest_invalid")
@@ -70,9 +78,12 @@ class OperationManager:
         self._now = now
         self._quiescence_seconds = quiescence_seconds
         self._max_summary_bytes = max_summary_bytes
+        self._max_result_shard_bytes = max_result_shard_bytes
         self._max_delete_keys = max_delete_keys
         self._revalidate = revalidate
-        self._statuses: dict[str, OperationStatus] = {}
+        self._locks = locks
+        self._monotonic = monotonic
+        self._max_active_seconds = max_active_seconds
 
     def prepare(self, request: PrepareRequest) -> OperationStatus:
         artifact = self._validate_prepare(request)
@@ -104,10 +115,13 @@ class OperationManager:
         return OperationStatus(request.operation_id, "prepared", body)
 
     def apply(self, request: ApplyRequest) -> OperationStatus:
+        started = self._start_deadline()
         if not isinstance(request, ApplyRequest) or _UUID.fullmatch(request.operation_id or "") is None:
             raise OperationFailure("operation_id_invalid")
         if _SHA256.fullmatch(request.plan_sha256 or "") is None:
             raise OperationFailure("plan_digest_mismatch")
+        if not isinstance(request.confirm_prefix, str) or _DISPOSABLE_PREFIX.fullmatch(request.confirm_prefix) is None:
+            raise OperationFailure("destructive_scope_invalid")
         base = f"_retention/tombstones/{request.operation_id}"
         prepared_body = self._read_control(f"{base}/prepared.json", self._max_summary_bytes, "prepared_read_failed")
         prepared = self._decode_prepared(prepared_body, request.operation_id)
@@ -129,16 +143,28 @@ class OperationManager:
                 max_bytes=self._max_summary_bytes,
             )
             return OperationStatus(request.operation_id, "not_ready", body)
+        checkpoint_id = prepared.get("checkpoint_id")
+        if not isinstance(checkpoint_id, str) or _IDENTIFIER.fullmatch(checkpoint_id) is None:
+            raise OperationFailure("prepared_invalid")
+        if self._locks is None or not hasattr(self._locks, "hold"):
+            return self._apply_locked(request, prepared, evaluated_at, base, started)
+        with self._locks.hold(checkpoint_id):
+            return self._apply_locked(request, prepared, evaluated_at, base, started)
+
+    def _apply_locked(self, request, prepared, evaluated_at, base, started) -> OperationStatus:
+        self.check_deadline(started)
         records = self._read_manifest(base, prepared["manifest_shards"])
-        prior_status = self._statuses.get(request.operation_id)
+        self.check_deadline(started)
+        prior_status = self._latest_status(request.operation_id, required=False)
         prior_deleted: set[str] = set()
         if prior_status is not None:
             try:
                 prior_value = json.loads(prior_status.body)
                 if prior_value["state"] == "completed":
+                    self._ensure_audit(request.operation_id, prior_status)
                     return prior_status
-                prior_deleted = set(prior_value["deleted_record_sha256s"])
-            except (KeyError, TypeError, json.JSONDecodeError):
+                prior_deleted = self._read_result_classification(base, prior_value, records)
+            except (KeyError, TypeError, json.JSONDecodeError, RecordFailure):
                 raise OperationFailure("status_invalid") from None
         remaining_records = tuple(record for record in records if _record_sha256(record) not in prior_deleted)
         if self._revalidate is None:
@@ -149,6 +175,7 @@ class OperationManager:
             raise
         except BaseException:
             raise OperationFailure("revalidation_failed") from None
+        self.check_deadline(started)
         if (
             not isinstance(current, PlanArtifact)
             or current.summary.get("decision") != "eligible"
@@ -161,6 +188,7 @@ class OperationManager:
         try:
             for record in remaining_records:
                 self._gateway.head_record(record)
+                self.check_deadline(started)
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException:
@@ -168,10 +196,13 @@ class OperationManager:
         deleted: list[ObjectRecord] = [record for record in records if _record_sha256(record) in prior_deleted]
         try:
             for offset in range(0, len(remaining_records), self._max_delete_keys):
+                self.check_deadline(started)
                 batch = remaining_records[offset : offset + self._max_delete_keys]
                 self._gateway.delete_records(batch)
                 deleted.extend(batch)
+                self.check_deadline(started)
             remaining = self._gateway.inventory(request.confirm_prefix)
+            self.check_deadline(started)
             if remaining:
                 raise OperationFailure("postflight_not_empty")
         except (KeyboardInterrupt, SystemExit):
@@ -183,46 +214,119 @@ class OperationManager:
                     raise OperationFailure("delete_response_invalid") from None
                 deleted.extend(by_key[key] for key in error.deleted_keys)
             primary = error if isinstance(error, OperationFailure) else OperationFailure("delete_partial")
-            self._record_status(request.operation_id, "partial", request.plan_sha256, deleted, records)
+            try:
+                self._record_status(
+                    request.operation_id,
+                    prepared["checkpoint_id"],
+                    "partial",
+                    request.plan_sha256,
+                    deleted,
+                    records,
+                    primary.code,
+                    started,
+                )
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except BaseException:
+                primary.add_note("partial_status_persist_failed")
             raise primary from None
-        status = self._record_status(request.operation_id, "completed", request.plan_sha256, deleted, records)
+        status = self._record_status(
+            request.operation_id,
+            prepared["checkpoint_id"],
+            "completed",
+            request.plan_sha256,
+            deleted,
+            records,
+            None,
+            started,
+        )
+        self._ensure_audit(request.operation_id, status)
+        self.check_deadline(started)
+        return status
+
+    def _ensure_audit(self, operation_id: str, status: OperationStatus) -> None:
+        value = json.loads(status.body)
         audit_body = canonical_json_bytes(
             {
-                "attempt_id": request.operation_id,
-                "decision": "completed",
-                "deleted_objects": len(deleted),
-                "operation_id": request.operation_id,
-                "plan_sha256": request.plan_sha256,
+                "attempt_id": hashlib.sha256(status.body).hexdigest(),
+                "decision": value["state"],
+                "deleted_objects": value["deleted_objects"],
+                "deleted_bytes": value["deleted_bytes"],
+                "operation_id": operation_id,
+                "plan_sha256": value["plan_sha256"],
+                "planned_objects": value["planned_objects"],
+                "remaining_bytes": value["remaining_bytes"],
+                "remaining_objects": value["remaining_objects"],
+                "result_sha256": hashlib.sha256(status.body).hexdigest(),
+                "result_shards": value["result_shards"],
                 "schema_version": 1,
             },
             max_bytes=self._max_summary_bytes,
         )
         self._create_identical(
-            f"_retention/audits/{request.operation_id}/{request.operation_id}.json",
+            f"_retention/audits/{operation_id}/{hashlib.sha256(audit_body).hexdigest()}.json",
             audit_body,
             self._max_summary_bytes,
         )
-        return status
 
     def status(self, operation_id: str) -> OperationStatus:
         if _UUID.fullmatch(operation_id or "") is None:
             raise OperationFailure("operation_id_invalid")
-        status = self._statuses.get(operation_id)
-        if status is not None:
-            return status
-        body = self._read_control(
-            f"_retention/tombstones/{operation_id}/status.json",
-            self._max_summary_bytes,
-            "status_missing",
-        )
+        status = self._latest_status(operation_id, required=True)
+        assert status is not None
+        return status
+
+    def _latest_status(self, operation_id: str, *, required: bool) -> OperationStatus | None:
         try:
-            value = json.loads(body)
-            state = value["state"]
-        except (KeyError, TypeError, json.JSONDecodeError):
-            raise OperationFailure("status_invalid") from None
-        if state not in {"partial", "completed", "refused"}:
-            raise OperationFailure("status_invalid")
-        return OperationStatus(operation_id, state, body)
+            keys = self._gateway.list_controls(
+                f"_retention/tombstones/{operation_id}/results/attempts/",
+                max_keys=1_024,
+            )
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            raise OperationFailure("status_read_failed") from None
+        statuses: list[tuple[int, OperationStatus]] = []
+        for key in keys:
+            body = self._read_control(key, self._max_summary_bytes, "status_invalid")
+            try:
+                value = json.loads(body)
+                state = value["state"]
+                deleted_objects = value["deleted_objects"]
+                canonical = canonical_json_bytes(value, max_bytes=self._max_summary_bytes) == body
+            except (KeyError, TypeError, json.JSONDecodeError):
+                raise OperationFailure("status_invalid") from None
+            if (
+                state not in {"partial", "completed", "refused"}
+                or set(value)
+                != {
+                    "checkpoint_id",
+                    "deleted_bytes",
+                    "deleted_objects",
+                    "operation_id",
+                    "plan_sha256",
+                    "planned_objects",
+                    "primary_category",
+                    "remaining_bytes",
+                    "remaining_objects",
+                    "result_shards",
+                    "schema_version",
+                    "state",
+                }
+                or not canonical
+                or type(deleted_objects) is not int
+                or deleted_objects < 0
+                or value.get("operation_id") != operation_id
+                or not key.endswith(f"-{hashlib.sha256(body).hexdigest()}.json")
+            ):
+                raise OperationFailure("status_invalid")
+            statuses.append((deleted_objects, OperationStatus(operation_id, state, body)))
+        if not statuses:
+            if required:
+                raise OperationFailure("status_missing")
+            return None
+        statuses.sort(key=lambda item: (item[0], item[1].state == "completed"))
+        return statuses[-1][1]
 
     def _read_manifest(self, base: str, shard_sha256s: object) -> tuple[ObjectRecord, ...]:
         invalid_digests = not isinstance(shard_sha256s, list) or any(
@@ -244,6 +348,13 @@ class OperationManager:
                 if not isinstance(values, list):
                     raise ValueError
                 for value in values:
+                    if not isinstance(value, dict) or set(value) != {
+                        "etag",
+                        "key",
+                        "last_modified",
+                        "size_bytes",
+                    }:
+                        raise ValueError
                     records.append(
                         ObjectRecord(
                             value["key"],
@@ -254,6 +365,18 @@ class OperationManager:
                     )
             except (KeyError, TypeError, ValueError, json.JSONDecodeError, RecordFailure):
                 raise OperationFailure("manifest_invalid") from None
+            try:
+                if (
+                    canonical_json_bytes(
+                        values,
+                        max_bytes=self._max_result_shard_bytes,
+                        max_nodes=max(4_096, len(values) * 8 + 8),
+                    )
+                    != body
+                ):
+                    raise OperationFailure("manifest_invalid")
+            except RecordFailure:
+                raise OperationFailure("manifest_invalid") from None
         if not records:
             raise OperationFailure("manifest_empty")
         return tuple(records)
@@ -261,14 +384,35 @@ class OperationManager:
     def _decode_prepared(self, body: bytes, operation_id: str) -> dict[str, object]:
         try:
             value = json.loads(body)
-            if value["schema_version"] != 1 or value["operation_id"] != operation_id:
+            if (
+                not isinstance(value, dict)
+                or set(value)
+                != {
+                    "actor",
+                    "checkpoint_id",
+                    "evaluated_at",
+                    "inventory_sha256",
+                    "manifest_shards",
+                    "operation_id",
+                    "plan_sha256",
+                    "policy_sha256",
+                    "prefix",
+                    "prefix_sha256",
+                    "prepared_at",
+                    "review",
+                    "schema_version",
+                }
+                or canonical_json_bytes(value, max_bytes=self._max_summary_bytes) != body
+                or value["schema_version"] != 1
+                or value["operation_id"] != operation_id
+            ):
                 raise ValueError
             if value["policy_sha256"] != self._policy_sha256:
                 raise OperationFailure("policy_drift")
             return value
         except OperationFailure:
             raise
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError, RecordFailure):
             raise OperationFailure("prepared_invalid") from None
 
     def _read_control(self, key: str, bound: int, code: str) -> bytes:
@@ -283,38 +427,147 @@ class OperationManager:
     def _record_status(
         self,
         operation_id: str,
+        checkpoint_id: str,
         state: str,
         plan_sha256: str,
         deleted: list[ObjectRecord],
         planned: tuple[ObjectRecord, ...],
+        primary_category: str | None,
+        started: float,
     ):
+        deleted_sha256s = {_record_sha256(record) for record in deleted}
+        classifications = tuple(
+            {
+                "object_sha256": _record_sha256(record),
+                "outcome": "deleted" if _record_sha256(record) in deleted_sha256s else "unattempted",
+            }
+            for record in planned
+        )
+        result_shards = self._write_result_shards(operation_id, classifications, started)
+        deleted_records = tuple(record for record in planned if _record_sha256(record) in deleted_sha256s)
+        remaining_records = tuple(record for record in planned if _record_sha256(record) not in deleted_sha256s)
         body = canonical_json_bytes(
             {
-                "deleted_objects": len(deleted),
-                "deleted_record_sha256s": tuple(_record_sha256(record) for record in deleted),
+                "deleted_bytes": sum(record.size_bytes for record in deleted_records),
+                "deleted_objects": len(deleted_records),
+                "checkpoint_id": checkpoint_id,
                 "operation_id": operation_id,
                 "plan_sha256": plan_sha256,
                 "planned_objects": len(planned),
+                "primary_category": primary_category,
+                "remaining_bytes": sum(record.size_bytes for record in remaining_records),
+                "remaining_objects": len(remaining_records),
+                "result_shards": result_shards,
                 "schema_version": 1,
                 "state": state,
             },
             max_bytes=self._max_summary_bytes,
         )
         status = OperationStatus(operation_id, state, body)
-        self._statuses[operation_id] = status
-        key = f"_retention/tombstones/{operation_id}/status.json"
-        try:
-            try:
-                _current, etag = self._gateway.read_control(key, max_bytes=self._max_summary_bytes)
-            except BaseException:
-                self._create_identical(key, body, self._max_summary_bytes)
-            else:
-                self._gateway.replace_lease(key, etag, body)
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except BaseException:
-            pass
+        digest = hashlib.sha256(body).hexdigest()
+        key = f"_retention/tombstones/{operation_id}/results/attempts/{len(deleted_records):06d}-{digest}.json"
+        self._create_identical(key, body, self._max_summary_bytes)
+        self.check_deadline(started)
         return status
+
+    def _write_result_shards(
+        self,
+        operation_id: str,
+        values: tuple[dict[str, str], ...],
+        started: float,
+    ) -> tuple[str, ...]:
+        chunks: list[list[dict[str, str]]] = []
+        current: list[dict[str, str]] = []
+        current_bytes = 2
+        for value in values:
+            encoded = canonical_json_bytes(value, max_bytes=256)
+            added = len(encoded) + (1 if current else 0)
+            if current and current_bytes + added > self._max_result_shard_bytes:
+                chunks.append(current)
+                current = []
+                current_bytes = 2
+                added = len(encoded)
+            if current_bytes + added > self._max_result_shard_bytes:
+                raise OperationFailure("result_shard_bound")
+            current.append(value)
+            current_bytes += added
+        if current:
+            chunks.append(current)
+        digests: list[str] = []
+        for chunk in chunks:
+            body = canonical_json_bytes(
+                chunk,
+                max_bytes=self._max_result_shard_bytes,
+                max_nodes=len(chunk) * 4 + 8,
+            )
+            digest = hashlib.sha256(body).hexdigest()
+            self._create_identical(
+                f"_retention/tombstones/{operation_id}/results/shards/{digest}.json",
+                body,
+                self._max_result_shard_bytes,
+            )
+            self.check_deadline(started)
+            digests.append(digest)
+        return tuple(digests)
+
+    def _read_result_classification(
+        self,
+        base: str,
+        status: dict[str, object],
+        records: tuple[ObjectRecord, ...],
+    ) -> set[str]:
+        digests = status.get("result_shards")
+        if (
+            not isinstance(digests, list)
+            or not digests
+            or any(not isinstance(value, str) or _SHA256.fullmatch(value) is None for value in digests)
+        ):
+            raise OperationFailure("status_invalid")
+        expected = {_record_sha256(record) for record in records}
+        observed: dict[str, str] = {}
+        for digest in digests:
+            body = self._read_control(
+                f"{base}/results/shards/{digest}.json",
+                self._max_result_shard_bytes,
+                "status_invalid",
+            )
+            if hashlib.sha256(body).hexdigest() != digest:
+                raise OperationFailure("status_invalid")
+            try:
+                values = json.loads(body)
+            except json.JSONDecodeError:
+                raise OperationFailure("status_invalid") from None
+            if not isinstance(values, list):
+                raise OperationFailure("status_invalid")
+            try:
+                if (
+                    canonical_json_bytes(
+                        values,
+                        max_bytes=self._max_result_shard_bytes,
+                        max_nodes=max(4_096, len(values) * 4 + 8),
+                    )
+                    != body
+                ):
+                    raise OperationFailure("status_invalid")
+            except RecordFailure:
+                raise OperationFailure("status_invalid") from None
+            for value in values:
+                if (
+                    not isinstance(value, dict)
+                    or set(value) != {"object_sha256", "outcome"}
+                    or not isinstance(value["object_sha256"], str)
+                    or _SHA256.fullmatch(value["object_sha256"]) is None
+                    or value["outcome"] not in {"deleted", "failed", "unattempted"}
+                    or value["object_sha256"] in observed
+                ):
+                    raise OperationFailure("status_invalid")
+                observed[value["object_sha256"]] = value["outcome"]
+        if set(observed) != expected:
+            raise OperationFailure("status_invalid")
+        deleted = {digest for digest, outcome in observed.items() if outcome == "deleted"}
+        if len(deleted) != status.get("deleted_objects"):
+            raise OperationFailure("status_invalid")
+        return deleted
 
     def _validate_prepare(self, request: PrepareRequest) -> PlanArtifact:
         if not isinstance(request, PrepareRequest) or _UUID.fullmatch(request.operation_id or "") is None:
@@ -335,7 +588,14 @@ class OperationManager:
             if len(decoded["shards"]) != len(artifact.shards):
                 raise ValueError
             for value, shard in zip(decoded["shards"], artifact.shards):
-                if canonical_json_bytes(value, max_bytes=len(shard.body)) != shard.body:
+                if (
+                    canonical_json_bytes(
+                        value,
+                        max_bytes=len(shard.body),
+                        max_nodes=max(4_096, len(shard.records) * 8 + 8),
+                    )
+                    != shard.body
+                ):
                     raise ValueError
                 if hashlib.sha256(shard.body).hexdigest() != shard.sha256:
                     raise ValueError
@@ -347,6 +607,12 @@ class OperationManager:
             raise OperationFailure("policy_drift")
         if artifact.summary.get("actor") != request.actor:
             raise OperationFailure("actor_mismatch")
+        if (
+            artifact.summary.get("checkpoint_id") != "go-live-streaming-test-v1"
+            or not isinstance(artifact.summary.get("prefix"), str)
+            or _DISPOSABLE_PREFIX.fullmatch(artifact.summary["prefix"]) is None
+        ):
+            raise OperationFailure("destructive_scope_invalid")
         return artifact
 
     def _create_identical(self, key: str, body: bytes, bound: int) -> None:
@@ -387,6 +653,27 @@ class OperationManager:
         ):
             raise OperationFailure("clock_invalid")
         return value
+
+    def _start_deadline(self) -> float:
+        try:
+            started = self._monotonic()
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            raise OperationFailure("clock_failed") from None
+        if type(started) not in (int, float):
+            raise OperationFailure("clock_invalid")
+        return float(started)
+
+    def check_deadline(self, started: float) -> None:
+        try:
+            elapsed = self._monotonic() - started
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            raise OperationFailure("clock_failed") from None
+        if elapsed < 0 or elapsed > self._max_active_seconds:
+            raise OperationFailure("operation_deadline")
 
 
 def _format_utc(value: datetime) -> str:

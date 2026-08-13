@@ -151,7 +151,8 @@ def _assembled_compose(scale: str | None = None) -> dict:
         MINIO_ROOT_PASSWORD="ci-placeholder-password",
         MINIO_RETENTION_ACCESS_KEY="ci-retention-user",
         MINIO_RETENTION_SECRET_KEY="ci-retention-password",
-        CHECKPOINT_RETENTION_API_TOKEN="ci-retention-api-token",
+        CHECKPOINT_RETENTION_LEASE_TOKEN="ci-retention-lease-token",
+        CHECKPOINT_RETENTION_OPERATOR_TOKEN="ci-retention-operator-token",
     )
     if scale is None:
         environment.pop("DATASET_SCALE", None)
@@ -197,10 +198,7 @@ def test_assembled_airflow_mounts_only_production_spark_app_dags():
     expected = "/opt/airflow/dags/data_eng_lab_spark_apps"
     for name in ("airflow-scheduler", "airflow-dag-processor"):
         volumes = services[name]["volumes"]
-        targets = {
-            volume["target"] if isinstance(volume, dict) else volume.split(":", 2)[1]
-            for volume in volumes
-        }
+        targets = {volume["target"] if isinstance(volume, dict) else volume.split(":", 2)[1] for volume in volumes}
         assert expected in targets
         assert "/opt/airflow/dags/data_eng_lab_scenarios" not in targets
 

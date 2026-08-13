@@ -20,6 +20,7 @@ class CliFailure(ValueError):
 
 _ORIGIN = "http://checkpoint-retention:8080"
 _MAX_BODY = 65_536
+_MAX_PLAN_BODY = 128 * 1024 * 1024
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -51,7 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     namespace = _parser().parse_args(arguments)
     try:
         origin = os.environ.get("CHECKPOINT_RETENTION_URI", _ORIGIN)
-        token = os.environ.get("CHECKPOINT_RETENTION_API_TOKEN")
+        token = os.environ.get("CHECKPOINT_RETENTION_OPERATOR_TOKEN")
         if origin != _ORIGIN or not isinstance(token, str) or not token or len(token.encode()) > 256:
             raise CliFailure("configuration_invalid", 2)
         path, payload, output = _command(namespace)
@@ -81,7 +82,7 @@ def _command(namespace) -> tuple[str, dict[str, object] | None, Path | None]:
         }
         return "/v1/plans", payload, namespace.output
     if namespace.command == "prepare":
-        plan = _read_json_file(namespace.plan)
+        plan = _read_json_file(namespace.plan, max_bytes=_MAX_PLAN_BODY)
         return (
             "/v1/operations/prepare",
             {
@@ -102,7 +103,9 @@ def _command(namespace) -> tuple[str, dict[str, object] | None, Path | None]:
 
 
 def _request(path: str, payload: dict[str, object] | None, token: str) -> bytes:
-    body = None if payload is None else _canonical(payload)
+    request_bound = _MAX_PLAN_BODY if path == "/v1/operations/prepare" else _MAX_BODY
+    response_bound = _MAX_PLAN_BODY if path == "/v1/plans" else _MAX_BODY
+    body = None if payload is None else _canonical(payload, max_bytes=request_bound)
     request = urllib.request.Request(
         _ORIGIN + path,
         data=body,
@@ -117,8 +120,8 @@ def _request(path: str, payload: dict[str, object] | None, token: str) -> bytes:
     primary: BaseException | None = None
     try:
         response = _open(request, timeout=30)
-        raw = response.read(_MAX_BODY + 1)
-        if type(raw) is not bytes or len(raw) > _MAX_BODY:
+        raw = response.read(response_bound + 1)
+        if type(raw) is not bytes or len(raw) > response_bound:
             raise CliFailure("response_invalid", 5)
         decoded = _decode_response(raw)
         if not isinstance(decoded, dict):
@@ -128,8 +131,26 @@ def _request(path: str, payload: dict[str, object] | None, token: str) -> bytes:
         primary = error
         raise
     except urllib.error.HTTPError as error:
-        exit_code = 3 if error.code in {409, 412, 423} else 2 if error.code == 400 else 5
-        primary = CliFailure("service_refused" if exit_code == 3 else "service_failure", exit_code)
+        response = error
+        try:
+            raw = error.read(_MAX_BODY + 1)
+            value = _decode_response(raw)
+            state = value.get("state")
+        except BaseException:
+            state = None
+        exit_code = (
+            4
+            if state == "partial"
+            else 3
+            if state == "refused" or error.code in {409, 412, 423}
+            else 2
+            if error.code == 400
+            else 5
+        )
+        primary = CliFailure(
+            "service_partial" if exit_code == 4 else "service_refused" if exit_code == 3 else "service_failure",
+            exit_code,
+        )
         raise primary from None
     except (KeyboardInterrupt, SystemExit) as error:
         primary = error
@@ -157,11 +178,11 @@ def _open(request, timeout):
     return opener.open(request, timeout=timeout)
 
 
-def _read_json_file(path: Path) -> dict[str, object]:
+def _read_json_file(path: Path, *, max_bytes: int = _MAX_BODY) -> dict[str, object]:
     try:
         with path.open("rb") as handle:
-            body = handle.read(_MAX_BODY + 1)
-        if len(body) > _MAX_BODY:
+            body = handle.read(max_bytes + 1)
+        if len(body) > max_bytes:
             raise CliFailure("file_too_large", 2)
         value = json.loads(body.decode("utf-8"))
     except CliFailure:
@@ -186,12 +207,12 @@ def _write_exclusive(path: Path, body: bytes) -> None:
         raise CliFailure("output_write_failed", 5) from None
 
 
-def _canonical(value: object) -> bytes:
+def _canonical(value: object, *, max_bytes: int = _MAX_BODY) -> bytes:
     try:
         body = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
     except (TypeError, ValueError, UnicodeError):
         raise CliFailure("json_invalid", 2) from None
-    if len(body) > _MAX_BODY:
+    if len(body) > max_bytes:
         raise CliFailure("body_too_large", 2)
     return body
 

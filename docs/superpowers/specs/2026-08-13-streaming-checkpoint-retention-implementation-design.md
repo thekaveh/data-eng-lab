@@ -149,7 +149,7 @@ mounts the policy read-only and receives only:
 
 - `CHECKPOINT_RETENTION_ACCESS_KEY`;
 - `CHECKPOINT_RETENTION_SECRET_KEY`;
-- `CHECKPOINT_RETENTION_API_TOKEN`;
+- `CHECKPOINT_RETENTION_OPERATOR_TOKEN`;
 - fixed internal MinIO endpoint, region, and bucket; and
 - `CHECKPOINT_RETENTION_DESTRUCTIVE_ENABLED`, default `false`.
 

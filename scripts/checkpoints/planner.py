@@ -24,6 +24,7 @@ from scripts.checkpoints.records import (
     PlanArtifact,
     RecordFailure,
     canonical_json_bytes,
+    decode_exact_json,
     inventory_sha256,
     shard_inventory,
 )
@@ -47,6 +48,20 @@ class PlanRequest:
 
 
 _ACTOR = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}")
+_LEASE_SCHEMA = {
+    "acquired_at": str,
+    "checkpoint_id": str,
+    "epoch": str,
+    "expires_at": str,
+    "heartbeat_at": str,
+    "owner_id": str,
+    "prefix": str,
+    "schema_version": int,
+    "session_id": str,
+    "state": str,
+    "terminal_evidence": (dict, type(None)),
+    "workload": str,
+}
 
 
 class RetentionPlanner:
@@ -192,7 +207,7 @@ def write_plan_exclusive(path: Path, artifact: PlanArtifact) -> None:
 
 def _decode_lease(body: bytes, etag: str) -> LeaseFacts:
     try:
-        value = json.loads(body)
+        value = decode_exact_json(body, _LEASE_SCHEMA)
         acquired = _parse_utc(value["acquired_at"])
         heartbeat = _parse_utc(value["heartbeat_at"])
         expires = _parse_utc(value["expires_at"])
@@ -207,7 +222,7 @@ def _decode_lease(body: bytes, etag: str) -> LeaseFacts:
             expires_at=expires,
             etag=etag,
         )
-    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError, RecordFailure):
         raise PlanFailure("lease_malformed") from None
 
 

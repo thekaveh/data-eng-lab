@@ -65,7 +65,7 @@ class FakeGateway:
 
     def create_control(self, key, body):
         self.calls.append(("create", key, body))
-        if self.create_failure_suffix and key.endswith(self.create_failure_suffix):
+        if self.create_failure_suffix and self.create_failure_suffix in key:
             raise OperationFailure("audit_write_failed")
         if key in self.controls:
             raise RuntimeError("collision")
@@ -76,6 +76,11 @@ class FakeGateway:
     def read_control(self, key, *, max_bytes):
         self.calls.append(("read", key, max_bytes))
         return self.controls[key]
+
+    def list_controls(self, prefix, *, max_keys):
+        keys = tuple(sorted(key for key in self.controls if key.startswith(prefix)))
+        assert len(keys) <= max_keys
+        return keys
 
     def replace_lease(self, key, etag, body):
         self.calls.append(("replace", key, etag, body))
@@ -231,7 +236,9 @@ def test_apply_rejects_confirmation_or_revalidation_drift_before_head_and_delete
             now=lambda: NOW.replace(minute=15),
             revalidate=lambda _prefix, _evaluated_at: revalidated,
         )
-        with pytest.raises(OperationFailure, match="confirmation_mismatch|revalidation_mismatch"):
+        with pytest.raises(
+            OperationFailure, match="destructive_scope_invalid|confirmation_mismatch|revalidation_mismatch"
+        ):
             manager.apply(request)
         assert not any(call[0] in {"head", "delete"} for call in gateway.calls)
 
@@ -317,11 +324,75 @@ def test_mixed_partial_response_persists_successful_keys_for_original_set_retry(
 
     partial_body = json.loads(manager.status(OPERATION_ID).body)
     assert partial_body["deleted_objects"] == 1
+    manager = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda _prefix, _evaluated_at: artifact,
+    )
     gateway.delete_records = FakeGateway.delete_records.__get__(gateway)
     gateway.data += (ObjectRecord(f"{PREFIX}foreign-after-plan", "f" * 32, 4, NOW),)
     with pytest.raises(OperationFailure, match="postflight_not_empty"):
         manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
     assert first_key not in tuple(key for call in gateway.calls if call[0] == "delete" for key in call[1])
+
+
+def test_partial_result_classification_is_sharded_and_restart_safe_beyond_summary_bound():
+    records = tuple(ObjectRecord(f"{PREFIX}state/{index:05d}", f"{index:032x}", 1, NOW) for index in range(1_200))
+    shards = shard_inventory(records, 1_048_576)
+    summary = dict(_artifact().summary)
+    summary["inventory"] = {
+        "newest_last_modified": "2026-08-13T12:00:00Z",
+        "object_count": len(records),
+        "sha256": inventory_sha256(records),
+        "total_bytes": len(records),
+    }
+    summary["manifest_shards"] = tuple(shard.sha256 for shard in shards)
+    body = canonical_json_bytes(
+        {"schema_version": 1, "summary": summary, "shards": [json.loads(shard.body) for shard in shards]},
+        max_bytes=128 * 1024 * 1024,
+        max_nodes=20_000,
+    )
+    artifact = PlanArtifact(summary, shards, body, __import__("hashlib").sha256(body).hexdigest())
+    gateway = FakeGateway()
+    gateway.data = records
+    _prepared_manager(gateway, artifact)
+
+    def partial(values):
+        deleted = tuple(record.key for record in values[:800])
+        gateway.data = tuple(record for record in gateway.data if record.key not in set(deleted))
+        raise GatewayFailure("delete_partial", deleted_keys=deleted)
+
+    gateway.delete_records = partial
+    first = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda _prefix, _evaluated_at: artifact,
+        max_delete_keys=1_000,
+    )
+    with pytest.raises(OperationFailure, match="delete_partial"):
+        first.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+
+    partial_status = first.status(OPERATION_ID)
+    partial_value = json.loads(partial_status.body)
+    assert len(partial_status.body) <= 65_536
+    assert partial_value["deleted_objects"] == 800
+    assert partial_value["remaining_objects"] == 400
+    assert partial_value["result_shards"]
+
+    gateway.delete_records = FakeGateway.delete_records.__get__(gateway)
+    restarted = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda _prefix, _evaluated_at: artifact,
+        max_delete_keys=1_000,
+    )
+    completed = restarted.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+
+    assert completed.state == "completed"
+    assert gateway.data == ()
 
 
 def test_head_failure_prevents_every_delete_and_control_flow_is_not_wrapped():
@@ -347,7 +418,7 @@ def test_deleted_but_audit_failed_recovery_never_deletes_again():
     artifact = _artifact()
     gateway = FakeGateway()
     _prepared_manager(gateway, artifact)
-    gateway.create_failure_suffix = f"audits/{OPERATION_ID}/{OPERATION_ID}.json"
+    gateway.create_failure_suffix = f"audits/{OPERATION_ID}/"
     manager = OperationManager(
         gateway,
         policy_sha256="a" * 64,
@@ -359,7 +430,15 @@ def test_deleted_but_audit_failed_recovery_never_deletes_again():
         manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
     delete_count = sum(call[0] == "delete" for call in gateway.calls)
 
-    recovered = manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    gateway.create_failure_suffix = None
+    restarted = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda _prefix, _evaluated_at: artifact,
+    )
+    recovered = restarted.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
 
     assert recovered.state == "completed"
     assert sum(call[0] == "delete" for call in gateway.calls) == delete_count
+    assert any(key.startswith(f"_retention/audits/{OPERATION_ID}/") for key in gateway.controls)

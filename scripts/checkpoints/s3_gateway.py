@@ -28,8 +28,10 @@ class GatewayFailure(ValueError):
 _CONTROL_KEY = re.compile(
     r"_retention/(?:"
     r"(?:leases|terminals)/[a-z0-9][a-z0-9_-]{0,127}\.json|"
-    r"tombstones/[0-9a-f-]{36}/(?:manifest/[0-9]+-[0-9a-f]{64}\.json|prepared\.json|status\.json)|"
-    r"audits/[0-9a-f-]{36}/[0-9a-f-]{36}\.json"
+    r"tombstones/[0-9a-f-]{36}/(?:manifest/[0-9]+-[0-9a-f]{64}\.json|prepared\.json|"
+    r"results/(?:attempts/[0-9]{6}-[0-9a-f]{64}\.json|shards/[0-9a-f]{64}\.json))|"
+    r"audits/[0-9a-f-]{36}/[0-9a-f]{64}\.json|"
+    r"capability/runtime-probe\.json"
     r")"
 )
 _ETAG = re.compile(r"[0-9a-f]{32}(?:-[1-9][0-9]{0,9})?")
@@ -166,7 +168,7 @@ class S3Gateway:
         _validate_control_key(key)
         bound = (
             self._policy.bounds.max_manifest_shard_bytes
-            if "/manifest/" in key
+            if "/manifest/" in key or "/results/shards/" in key
             else self._policy.bounds.max_summary_bytes
         )
         if type(max_bytes) is not int or max_bytes < 1 or max_bytes > bound:
@@ -221,6 +223,40 @@ class S3Gateway:
         if not isinstance(etag, str) or _ETAG.fullmatch(etag) is None:
             raise GatewayFailure("control_etag_invalid")
         return self._write_control(key, body, if_none_match=False, etag=etag)
+
+    def list_controls(self, prefix: str, *, max_keys: int) -> tuple[str, ...]:
+        if (
+            not isinstance(prefix, str)
+            or not prefix.isascii()
+            or not prefix.startswith("_retention/")
+            or type(max_keys) is not int
+            or max_keys < 1
+            or max_keys > 1_024
+        ):
+            raise GatewayFailure("control_prefix_invalid")
+        try:
+            response = self._client.list_objects_v2(
+                Bucket=self._policy.bucket,
+                Prefix=prefix,
+                MaxKeys=max_keys + 1,
+            )
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            raise GatewayFailure("control_list_failed") from None
+        contents = response.get("Contents", []) if isinstance(response, Mapping) else None
+        if not isinstance(contents, list) or response.get("IsTruncated") is not False or len(contents) > max_keys:
+            raise GatewayFailure("control_list_bound")
+        keys = []
+        for item in contents:
+            key = item.get("Key") if isinstance(item, Mapping) else None
+            if not isinstance(key, str) or not key.startswith(prefix):
+                raise GatewayFailure("control_list_invalid")
+            _validate_control_key(key)
+            keys.append(key)
+        if len(keys) != len(set(keys)):
+            raise GatewayFailure("control_list_invalid")
+        return tuple(sorted(keys))
 
     def head_record(self, record: ObjectRecord) -> None:
         if not isinstance(record, ObjectRecord):
@@ -285,17 +321,52 @@ class S3Gateway:
         return expected
 
     def probe_capabilities(self) -> Mapping[str, object]:
+        key = "_retention/capability/runtime-probe.json"
+        body = b'{"profile":"minio-2025-09-manual-verified-readback","schema_version":1}'
+        observed = False
+        try:
+            try:
+                etag = self.create_control(key, body)
+            except GatewayFailure:
+                existing, etag = self.read_control(key, max_bytes=len(body))
+                if existing != body:
+                    raise GatewayFailure("capability_failed")
+            replaced = self.replace_lease(key, etag, body)
+            readback, read_etag = self.read_control(key, max_bytes=len(body))
+            if readback != body or read_etag != replaced:
+                raise GatewayFailure("capability_failed")
+            try:
+                self._client.delete_object(Bucket=self._policy.bucket, Key=key)
+            except ClientError as error:
+                code = error.response.get("Error", {}).get("Code") if isinstance(error.response, Mapping) else None
+                if code not in {"AccessDenied", "MethodNotAllowed"}:
+                    raise GatewayFailure("capability_failed") from None
+            else:
+                raise GatewayFailure("capability_failed")
+            observed = True
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except GatewayFailure:
+            raise
+        except BaseException:
+            raise GatewayFailure("capability_failed") from None
         return {
             "profile": "minio-2025-09-manual-verified-readback",
             "conditional_create": True,
             "conditional_replace_verified_readback": True,
             "conditional_delete": False,
             "automatic_apply": False,
+            "observed": observed,
         }
 
     def _write_control(self, key: str, body: bytes, *, if_none_match: bool, etag: str | None) -> str:
         _validate_control_key(key)
-        if type(body) is not bytes or not body or len(body) > self._policy.bounds.max_summary_bytes:
+        bound = (
+            self._policy.bounds.max_manifest_shard_bytes
+            if "/manifest/" in key
+            else self._policy.bounds.max_summary_bytes
+        )
+        if type(body) is not bytes or not body or len(body) > bound:
             raise GatewayFailure("control_body_bound")
         request: dict[str, object] = {"Bucket": self._policy.bucket, "Key": key, "Body": body}
         if if_none_match:

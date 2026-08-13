@@ -260,12 +260,15 @@ def _parse_metrics(body: bytes) -> dict[str, int]:
 
 def _service(method: str, path: str, payload: dict[str, object] | None = None) -> dict[str, object]:
     body = None if payload is None else json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
+    token_name = (
+        "CHECKPOINT_RETENTION_LEASE_TOKEN" if path.startswith("/v1/leases/") else "CHECKPOINT_RETENTION_OPERATOR_TOKEN"
+    )
     script = (
         "import json,os,urllib.request;"
         f"body={body!r};"
         "request=urllib.request.Request("
         f"'http://127.0.0.1:8080{path}',data=body,method='{method}',"
-        "headers={'Authorization':'Bearer '+os.environ['CHECKPOINT_RETENTION_API_TOKEN'],"
+        f"headers={{'Authorization':'Bearer '+os.environ['{token_name}'],"
         "'Content-Type':'application/json',**({'Content-Length':str(len(body))} if body is not None else {})});"
         "response=urllib.request.urlopen(request,timeout=30);"
         f"raw=response.read({MAX_RESPONSE_BYTES + 1});response.close();"

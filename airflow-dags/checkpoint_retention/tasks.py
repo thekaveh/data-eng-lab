@@ -34,7 +34,7 @@ _CODE = re.compile(r"[a-z][a-z0-9_]{0,63}")
 def run_retention_plans() -> dict[str, object]:
     """Request the complete registry-ordered dry run and return summaries only."""
 
-    token = os.environ.get("CHECKPOINT_RETENTION_API_TOKEN")
+    token = os.environ.get("CHECKPOINT_RETENTION_OPERATOR_TOKEN")
     origin = os.environ.get("CHECKPOINT_RETENTION_URI", _ORIGIN)
     if origin != _ORIGIN or not isinstance(token, str) or not token or len(token.encode()) > 256:
         raise RetentionTaskFailure("configuration_invalid")

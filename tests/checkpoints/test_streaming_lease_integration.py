@@ -93,8 +93,8 @@ def test_runtime_mounts_only_the_fixed_internal_lease_api_contract_into_notebook
     for service in ("jupyterhub", "zeppelin"):
         value = compose["services"][service]
         assert value["environment"]["CHECKPOINT_RETENTION_URI"] == "http://checkpoint-retention:8080"
-        assert value["environment"]["CHECKPOINT_RETENTION_API_TOKEN"] == (
-            "${CHECKPOINT_RETENTION_API_TOKEN:?CHECKPOINT_RETENTION_API_TOKEN is required}"
+        assert value["environment"]["CHECKPOINT_RETENTION_LEASE_TOKEN"] == (
+            "${CHECKPOINT_RETENTION_LEASE_TOKEN:?CHECKPOINT_RETENTION_LEASE_TOKEN is required}"
         )
         assert "../scripts/checkpoints:/opt/data-eng-lab/scripts/checkpoints:ro" in value["volumes"]
         assert value["environment"]["PYTHONPATH"] == "/opt/data-eng-lab"

@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import threading
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from types import MappingProxyType
@@ -77,6 +78,23 @@ _LEASE_SCHEMA = {
 }
 
 
+class CheckpointLockRegistry:
+    """One process-local re-entrant lock per exact checkpoint identity."""
+
+    def __init__(self) -> None:
+        self._guard = threading.Lock()
+        self._values: dict[str, threading.RLock] = {}
+
+    @contextmanager
+    def hold(self, checkpoint_id: str):
+        if not isinstance(checkpoint_id, str) or _IDENTITY.fullmatch(checkpoint_id) is None:
+            raise LeaseFailure("lease_identity_mismatch")
+        with self._guard:
+            lock = self._values.setdefault(checkpoint_id, threading.RLock())
+        with lock:
+            yield
+
+
 class LeaseManager:
     """Serialize and validate all lease transitions in one service process."""
 
@@ -87,17 +105,17 @@ class LeaseManager:
         *,
         now: Callable[[], datetime],
         uuid_factory: Callable[[], str] = lambda: str(uuid.uuid4()),
+        locks: CheckpointLockRegistry | None = None,
     ) -> None:
         self._gateway = gateway
         self._policy = policy
         self._now = now
         self._uuid_factory = uuid_factory
-        self._locks_guard = threading.Lock()
-        self._locks: dict[str, threading.Lock] = {}
+        self._locks = locks or CheckpointLockRegistry()
 
     def acquire(self, request: AcquireRequest) -> LeaseResult:
         matched = self._validate_acquire(request)
-        with self._lock(request.checkpoint_id):
+        with self._locks.hold(request.checkpoint_id):
             now = self._exact_now()
             key = self._lease_key(request.checkpoint_id)
             existing: tuple[dict[str, object], str] | None
@@ -212,13 +230,16 @@ class LeaseManager:
             "state": request.state,
             "successful": evidence.get("successful", False),
         }
-        if any(type(value[field]) is not bool for field in {
-            "exclusive_run",
-            "recovery_approved",
-            "sink_disposition_approved",
-            "source_available",
-            "successful",
-        }):
+        if any(
+            type(value[field]) is not bool
+            for field in {
+                "exclusive_run",
+                "recovery_approved",
+                "sink_disposition_approved",
+                "source_available",
+                "successful",
+            }
+        ):
             raise LeaseFailure("terminal_evidence_invalid")
         body = canonical_json_bytes(value, max_bytes=self._policy.bounds.max_summary_bytes)
         key = f"_retention/terminals/{request.checkpoint_id}.json"
@@ -245,7 +266,7 @@ class LeaseManager:
         evidence: Mapping[str, object] | None,
     ) -> LeaseResult:
         self._validate_identity_request(request.checkpoint_id, request.prefix, request.epoch)
-        with self._lock(request.checkpoint_id):
+        with self._locks.hold(request.checkpoint_id):
             now = self._exact_now()
             key = self._lease_key(request.checkpoint_id)
             try:
@@ -336,10 +357,6 @@ class LeaseManager:
         ):
             raise LeaseFailure("clock_invalid")
         return value
-
-    def _lock(self, checkpoint_id: str) -> threading.Lock:
-        with self._locks_guard:
-            return self._locks.setdefault(checkpoint_id, threading.Lock())
 
     @staticmethod
     def _lease_key(checkpoint_id: str) -> str:

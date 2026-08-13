@@ -82,6 +82,10 @@ class FakeS3:
         self.calls.append(("delete", request))
         return self.delete_response
 
+    def delete_object(self, **request):
+        self.calls.append(("delete-control", request))
+        raise ClientError({"Error": {"Code": "AccessDenied", "Message": "denied"}}, "DeleteObject")
+
 
 def _page(*keys: str, truncated: bool = False, token: str | None = None) -> dict:
     page = {
@@ -255,6 +259,26 @@ def test_create_and_replace_use_conditions_and_verify_exact_readback():
     assert "IfNoneMatch" not in puts[1]
     assert second_etag != first_etag
     assert client.objects[CONTROL][0] == b'{"epoch":2}'
+
+
+def test_capability_probe_performs_observed_create_replace_readback_and_denied_delete():
+    client = FakeS3()
+    gateway = S3Gateway(client, POLICY, monotonic=lambda: 0.0)
+
+    result = gateway.probe_capabilities()
+
+    assert result == {
+        "automatic_apply": False,
+        "conditional_create": True,
+        "conditional_delete": False,
+        "conditional_replace_verified_readback": True,
+        "observed": True,
+        "profile": "minio-2025-09-manual-verified-readback",
+    }
+    operations = tuple(operation for operation, _request in client.calls)
+    assert operations.count("put") == 2
+    assert operations.count("get") == 3
+    assert operations[-1] == "delete-control"
 
 
 def test_head_and_delete_require_every_exact_original_record_result():

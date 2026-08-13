@@ -256,9 +256,7 @@ def test_terminal_defaults_missing_recovery_facts_to_false_and_rotates_completed
 
     next_uuid = "22222222-2222-4222-8222-222222222222"
     next_prefix = f"streaming_test/{next_uuid}/"
-    rotated = manager.acquire(
-        replace(_acquire(), prefix=next_prefix, session_id="issue86-live-002")
-    )
+    rotated = manager.acquire(replace(_acquire(), prefix=next_prefix, session_id="issue86-live-002"))
 
     assert rotated.epoch == EPOCH
     assert json.loads(rotated.body)["prefix"] == next_prefix

@@ -6,6 +6,7 @@ import hmac
 import json
 import os
 import re
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -13,9 +14,15 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Mapping, Sequence
 
-from scripts.checkpoints.leases import AcquireRequest, HeartbeatRequest, LeaseManager, TerminalRequest
+from scripts.checkpoints.leases import (
+    AcquireRequest,
+    CheckpointLockRegistry,
+    HeartbeatRequest,
+    LeaseManager,
+    TerminalRequest,
+)
 from scripts.checkpoints.metrics import render_metrics
-from scripts.checkpoints.operations import ApplyRequest, OperationManager, PrepareRequest
+from scripts.checkpoints.operations import ApplyRequest, OperationFailure, OperationManager, PrepareRequest
 from scripts.checkpoints.planner import PlanFailure, PlanRequest, RetentionPlanner
 from scripts.checkpoints.policy import CheckpointPolicy, load_policy
 from scripts.checkpoints.records import RecordFailure, canonical_json_bytes, decode_plan_artifact
@@ -23,9 +30,11 @@ from scripts.checkpoints.s3_gateway import S3Gateway, build_s3_client
 
 
 class ServiceFailure(ValueError):
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, *, status: int = 400, state: str | None = None) -> None:
         super().__init__(code)
         self.code = code
+        self.status = status
+        self.state = state
 
 
 @dataclass(frozen=True)
@@ -46,6 +55,9 @@ _POST_ROUTES = {
     "/v1/operations/prepare": "prepare",
 }
 _MAX_BODY = 65_536
+_MAX_PLAN_BODY = 128 * 1024 * 1024
+_MAX_PLAN_NODES = 600_128
+_LEASE_ACTIONS = {"lease_acquire", "lease_heartbeat", "lease_terminal"}
 
 
 class RuntimeBackend:
@@ -76,7 +88,14 @@ class RuntimeBackend:
 
     def health(self) -> dict[str, object]:
         capabilities = self._gateway.probe_capabilities()
-        if not isinstance(capabilities, Mapping) or capabilities.get("automatic_apply") is not False:
+        if (
+            not isinstance(capabilities, Mapping)
+            or capabilities.get("automatic_apply") is not False
+            or capabilities.get("observed") is not True
+            or capabilities.get("conditional_create") is not True
+            or capabilities.get("conditional_replace_verified_readback") is not True
+            or capabilities.get("conditional_delete") is not False
+        ):
             raise ServiceFailure("capability_failed")
         return {
             "capability_profile": capabilities.get("profile", "manual-verified-readback"),
@@ -92,6 +111,9 @@ class RuntimeBackend:
         key = (label,)
         values[key] = values.get(key, 0) + amount
 
+    def _set(self, metric: str, label: str, amount: int | float) -> None:
+        self._metrics.setdefault(metric, {})[(label,)] = amount
+
     def invoke(self, action: str, payload: dict[str, object] | None, operation_id: str | None):
         if action == "lease_acquire":
             value = _exact_payload(payload, {"checkpoint_id", "owner_id", "prefix", "session_id", "workload"})
@@ -104,11 +126,15 @@ class RuntimeBackend:
                     value["session_id"],
                 )
             )
-            return _lease_response(result)
+            response = _lease_response(result)
+            self._record_lease_metrics(value["checkpoint_id"], result.body)
+            return response
         if action == "lease_heartbeat":
             value = _exact_payload(payload, {"checkpoint_id", "epoch", "prefix"})
             result = self._leases.heartbeat(HeartbeatRequest(value["checkpoint_id"], value["prefix"], value["epoch"]))
-            return _lease_response(result)
+            response = _lease_response(result)
+            self._record_lease_metrics(value["checkpoint_id"], result.body)
+            return response
         if action == "lease_terminal":
             value = _exact_payload(payload, {"checkpoint_id", "epoch", "evidence", "prefix", "state"})
             if not isinstance(value["evidence"], Mapping):
@@ -122,18 +148,53 @@ class RuntimeBackend:
                     value["evidence"],
                 )
             )
-            return _lease_response(result)
+            response = _lease_response(result)
+            self._record_lease_metrics(value["checkpoint_id"], result.body)
+            if value["evidence"].get("successful") is True:
+                self._set(
+                    "checkpoint_retention_last_success_unixtime",
+                    value["checkpoint_id"],
+                    int(self._now().timestamp()),
+                )
+            return response
         if action == "apply":
             if not self._destructive_enabled:
                 return {"state": "refused", "refusal_codes": ["destructive_disabled"]}
             value = _exact_payload(payload, {"confirm_prefix", "plan_sha256"})
-            status = self._operations.apply(
-                ApplyRequest(operation_id or "", value["plan_sha256"], value["confirm_prefix"])
-            )
+            self._require_disposable(value["confirm_prefix"])
+            try:
+                status = self._operations.apply(
+                    ApplyRequest(operation_id or "", value["plan_sha256"], value["confirm_prefix"])
+                )
+            except OperationFailure as error:
+                if error.code == "delete_partial":
+                    status = self._operations.status(operation_id or "")
+                    result = json.loads(status.body)
+                    self._increment("checkpoint_retention_partial_total", "partial")
+                    return result
+                outcome = "timeout" if error.code == "operation_deadline" else "backend_failure"
+                self._increment("checkpoint_retention_request_failures_total", outcome)
+                raise ServiceFailure(
+                    error.code,
+                    status=504 if error.code == "operation_deadline" else 409,
+                    state=None if error.code == "operation_deadline" else "refused",
+                ) from None
             result = json.loads(status.body)
             state = result.get("state")
             if state in {"not_ready", "partial", "completed"}:
                 self._increment("checkpoint_retention_deleted_objects_total", state, result.get("deleted_objects", 0))
+                self._increment("checkpoint_retention_deleted_bytes_total", state, result.get("deleted_bytes", 0))
+                if state == "partial":
+                    self._increment("checkpoint_retention_partial_total", "partial")
+                if state == "completed" and result.get("checkpoint_id") in getattr(
+                    __import__("scripts.checkpoints.metrics", fromlist=["_CHECKPOINT_IDS"]),
+                    "_CHECKPOINT_IDS",
+                ):
+                    self._set(
+                        "checkpoint_retention_last_success_unixtime",
+                        result["checkpoint_id"],
+                        int(self._now().timestamp()),
+                    )
             return result
         if action == "status":
             status = self._operations.status(operation_id or "")
@@ -154,6 +215,22 @@ class RuntimeBackend:
             decision = result.get("summary", {}).get("decision")
             if decision in {"eligible", "refused"}:
                 self._increment("checkpoint_retention_plans_total", decision)
+                summary = result["summary"]
+                checkpoint_id = summary.get("checkpoint_id")
+                inventory = summary.get("inventory", {})
+                if checkpoint_id in getattr(
+                    __import__("scripts.checkpoints.metrics", fromlist=["_CHECKPOINT_IDS"]), "_CHECKPOINT_IDS"
+                ):
+                    total_bytes = inventory.get("total_bytes", 0)
+                    self._set("checkpoint_retention_objects", checkpoint_id, inventory.get("object_count", 0))
+                    self._set("checkpoint_retention_bytes", checkpoint_id, total_bytes)
+                    self._set(
+                        "checkpoint_retention_eligible_bytes",
+                        checkpoint_id,
+                        total_bytes if decision == "eligible" else 0,
+                    )
+                for code in summary.get("refusal_codes", ()):
+                    self._increment("checkpoint_retention_refusals_total", code)
             return result
         if action == "prepare":
             if not isinstance(payload, dict) or set(payload) != {"actor", "plan", "plan_sha256", "review"}:
@@ -161,16 +238,22 @@ class RuntimeBackend:
             if any(not isinstance(payload[field], str) for field in {"actor", "plan_sha256", "review"}):
                 raise ServiceFailure("request_invalid")
             try:
-                plan_body = canonical_json_bytes(payload["plan"], max_bytes=_MAX_BODY)
+                plan_body = canonical_json_bytes(
+                    payload["plan"],
+                    max_bytes=_MAX_PLAN_BODY,
+                    max_nodes=_MAX_PLAN_NODES,
+                )
                 artifact = decode_plan_artifact(
                     plan_body,
-                    max_body_bytes=_MAX_BODY,
+                    max_body_bytes=_MAX_PLAN_BODY,
                     max_shard_bytes=getattr(
                         getattr(self._policy, "bounds", None),
                         "max_manifest_shard_bytes",
                         1_048_576,
                     ),
+                    max_nodes=_MAX_PLAN_NODES,
                 )
+                self._require_disposable(artifact.summary.get("prefix"))
                 identifier = self._operation_id()
                 status = self._operations.prepare(
                     PrepareRequest(identifier, artifact, payload["plan_sha256"], payload["review"], payload["actor"])
@@ -181,9 +264,43 @@ class RuntimeBackend:
                 return result
             except (KeyboardInterrupt, SystemExit):
                 raise
+            except ServiceFailure:
+                raise
             except (RecordFailure, ValueError, TypeError):
                 raise ServiceFailure("request_invalid") from None
         raise ServiceFailure("route_invalid")
+
+    def _record_lease_metrics(self, checkpoint_id: object, body: bytes) -> None:
+        allowed = getattr(
+            __import__("scripts.checkpoints.metrics", fromlist=["_CHECKPOINT_IDS"]),
+            "_CHECKPOINT_IDS",
+        )
+        if checkpoint_id not in allowed:
+            return
+        try:
+            value = json.loads(body)
+            heartbeat = _parse_utc(value["heartbeat_at"])
+            age = max(0, int((self._now() - heartbeat).total_seconds()))
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError, ServiceFailure):
+            raise ServiceFailure("lease_response_invalid") from None
+        self._set("checkpoint_retention_lease_heartbeat_age_seconds", checkpoint_id, age)
+
+    def _require_disposable(self, prefix: object) -> None:
+        if (
+            not isinstance(prefix, str)
+            or re.fullmatch(
+                r"streaming_test/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/", prefix
+            )
+            is None
+        ):
+            raise ServiceFailure("destructive_scope_invalid", status=409, state="refused")
+        try:
+            matched = self._policy.match_prefix(prefix)
+            entry = self._policy.entries[matched.checkpoint_id]
+        except BaseException:
+            raise ServiceFailure("destructive_scope_invalid", status=409, state="refused") from None
+        if matched.checkpoint_id != "go-live-streaming-test-v1" or entry.durability != "disposable_acceptance":
+            raise ServiceFailure("destructive_scope_invalid", status=409, state="refused")
 
     def _bulk_plan(self, payload: dict[str, object]) -> dict[str, object]:
         actor = payload.get("actor")
@@ -244,6 +361,7 @@ def build_runtime() -> RuntimeBackend:
         client = build_s3_client(access_key, secret_key)
         gateway = S3Gateway(client, policy)
         planner = RetentionPlanner(gateway, policy)
+        locks = CheckpointLockRegistry()
 
         def revalidate(prefix: str, evaluated_at: datetime):
             matched = policy.match_prefix(prefix)
@@ -257,10 +375,12 @@ def build_runtime() -> RuntimeBackend:
             max_summary_bytes=policy.bounds.max_summary_bytes,
             max_delete_keys=policy.bounds.max_delete_keys,
             revalidate=revalidate,
+            locks=locks,
+            max_active_seconds=policy.bounds.max_active_seconds,
         )
         return RuntimeBackend(
             gateway=gateway,
-            leases=LeaseManager(gateway, policy, now=_now),
+            leases=LeaseManager(gateway, policy, now=_now, locks=locks),
             planner=planner,
             operations=operations,
             policy=policy,
@@ -326,11 +446,24 @@ def _lease_response(result: object) -> dict[str, object]:
 
 
 class RetentionApplication:
-    def __init__(self, backend: object, *, token: str) -> None:
-        if not isinstance(token, str) or not token or len(token.encode("utf-8")) > 256:
+    def __init__(
+        self,
+        backend: object,
+        *,
+        lease_token: str | None = None,
+        operator_token: str | None = None,
+        token: str | None = None,
+    ) -> None:
+        lease_token = token if lease_token is None else lease_token
+        operator_token = token if operator_token is None else operator_token
+        if any(
+            not isinstance(value, str) or not value or len(value.encode("utf-8")) > 256
+            for value in (lease_token, operator_token)
+        ):
             raise ServiceFailure("token_invalid")
         self._backend = backend
-        self._token = token
+        self._lease_token = lease_token
+        self._operator_token = operator_token
 
     def dispatch(
         self,
@@ -354,9 +487,8 @@ class RetentionApplication:
             if type(metrics) is not bytes or len(metrics) > _MAX_BODY:
                 raise ServiceFailure("response_invalid")
             return HttpResponse(200, metrics, "text/plain; version=0.0.4")
-        self._authenticate(normalized)
         if method == "POST":
-            payload = _decode_body(normalized, body)
+            self._authenticate(normalized, _POST_ROUTES.get(path, "operator"))
             action = _POST_ROUTES.get(path)
             operation_id = None
             if action is None:
@@ -366,6 +498,12 @@ class RetentionApplication:
                     operation_id = match.group("operation_id")
             if action is None:
                 raise ServiceFailure("route_invalid")
+            payload = _decode_body(
+                normalized,
+                body,
+                max_bytes=_MAX_PLAN_BODY if action == "prepare" else _MAX_BODY,
+                max_nodes=_MAX_PLAN_NODES if action == "prepare" else 4_096,
+            )
             return self._invoke(action, payload, operation_id)
         if method == "GET":
             if body:
@@ -373,12 +511,13 @@ class RetentionApplication:
             match = _STATUS.fullmatch(path)
             if not match:
                 raise ServiceFailure("route_invalid")
+            self._authenticate(normalized, "status")
             return self._invoke("status", None, match.group("operation_id"))
         raise ServiceFailure("method_invalid")
 
-    def _authenticate(self, headers: Mapping[str, str]) -> None:
+    def _authenticate(self, headers: Mapping[str, str], action: str) -> None:
         authorization = headers.get("authorization")
-        expected = f"Bearer {self._token}"
+        expected = f"Bearer {self._lease_token if action in _LEASE_ACTIONS else self._operator_token}"
         if not isinstance(authorization, str) or not hmac.compare_digest(authorization, expected):
             raise ServiceFailure("unauthorized")
 
@@ -387,28 +526,50 @@ class RetentionApplication:
             value = self._backend.invoke(action, payload, operation_id)
         except (KeyboardInterrupt, SystemExit):
             raise
+        except ServiceFailure as error:
+            if error.state is not None:
+                return self._response({"code": error.code, "state": error.state}, status=error.status)
+            raise
         except BaseException:
             raise ServiceFailure("backend_failure") from None
-        return self._response(value)
+        return self._response(value, max_bytes=_MAX_PLAN_BODY if action == "plan" else _MAX_BODY)
 
     @staticmethod
-    def _response(value: object) -> HttpResponse:
+    def _response(value: object, *, status: int = 200, max_bytes: int = _MAX_BODY) -> HttpResponse:
         try:
             body = json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("ascii")
         except (TypeError, ValueError, UnicodeError):
             raise ServiceFailure("response_invalid") from None
-        if len(body) > _MAX_BODY:
+        if len(body) > max_bytes:
             raise ServiceFailure("response_invalid")
-        return HttpResponse(200, body)
+        return HttpResponse(status, body)
 
 
-def create_server(address: tuple[str, int], application: RetentionApplication) -> ThreadingHTTPServer:
+def create_server(
+    address: tuple[str, int],
+    application: RetentionApplication,
+    *,
+    max_workers: int = 16,
+    request_timeout_seconds: int = 30,
+) -> ThreadingHTTPServer:
     if address != ("0.0.0.0", 8080) or not isinstance(application, RetentionApplication):
+        raise ServiceFailure("server_config_invalid")
+
+    if (
+        type(max_workers) is not int
+        or not 1 <= max_workers <= 64
+        or type(request_timeout_seconds) is not int
+        or not 1 <= request_timeout_seconds <= 60
+    ):
         raise ServiceFailure("server_config_invalid")
 
     class Handler(BaseHTTPRequestHandler):
         server_version = "CheckpointRetention/1"
         sys_version = ""
+
+        def setup(self):
+            super().setup()
+            self.connection.settimeout(self.server.request_timeout_seconds)
 
         def do_GET(self):
             self._handle()
@@ -426,10 +587,18 @@ def create_server(address: tuple[str, int], application: RetentionApplication) -
             except ValueError:
                 self._send_failure(ServiceFailure("content_length_invalid"))
                 return
-            if length < 0 or length > _MAX_BODY:
+            request_bound = _MAX_PLAN_BODY if self.path == "/v1/operations/prepare" else _MAX_BODY
+            if length < 0 or length > request_bound:
                 self._send_failure(ServiceFailure("body_too_large"))
                 return
-            body = self.rfile.read(length) if length else b""
+            try:
+                body = self.rfile.read(length) if length else b""
+            except TimeoutError:
+                self._send_failure(ServiceFailure("request_timeout", status=408))
+                return
+            if len(body) != length:
+                self._send_failure(ServiceFailure("request_body_incomplete"))
+                return
             try:
                 response = application.dispatch(self.command, self.path, tuple(self.headers.raw_items()), body)
             except ServiceFailure as error:
@@ -443,7 +612,7 @@ def create_server(address: tuple[str, int], application: RetentionApplication) -
 
         def _send_failure(self, error: ServiceFailure):
             body = json.dumps({"code": error.code}, separators=(",", ":")).encode("ascii")
-            self.send_response(400 if error.code != "unauthorized" else 401)
+            self.send_response(401 if error.code == "unauthorized" else error.status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
@@ -452,7 +621,30 @@ def create_server(address: tuple[str, int], application: RetentionApplication) -
         def log_message(self, _format, *_args):
             return
 
-    server = ThreadingHTTPServer(address, Handler)
+    class BoundedServer(ThreadingHTTPServer):
+        def __init__(self, *args, **kwargs):
+            self.max_workers = max_workers
+            self.request_timeout_seconds = request_timeout_seconds
+            self._work_slots = threading.BoundedSemaphore(max_workers)
+            super().__init__(*args, **kwargs)
+
+        def process_request(self, request, client_address):
+            if not self._work_slots.acquire(blocking=False):
+                self.shutdown_request(request)
+                return
+            try:
+                super().process_request(request, client_address)
+            except BaseException:
+                self._work_slots.release()
+                raise
+
+        def process_request_thread(self, request, client_address):
+            try:
+                super().process_request_thread(request, client_address)
+            finally:
+                self._work_slots.release()
+
+    server = BoundedServer(address, Handler)
     server.daemon_threads = True
     return server
 
@@ -471,7 +663,13 @@ def _headers(headers: Sequence[tuple[str, str]]) -> dict[str, str]:
     return result
 
 
-def _decode_body(headers: Mapping[str, str], body: bytes) -> dict[str, object]:
+def _decode_body(
+    headers: Mapping[str, str],
+    body: bytes,
+    *,
+    max_bytes: int = _MAX_BODY,
+    max_nodes: int = 4_096,
+) -> dict[str, object]:
     if "transfer-encoding" in headers:
         raise ServiceFailure("transfer_encoding_forbidden")
     if headers.get("content-type") != "application/json":
@@ -479,7 +677,7 @@ def _decode_body(headers: Mapping[str, str], body: bytes) -> dict[str, object]:
     raw_length = headers.get("content-length")
     if not isinstance(raw_length, str) or not raw_length.isdigit() or int(raw_length) != len(body):
         raise ServiceFailure("content_length_mismatch")
-    if type(body) is not bytes or len(body) > _MAX_BODY:
+    if type(body) is not bytes or len(body) > max_bytes:
         raise ServiceFailure("body_too_large")
 
     def pairs(values):
@@ -498,24 +696,27 @@ def _decode_body(headers: Mapping[str, str], body: bytes) -> dict[str, object]:
         raise ServiceFailure("json_invalid") from None
     if not isinstance(value, dict):
         raise ServiceFailure("json_shape_invalid")
-    _check_structure(value, depth=0, nodes=[0])
+    _check_structure(value, depth=0, nodes=[0], max_nodes=max_nodes)
     return value
 
 
-def _check_structure(value: object, *, depth: int, nodes: list[int]) -> None:
+def _check_structure(value: object, *, depth: int, nodes: list[int], max_nodes: int = 4_096) -> None:
     nodes[0] += 1
-    if depth > 32 or nodes[0] > 4_096:
+    if depth > 32 or nodes[0] > max_nodes:
         raise ServiceFailure("json_structure_bound")
     if isinstance(value, dict):
         for item in value.values():
-            _check_structure(item, depth=depth + 1, nodes=nodes)
+            _check_structure(item, depth=depth + 1, nodes=nodes, max_nodes=max_nodes)
     elif isinstance(value, list):
         for item in value:
-            _check_structure(item, depth=depth + 1, nodes=nodes)
+            _check_structure(item, depth=depth + 1, nodes=nodes, max_nodes=max_nodes)
 
 
 def main() -> int:
-    token = _required_environment("CHECKPOINT_RETENTION_API_TOKEN")
+    lease_token = _required_environment("CHECKPOINT_RETENTION_LEASE_TOKEN")
+    operator_token = _required_environment("CHECKPOINT_RETENTION_OPERATOR_TOKEN")
+    if hmac.compare_digest(lease_token, operator_token):
+        raise ServiceFailure("configuration_invalid")
     runtime = None
     server = None
     primary: BaseException | None = None
@@ -526,7 +727,10 @@ def main() -> int:
             raise
         except BaseException:
             raise ServiceFailure("runtime_initialization_failed") from None
-        server = create_server(("0.0.0.0", 8080), RetentionApplication(runtime, token=token))
+        server = create_server(
+            ("0.0.0.0", 8080),
+            RetentionApplication(runtime, lease_token=lease_token, operator_token=operator_token),
+        )
         server.serve_forever()
     except KeyboardInterrupt:
         return 0
