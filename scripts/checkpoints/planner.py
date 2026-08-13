@@ -68,9 +68,13 @@ class RetentionPlanner:
             f"_retention/leases/{request.checkpoint_id}.json",
             lambda body, etag: _decode_lease(body, etag),
         )
-        terminal = self._optional_control(
-            f"_retention/terminals/{request.checkpoint_id}.json",
-            lambda body, _etag: _decode_terminal(body, request.checkpoint_id, request.prefix),
+        terminal = (
+            None
+            if lease is not None and lease.state == "active"
+            else self._optional_control(
+                f"_retention/terminals/{request.checkpoint_id}.json",
+                lambda body, _etag: _decode_terminal(body, request.checkpoint_id, request.prefix),
+            )
         )
         newest = max(record.last_modified for record in records)
         inventory = InventorySummary(

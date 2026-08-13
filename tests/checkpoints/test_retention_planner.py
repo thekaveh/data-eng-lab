@@ -159,6 +159,49 @@ def test_planner_refuses_terminal_identity_drift_before_accepting_a_plan():
         RetentionPlanner(ForeignTerminalGateway(), POLICY).plan(_request())
 
 
+def test_active_rotated_generation_refuses_before_decoding_stale_prior_terminal():
+    current_uuid = "11111111-1111-4111-8111-111111111111"
+    current_prefix = f"streaming_test/{current_uuid}/"
+
+    class RotatedActiveGateway(ReadOnlyGateway):
+        def __init__(self):
+            super().__init__()
+            self.records = (ObjectRecord(f"{current_prefix}state/a", "a" * 32, 1, NOW - timedelta(days=1)),)
+
+        def read_control(self, key, *, max_bytes):
+            body, etag = super().read_control(key, max_bytes=max_bytes)
+            value = json.loads(body)
+            if "/leases/" in key:
+                value.update(prefix=current_prefix, state="active", expires_at="2026-08-13T12:10:00Z")
+            return json.dumps(value, sort_keys=True, separators=(",", ":")).encode(), etag
+
+    artifact = RetentionPlanner(RotatedActiveGateway(), POLICY).plan(_request(prefix=current_prefix, evaluated_at=NOW))
+
+    assert artifact.summary["decision"] == "refused"
+    assert "lease_active" in artifact.summary["refusal_codes"]
+    assert "terminal_missing" in artifact.summary["refusal_codes"]
+
+
+def test_stopped_rotated_generation_cannot_be_eligible_with_stale_prior_terminal():
+    current_uuid = "11111111-1111-4111-8111-111111111111"
+    current_prefix = f"streaming_test/{current_uuid}/"
+
+    class RotatedStoppedGateway(ReadOnlyGateway):
+        def __init__(self):
+            super().__init__()
+            self.records = (ObjectRecord(f"{current_prefix}state/a", "a" * 32, 1, NOW - timedelta(days=1)),)
+
+        def read_control(self, key, *, max_bytes):
+            body, etag = super().read_control(key, max_bytes=max_bytes)
+            value = json.loads(body)
+            if "/leases/" in key:
+                value["prefix"] = current_prefix
+            return json.dumps(value, sort_keys=True, separators=(",", ":")).encode(), etag
+
+    with pytest.raises(PlanFailure, match="terminal_identity_mismatch"):
+        RetentionPlanner(RotatedStoppedGateway(), POLICY).plan(_request(prefix=current_prefix))
+
+
 def test_planner_treats_absent_terminal_as_a_refusal_fact_not_transport_failure():
     class MissingTerminalGateway(ReadOnlyGateway):
         def read_control(self, key, *, max_bytes):
