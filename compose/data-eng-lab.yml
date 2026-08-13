@@ -87,8 +87,12 @@ services:
       DATASET_RESOLVER_URI: http://dataset-resolver:8080
       DATASET_SCALE: ${DATASET_SCALE:-small}
       AIRFLOW_CONN_TRINO_DEFAULT: http://trino:8080
+      CHECKPOINT_RETENTION_URI: http://checkpoint-retention:8080
+      CHECKPOINT_RETENTION_API_TOKEN: ${CHECKPOINT_RETENTION_API_TOKEN:?CHECKPOINT_RETENTION_API_TOKEN is required}
     depends_on:
       dataset-resolver:
+        condition: service_healthy
+      checkpoint-retention:
         condition: service_healthy
     volumes:
       - ../spark-apps:/opt/airflow/dags/data_eng_lab_spark_apps:ro
