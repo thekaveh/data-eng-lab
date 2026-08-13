@@ -75,7 +75,7 @@ def _unsupported_atlas_export_offenders(paths: Iterable[Path], *, root: Path = R
 
 def test_catalog_has_expected_atlas_artifacts():
     assert len(sorted((ROOT / "scenarios").rglob("dag.py"))) == 0
-    assert len(sorted((ROOT / "spark-apps").rglob("dag.py"))) == 4
+    assert len(sorted((ROOT / "spark-apps").rglob("dag.py"))) == 5
     assert len(sorted((ROOT / "scenarios").rglob("notebook.zpln"))) == 19
     assert len(sorted((ROOT / "scenarios").rglob("notebook.ipynb"))) == 19
 
@@ -275,11 +275,13 @@ urllib3.request = denied
 urllib3.PoolManager.request = denied
 class FakeOperator:
     def __init__(self, *args, **kwargs): pass
+    def __rshift__(self, other): return other
 class FakeDag(FakeOperator):
     def __enter__(self): return self
     def __exit__(self, *args): return False
 airflow=types.ModuleType("airflow"); airflow.DAG=FakeDag
 empty=types.ModuleType("airflow.operators.empty"); empty.EmptyOperator=FakeOperator
+python=types.ModuleType("airflow.operators.python"); python.PythonOperator=FakeOperator
 spark_submit=types.ModuleType("airflow.providers.apache.spark.operators.spark_submit")
 spark_submit.SparkSubmitOperator=FakeOperator
 pendulum=types.ModuleType("pendulum"); pendulum.datetime=lambda *args, **kwargs: object()
@@ -287,7 +289,8 @@ atlas=types.ModuleType("atlas_spark_utils"); atlas.RestConfirmingSparkHook=FakeO
 resolver=types.ModuleType("datasets.resolver_service"); resolver.resolve_request=denied
 host_cli=types.ModuleType("scripts.resolve_dataset"); host_cli.run=denied
 for name, module in {
- "airflow":airflow, "airflow.operators":types.ModuleType("airflow.operators"), "airflow.operators.empty":empty,
+ "airflow":airflow, "airflow.operators":types.ModuleType("airflow.operators"),
+ "airflow.operators.empty":empty, "airflow.operators.python":python,
  "airflow.providers":types.ModuleType("airflow.providers"),
  "airflow.providers.apache":types.ModuleType("airflow.providers.apache"),
  "airflow.providers.apache.spark":types.ModuleType("airflow.providers.apache.spark"),

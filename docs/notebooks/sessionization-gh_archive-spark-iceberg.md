@@ -2,7 +2,8 @@
 Documents the scenario's paired Jupyter (`notebook.ipynb`) and Zeppelin (`notebook.zpln`) implementations.
 Both notebooks implement identical logic in PySpark and Scala.
 
-> **Production-risk warning:** these educational notebooks directly replace
+> **Production-risk warning:** these educational notebooks consume a typed table produced from an
+> immutable generation but directly replace
 > `lakehouse.silver.gh_sessions`, do not write production provenance, and are not serialized with
 > the flatten stage. Production writes must use `gh_archive_flatten_sessionization`.
 
