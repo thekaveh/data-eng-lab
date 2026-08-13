@@ -174,9 +174,28 @@ endpoint- and secret-redacted diagnostic tail without exposing the fixed SQL bod
 partial state remained three deterministic run IDs with exactly eight rows and eight distinct rule
 keys each; no data mutation was needed for this read-only query correction.
 
+## Review-hardening replay diagnostics
+
+Four acceptance-only mismatches were found and corrected under focused RED/GREEN tests before the
+final replay. None changed the production application or governed query results:
+
+1. the new snapshot-binding probe initially emitted a malformed Trino format literal and failed
+   after the first ETL, before a quality run;
+2. its next revision truncated the Iceberg commit to seconds and used Python truncation toward zero,
+   while production correctly retained milliseconds and used Java duration floor semantics;
+3. the typed protocol helper initially admitted only internal `trino:8080` next URIs, while the
+   loopback request correctly yielded `127.0.0.1:20029`; and
+4. Trino 482 renders decimals as `decimal(38, 9)` and infers the trend status expression as
+   `varchar(4)`, more precisely than the original harness expectation.
+
+Every failed replay restored pause state, used standard volume-preserving teardown, and ended with
+zero project containers. Preserved Silver and Gold state converged through the normal serialized
+rerun contract; the active dataset pointer was never refreshed or mutated.
+
 ## Final canonical acceptance
 
-The corrected harness completed with `23 passed in 535.21s`. Both production DAGs stayed paused
+The final review-hardened harness at commit `770aa29` completed with `1 passed in 549.78s`. Both
+production DAGs stayed paused
 throughout controlled execution, then returned to their initial states: ETL unpaused and quality
 paused. The owned stack stopped volume-preserving and an all-state Docker probe returned zero
 project containers.
@@ -189,37 +208,54 @@ Immutable inputs and artifacts:
 - active pointer ETag `"204190c685574dfa91c330acb64dfb82"`, unchanged before/after;
 - ETL JAR SHA-256 `cc50a4352de371151ddec2dcc66ab73a7e9af3c4b69d8b45fe7471bedef84b74`;
   and
-- quality JAR SHA-256 `97b7a3d5ba4ad0b059a09b13580b269e2017fd567ca8f5907023aa368727ba5a`.
+- quality JAR SHA-256 `7fdf03eeeab3e1cd62385ba17ed4e7e5e3f065cfe142b1e5349e1580c122cf1f`.
 
 Airflow and Spark execution evidence:
 
-- ETL runs `manual__2026-08-13T08:58:29.732074+00:00` and
-  `manual__2026-08-13T09:02:33.590601+00:00`;
-- first quality run `manual__2026-08-13T08:59:16.184984+00:00`, replaced under pinned same-date
-  test semantics by `manual__2026-08-13T09:01:06.546338+00:00`;
-- final quality run `manual__2026-08-13T09:02:56.239893+00:00`; and
-- five distinct REST-confirmed terminal drivers: `driver-20260813085834-0000`,
-  `driver-20260813085919-0001`, `driver-20260813090110-0002`,
-  `driver-20260813090236-0003`, and `driver-20260813090259-0004`.
+- ETL runs `manual__2026-08-13T10:47:31.955992+00:00` and
+  `manual__2026-08-13T10:51:36.657505+00:00`;
+- first quality run `manual__2026-08-13T10:48:19.698016+00:00`, replaced under pinned same-date
+  test semantics by `manual__2026-08-13T10:50:10.059952+00:00`;
+- final quality run `manual__2026-08-13T10:52:00.638217+00:00`; and
+- five distinct REST-confirmed terminal drivers: `driver-20260813104737-0000`,
+  `driver-20260813104823-0001`, `driver-20260813105013-0002`,
+  `driver-20260813105140-0003`, and `driver-20260813105204-0004`.
 
-The first accepted source snapshot was `7406749614129383139`; the same-date retry advanced clean
-snapshot `8064938920291405697` to `7700155026136760051` and quarantine snapshot
-`3772650949156990311` to `5928903944035912115` while preserving exact table multisets and the fact
-set. The second matching ETL produced Bronze snapshot `4706204245680639235`. Its final Silver
+The first accepted source snapshot was `815563093405415986`, committed at
+`2026-08-13T10:47:47.218Z`; the same-date retry advanced clean snapshot
+`1470972520855769750` to `6911075779583457757` and quarantine snapshot
+`7480648615033564735` to `3653883011626346753` while preserving exact table multisets and the fact
+set. Its exact deterministic fact ID was
+`d0277840940b98d38c1724e3e0e4715847b2b55cd85678d3466b5f29f8e7da35`.
+The second matching ETL produced Bronze snapshot `1189034078581805403`, committed at
+`2026-08-13T10:51:51.024Z`. Its final Silver
 properties matched exactly and bound both outputs to deterministic run
-`98db6952f23ca948c98702fbe43873629f138840cecf542f187eab394f517e0e` and that Bronze snapshot.
+`bf2b3e0b4a185645a68077191281728f052972b6347f636365e0954739e2a959` and that Bronze snapshot.
+
+The harness selected those two exact owned fact IDs rather than a lexical history tail. It compared
+all 23 fields of all 16 rows, including exact UTC timestamps, millisecond source commits, Java
+`Duration.getSeconds` freshness values `-22` and `-265`, nullable thresholds/denominators, exact
+scale-nine decimals, schema fingerprint
+`5a8d2916cc5967c0eeb8318136c1262156cd616105dad67a713f1cb1cc872fc5`, lineage, owners, rule
+metadata, severities, statuses, and diagnostic codes. Both owned runs had exactly eight governed
+keys and zero rejected statuses.
 
 Final source/output evidence:
 
 - Bronze 2,943,859 rows, checksum `b66a4c29486af278`;
 - clean 2,917,820 rows, checksum `330b0a56eb827b24`;
 - quarantine 26,039 rows, checksum `d4c2179946371cbd`; and
-- facts 40 historical rows, checksum `3129bac3b8f8e3dc`, comprising five deterministic run IDs
-  with exactly eight rows, eight distinct governed rules, and zero rejected statuses each.
+- facts 104 historical rows, checksum `29746ac58941798a`; the first owned acceptance point had 96
+  rows/checksum `d82ef6f4e67f8748`, and same-date retry left that exact fact multiset unchanged.
 
 The fixed dashboards executed read-only with exact bounded results: latest returned eight rows and
-checksum `ca540881a63a8e67d9a2506ad6740c6c577fbd918677550ba858354dc7994f46`;
-trend returned five rows and checksum
-`9f1e89d454e1de55e6946f9c8721895215def9fa87b57baf36ef3cf205d4ad50`; operator attention
+checksum `5f32f593f4fd6119effe8ab049aa062f24658ab7a3546931032454a7a3a7c16c`;
+trend returned 13 rows and checksum
+`bd125cc8f28ac501c58e9a064aac6b1cfc9e791d2555805bdb32faf29a7669dd`; operator attention
 returned zero rows and canonical empty checksum
 `4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945`.
+Protocol metadata was present even for the empty result and matched the frozen names and types.
+Trino 482 rendered decimal fields as `decimal(38, 9)` and inferred trend `overall_status` as
+`varchar(4)`; every other textual output field was `varchar` and all count/snapshot fields were
+`bigint`. Pagination accepted only the exact configured internal or loopback Trino origin and the
+canonical statement path.
