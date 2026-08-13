@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import hashlib
 import importlib.util
 import json
@@ -229,6 +230,11 @@ def _validate_runs(runs: list[dict], baseline: set[str], expected: set[str]) -> 
     return created
 
 
+def _validate_tiny_run_conf(run: dict) -> None:
+    if run.get("conf") != {"dataset_scale": "tiny"}:
+        raise AssertionError("owned DagRun did not preserve the exact tiny dataset scale")
+
+
 def _resolve_existing_tiny(runner=None) -> dict:
     execute = runner or _run
     resolve = ("uv", "run", "python", "scripts/resolve_dataset.py", "nyc_taxi", "--scale", "tiny")
@@ -319,6 +325,8 @@ def _execute_dag_test(dag_id: str, logical_date: datetime, runner=None) -> None:
         dag_id,
         logical_date.replace(microsecond=0).isoformat(),
         "--use-executor",
+        "--conf",
+        '{"dataset_scale":"tiny"}',
     )
     try:
         execute(*command, timeout=1200)
@@ -357,6 +365,7 @@ def _execute_owned_run(
         raise AssertionError(f"{dag_id} created {len(new_runs)} runs instead of one")
     run_id = new_runs.pop()
     _validate_runs(after_runs, baseline, owned | {run_id})
+    _validate_tiny_run_conf(next(run for run in after_runs if run["dag_run_id"] == run_id))
     new_drivers = _driver_ids() - before_drivers
     if len(new_drivers) != 1:
         raise AssertionError(f"{dag_id} created {len(new_drivers)} drivers instead of one")
@@ -673,6 +682,57 @@ def test_run_inventory_paginates_and_rejects_unexpected_active_run():
     baseline = {run["dag_run_id"] for run in inventory if run["dag_run_id"] != "unexpected"}
     with pytest.raises(AssertionError, match="owned run mismatch"):
         _validate_runs(inventory, baseline, set())
+
+
+@pytest.mark.parametrize("dag_id", DAG_IDS)
+def test_paused_dag_test_passes_exact_tiny_scale_conf(dag_id):
+    calls = []
+    logical_date = datetime(2026, 8, 13, 12, 34, 56, tzinfo=timezone.utc)
+
+    def runner(*command, **kwargs):
+        calls.append((command, kwargs))
+        return subprocess.CompletedProcess(command, 0, stdout="", stderr="")
+
+    _execute_dag_test(dag_id, logical_date, runner)
+
+    command, kwargs = calls.pop()
+    assert command[-4:] == (
+        logical_date.isoformat(),
+        "--use-executor",
+        "--conf",
+        '{"dataset_scale":"tiny"}',
+    )
+    assert json.loads(command[-1]) == {"dataset_scale": "tiny"}
+    assert kwargs == {"timeout": 1200}
+
+
+def test_etl_effective_scale_uses_the_exact_live_dag_run_conf(monkeypatch):
+    source = (ETL_APP / "dag.py").read_text(encoding="utf-8")
+    module = ast.parse(source)
+    function = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_effective_scale"
+    )
+    scales = next(
+        node
+        for node in module.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "SCALES" for target in node.targets)
+    )
+    namespace = {"os": os}
+    exec(compile(ast.Module(body=[scales, function], type_ignores=[]), str(ETL_APP / "dag.py"), "exec"), namespace)
+    monkeypatch.setenv("DATASET_SCALE", "small")
+    dag_run = type("DagRun", (), {"conf": {"dataset_scale": "tiny"}})()
+
+    assert namespace["_effective_scale"]({"dag_run": dag_run}) == "tiny"
+
+
+def test_owned_run_inventory_requires_exact_tiny_conf():
+    _validate_tiny_run_conf({"conf": {"dataset_scale": "tiny"}})
+    for conf in ({}, None, {"dataset_scale": "small"}, {"dataset_scale": "tiny", "extra": True}):
+        with pytest.raises(AssertionError, match="exact tiny"):
+            _validate_tiny_run_conf({"conf": conf})
 
 
 def test_resolver_failure_never_refreshes_or_attempts_a_second_command():
