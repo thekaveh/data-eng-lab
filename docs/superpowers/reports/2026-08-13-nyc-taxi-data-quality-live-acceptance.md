@@ -319,3 +319,61 @@ returned zero current warning/failure rows with the canonical empty checksum
 adversarial tests separately prove that operator attention surfaces a governed partial
 missing-source diagnostic while latest/trend reject null, wrong-fingerprint, wrong-lineage,
 wrong-rule-metadata, missing, duplicate, and foreign fact sets.
+
+## Final authenticated-dashboard replay
+
+The final reviewed artifact at commits `76f98ea` and `a554b7e` passed the unchanged canonical
+harness with `32 passed in 549.25s`. The first replay correctly failed closed after all five Spark
+applications at the new dashboard authenticity gate: it exposed that Airflow manual test runs use
+an equal logical date and data-interval end, and that Java `Duration.getSeconds` floors negative
+fractional ages while Trino `date_diff('second', ...)` truncates them. The final SQL keeps all eight
+interval values non-null and equal, recomputes freshness as the floor of the exact millisecond
+difference, and does not invent an interval duration. The passing replay exercised that native
+Trino expression. Both DAGs stayed paused during controlled execution and were restored to their
+initial states. Volume-preserving teardown and the later read-only evidence extraction each ended
+with zero all-state project containers.
+
+Immutable identities remained unchanged: resolver plan
+`66929ee59188f5a2deb8e29e8593fbe9bad1ad6dc1c4daadd7aeb45b51916189`, publication
+`16e280e900a84d1b9d617743472b8ada`, manifest
+`3b678261e704aeb6dee3ae981d699bf81db5696fa9da64abfbce6fe2bd7f6c12`, and pointer ETag
+`"204190c685574dfa91c330acb64dfb82"` before and after. The ETL JAR SHA-256 was
+`cc50a4352de371151ddec2dcc66ab73a7e9af3c4b69d8b45fe7471bedef84b74`; the final quality JAR
+SHA-256 was `593f59d8deea026448c0e6514b33338c10c2d303857a7187298b92bb2597869d`.
+
+The exact Airflow/Spark evidence was:
+
+- ETL runs `manual__2026-08-13T12:14:00.523419+00:00` and
+  `manual__2026-08-13T12:18:04.763337+00:00`;
+- initial quality run `manual__2026-08-13T12:14:48.652746+00:00`, replaced at the same logical
+  date by `manual__2026-08-13T12:16:38.694341+00:00`;
+- final quality run `manual__2026-08-13T12:18:29.679926+00:00`; and
+- five distinct REST-confirmed terminal drivers `driver-20260813121405-0000`,
+  `driver-20260813121452-0001`, `driver-20260813121642-0002`,
+  `driver-20260813121808-0003`, and `driver-20260813121833-0004`.
+
+The first Bronze snapshot was `4468175290679957811`, committed at
+`2026-08-13T12:14:16.963Z`, and bound deterministic fact run
+`2579c618ee8db7073bb515d032185add960cbe6fa5d7a0c5dde4917939c9f8ad`. Same-date recovery
+advanced clean snapshot `8326777679340570550` to `1936699521753809644` and quarantine snapshot
+`1757991413199017851` to `440610164289841125`, while preserving exact clean/quarantine
+multisets and the 144-row fact checksum `73adae5c6f0f3a88`. The second Bronze snapshot was
+`1746075589603593049`, committed at `2026-08-13T12:18:18.617Z`, and bound deterministic fact run
+`86f05d9b134e136169e1a7774dde7a2308759019104068164b141cd2b66b2958`. Final clean and
+quarantine snapshots were `4617293870179976012` and `1499385381134625583`; final Gold state was
+152 rows/checksum `485b337889d56874`.
+
+Contents remained exact: Bronze 2,943,859 rows/checksum `b66a4c29486af278`, clean 2,917,820
+rows/checksum `330b0a56eb827b24`, and quarantine 26,039 rows/checksum `d4c2179946371cbd`.
+The harness compared all 23 fields of the exact two owned eight-row fact sets, including the
+canonical run IDs, snapshot bindings, source commits, floor-exact freshness values, decimals,
+thresholds, owners, severities, statuses, and the closed per-rule diagnostic mapping.
+
+The final fixed dashboards executed natively and read-only. Latest returned eight rows/checksum
+`6a71aa2ef475f63bdbf4e3444a82481a6d63842a7797bd362ef7d9f54b6171cc`; trend returned six
+authentic historical runs/checksum
+`04ec0dd4431b727b8ae23d1aac2720c3b6133d55f4aa9a8f9e72e0d8e1cc46dc`; and operator attention
+returned zero rows with canonical empty checksum
+`4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945`. The lower trend count is
+intentional: structurally complete legacy rows whose signals or run identity do not satisfy the
+approved contract remain preserved in Gold but are excluded rather than rewritten.
