@@ -59,6 +59,17 @@ _SHA256 = re.compile(r"[0-9a-f]{64}")
 _DISPOSABLE_PREFIX = re.compile(
     r"streaming_test/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/"
 )
+_STATUS_PRIMARY_CATEGORIES = {
+    "not_ready": {"quiescence_not_ready"},
+    "partial": {"delete_partial", "head_mismatch", "operation_deadline", "postflight_not_empty"},
+    "refused": {
+        "delete_partial",
+        "head_mismatch",
+        "operation_deadline",
+        "revalidation_failed",
+        "revalidation_mismatch",
+    },
+}
 
 
 class OperationManager:
@@ -128,7 +139,6 @@ class OperationManager:
                 records=records,
             )
             if prior is not None:
-                self._ensure_audit(request.operation_id, prior, prepared)
                 return prior
         else:
             prepared = {**prepared_identity, "prepared_at": _format_utc(self._exact_now())}
@@ -231,8 +241,11 @@ class OperationManager:
                         raise OperationFailure("status_invalid")
                     self._ensure_audit(request.operation_id, prior_status, prepared)
                     return prior_status
-                prior_deleted = self._read_result_classification(base, prior_value, records)
-                self._ensure_audit(request.operation_id, prior_status, prepared)
+                prior_deleted = {
+                    digest
+                    for digest, outcome in self._read_result_classification(base, prior_value, records).items()
+                    if outcome == "deleted"
+                }
             except (KeyError, TypeError, json.JSONDecodeError, RecordFailure):
                 raise OperationFailure("status_invalid") from None
         remaining_records = tuple(record for record in records if _record_sha256(record) not in prior_deleted)
@@ -589,7 +602,7 @@ class OperationManager:
                     state in {"not_ready", "partial", "refused"}
                     and (
                         not isinstance(value.get("primary_category"), str)
-                        or _IDENTIFIER.fullmatch(value["primary_category"]) is None
+                        or value["primary_category"] not in _STATUS_PRIMARY_CATEGORIES[state]
                     )
                 )
                 or (
@@ -602,16 +615,19 @@ class OperationManager:
                 or not key.endswith(f"/{value['attempt_sequence']:06d}-{hashlib.sha256(body).hexdigest()}.json")
             ):
                 raise OperationFailure("status_invalid")
-            deleted = self._read_result_classification(
+            outcomes = self._read_result_classification(
                 f"_retention/tombstones/{operation_id}",
                 value,
                 records,
             )
+            deleted = {digest for digest, outcome in outcomes.items() if outcome == "deleted"}
+            observed_outcomes = set(outcomes.values())
             if (
                 (
                     state in {"prepared", "not_ready"}
                     and (
-                        deleted
+                        observed_outcomes != {"unattempted"}
+                        or deleted
                         or value["deleted_bytes"] != 0
                         or value["head_requests"] != 0
                         or value["delete_requests"] != 0
@@ -623,7 +639,8 @@ class OperationManager:
                 or (
                     state == "completed"
                     and (
-                        len(deleted) != len(records)
+                        observed_outcomes != {"deleted"}
+                        or len(deleted) != len(records)
                         or value["remaining_objects"] != 0
                         or value["remaining_bytes"] != 0
                         or value["postflight_inventory_sha256"] != inventory_sha256(())
@@ -664,6 +681,8 @@ class OperationManager:
             last_state_rank = state_rank
         if any(item[1]["state"] == "completed" for item in statuses[:-1]):
             raise OperationFailure("status_ambiguous")
+        for _sequence, _value, _deleted, status in statuses:
+            self._ensure_audit(operation_id, status, prepared)
         return statuses[-1][3]
 
     def _read_bound_manifest(
@@ -753,6 +772,30 @@ class OperationManager:
                 or canonical_json_bytes(value, max_bytes=self._max_summary_bytes) != body
                 or value["schema_version"] != 1
                 or value["operation_id"] != operation_id
+            ):
+                raise ValueError
+            evaluated_at = _parse_utc(value["evaluated_at"])
+            prepared_at = _parse_utc(value["prepared_at"])
+            manifest_shards = value["manifest_shards"]
+            prefix = value["prefix"]
+            if (
+                _IDENTIFIER.fullmatch(value["actor"] or "") is None
+                or _IDENTIFIER.fullmatch(value["review"] or "") is None
+                or value["checkpoint_id"] != "go-live-streaming-test-v1"
+                or not isinstance(prefix, str)
+                or not prefix.isascii()
+                or _DISPOSABLE_PREFIX.fullmatch(prefix) is None
+                or value["prefix_sha256"] != hashlib.sha256(prefix.encode("ascii")).hexdigest()
+                or _SHA256.fullmatch(value["plan_sha256"] or "") is None
+                or _SHA256.fullmatch(value["policy_sha256"] or "") is None
+                or _SHA256.fullmatch(value["inventory_sha256"] or "") is None
+                or not isinstance(manifest_shards, list)
+                or not manifest_shards
+                or len(manifest_shards) != len(set(manifest_shards))
+                or any(not isinstance(digest, str) or _SHA256.fullmatch(digest) is None for digest in manifest_shards)
+                or evaluated_at is None
+                or prepared_at is None
+                or prepared_at < evaluated_at
             ):
                 raise ValueError
             if value["policy_sha256"] != self._policy_sha256:
@@ -931,7 +974,7 @@ class OperationManager:
         base: str,
         status: dict[str, object],
         records: tuple[ObjectRecord, ...],
-    ) -> set[str]:
+    ) -> dict[str, str]:
         digests = status.get("result_shards")
         if (
             not isinstance(digests, list)
@@ -990,7 +1033,7 @@ class OperationManager:
             != status.get("remaining_bytes")
         ):
             raise OperationFailure("status_invalid")
-        return deleted
+        return observed
 
     def _validate_prepare(self, request: PrepareRequest) -> PlanArtifact:
         if not isinstance(request, PrepareRequest) or _UUID.fullmatch(request.operation_id or "") is None:

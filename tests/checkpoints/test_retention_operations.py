@@ -169,7 +169,7 @@ def test_identical_prepare_retry_repairs_missing_prepare_audit_idempotently():
 
     with pytest.raises(OperationFailure):
         manager.prepare(request)
-    assert manager.status(OPERATION_ID).state == "prepared"
+    assert len([key for key in gateway.controls if "/results/attempts/" in key]) == 1
     assert not any(key.startswith(f"_retention/audits/{OPERATION_ID}/") for key in gateway.controls)
 
     gateway.create_failure_suffix = None
@@ -181,6 +181,35 @@ def test_identical_prepare_retry_repairs_missing_prepare_audit_idempotently():
     assert repaired.body == repeated.body
     assert gateway.controls == after_repair
     assert len([key for key in gateway.controls if key.startswith(f"_retention/audits/{OPERATION_ID}/")]) == 1
+
+
+def test_progressed_prepare_retry_repairs_every_validated_historical_audit():
+    gateway = FakeGateway()
+    artifact = _artifact()
+    request = PrepareRequest(OPERATION_ID, artifact, artifact.sha256, "review-86", "acceptance-engineering")
+    gateway.create_failure_suffix = f"audits/{OPERATION_ID}/"
+    first = OperationManager(gateway, policy_sha256="a" * 64, now=lambda: NOW)
+    with pytest.raises(OperationFailure):
+        first.prepare(request)
+    gateway.create_failure_suffix = None
+    progressed = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW + timedelta(seconds=899),
+        revalidate=lambda *_args: artifact,
+    )
+
+    assert progressed.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX)).state == "not_ready"
+    assert progressed.prepare(request).state == "not_ready"
+    audits = [
+        json.loads(body)
+        for key, (body, _etag) in gateway.controls.items()
+        if key.startswith(f"_retention/audits/{OPERATION_ID}/")
+    ]
+    assert [(value["attempt_sequence"], value["decision"]) for value in audits] == [
+        (1, "prepared"),
+        (2, "not_ready"),
+    ]
 
 
 def test_revalidation_deadline_is_not_persisted_as_revalidation_failure():
@@ -1063,6 +1092,74 @@ def test_status_enforces_state_specific_evidence_invariants(state, field, invali
 
     with pytest.raises(OperationFailure, match="status_invalid|status_ambiguous"):
         manager.status(OPERATION_ID)
+
+
+def test_prepared_status_rejects_failed_result_classification():
+    artifact = _artifact()
+    gateway = FakeGateway()
+    manager = _prepared_manager(gateway, artifact)
+    attempt_key = next(key for key in gateway.controls if "/results/attempts/" in key)
+    status = json.loads(gateway.controls.pop(attempt_key)[0])
+    shard_key = f"_retention/tombstones/{OPERATION_ID}/results/shards/{status['result_shards'][0]}.json"
+    classification = json.loads(gateway.controls[shard_key][0])
+    classification[0]["outcome"] = "failed"
+    shard_body = canonical_json_bytes(classification)
+    shard_digest = __import__("hashlib").sha256(shard_body).hexdigest()
+    gateway.controls[f"_retention/tombstones/{OPERATION_ID}/results/shards/{shard_digest}.json"] = (
+        shard_body,
+        "f" * 32,
+    )
+    status["result_shards"] = [shard_digest]
+    status_body = canonical_json_bytes(status)
+    gateway.controls[
+        attempt_key.rsplit("/", 1)[0]
+        + "/"
+        + f"{status['attempt_sequence']:06d}-"
+        + __import__("hashlib").sha256(status_body).hexdigest()
+        + ".json"
+    ] = (status_body, "e" * 32)
+
+    with pytest.raises(OperationFailure, match="status_invalid"):
+        manager.status(OPERATION_ID)
+
+
+@pytest.mark.parametrize(
+    ("field", "invalid"),
+    [
+        ("actor", "bad actor"),
+        ("review", "bad review"),
+        ("checkpoint_id", "another-valid-checkpoint"),
+        ("prefix", f"{PREFIX}nested/"),
+        ("prefix_sha256", "b" * 64),
+        ("plan_sha256", "not-a-sha"),
+        ("inventory_sha256", "not-a-sha"),
+        ("manifest_shards", []),
+        ("evaluated_at", "not-a-time"),
+        ("prepared_at", "2026-08-13T11:59:59Z"),
+    ],
+)
+def test_apply_strictly_validates_every_prepared_identity_before_repair_or_delete(field, invalid):
+    artifact = _artifact()
+    gateway = FakeGateway()
+    _prepared_manager(gateway, artifact)
+    prepared_key = f"_retention/tombstones/{OPERATION_ID}/prepared.json"
+    prepared = json.loads(gateway.controls[prepared_key][0])
+    prepared[field] = invalid
+    prepared_body = canonical_json_bytes(prepared)
+    gateway.controls[prepared_key] = (prepared_body, "f" * 32)
+    for key in tuple(gateway.controls):
+        if key.startswith(f"_retention/audits/{OPERATION_ID}/"):
+            del gateway.controls[key]
+
+    with pytest.raises(OperationFailure, match="prepared_invalid"):
+        OperationManager(
+            gateway,
+            policy_sha256="a" * 64,
+            now=lambda: NOW.replace(minute=15),
+            revalidate=lambda *_args: artifact,
+        ).apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    assert not any(call[0] in {"head", "delete"} for call in gateway.calls)
+    assert not any(key.startswith(f"_retention/audits/{OPERATION_ID}/") for key in gateway.controls)
 
 
 def test_status_binds_prepared_inventory_digest_to_exact_manifest_records():
