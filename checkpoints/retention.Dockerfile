@@ -15,10 +15,13 @@ COPY --from=uv /uv /uvx /bin/
 WORKDIR /workspace
 COPY pyproject.toml uv.lock /workspace/
 RUN echo "a376ce1b5bd5621290aaded68c22572690395419876da41814e28469bb4186b1  /workspace/uv.lock" | sha256sum -c - && \
+    uv export --frozen --only-group dev --no-emit-project --format requirements-txt --output-file /tmp/all-requirements.txt && \
+    sed -n \
+      -e '/^boto3==/,/^    #/p' -e '/^botocore==/,/^    #/p' -e '/^jmespath==/,/^    #/p' \
+      -e '/^s3transfer==/,/^    #/p' -e '/^python-dateutil==/,/^    #/p' -e '/^six==/,/^    #/p' \
+      -e '/^urllib3==/,/^    #/p' -e '/^pyyaml==/,/^    #/p' /tmp/all-requirements.txt > /tmp/runtime-requirements.txt && \
     uv venv /opt/venv && \
-    uv pip install --python /opt/venv/bin/python --no-deps \
-      boto3==1.43.0 botocore==1.43.0 jmespath==1.1.0 s3transfer==0.17.1 \
-      python-dateutil==2.9.0.post0 six==1.17.0 urllib3==2.7.0 pyyaml==6.0.3 && \
+    uv pip install --python /opt/venv/bin/python --no-deps --require-hashes -r /tmp/runtime-requirements.txt && \
     rm -rf /tmp/uv-cache
 
 FROM --platform=linux/amd64 python@sha256:cec9aa7aa96eea4fa036e9b82be1e6b325f2e3707f462d885868df51ec0a4b47

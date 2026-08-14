@@ -5,6 +5,7 @@ import json
 import types
 from contextlib import contextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 
 import pytest
 
@@ -605,3 +606,44 @@ def test_http_boundary_records_auth_and_invalid_request_metrics_without_exposing
         app.dispatch("POST", "/v1/plans", _headers(duplicate, "manual-operator-token"), duplicate)
 
     assert backend.failures == ["unauthorized", "invalid_request"]
+
+
+def test_unexpected_backend_failure_is_http_500_and_cli_exit_5(monkeypatch):
+    class Broken(Backend):
+        def invoke(self, *_args, **_kwargs):
+            raise RuntimeError("secret=must-not-escape")
+
+    app = service.RetentionApplication(Broken(), lease_token="lease", operator_token="operator")
+    with pytest.raises(service.ServiceFailure, match="backend_failure") as failure:
+        app.dispatch("POST", "/v1/plans", _headers(b"{}", "operator"), b"{}")
+    assert failure.value.status == 500
+
+    class ErrorResponse:
+        code = 500
+
+        def read(self, _size):
+            return b'{"code":"backend_failure"}'
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(
+        retention_cli,
+        "_open",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            __import__("urllib.error").error.HTTPError("x", 500, "", {}, ErrorResponse())
+        ),
+    )
+    with pytest.raises(retention_cli.CliFailure) as cli:
+        retention_cli._request("/v1/plans", {"actor": "operator"}, "token")
+    assert cli.value.exit_code == 5
+
+
+def test_runbook_uses_actor_only_facts_and_locked_runtime_install():
+    runbook = (Path(__file__).resolve().parents[2] / "docs/checkpoint-retention.md").read_text(encoding="utf-8")
+    dockerfile = (Path(__file__).resolve().parents[2] / "checkpoints/retention.Dockerfile").read_text(encoding="utf-8")
+    manual = runbook.split("### Manual command sequence", 1)[1].split("###", 1)[0]
+    assert "evaluated_at" not in manual
+    assert "only `actor`" in manual
+    assert "uv export --frozen" in dockerfile
+    assert "--require-hashes" in dockerfile

@@ -335,6 +335,12 @@ def test_final_runtime_live_executes_destructive_refusal_partial_retry_and_evide
     assert "_assert_operation_evidence(" in source[source.index("def test_checkpoint_retention_live_acceptance") :]
     for state in ('["state"] == "completed"', '["state"] == "not_ready"', "_run_layered_partial_retry()"):
         assert state in source
+    assert 'refused["code"] != "revalidation_mismatch"' in source
+    assert 'refused_status["state"] != "refused"' in source
+    assert 'wait_signal("changed.ready")' in source
+    assert 'wait_signal("removed.ready")' in source
+    assert "add_changed_object()" in source
+    assert "remove_changed_object()" in source
     assert "evaluated_at" not in source[source.index("def _plan(") : source.index("def _prepare(")]
     assert "_volume_inventory" in source
 
@@ -349,6 +355,8 @@ def test_accelerated_exact_image_result_is_closed_and_bounded():
         "not_ready": {"state": "not_ready"},
         "operation_id": "550e8400-e29b-41d4-a716-446655440000",
         "plan_sha256": "b" * 64,
+        "refused": {"code": "revalidation_mismatch", "state": "refused"},
+        "refused_status": {"state": "refused"},
     }
     assert live._validate_accelerated_result(json.dumps(result).encode("ascii")) == result
     for invalid in (

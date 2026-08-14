@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import os
 import re
+import threading
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterable, Mapping
 
@@ -92,6 +94,23 @@ class S3Gateway:
         self._client = client
         self._policy = policy
         self._monotonic = monotonic
+        self._operation = threading.local()
+
+    @contextmanager
+    def operation_deadline(self, check: Callable[[], None]):
+        prior = getattr(self._operation, "check", None)
+        self._operation.check = check
+        try:
+            check()
+            yield
+            check()
+        finally:
+            self._operation.check = prior
+
+    def _check_operation_deadline(self) -> None:
+        check = getattr(self._operation, "check", None)
+        if callable(check):
+            check()
 
     def inventory(self, prefix: str) -> tuple[ObjectRecord, ...]:
         try:
@@ -114,7 +133,9 @@ class S3Gateway:
             if token is not None:
                 request["ContinuationToken"] = token
             try:
+                self._check_operation_deadline()
                 page = self._client.list_objects_v2(**request)
+                self._check_operation_deadline()
             except (KeyboardInterrupt, SystemExit):
                 raise
             except BaseException:
@@ -175,7 +196,9 @@ class S3Gateway:
         if type(max_bytes) is not int or max_bytes < 1 or max_bytes > bound:
             raise GatewayFailure("control_bound_invalid")
         try:
+            self._check_operation_deadline()
             response = self._client.get_object(Bucket=self._policy.bucket, Key=key)
+            self._check_operation_deadline()
         except (KeyboardInterrupt, SystemExit):
             raise
         except ClientError as error:
@@ -196,6 +219,7 @@ class S3Gateway:
             if type(length) is not int or length < 0 or length > max_bytes:
                 raise GatewayFailure("control_body_bound")
             body = stream.read(max_bytes + 1)
+            self._check_operation_deadline()
             if type(body) is not bytes or len(body) != length or len(body) > max_bytes:
                 raise GatewayFailure("control_body_invalid")
             etag = _parse_etag(response.get("ETag"))
@@ -236,11 +260,13 @@ class S3Gateway:
         ):
             raise GatewayFailure("control_prefix_invalid")
         try:
+            self._check_operation_deadline()
             response = self._client.list_objects_v2(
                 Bucket=self._policy.bucket,
                 Prefix=prefix,
                 MaxKeys=max_keys + 1,
             )
+            self._check_operation_deadline()
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException:
@@ -264,7 +290,9 @@ class S3Gateway:
             raise GatewayFailure("object_record_invalid")
         self._validate_data_key(record.key)
         try:
+            self._check_operation_deadline()
             response = self._client.head_object(Bucket=self._policy.bucket, Key=record.key)
+            self._check_operation_deadline()
             actual_etag = _parse_etag(response.get("ETag"))
         except (KeyboardInterrupt, SystemExit):
             raise
@@ -295,7 +323,9 @@ class S3Gateway:
             "Delete": {"Objects": [{"Key": record.key} for record in ordered], "Quiet": False},
         }
         try:
+            self._check_operation_deadline()
             response = self._client.delete_objects(**request)
+            self._check_operation_deadline()
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException:
@@ -488,7 +518,9 @@ class S3Gateway:
         else:
             request["IfMatch"] = f'"{etag}"'
         try:
+            self._check_operation_deadline()
             response = self._client.put_object(**request)
+            self._check_operation_deadline()
             written_etag = _parse_etag(response.get("ETag"))
         except (KeyboardInterrupt, SystemExit):
             raise

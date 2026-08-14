@@ -139,6 +139,13 @@ class OperationManager:
 
     def apply(self, request: ApplyRequest) -> OperationStatus:
         started = self._start_deadline()
+        deadline = getattr(self._gateway, "operation_deadline", None)
+        if callable(deadline):
+            with deadline(lambda: self.check_deadline(started)):
+                return self._apply(request, started)
+        return self._apply(request, started)
+
+    def _apply(self, request: ApplyRequest, started: float) -> OperationStatus:
         if not isinstance(request, ApplyRequest) or _UUID.fullmatch(request.operation_id or "") is None:
             raise OperationFailure("operation_id_invalid")
         if _SHA256.fullmatch(request.plan_sha256 or "") is None:
@@ -209,6 +216,20 @@ class OperationManager:
             except (KeyboardInterrupt, SystemExit):
                 raise
             except BaseException:
+                status = self._record_status(
+                    request.operation_id,
+                    prepared["checkpoint_id"],
+                    "refused",
+                    request.plan_sha256,
+                    [record for record in records if _record_sha256(record) in prior_deleted],
+                    records,
+                    "revalidation_failed",
+                    started,
+                    head_requests=0,
+                    delete_requests=0,
+                    postflight_inventory_sha256=None,
+                )
+                self._ensure_audit(request.operation_id, status, prepared)
                 raise OperationFailure("revalidation_failed") from None
             self.check_deadline(started)
             current_records = (
@@ -216,18 +237,6 @@ class OperationManager:
                 if isinstance(current, PlanArtifact)
                 else ()
             )
-            current_valid = (
-                isinstance(current, PlanArtifact)
-                and current.summary.get("decision") == "eligible"
-                and current.summary.get("policy_sha256") == self._policy_sha256
-                and current.summary.get("prefix") == request.confirm_prefix
-            )
-            if current_valid and current_records != remaining_records:
-                original_by_record = {record: record for record in remaining_records}
-                if all(record in original_by_record for record in current_records):
-                    inferred = tuple(record for record in remaining_records if record not in set(current_records))
-                    prior_deleted.update(_record_sha256(record) for record in inferred)
-                    remaining_records = current_records
             if (
                 not isinstance(current, PlanArtifact)
                 or current.summary.get("decision") != "eligible"
@@ -255,34 +264,42 @@ class OperationManager:
             try:
                 if self._gateway.inventory(request.confirm_prefix):
                     raise OperationFailure("revalidation_mismatch")
-            except OperationFailure:
+            except OperationFailure as error:
+                status = self._record_status(
+                    request.operation_id,
+                    prepared["checkpoint_id"],
+                    "refused",
+                    request.plan_sha256,
+                    list(records),
+                    records,
+                    error.code,
+                    started,
+                    head_requests=0,
+                    delete_requests=0,
+                    postflight_inventory_sha256=None,
+                )
+                self._ensure_audit(request.operation_id, status, prepared)
                 raise
             except BaseException:
                 raise OperationFailure("revalidation_failed") from None
-        try:
-            head_requests = 0
-            for record in remaining_records:
-                self._gateway.head_record(record)
-                head_requests += 1
-                self.check_deadline(started)
-        except (KeyboardInterrupt, SystemExit):
-            raise
-        except BaseException:
-            raise OperationFailure("head_mismatch") from None
+        head_requests = 0
         deleted: list[ObjectRecord] = [record for record in records if _record_sha256(record) in prior_deleted]
         delete_requests = 0
         postflight_sha256: str | None = None
+        current_batch: tuple[ObjectRecord, ...] = ()
+        current_record: ObjectRecord | None = None
         try:
             for offset in range(0, len(remaining_records), self._max_delete_keys):
                 self.check_deadline(started)
-                batch = remaining_records[offset : offset + self._max_delete_keys]
-                for record in batch:
+                current_batch = remaining_records[offset : offset + self._max_delete_keys]
+                for record in current_batch:
+                    current_record = record
                     self._gateway.head_record(record)
                     head_requests += 1
                     self.check_deadline(started)
                 delete_requests += 1
-                self._gateway.delete_records(batch)
-                deleted.extend(batch)
+                self._gateway.delete_records(current_batch)
+                deleted.extend(current_batch)
                 self.check_deadline(started)
             remaining = self._gateway.inventory(request.confirm_prefix)
             postflight_sha256 = inventory_sha256(remaining)
@@ -297,14 +314,22 @@ class OperationManager:
                 if any(key not in by_key for key in error.deleted_keys):
                     raise OperationFailure("delete_response_invalid") from None
                 deleted.extend(by_key[key] for key in error.deleted_keys)
-            primary = error if isinstance(error, OperationFailure) else OperationFailure("delete_partial")
+            primary = (
+                error
+                if isinstance(error, OperationFailure)
+                else OperationFailure(
+                    "head_mismatch"
+                    if isinstance(error, GatewayFailure) and error.code == "head_mismatch"
+                    else "delete_partial"
+                )
+            )
             primary.partial = bool(deleted)
             try:
                 cleanup_started = self._start_deadline()
                 status = self._record_status(
                     request.operation_id,
                     prepared["checkpoint_id"],
-                    "partial",
+                    "partial" if deleted else "refused",
                     request.plan_sha256,
                     deleted,
                     records,
@@ -314,6 +339,9 @@ class OperationManager:
                     delete_requests=delete_requests,
                     postflight_inventory_sha256=postflight_sha256,
                     deadline_seconds=30,
+                    failed=(current_record,)
+                    if primary.code == "head_mismatch" and current_record is not None
+                    else tuple(record for record in current_batch if record not in deleted),
                 )
                 self._ensure_audit(request.operation_id, status, prepared)
             except (KeyboardInterrupt, SystemExit):
@@ -376,6 +404,7 @@ class OperationManager:
                 "prepared_at": prepared["prepared_at"],
                 "prefix_sha256": prepared["prefix_sha256"],
                 "primary_category": value["primary_category"],
+                "refusal_codes": [value["primary_category"]] if value["primary_category"] is not None else [],
                 "remaining_bytes": value["remaining_bytes"],
                 "remaining_objects": value["remaining_objects"],
                 "review": prepared["review"],
@@ -592,12 +621,20 @@ class OperationManager:
         delete_requests: int,
         postflight_inventory_sha256: str | None,
         deadline_seconds: int | None = None,
+        failed: tuple[ObjectRecord, ...] = (),
     ):
         deleted_sha256s = {_record_sha256(record) for record in deleted}
+        failed_sha256s = {_record_sha256(record) for record in failed}
         classifications = tuple(
             {
                 "object_sha256": _record_sha256(record),
-                "outcome": "deleted" if _record_sha256(record) in deleted_sha256s else "unattempted",
+                "outcome": (
+                    "deleted"
+                    if _record_sha256(record) in deleted_sha256s
+                    else "failed"
+                    if _record_sha256(record) in failed_sha256s
+                    else "unattempted"
+                ),
             }
             for record in planned
         )

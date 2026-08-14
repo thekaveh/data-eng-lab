@@ -485,7 +485,8 @@ The genuine `RUN_INFRA=1` harness uses the hardened exclusive-stack pattern:
 9. stop and terminalize the writer;
 10. use an injected evaluator clock to prove the 24-hour retention rule without
     falsifying S3 LastModified or changing the production policy;
-11. run dry-run twice and prove byte-identical plan/SHA with zero S3 writes;
+11. run dry-run twice with server-owned whole-second clocks and prove the same semantic
+    inventory, decision, policy, prefix, and refusal binding with zero S3 writes;
 12. prepare, alter the fixture during quiescence, and prove apply refuses without
     deleting any fixture object;
 13. create a second unique fixture, prepare it, and exercise the real 900-second

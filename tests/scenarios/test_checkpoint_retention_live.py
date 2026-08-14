@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import select
 import subprocess
 import tempfile
 import time
@@ -628,11 +629,15 @@ def _validate_accelerated_result(raw: bytes) -> dict[str, object]:
         "not_ready",
         "operation_id",
         "plan_sha256",
+        "refused",
+        "refused_status",
     }:
         raise AssertionError("accelerated evidence invalid")
     artifact = value["artifact"]
     completed = value["completed"]
     not_ready = value["not_ready"]
+    refused = value["refused"]
+    refused_status = value["refused_status"]
     if (
         not isinstance(artifact, dict)
         or not isinstance(artifact.get("summary"), dict)
@@ -641,6 +646,10 @@ def _validate_accelerated_result(raw: bytes) -> dict[str, object]:
         or completed.get("state") != "completed"
         or not isinstance(not_ready, dict)
         or not_ready.get("state") != "not_ready"
+        or not isinstance(refused, dict)
+        or refused != {"code": "revalidation_mismatch", "state": "refused"}
+        or not isinstance(refused_status, dict)
+        or refused_status.get("state") != "refused"
         or not isinstance(value["image_id"], str)
         or re.fullmatch(r"sha256:[0-9a-f]{64}", value["image_id"]) is None
         or not isinstance(value["operation_id"], str)
@@ -655,7 +664,11 @@ def _validate_accelerated_result(raw: bytes) -> dict[str, object]:
     return value
 
 
-def _run_accelerated_exact_image(identity: dict[str, object]) -> tuple[dict[str, object], datetime]:
+def _run_accelerated_exact_image(
+    identity: dict[str, object],
+    add_changed_object,
+    remove_changed_object,
+) -> tuple[dict[str, object], datetime]:
     project = _env("PROJECT_NAME", "data-eng-lab")
     container = f"{project}-checkpoint-retention-1"
     image_id = _run("docker", "inspect", container, "--format", "{{.Image}}").stdout.strip()
@@ -674,7 +687,9 @@ def _run_accelerated_exact_image(identity: dict[str, object]) -> tuple[dict[str,
     script = f"""\
 import hashlib
 import json
+import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import scripts.checkpoints.service as service
 
@@ -683,6 +698,15 @@ identity = json.loads(identity)
 clock = [datetime.now(timezone.utc).replace(microsecond=0)]
 service._now = lambda: clock[0]
 runtime = service.build_runtime()
+
+def wait_signal(name):
+    deadline = time.monotonic() + 60
+    path = Path("/proof") / name
+    while not path.is_file():
+        if time.monotonic() >= deadline:
+            raise RuntimeError("signal_timeout")
+        time.sleep(0.05)
+
 try:
     lease = runtime.invoke("lease_acquire", {{
         "checkpoint_id": identity["checkpoint_id"],
@@ -722,7 +746,22 @@ try:
     operation_id = prepared["operation_id"]
     request = {{"confirm_prefix": identity["prefix"], "plan_sha256": plan_sha256}}
     not_ready = runtime.invoke("apply", request, operation_id)
+    print(json.dumps({{"ready": True}}, separators=(",", ":")), flush=True)
+    wait_signal("changed.ready")
     clock[0] += timedelta(seconds=901)
+    try:
+        runtime.invoke("apply", request, operation_id)
+    except service.ServiceFailure as error:
+        refused = {{"code": error.code, "state": error.state}}
+    else:
+        raise RuntimeError("changed_inventory_accepted")
+    if refused["code"] != "revalidation_mismatch" or refused["state"] != "refused":
+        raise RuntimeError("changed_inventory_category_invalid")
+    refused_status = runtime.invoke("status", None, operation_id)
+    if refused_status["state"] != "refused":
+        raise RuntimeError("changed_inventory_status_invalid")
+    print(json.dumps({{"refused_ready": True}}, separators=(",", ":")), flush=True)
+    wait_signal("removed.ready")
     completed = runtime.invoke("apply", request, operation_id)
     print(json.dumps({{
         "artifact": artifact,
@@ -732,6 +771,8 @@ try:
         "not_ready": not_ready,
         "operation_id": operation_id,
         "plan_sha256": plan_sha256,
+        "refused": refused,
+        "refused_status": refused_status,
     }}, sort_keys=True, separators=(",", ":")))
 finally:
     runtime.close()
@@ -745,9 +786,10 @@ finally:
         }
     )
     with tempfile.TemporaryDirectory(prefix="issue86-accelerated-") as directory:
+        Path(directory).chmod(0o755)
         script_path = Path(directory) / "proof.py"
         script_path.write_text(script, encoding="utf-8")
-        result = subprocess.run(
+        process = subprocess.Popen(
             [
                 "docker",
                 "run",
@@ -763,7 +805,7 @@ finally:
                 "--env",
                 "PYTHONPATH=/workspace",
                 "--mount",
-                f"type=bind,source={script_path},target=/proof/proof.py,readonly",
+                f"type=bind,source={directory},target=/proof",
                 "--entrypoint",
                 "/opt/venv/bin/python",
                 image_id,
@@ -771,9 +813,31 @@ finally:
             ],
             cwd=ROOT,
             env=environment,
-            capture_output=True,
-            timeout=180,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
         )
+        try:
+            assert process.stdout is not None
+            ready, _, _ = select.select([process.stdout], [], [], 60)
+            if not ready or process.stdout.readline() != b'{"ready":true}\n':
+                raise AssertionError("accelerated exact-image proof failed")
+            add_changed_object()
+            (Path(directory) / "changed.ready").write_text("ready\n", encoding="ascii")
+            ready, _, _ = select.select([process.stdout], [], [], 60)
+            if not ready or process.stdout.readline() != b'{"refused_ready":true}\n':
+                raise AssertionError("accelerated exact-image proof failed")
+            remove_changed_object()
+            (Path(directory) / "removed.ready").write_text("ready\n", encoding="ascii")
+            stdout, stderr = process.communicate(timeout=180)
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                try:
+                    process.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                    process.wait(timeout=10)
+        result = subprocess.CompletedProcess(process.args, process.returncode, stdout, stderr)
     if result.returncode != 0 or len(result.stdout) > MAX_RESPONSE_BYTES or len(result.stderr) > MAX_RESPONSE_BYTES:
         raise AssertionError("accelerated exact-image proof failed")
     for secret in (_env("MINIO_RETENTION_SECRET_KEY"),):
@@ -914,9 +978,22 @@ def test_checkpoint_retention_live_acceptance():
             )
             assert (injected_status, injected_body) == (400, {"code": "request_invalid"})
 
-            accelerated, accelerated_started_at = _run_accelerated_exact_image(identities[1])
+            changed_key = f"{identities[1]['prefix']}state/changed"
+
+            def remove_changed_object():
+                root.delete_object(Bucket="checkpoints", Key=changed_key)
+                if _inventory(root, changed_key):
+                    raise AssertionError("changed fixture cleanup failed")
+
+            accelerated, accelerated_started_at = _run_accelerated_exact_image(
+                identities[1],
+                lambda: put_owned(changed_key, b"changed"),
+                remove_changed_object,
+            )
             owned_resources.enter_context(_owned_runtime_capability(root, accelerated_started_at))
             assert accelerated["not_ready"]["state"] == "not_ready"
+            assert accelerated["refused"]["code"] == "revalidation_mismatch"
+            assert accelerated["refused_status"]["state"] == "refused"
             assert accelerated["completed"]["state"] == "completed"
             accelerated_metrics = _parse_metrics(accelerated["metrics"].encode("ascii"))
             assert accelerated_metrics['checkpoint_retention_plans_total{decision="eligible"}'] == 1

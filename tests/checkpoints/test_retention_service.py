@@ -350,6 +350,41 @@ def test_runtime_backend_routes_one_exact_plan_and_prepare_with_server_owned_ope
         )
 
 
+def test_exact_prepare_identity_is_deterministic_before_any_mutation(monkeypatch):
+    module = _service()
+    identifiers = []
+
+    class Operations:
+        def prepare(self, request):
+            identifiers.append(request.operation_id)
+            return types.SimpleNamespace(
+                body=json.dumps({"operation_id": request.operation_id, "state": "prepared"}).encode()
+            )
+
+    monkeypatch.setattr(
+        module,
+        "decode_plan_artifact",
+        lambda *_args, **_kwargs: types.SimpleNamespace(
+            summary={"prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/"}
+        ),
+    )
+    backend = module.RuntimeBackend(
+        gateway=types.SimpleNamespace(probe_capabilities=lambda: {}),
+        leases=object(),
+        planner=object(),
+        operations=Operations(),
+        policy=types.SimpleNamespace(entries={}),
+        destructive_enabled=True,
+    )
+    backend._require_disposable = lambda _prefix: None
+    payload = {"actor": "operator", "plan": {}, "plan_sha256": "a" * 64, "review": "review-86"}
+
+    first = backend.invoke("prepare", payload, None)
+    second = backend.invoke("prepare", payload, None)
+
+    assert first["operation_id"] == second["operation_id"] == identifiers[0] == identifiers[1]
+
+
 def test_runtime_backend_bulk_plan_returns_registry_ordered_bounded_refusals(monkeypatch):
     module = _service()
     entries = {

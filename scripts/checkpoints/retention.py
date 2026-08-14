@@ -120,7 +120,7 @@ def _request(path: str, payload: dict[str, object] | None, token: str) -> bytes:
     result: bytes | None = None
     primary: BaseException | None = None
     try:
-        response = _open(request, timeout=930 if path.endswith("/apply") else 30)
+        response = _open(request, timeout=970 if path.endswith("/apply") else 30)
         raw = response.read(response_bound + 1)
         if type(raw) is not bytes or len(raw) > response_bound:
             raise CliFailure("response_invalid", 5)

@@ -75,8 +75,8 @@ and 600,128 JSON nodes so the 100,000-object policy ceiling remains representabl
 
 ### Manual command sequence
 
-Create a bounded facts file containing only `actor` and a whole-second UTC
-`evaluated_at`, then run the fixed-origin CLI. The plan output is created with mode
+Create a bounded facts file containing only `actor`; the service owns the exact
+whole-second UTC evaluation clock. Then run the fixed-origin CLI. The plan output is created with mode
 `0600` and refuses an existing path.
 
 ```bash

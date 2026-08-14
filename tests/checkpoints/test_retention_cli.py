@@ -232,4 +232,4 @@ def test_cli_apply_timeout_covers_operation_deadline(monkeypatch):
         )
         == 0
     )
-    assert captured["timeout"] > 900
+    assert captured["timeout"] >= 970

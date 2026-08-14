@@ -59,6 +59,7 @@ _MAX_BODY = 65_536
 _MAX_PLAN_BODY = 128 * 1024 * 1024
 _MAX_PLAN_NODES = 600_128
 _LEASE_ACTIONS = {"lease_acquire", "lease_heartbeat", "lease_terminal"}
+_METRIC_OPERATION_CACHE = 4_096
 
 
 class RuntimeBackend:
@@ -74,7 +75,7 @@ class RuntimeBackend:
         policy: CheckpointPolicy,
         destructive_enabled: bool,
         now=None,
-        operation_id=lambda: str(uuid.uuid4()),
+        operation_id=None,
     ) -> None:
         self._gateway = gateway
         self._leases = leases
@@ -266,7 +267,16 @@ class RuntimeBackend:
                     max_nodes=_MAX_PLAN_NODES,
                 )
                 self._require_disposable(artifact.summary.get("prefix"))
-                identifier = self._operation_id()
+                identifier = (
+                    self._operation_id()
+                    if callable(self._operation_id)
+                    else str(
+                        uuid.uuid5(
+                            uuid.NAMESPACE_URL,
+                            f"checkpoint-retention:{payload['plan_sha256']}:{payload['actor']}:{payload['review']}",
+                        )
+                    )
+                )
                 status = self._operations.prepare(
                     PrepareRequest(identifier, artifact, payload["plan_sha256"], payload["review"], payload["actor"])
                 )
@@ -357,6 +367,10 @@ class RuntimeBackend:
             if state == "partial" and transition not in self._apply_metric_transitions:
                 self._increment("checkpoint_retention_partial_total", "partial")
             self._apply_metric_transitions.add(transition)
+            while len(self._apply_metric_totals) > _METRIC_OPERATION_CACHE:
+                self._apply_metric_totals.pop(next(iter(self._apply_metric_totals)))
+            while len(self._apply_metric_transitions) > _METRIC_OPERATION_CACHE * 4:
+                self._apply_metric_transitions.pop()
         checkpoint_id = result.get("checkpoint_id")
         if state == "completed" and checkpoint_id in getattr(
             __import__("scripts.checkpoints.metrics", fromlist=["_CHECKPOINT_IDS"]),
@@ -655,7 +669,7 @@ class RetentionApplication:
                 return self._response({"code": error.code, "state": error.state}, status=error.status)
             raise
         except BaseException:
-            raise ServiceFailure("backend_failure") from None
+            raise ServiceFailure("backend_failure", status=500) from None
         return self._response(value, max_bytes=_MAX_PLAN_BODY if action == "plan" else _MAX_BODY)
 
     @staticmethod
@@ -715,24 +729,32 @@ def create_server(
             if length < 0 or length > request_bound:
                 self._send_failure(ServiceFailure("body_too_large"))
                 return
-            try:
-                body = self.rfile.read(length) if length else b""
-            except TimeoutError:
-                self._send_failure(ServiceFailure("request_timeout", status=408))
-                return
-            if len(body) != length:
-                self._send_failure(ServiceFailure("request_body_incomplete"))
+            prepare_slot = self.path == "/v1/operations/prepare"
+            if prepare_slot and not self.server.prepare_slots.acquire(blocking=False):
+                self._send_failure(ServiceFailure("prepare_busy", status=503))
                 return
             try:
-                response = application.dispatch(self.command, self.path, tuple(self.headers.raw_items()), body)
-            except ServiceFailure as error:
-                self._send_failure(error)
-                return
-            self.send_response(response.status)
-            self.send_header("Content-Type", response.content_type)
-            self.send_header("Content-Length", str(len(response.body)))
-            self.end_headers()
-            self.wfile.write(response.body)
+                try:
+                    body = self.rfile.read(length) if length else b""
+                except TimeoutError:
+                    self._send_failure(ServiceFailure("request_timeout", status=408))
+                    return
+                if len(body) != length:
+                    self._send_failure(ServiceFailure("request_body_incomplete"))
+                    return
+                try:
+                    response = application.dispatch(self.command, self.path, tuple(self.headers.raw_items()), body)
+                except ServiceFailure as error:
+                    self._send_failure(error)
+                    return
+                self.send_response(response.status)
+                self.send_header("Content-Type", response.content_type)
+                self.send_header("Content-Length", str(len(response.body)))
+                self.end_headers()
+                self.wfile.write(response.body)
+            finally:
+                if prepare_slot:
+                    self.server.prepare_slots.release()
 
         def _send_failure(self, error: ServiceFailure):
             body = json.dumps({"code": error.code}, separators=(",", ":")).encode("ascii")
@@ -750,6 +772,7 @@ def create_server(
             self.max_workers = max_workers
             self.request_timeout_seconds = request_timeout_seconds
             self._work_slots = threading.BoundedSemaphore(max_workers)
+            self.prepare_slots = threading.BoundedSemaphore(1)
             super().__init__(*args, **kwargs)
 
         def process_request(self, request, client_address):
