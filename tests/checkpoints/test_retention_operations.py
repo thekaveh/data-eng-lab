@@ -952,6 +952,50 @@ def test_completed_recovery_validates_result_shards_and_exact_absence_before_aud
     assert not any(key.startswith(f"_retention/audits/{OPERATION_ID}/") for key in gateway.controls)
 
 
+def test_status_read_never_repairs_missing_audit():
+    artifact = _artifact()
+    gateway = FakeGateway()
+    manager = _prepared_manager(gateway, artifact)
+    for key in tuple(gateway.controls):
+        if key.startswith(f"_retention/audits/{OPERATION_ID}/"):
+            del gateway.controls[key]
+    gateway.calls.clear()
+
+    assert manager.status(OPERATION_ID).state == "prepared"
+    assert not any(key.startswith(f"_retention/audits/{OPERATION_ID}/") for key in gateway.controls)
+    assert not any(call[0] == "create" for call in gateway.calls)
+
+
+def test_completed_missing_audit_is_not_repaired_when_exact_prefix_is_nonempty():
+    artifact = _artifact()
+    gateway = FakeGateway()
+    _prepared_manager(gateway, artifact)
+    manager = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda *_args: artifact,
+    )
+    manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    completed_audit = next(
+        key
+        for key, (body, _etag) in gateway.controls.items()
+        if key.startswith(f"_retention/audits/{OPERATION_ID}/")
+        and json.loads(body)["decision"] == "completed"
+    )
+    del gateway.controls[completed_audit]
+    gateway.data = (ObjectRecord(f"{PREFIX}foreign", "3" * 32, 3, NOW),)
+    gateway.calls.clear()
+
+    with pytest.raises(OperationFailure, match="status_invalid"):
+        manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    assert completed_audit not in gateway.controls
+    assert not any(
+        call[0] == "create" and call[1].startswith(f"_retention/audits/{OPERATION_ID}/")
+        for call in gateway.calls
+    )
+
+
 @pytest.mark.parametrize(
     ("field", "replacement"),
     [("plan_sha256", "b" * 64), ("checkpoint_id", "another-valid-checkpoint")],

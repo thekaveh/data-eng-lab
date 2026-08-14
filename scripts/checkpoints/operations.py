@@ -139,7 +139,17 @@ class OperationManager:
                 records=records,
             )
             if prior is not None:
-                return prior
+                if prior.state == "completed":
+                    self._prove_completed_absence(prepared["prefix"], prior, started)
+                repaired = self._latest_status(
+                    request.operation_id,
+                    required=True,
+                    prepared=prepared,
+                    records=records,
+                    repair_audits=True,
+                )
+                assert repaired is not None
+                return repaired
         else:
             prepared = {**prepared_identity, "prepared_at": _format_utc(self._exact_now())}
             try:
@@ -190,12 +200,25 @@ class OperationManager:
             raise OperationFailure("prepared_invalid")
         if now < prepared_at + timedelta(seconds=self._quiescence_seconds):
             records = self._read_bound_manifest(base, prepared)
-            self._latest_status(
+            prior = self._latest_status(
                 request.operation_id,
                 required=False,
                 prepared=prepared,
                 records=records,
             )
+            if prior is not None:
+                if prior.state == "completed":
+                    self._prove_completed_absence(prepared["prefix"], prior, started)
+                repaired = self._latest_status(
+                    request.operation_id,
+                    required=True,
+                    prepared=prepared,
+                    records=records,
+                    repair_audits=True,
+                )
+                assert repaired is not None
+                if repaired.state == "completed":
+                    return repaired
             status = self._record_status(
                 request.operation_id,
                 prepared["checkpoint_id"],
@@ -234,13 +257,26 @@ class OperationManager:
             try:
                 prior_value = json.loads(prior_status.body)
                 if prior_value["state"] == "completed":
-                    self._read_result_classification(base, prior_value, records)
-                    remaining = self._gateway.inventory(request.confirm_prefix)
-                    self.check_deadline(started)
-                    if remaining or prior_value.get("postflight_inventory_sha256") != inventory_sha256(()):
-                        raise OperationFailure("status_invalid")
-                    self._ensure_audit(request.operation_id, prior_status, prepared)
-                    return prior_status
+                    self._prove_completed_absence(request.confirm_prefix, prior_status, started)
+                    repaired = self._latest_status(
+                        request.operation_id,
+                        required=True,
+                        prepared=prepared,
+                        records=records,
+                        repair_audits=True,
+                    )
+                    assert repaired is not None
+                    return repaired
+                repaired = self._latest_status(
+                    request.operation_id,
+                    required=True,
+                    prepared=prepared,
+                    records=records,
+                    repair_audits=True,
+                )
+                assert repaired is not None
+                prior_status = repaired
+                prior_value = json.loads(prior_status.body)
                 prior_deleted = {
                     digest
                     for digest, outcome in self._read_result_classification(base, prior_value, records).items()
@@ -511,6 +547,18 @@ class OperationManager:
         assert status is not None
         return status
 
+    def _prove_completed_absence(
+        self,
+        prefix: str,
+        status: OperationStatus,
+        started: float,
+    ) -> None:
+        value = json.loads(status.body)
+        remaining = self._gateway.inventory(prefix)
+        self.check_deadline(started)
+        if remaining or value.get("postflight_inventory_sha256") != inventory_sha256(()):
+            raise OperationFailure("status_invalid")
+
     def _latest_status(
         self,
         operation_id: str,
@@ -518,6 +566,7 @@ class OperationManager:
         required: bool,
         prepared: dict[str, object],
         records: tuple[ObjectRecord, ...],
+        repair_audits: bool = False,
     ) -> OperationStatus | None:
         try:
             keys = self._gateway.list_controls(
@@ -681,8 +730,9 @@ class OperationManager:
             last_state_rank = state_rank
         if any(item[1]["state"] == "completed" for item in statuses[:-1]):
             raise OperationFailure("status_ambiguous")
-        for _sequence, _value, _deleted, status in statuses:
-            self._ensure_audit(operation_id, status, prepared)
+        if repair_audits:
+            for _sequence, _value, _deleted, status in statuses:
+                self._ensure_audit(operation_id, status, prepared)
         return statuses[-1][3]
 
     def _read_bound_manifest(
