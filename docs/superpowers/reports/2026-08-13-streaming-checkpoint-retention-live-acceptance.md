@@ -9,7 +9,7 @@
 
 | Artifact | Exact identity |
 |---|---|
-| Retention service image | `sha256:3b23538ff454f773f8c7932a5d2967346028d8ac4b9bda0ee2432467ee916b1f` (`linux/amd64`) |
+| Retention service image | `sha256:610b676fa2284547020a90164b3389a37ed402bc4b14868d8aa8e06864cd55f2` (`linux/amd64`) |
 | Pinned MinIO image | `minio/minio:RELEASE.2025-09-07T16-13-09Z`, local image ID `sha256:8f08aee614800a237906bd48114d733e5ac5bfac4ccdf731f141b0e880d7a253` |
 | Pinned MinIO client | `minio/mc:RELEASE.2025-08-13T08-35-41Z`, local image ID `sha256:5dee113ef037d349ac22ab6c20193ade5c4701e2a38e3777fa1c1bec1c063ad1` |
 | Policy YAML file SHA-256 | `8b06b3cfd439652a4f70c9b2fc7e604321e953507096e63d872ef326db7568de` |
@@ -23,7 +23,7 @@ enabled only for the test-owned disposable proof. The deployed default remains
 
 ## Final split-token and exact-image layered replay
 
-The final architectural-correction replay passed `1 passed in 124.91s` with zero
+The final architectural-correction replay passed `1 passed in 123.82s` with zero
 failures, errors, or skips. It began and ended with zero all-state project
 containers and used standard volume-preserving teardown. The final service image
 above proved:
@@ -43,7 +43,8 @@ above proved:
 - an active disposable lease made planning refuse with `lease_active`; after its
   exact stopped terminal evidence, the fresh real-wall-clock plan remained safely
   refused with exact codes `future_clock,retention_quarantine` and made zero
-  checkpoint-data deletes;
+  checkpoint-data deletes. A second server-clock plan produced the exact same
+  semantic artifact after excluding only server-owned `evaluated_at`;
 - a caller-supplied `evaluated_at` field was rejected with HTTP 400
   `request_invalid`, proving that no API or configuration surface can advance the
   production evaluation clock;
@@ -66,16 +67,16 @@ above proved:
 
 | Fixture UUID | Operation ID | Plan SHA-256 | Prepared at | State |
 |---|---|---|---|---|
-| `0a54e84c-f655-4159-8fcc-46bae609ce62` | `4f45e404-f1f6-5163-ab0e-df5ac740b0da` | `c67dd246f1f3c85e89561213f3ca458221687f8e2bbfe708c0121115c0577f00` | `2026-08-15T20:27:12Z` | `prepared` → `not_ready` → `refused` → `completed`; exact two-object fixture empty |
+| `0fc2a5f5-656d-4eb6-b110-f626f1477e96` | `1f828fef-f392-5faa-9144-a38b4028b61f` | `5e9d06086ad9b2d96000906dd6a3e8c64b0782b4a1cb7c3806d0bd9bafba9f95` | `2026-08-15T20:59:30Z` | `prepared` → `not_ready` → `refused` → `completed`; exact two-object fixture empty |
 
 The completed attempt used result SHA-256
-`658f1bb078e9864fcaa7bea6a1889a48081a8c71d79ca491589a2b4450ecd943`,
+`06ac633da7e8daacfcc872d4054f8f6d34fc728346982fe140759530ae02244e`,
 empty postflight inventory SHA-256
 `4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945`,
-manifest root `492b5ef52eee2d53a08834e25308f75d4fdb76b259bf922cdba9d8d7e670a75f`,
-and prefix digest `c47440cf5de2f683b86124604c229b07cff5deed11daf3b2783746bccb9d152e`.
+manifest root `55c7f1ff26e28866acceec1b60a637804c3bf60596caf91fe66ca6e805420ac5`,
+and prefix digest `43bbef8d7151ab56d2ae063dd8e67abf92712d589934ed704d303feffd4e2f45`.
 The refused attempt and audit used exact result SHA-256
-`f8f834d58b3c30f8ea8ddcba94b6514ecdfa41cb0d073e4dbaebaf731e37e254`
+`b6e9818282fd2976ae7e5aad63a14fc54fa65dafed0d768b6709f92404501b23`
 and exact refusal code `revalidation_mismatch` before any HEAD or delete request.
 The final operation implementation was also exercised against pinned disposable
 MinIO inside the same live gate: `1 passed`. That layer uses the real gateway,
@@ -130,7 +131,7 @@ identity while retaining this wall-clock timing proof.
 
 ## Accelerated exact-delete proof
 
-The final isolated-clock operation is the `4f45e404-...` operation above. Its clock
+The final isolated-clock operation is the `1f828fef-...` operation above. Its clock
 was injected only by assigning the imported exact-image runtime's internal clock in
 the mounted, test-owned process. Production service construction, HTTP routes, and
 Compose configuration expose no such input. The durable evidence contains exact
@@ -173,24 +174,24 @@ then returns one deterministic mixed partial response. The production manager:
 5. proves the exact original prefix empty; and
 6. returns the completed result idempotently without another delete.
 
-The final checkpoint-focused result is `336 passed, 2 expected integration skips in
-1.31s`, and the separately enabled pinned-MinIO result is `2 passed in 2.28s`. This layered
+The final checkpoint-focused result is `343 passed, 2 expected integration skips in
+1.41s`, and the separately enabled pinned-MinIO result is `2 passed in 2.32s`. This layered
 proof exercises the final partial-result
 runtime bytes without another 900-second wait and without changing the immutable
 prepare/quiescence protocol.
 
 ## Final repository verification
 
-The final service/runtime and layered acceptance correction is `cf1a742`. The
+The final service/runtime and layered acceptance correction is `6e32da2`. The
 subsequent evidence update changes only this report. The exact final
 validation set was:
 
 | Gate | Result |
 |---|---|
-| Full offline Python suite | 3,318 passed, 43 expected live skips, 0 failures/errors in 52.16 s |
-| Checkpoint-focused suite | 336 passed, 2 expected skips in 1.31 s |
-| Final split-token/exact-image layered live replay | 1 passed, 0 skipped/failures/errors in 124.91 s |
-| Pinned-MinIO operation/restart integration | 2 passed in 2.28 s |
+| Full offline Python suite | 3,325 passed, 43 expected live skips, 0 failures/errors in 52.02 s |
+| Checkpoint-focused suite | 343 passed, 2 expected skips in 1.41 s |
+| Final split-token/exact-image layered live replay | 1 passed, 0 skipped/failures/errors in 123.82 s |
+| Pinned-MinIO operation/restart integration | 2 passed in 2.32 s |
 | GH Archive Maven suite, Java 17 | 19 passed in 4:10 |
 | MovieLens Maven suite, Java 17 | 12 passed in 1:49 |
 | NYC quality Maven suite, Java 17 | 37 passed in 2:43 |
