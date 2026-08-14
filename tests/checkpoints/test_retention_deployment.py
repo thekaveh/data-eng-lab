@@ -167,11 +167,11 @@ def test_compose_runtime_is_single_replica_internal_nonroot_and_fail_closed():
     assert runtime["read_only"] is True
     assert runtime["cap_drop"] == ["ALL"]
     assert runtime["security_opt"] == ["no-new-privileges:true"]
-    assert runtime["pids_limit"] == 128
+    assert "pids_limit" not in runtime
     assert runtime["deploy"] == {
         "replicas": 1,
         "resources": {
-            "limits": {"cpus": "1.0", "memory": "512M"},
+            "limits": {"cpus": "1.0", "memory": "512M", "pids": 128},
             "reservations": {"cpus": "0.1", "memory": "128M"},
         },
     }
