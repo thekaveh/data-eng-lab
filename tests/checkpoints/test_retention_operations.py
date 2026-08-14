@@ -926,7 +926,8 @@ def test_sequential_same_progress_refusals_remain_ordered_and_retryable():
 
 
 @pytest.mark.parametrize("progressed_state", ["refused", "partial"])
-def test_backward_clock_after_progress_returns_authoritative_history_without_append(progressed_state):
+@pytest.mark.parametrize("backward_clock", [(14, 59), (15, 0)], ids=["before-quiescence", "after-quiescence"])
+def test_backward_clock_after_progress_returns_authoritative_history_without_append(progressed_state, backward_clock):
     artifact = _artifact()
     gateway = FakeGateway()
     _prepared_manager(gateway, artifact)
@@ -943,17 +944,18 @@ def test_backward_clock_after_progress_returns_authoritative_history_without_app
     forward = OperationManager(
         gateway,
         policy_sha256="a" * 64,
-        now=lambda: NOW.replace(minute=15),
+        now=lambda: NOW.replace(minute=16),
         revalidate=lambda *_args: artifact,
     )
     with pytest.raises(OperationFailure):
         forward.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
     before = dict(gateway.controls)
+    data_before = gateway.data
     gateway.calls.clear()
     backward = OperationManager(
         gateway,
         policy_sha256="a" * 64,
-        now=lambda: NOW.replace(minute=14, second=59),
+        now=lambda: NOW.replace(minute=backward_clock[0], second=backward_clock[1]),
         revalidate=lambda *_args: artifact,
     )
 
@@ -962,7 +964,8 @@ def test_backward_clock_after_progress_returns_authoritative_history_without_app
     assert returned.state == progressed_state
     assert backward.status(OPERATION_ID).state == progressed_state
     assert gateway.controls == before
-    assert not any(call[0] == "create" for call in gateway.calls)
+    assert gateway.data == data_before
+    assert not any(call[0] in {"create", "head", "delete"} for call in gateway.calls)
 
 
 def test_completed_recovery_validates_result_shards_and_exact_absence_before_audit():

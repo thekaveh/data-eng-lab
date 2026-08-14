@@ -239,11 +239,11 @@ class OperationManager:
         if not isinstance(checkpoint_id, str) or _IDENTIFIER.fullmatch(checkpoint_id) is None:
             raise OperationFailure("prepared_invalid")
         if self._locks is None or not hasattr(self._locks, "hold"):
-            return self._apply_locked(request, prepared, evaluated_at, base, started)
+            return self._apply_locked(request, prepared, evaluated_at, base, started, now)
         with self._locks.hold(checkpoint_id):
-            return self._apply_locked(request, prepared, evaluated_at, base, started)
+            return self._apply_locked(request, prepared, evaluated_at, base, started, now)
 
-    def _apply_locked(self, request, prepared, evaluated_at, base, started) -> OperationStatus:
+    def _apply_locked(self, request, prepared, evaluated_at, base, started, now) -> OperationStatus:
         self.check_deadline(started)
         records = self._read_bound_manifest(base, prepared)
         self.check_deadline(started)
@@ -257,6 +257,11 @@ class OperationManager:
         if prior_status is not None:
             try:
                 prior_value = json.loads(prior_status.body)
+                prior_occurred_at = _parse_utc(prior_value.get("occurred_at"))
+                if prior_occurred_at is None:
+                    raise OperationFailure("status_invalid")
+                if now < prior_occurred_at:
+                    return prior_status
                 if prior_value["state"] == "completed":
                     self._prove_completed_absence(request.confirm_prefix, prior_status, started)
                     repaired = self._latest_status(
