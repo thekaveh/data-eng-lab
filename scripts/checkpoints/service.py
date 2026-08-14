@@ -86,6 +86,9 @@ class RuntimeBackend:
         self._operation_id = operation_id
         self._client = getattr(gateway, "_client", None)
         self._metrics: dict[str, dict[tuple[str, ...], int]] = {}
+        self._metrics_lock = threading.RLock()
+        self._apply_metric_totals: dict[str, tuple[int, int]] = {}
+        self._apply_metric_transitions: set[tuple[str, str, object]] = set()
         self._capabilities: Mapping[str, object] | None = None
 
     def health(self) -> dict[str, object]:
@@ -121,7 +124,9 @@ class RuntimeBackend:
 
     def metrics(self) -> bytes:
         try:
-            return render_metrics(self._metrics)
+            with self._metrics_lock:
+                snapshot = {name: dict(values) for name, values in self._metrics.items()}
+            return render_metrics(snapshot)
         except MetricsFailure:
             fallback = {
                 "checkpoint_retention_request_failures_total": {("backend_failure",): 1},
@@ -134,12 +139,14 @@ class RuntimeBackend:
         self._increment("checkpoint_retention_request_failures_total", outcome)
 
     def _increment(self, metric: str, label: str, amount: int = 1) -> None:
-        values = self._metrics.setdefault(metric, {})
-        key = (label,)
-        values[key] = values.get(key, 0) + amount
+        with self._metrics_lock:
+            values = self._metrics.setdefault(metric, {})
+            key = (label,)
+            values[key] = values.get(key, 0) + amount
 
     def _set(self, metric: str, label: str, amount: int | float) -> None:
-        self._metrics.setdefault(metric, {})[(label,)] = amount
+        with self._metrics_lock:
+            self._metrics.setdefault(metric, {})[(label,)] = amount
 
     def invoke(self, action: str, payload: dict[str, object] | None, operation_id: str | None):
         if action == "lease_acquire":
@@ -194,17 +201,17 @@ class RuntimeBackend:
                     ApplyRequest(operation_id or "", value["plan_sha256"], value["confirm_prefix"])
                 )
             except OperationFailure as error:
-                try:
-                    status = self._operations.status(operation_id or "")
-                except (KeyboardInterrupt, SystemExit):
-                    raise
-                except BaseException:
-                    status = None
-                if status is not None and status.state == "partial":
-                    result = json.loads(status.body)
-                    self._record_apply_metrics(result)
-                    return result
                 if error.partial:
+                    try:
+                        status = self._operations.status(operation_id or "")
+                    except (KeyboardInterrupt, SystemExit):
+                        raise
+                    except BaseException:
+                        status = None
+                    if status is not None and status.state == "partial":
+                        result = json.loads(status.body)
+                        self._record_apply_metrics(result)
+                        return result
                     self._increment("checkpoint_retention_partial_total", "partial")
                     raise ServiceFailure(error.code, status=409, state="partial") from None
                 outcome = "timeout" if error.code == "operation_deadline" else "backend_failure"
@@ -223,13 +230,13 @@ class RuntimeBackend:
         if action == "plan":
             if isinstance(payload, dict) and set(payload) == {"actor", "checkpoint_ids"}:
                 return self._bulk_plan(payload)
-            value = _exact_payload(payload, {"actor", "checkpoint_id", "evaluated_at", "prefix"})
+            value = _exact_payload(payload, {"actor", "checkpoint_id", "prefix"})
             artifact = self._planner.plan(
                 PlanRequest(
                     value["checkpoint_id"],
                     value["prefix"],
                     value["actor"],
-                    _parse_utc(value["evaluated_at"]),
+                    self._now(),
                 )
             )
             result = json.loads(artifact.body)
@@ -271,6 +278,8 @@ class RuntimeBackend:
                 raise
             except ServiceFailure:
                 raise
+            except OperationFailure as error:
+                raise ServiceFailure(error.code, status=409, state="partial" if error.partial else "refused") from None
             except (RecordFailure, ValueError, TypeError):
                 raise ServiceFailure("request_invalid") from None
         raise ServiceFailure("route_invalid")
@@ -324,12 +333,30 @@ class RuntimeBackend:
             return
         deleted_objects = result.get("deleted_objects", 0)
         deleted_bytes = result.get("deleted_bytes", 0)
-        if type(deleted_objects) is int and deleted_objects >= 0:
-            self._increment("checkpoint_retention_deleted_objects_total", state, deleted_objects)
-        if type(deleted_bytes) is int and deleted_bytes >= 0:
-            self._increment("checkpoint_retention_deleted_bytes_total", state, deleted_bytes)
-        if state == "partial":
-            self._increment("checkpoint_retention_partial_total", "partial")
+        operation_id = result.get("operation_id")
+        if (
+            not isinstance(operation_id, str)
+            or type(deleted_objects) is not int
+            or deleted_objects < 0
+            or type(deleted_bytes) is not int
+            or deleted_bytes < 0
+        ):
+            return
+        with self._metrics_lock:
+            previous_objects, previous_bytes = self._apply_metric_totals.get(operation_id, (0, 0))
+            if deleted_objects < previous_objects or deleted_bytes < previous_bytes:
+                return
+            object_delta = deleted_objects - previous_objects
+            byte_delta = deleted_bytes - previous_bytes
+            if object_delta:
+                self._increment("checkpoint_retention_deleted_objects_total", state, object_delta)
+            if byte_delta:
+                self._increment("checkpoint_retention_deleted_bytes_total", state, byte_delta)
+            self._apply_metric_totals[operation_id] = (deleted_objects, deleted_bytes)
+            transition = (operation_id, state, result.get("attempt_sequence"))
+            if state == "partial" and transition not in self._apply_metric_transitions:
+                self._increment("checkpoint_retention_partial_total", "partial")
+            self._apply_metric_transitions.add(transition)
         checkpoint_id = result.get("checkpoint_id")
         if state == "completed" and checkpoint_id in getattr(
             __import__("scripts.checkpoints.metrics", fromlist=["_CHECKPOINT_IDS"]),
@@ -418,9 +445,9 @@ def build_runtime() -> RuntimeBackend:
         planner = RetentionPlanner(gateway, policy)
         locks = CheckpointLockRegistry()
 
-        def revalidate(prefix: str, evaluated_at: datetime):
+        def revalidate(prefix: str, _evaluated_at: datetime):
             matched = policy.match_prefix(prefix)
-            return planner.plan(PlanRequest(matched.checkpoint_id, prefix, "retention-revalidation", evaluated_at))
+            return planner.plan(PlanRequest(matched.checkpoint_id, prefix, "retention-revalidation", _now()))
 
         operations = OperationManager(
             gateway,

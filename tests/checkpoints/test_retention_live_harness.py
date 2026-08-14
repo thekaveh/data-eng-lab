@@ -237,10 +237,7 @@ def test_disposable_identity_and_review_facts_are_exact_and_bounded():
         "prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/",
         "workload": "go-live-streaming-test",
     }
-    assert live._review_facts("2026-08-13T12:00:00Z") == {
-        "actor": "issue86-live-acceptance",
-        "evaluated_at": "2026-08-13T12:00:00Z",
-    }
+    assert live._review_facts() == {"actor": "issue86-live-acceptance"}
     for invalid in ("not-a-uuid", "550E8400-E29B-41D4-A716-446655440000", "../escape"):
         with pytest.raises(AssertionError):
             live._fixture_identity(invalid)
@@ -320,6 +317,17 @@ def test_live_module_is_a_genuine_run_infra_opt_in_with_no_refresh_or_family_del
     assert 'delete_object(Bucket="checkpoints", Key="streaming_test/"' not in source
     assert 'delete_objects(Bucket="checkpoints", Delete={"Prefix"' not in source
     assert "remove_volume" not in source
+
+
+def test_final_runtime_live_executes_destructive_refusal_partial_retry_and_evidence_contract():
+    source = LIVE.read_text(encoding="utf-8")
+
+    assert "timedelta(days=2)" not in source
+    assert "_assert_operation_evidence(" in source[source.index("def test_checkpoint_retention_live_acceptance") :]
+    for state in ('["state"] == "completed"', '["state"] == "refused"', "_run_layered_partial_retry()"):
+        assert state in source
+    assert source.count("_wait_apply(") >= 3
+    assert "_volume_inventory" in source
 
 
 def test_live_identity_is_one_explicit_bounded_value_for_provisioning_and_probe():

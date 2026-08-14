@@ -227,6 +227,8 @@ def write_plan_exclusive(path: Path, artifact: PlanArtifact) -> None:
 def _decode_lease(body: bytes, etag: str) -> LeaseFacts:
     try:
         value = decode_exact_json(body, _LEASE_SCHEMA)
+        if value["schema_version"] != 1:
+            raise ValueError
         acquired = _parse_utc(value["acquired_at"])
         heartbeat = _parse_utc(value["heartbeat_at"])
         expires = _parse_utc(value["expires_at"])
@@ -251,6 +253,8 @@ def _decode_terminal(body: bytes, checkpoint_id: str, prefix: str) -> TerminalFa
             value = decode_exact_json(body, _TERMINAL_SCHEMA)
         except RecordFailure:
             value = decode_exact_json(body, _RETIRED_TERMINAL_SCHEMA)
+        if value["schema_version"] != 1:
+            raise ValueError
         occurred = _parse_utc(value["occurred_at"])
         if occurred is None:
             raise ValueError

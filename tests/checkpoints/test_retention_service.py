@@ -311,7 +311,6 @@ def test_runtime_backend_routes_one_exact_plan_and_prepare_with_server_owned_ope
         {
             "actor": "acceptance-engineering",
             "checkpoint_id": "go-live-streaming-test-v1",
-            "evaluated_at": "2026-08-13T12:00:00Z",
             "prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/",
         },
         None,
@@ -337,6 +336,18 @@ def test_runtime_backend_routes_one_exact_plan_and_prepare_with_server_owned_ope
     assert calls[1][0] == "prepare"
     assert calls[1][1].artifact is decoded
     assert calls[1][1].operation_id == "550e8400-e29b-41d4-a716-446655440000"
+
+    with pytest.raises(module.ServiceFailure, match="request_invalid"):
+        backend.invoke(
+            "plan",
+            {
+                "actor": "acceptance-engineering",
+                "checkpoint_id": "go-live-streaming-test-v1",
+                "evaluated_at": "2099-01-01T00:00:00Z",
+                "prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/",
+            },
+            None,
+        )
 
 
 def test_runtime_backend_bulk_plan_returns_registry_ordered_bounded_refusals(monkeypatch):
@@ -460,7 +471,6 @@ def test_runtime_metrics_track_fixed_low_cardinality_plan_prepare_apply_outcomes
         {
             "actor": "acceptance-engineering",
             "checkpoint_id": "go-live-streaming-test-v1",
-            "evaluated_at": "2026-08-13T12:00:00Z",
             "prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/",
         },
         None,
@@ -478,8 +488,88 @@ def test_runtime_metrics_track_fixed_low_cardinality_plan_prepare_apply_outcomes
         },
         "550e8400-e29b-41d4-a716-446655440000",
     )
+    backend.invoke(
+        "apply",
+        {
+            "confirm_prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/",
+            "plan_sha256": "a" * 64,
+        },
+        "550e8400-e29b-41d4-a716-446655440000",
+    )
 
     metrics = backend.metrics()
     assert b'checkpoint_retention_plans_total{decision="eligible"} 1\n' in metrics
     assert b'checkpoint_retention_prepared_total{outcome="completed"} 1\n' in metrics
     assert b'checkpoint_retention_deleted_objects_total{outcome="completed"} 2\n' in metrics
+    assert b'checkpoint_retention_deleted_objects_total{outcome="completed"} 4\n' not in metrics
+
+
+def test_runtime_backend_current_refusal_outranks_stale_partial_status():
+    module = _service()
+
+    class Operations:
+        def apply(self, _request):
+            raise module.OperationFailure("confirmation_mismatch")
+
+        def status(self, _operation_id):
+            return types.SimpleNamespace(
+                state="partial",
+                body=b'{"operation_id":"550e8400-e29b-41d4-a716-446655440000","state":"partial"}',
+            )
+
+    backend = module.RuntimeBackend(
+        gateway=types.SimpleNamespace(probe_capabilities=lambda: {"automatic_apply": False}),
+        leases=object(),
+        planner=object(),
+        operations=Operations(),
+        policy=types.SimpleNamespace(entries={}),
+        destructive_enabled=True,
+    )
+    backend._require_disposable = lambda _prefix: None
+
+    with pytest.raises(module.ServiceFailure, match="confirmation_mismatch") as failure:
+        backend.invoke(
+            "apply",
+            {
+                "confirm_prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/",
+                "plan_sha256": "a" * 64,
+            },
+            "550e8400-e29b-41d4-a716-446655440000",
+        )
+
+    assert failure.value.state == "refused"
+
+
+def test_runtime_prepare_preserves_typed_operation_refusal_taxonomy(monkeypatch):
+    module = _service()
+
+    class Operations:
+        def prepare(self, _request):
+            raise module.OperationFailure("policy_drift")
+
+    monkeypatch.setattr(
+        module,
+        "decode_plan_artifact",
+        lambda *_args, **_kwargs: types.SimpleNamespace(
+            summary={"prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/"}
+        ),
+    )
+    backend = module.RuntimeBackend(
+        gateway=types.SimpleNamespace(probe_capabilities=lambda: {"automatic_apply": False}),
+        leases=object(),
+        planner=object(),
+        operations=Operations(),
+        policy=types.SimpleNamespace(entries={}),
+        destructive_enabled=False,
+    )
+    backend._require_disposable = lambda _prefix: None
+
+    with pytest.raises(module.ServiceFailure, match="policy_drift") as failure:
+        backend.invoke(
+            "prepare",
+            {"actor": "operator", "plan": {}, "plan_sha256": "a" * 64, "review": "review-86"},
+            None,
+        )
+
+    assert failure.value.status == 409
+    assert failure.value.state == "refused"

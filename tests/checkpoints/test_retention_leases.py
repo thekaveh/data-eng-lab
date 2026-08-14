@@ -301,6 +301,49 @@ def test_terminal_control_failure_is_fail_closed_and_retry_can_finish_missing_ev
     assert TERMINAL_KEY in gateway.controls
 
 
+def test_terminal_lease_and_terminal_evidence_persist_under_one_shared_checkpoint_lock():
+    class TrackingLocks:
+        held = False
+
+        class Context:
+            def __init__(self, owner):
+                self.owner = owner
+
+            def __enter__(self):
+                assert self.owner.held is False
+                self.owner.held = True
+
+            def __exit__(self, *_args):
+                self.owner.held = False
+
+        def hold(self, checkpoint_id):
+            assert checkpoint_id == CHECKPOINT_ID
+            return self.Context(self)
+
+    locks = TrackingLocks()
+
+    class LockedGateway(FakeGateway):
+        def create_control(self, key, body):
+            if key == TERMINAL_KEY:
+                assert locks.held is True
+            return super().create_control(key, body)
+
+    gateway = LockedGateway()
+    gateway.controls[LEASE_KEY] = (_active_body(), "a" * 32)
+    manager = LeaseManager(gateway, POLICY, now=lambda: NOW + timedelta(seconds=60), locks=locks)
+    request = TerminalRequest(
+        CHECKPOINT_ID,
+        PREFIX,
+        EPOCH,
+        "stopped",
+        {"generation": {"run_uuid": RUN_UUID}, "successful": True, "exclusive_run": True},
+    )
+
+    manager.terminal(request)
+
+    assert locks.held is False
+
+
 def test_per_checkpoint_lock_serializes_competing_acquires():
     gateway = FakeGateway()
     gateway.read_entered = threading.Event()

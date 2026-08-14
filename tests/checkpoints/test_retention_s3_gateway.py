@@ -242,6 +242,22 @@ def test_manifest_read_uses_manifest_shard_bound_while_summary_controls_stay_sma
         gateway.read_control(CONTROL, max_bytes=POLICY.bounds.max_summary_bytes + 1)
 
 
+@pytest.mark.parametrize(
+    "response",
+    [
+        {"Deleted": [{"Key": f"{PREFIX}a"}], "Errors": [{"Key": f"{PREFIX}a"}]},
+        {"Deleted": [], "Errors": [{"Key": f"{PREFIX}a"}, {"Key": f"{PREFIX}a"}]},
+    ],
+)
+def test_delete_rejects_overlapping_or_duplicate_response_classification(response):
+    client = FakeS3()
+    client.delete_response = response
+    record = ObjectRecord(f"{PREFIX}a", "a" * 32, 1, NOW)
+
+    with pytest.raises(GatewayFailure, match="delete_response_invalid"):
+        S3Gateway(client, POLICY, monotonic=lambda: 0.0).delete_records((record,))
+
+
 def test_result_classification_shard_write_uses_same_one_megabyte_bound_as_read():
     client = FakeS3()
     gateway = S3Gateway(client, POLICY, monotonic=lambda: 0.0)

@@ -75,6 +75,17 @@ def test_every_streaming_notebook_wraps_start_and_wait_in_exact_lease_lifecycle(
     assert len(scala_helpers) == 1, "Zeppelin lease helper must be one canonical projection"
 
 
+def test_every_zeppelin_helper_attempts_terminal_even_when_final_heartbeat_fails():
+    helpers = {_texts(scenario)[2] for scenario in SCENARIOS}
+    assert len(helpers) == 1
+    helper = helpers.pop()
+    close = helper[helper.index("def close") :]
+
+    assert "try heartbeat()" in close
+    assert "catch" in close
+    assert close.index('post("/v1/leases/terminal"') < close.index("throw finalHeartbeatFailure")
+
+
 def test_gh_archive_lease_binds_the_exact_resolved_generation():
     python, scala, _helper = _texts("streaming_ingest-gh_archive-spark-iceberg")
     for name in ("dataset_scale", "publication_id", "manifest_sha256"):

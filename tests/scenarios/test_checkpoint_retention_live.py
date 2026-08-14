@@ -291,10 +291,8 @@ def _fixture_identity(run_uuid: str) -> dict[str, object]:
     }
 
 
-def _review_facts(evaluated_at: str) -> dict[str, str]:
-    if not isinstance(evaluated_at, str) or re.fullmatch(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z", evaluated_at) is None:
-        raise AssertionError("review clock must be canonical UTC")
-    return {"actor": "issue86-live-acceptance", "evaluated_at": evaluated_at}
+def _review_facts() -> dict[str, str]:
+    return {"actor": "issue86-live-acceptance"}
 
 
 def _assert_stable_snapshot(before: dict[str, object], after: dict[str, object]) -> None:
@@ -520,14 +518,13 @@ def _terminal_payload(identity: dict[str, object], epoch: str) -> dict[str, obje
     }
 
 
-def _plan(identity: dict[str, object], evaluated_at: str) -> tuple[dict[str, object], str]:
+def _plan(identity: dict[str, object]) -> tuple[dict[str, object], str]:
     artifact = _service(
         "POST",
         "/v1/plans",
         {
             "actor": "issue86-live-acceptance",
             "checkpoint_id": identity["checkpoint_id"],
-            "evaluated_at": evaluated_at,
             "prefix": identity["prefix"],
         },
     )
@@ -546,6 +543,94 @@ def _prepare(artifact: dict[str, object], digest: str) -> dict[str, object]:
             "review": "issue86-live-reviewed",
         },
     )
+
+
+def _wait_apply(operation_id: str, prefix: str, plan_sha256: str) -> dict[str, object]:
+    deadline = time.monotonic() + 930
+    while True:
+        result = _service(
+            "POST",
+            f"/v1/operations/{operation_id}/apply",
+            {"confirm_prefix": prefix, "plan_sha256": plan_sha256},
+        )
+        if result.get("state") != "not_ready":
+            return result
+        if time.monotonic() >= deadline:
+            raise AssertionError("operation quiescence deadline exceeded")
+        time.sleep(5)
+
+
+def _read_json_object(client, key: str, *, max_bytes: int = 65_536) -> dict[str, object]:
+    response = client.get_object(Bucket="checkpoints", Key=key)
+    body = response.get("Body") if isinstance(response, dict) else None
+    if body is None or not hasattr(body, "read") or not hasattr(body, "close"):
+        raise AssertionError("operation evidence invalid")
+    try:
+        raw = body.read(max_bytes + 1)
+    finally:
+        body.close()
+    if type(raw) is not bytes or len(raw) > max_bytes:
+        raise AssertionError("operation evidence invalid")
+    try:
+        value = json.loads(raw)
+    except (UnicodeError, json.JSONDecodeError):
+        raise AssertionError("operation evidence invalid") from None
+    if not isinstance(value, dict):
+        raise AssertionError("operation evidence invalid")
+    return value
+
+
+def _operation_evidence(
+    client,
+    artifact: dict[str, object],
+    operation_id: str,
+    plan_sha256: str,
+) -> dict[str, object]:
+    base = f"_retention/tombstones/{operation_id}"
+    prepared = _read_json_object(client, f"{base}/prepared.json")
+    attempts = client.list_objects_v2(Bucket="checkpoints", Prefix=f"{base}/results/attempts/", MaxKeys=1000)
+    audits = client.list_objects_v2(Bucket="checkpoints", Prefix=f"_retention/audits/{operation_id}/", MaxKeys=1000)
+    if attempts.get("IsTruncated") is not False or audits.get("IsTruncated") is not False:
+        raise AssertionError("operation evidence invalid")
+    attempt_keys = sorted(item.get("Key") for item in attempts.get("Contents", []))
+    audit_keys = sorted(item.get("Key") for item in audits.get("Contents", []))
+    results = [_read_json_object(client, key) for key in attempt_keys]
+    audit_values = [_read_json_object(client, key) for key in audit_keys]
+    completed = [value for value in results if value.get("state") == "completed"]
+    completed_audits = [value for value in audit_values if value.get("decision") == "completed"]
+    if len(completed) != 1 or len(completed_audits) != 1:
+        raise AssertionError("operation evidence invalid")
+    plan = dict(artifact)
+    plan["plan_sha256"] = plan_sha256
+    return {"audit": completed_audits[0], "plan": plan, "prepared": prepared, "result": completed[0]}
+
+
+def _run_layered_partial_retry() -> None:
+    environment = dict(os.environ)
+    environment["RUN_MINIO_INTEGRATION"] = "1"
+    result = subprocess.run(
+        [
+            "uv",
+            "run",
+            "pytest",
+            "-q",
+            "tests/checkpoints/test_retention_s3_minio.py::test_real_gateway_partial_retry_is_original_set_confined_and_idempotent",
+        ],
+        cwd=ROOT,
+        env=environment,
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=180,
+    )
+    if "1 passed" not in result.stdout:
+        raise AssertionError("partial retry evidence missing")
+
+
+def _volume_inventory() -> tuple[str, ...]:
+    project = _env("PROJECT_NAME", "data-eng-lab")
+    result = _run("docker", "volume", "ls", "--format", "{{.Name}}")
+    return tuple(sorted(line for line in result.stdout.splitlines() if line.startswith(f"{project}_")))
 
 
 def _airflow_token() -> str:
@@ -585,6 +670,7 @@ def test_checkpoint_retention_live_acceptance():
     os.environ["CHECKPOINT_RETENTION_LEASE_TOKEN"] = LIVE_LEASE_TOKEN
     os.environ["CHECKPOINT_RETENTION_OPERATOR_TOKEN"] = LIVE_OPERATOR_TOKEN
     stack_started_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    volumes_before = _volume_inventory()
     try:
         with _owned_stack(), ExitStack() as owned_resources:
             health = _wait_service()
@@ -629,23 +715,21 @@ def test_checkpoint_retention_live_acceptance():
             assert _prove_maintenance_iam(root, maintenance, identities[0]["prefix"], denied_key)["denied"] == 4
 
             active = _service("POST", "/v1/leases/acquire", _lease_payload(identities[0], "issue86-live-active"))
-            active_plan, _active_sha = _plan(identities[0], datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"))
+            active_plan, _active_sha = _plan(identities[0])
             assert active_plan["summary"]["decision"] == "refused"
             assert "lease_active" in active_plan["summary"]["refusal_codes"]
             _service("POST", "/v1/leases/terminal", _terminal_payload(identities[0], active["epoch"]))
 
-            evaluated_at = (
-                (datetime.now(timezone.utc) + timedelta(days=2)).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
-            )
-            first_plan, first_sha = _plan(identities[0], evaluated_at)
-            repeated_plan, repeated_sha = _plan(identities[0], evaluated_at)
-            assert first_plan == repeated_plan and first_sha == repeated_sha
+            first_plan, first_sha = _plan(identities[0])
+            repeated_plan, repeated_sha = _plan(identities[0])
+            assert first_plan["summary"]["decision"] == repeated_plan["summary"]["decision"]
+            assert first_plan["summary"]["inventory"] == repeated_plan["summary"]["inventory"]
             assert first_plan["summary"]["decision"] == "eligible"
             first_prepared = _prepare(first_plan, first_sha)
 
             second_lease = _service("POST", "/v1/leases/acquire", _lease_payload(identities[1], "issue86-live-success"))
             _service("POST", "/v1/leases/terminal", _terminal_payload(identities[1], second_lease["epoch"]))
-            second_plan, second_sha = _plan(identities[1], evaluated_at)
+            second_plan, second_sha = _plan(identities[1])
             assert second_plan["summary"]["decision"] == "eligible"
             second_prepared = _prepare(second_plan, second_sha)
 
@@ -657,14 +741,19 @@ def test_checkpoint_retention_live_acceptance():
             assert not_ready["state"] == "not_ready"
             put_owned(f"{identities[0]['prefix']}state/changed", b"changed")
 
-            first_not_ready = _service(
-                "POST",
-                f"/v1/operations/{first_prepared['operation_id']}/apply",
-                {"confirm_prefix": identities[0]["prefix"], "plan_sha256": first_sha},
+            completed = _wait_apply(second_prepared["operation_id"], identities[1]["prefix"], second_sha)
+            assert completed["state"] == "completed"
+            refused = _wait_apply(first_prepared["operation_id"], identities[0]["prefix"], first_sha)
+            assert refused["state"] == "refused"
+            evidence = _operation_evidence(root, second_plan, second_prepared["operation_id"], second_sha)
+            _assert_operation_evidence(
+                evidence,
+                second_prepared["operation_id"],
+                second_sha,
+                identities[1]["prefix"],
             )
-            assert first_not_ready["state"] == "not_ready"
             assert len(_inventory(root, identities[0]["prefix"])) == 3
-            assert len(_inventory(root, identities[1]["prefix"])) == 2
+            assert _inventory(root, identities[1]["prefix"]) == ()
             assert root.head_object(Bucket="checkpoints", Key=denied_key)["ContentLength"] == len(b"preserve")
 
             dag = _airflow_dag()
@@ -689,6 +778,8 @@ def test_checkpoint_retention_live_acceptance():
             )
             assert metrics['checkpoint_retention_last_success_unixtime{checkpoint_id="go-live-streaming-test-v1"}'] > 0
             _assert_stable_snapshot(before, _production_snapshot(root))
+        _run_layered_partial_retry()
+        assert _volume_inventory() == volumes_before
     finally:
         if previous_destructive is None:
             os.environ.pop("CHECKPOINT_RETENTION_DESTRUCTIVE_ENABLED", None)

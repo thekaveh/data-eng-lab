@@ -431,7 +431,6 @@ def test_plan_metrics_publish_inventory_eligibility_and_refusal_outcomes():
         {
             "actor": "operator",
             "checkpoint_id": "go-live-streaming-test-v1",
-            "evaluated_at": "2026-08-13T12:00:00Z",
             "prefix": PREFIX,
         },
         None,
@@ -503,7 +502,7 @@ def test_runtime_returns_any_persisted_destructive_partial_as_partial():
         }
     )
     operations = types.SimpleNamespace(
-        apply=lambda _request: (_ for _ in ()).throw(OperationFailure("postflight_not_empty")),
+        apply=lambda _request: (_ for _ in ()).throw(OperationFailure("postflight_not_empty", partial=True)),
         status=lambda operation_id: types.SimpleNamespace(operation_id=operation_id, state="partial", body=partial),
     )
     policy = types.SimpleNamespace(

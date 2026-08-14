@@ -313,6 +313,8 @@ class S3Gateway:
             len(deleted_keys) != len(deleted)
             or len(error_keys) != len(errors)
             or len(deleted_keys) != len(set(deleted_keys))
+            or len(error_keys) != len(set(error_keys))
+            or set(deleted_keys) & set(error_keys)
             or any(not isinstance(key, str) for key in (*deleted_keys, *error_keys))
             or any(key not in expected for key in (*deleted_keys, *error_keys))
         ):

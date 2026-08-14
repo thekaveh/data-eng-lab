@@ -93,6 +93,7 @@ class OperationManager:
         self._max_active_seconds = max_active_seconds
 
     def prepare(self, request: PrepareRequest) -> OperationStatus:
+        started = self._start_deadline()
         artifact = self._validate_prepare(request)
         summary = artifact.summary
         base = f"_retention/tombstones/{request.operation_id}"
@@ -119,7 +120,22 @@ class OperationManager:
         except RecordFailure:
             raise OperationFailure("prepared_body_invalid") from None
         self._create_identical(f"{base}/prepared.json", body, self._max_summary_bytes)
-        return OperationStatus(request.operation_id, "prepared", body)
+        records = tuple(record for shard in artifact.shards for record in shard.records)
+        status = self._record_status(
+            request.operation_id,
+            prepared["checkpoint_id"],
+            "prepared",
+            request.plan_sha256,
+            [],
+            records,
+            None,
+            started,
+            head_requests=0,
+            delete_requests=0,
+            postflight_inventory_sha256=None,
+        )
+        self._ensure_audit(request.operation_id, status, prepared)
+        return status
 
     def apply(self, request: ApplyRequest) -> OperationStatus:
         started = self._start_deadline()
@@ -140,16 +156,22 @@ class OperationManager:
         if prepared_at is None or evaluated_at is None:
             raise OperationFailure("prepared_invalid")
         if now < prepared_at + timedelta(seconds=self._quiescence_seconds):
-            body = canonical_json_bytes(
-                {
-                    "operation_id": request.operation_id,
-                    "plan_sha256": request.plan_sha256,
-                    "schema_version": 1,
-                    "state": "not_ready",
-                },
-                max_bytes=self._max_summary_bytes,
+            records = self._read_manifest(base, prepared["manifest_shards"])
+            status = self._record_status(
+                request.operation_id,
+                prepared["checkpoint_id"],
+                "not_ready",
+                request.plan_sha256,
+                [],
+                records,
+                "quiescence_not_ready",
+                started,
+                head_requests=0,
+                delete_requests=0,
+                postflight_inventory_sha256=None,
             )
-            return OperationStatus(request.operation_id, "not_ready", body)
+            self._ensure_audit(request.operation_id, status, prepared)
+            return status
         checkpoint_id = prepared.get("checkpoint_id")
         if not isinstance(checkpoint_id, str) or _IDENTIFIER.fullmatch(checkpoint_id) is None:
             raise OperationFailure("prepared_invalid")
@@ -183,7 +205,7 @@ class OperationManager:
             if self._revalidate is None:
                 raise OperationFailure("revalidation_unavailable")
             try:
-                current = self._revalidate(request.confirm_prefix, evaluated_at)
+                current = self._revalidate(request.confirm_prefix, self._exact_now())
             except (KeyboardInterrupt, SystemExit):
                 raise
             except BaseException:
@@ -194,6 +216,18 @@ class OperationManager:
                 if isinstance(current, PlanArtifact)
                 else ()
             )
+            current_valid = (
+                isinstance(current, PlanArtifact)
+                and current.summary.get("decision") == "eligible"
+                and current.summary.get("policy_sha256") == self._policy_sha256
+                and current.summary.get("prefix") == request.confirm_prefix
+            )
+            if current_valid and current_records != remaining_records:
+                original_by_record = {record: record for record in remaining_records}
+                if all(record in original_by_record for record in current_records):
+                    inferred = tuple(record for record in remaining_records if record not in set(current_records))
+                    prior_deleted.update(_record_sha256(record) for record in inferred)
+                    remaining_records = current_records
             if (
                 not isinstance(current, PlanArtifact)
                 or current.summary.get("decision") != "eligible"
@@ -202,6 +236,20 @@ class OperationManager:
                 or current.summary.get("inventory", {}).get("sha256") != inventory_sha256(remaining_records)
                 or current_records != remaining_records
             ):
+                status = self._record_status(
+                    request.operation_id,
+                    prepared["checkpoint_id"],
+                    "refused",
+                    request.plan_sha256,
+                    [record for record in records if _record_sha256(record) in prior_deleted],
+                    records,
+                    "revalidation_mismatch",
+                    started,
+                    head_requests=0,
+                    delete_requests=0,
+                    postflight_inventory_sha256=None,
+                )
+                self._ensure_audit(request.operation_id, status, prepared)
                 raise OperationFailure("revalidation_mismatch")
         else:
             try:
@@ -228,6 +276,10 @@ class OperationManager:
             for offset in range(0, len(remaining_records), self._max_delete_keys):
                 self.check_deadline(started)
                 batch = remaining_records[offset : offset + self._max_delete_keys]
+                for record in batch:
+                    self._gateway.head_record(record)
+                    head_requests += 1
+                    self.check_deadline(started)
                 delete_requests += 1
                 self._gateway.delete_records(batch)
                 deleted.extend(batch)
@@ -248,7 +300,8 @@ class OperationManager:
             primary = error if isinstance(error, OperationFailure) else OperationFailure("delete_partial")
             primary.partial = bool(deleted)
             try:
-                self._record_status(
+                cleanup_started = self._start_deadline()
+                status = self._record_status(
                     request.operation_id,
                     prepared["checkpoint_id"],
                     "partial",
@@ -256,11 +309,13 @@ class OperationManager:
                     deleted,
                     records,
                     primary.code,
-                    started,
+                    cleanup_started,
                     head_requests=head_requests,
                     delete_requests=delete_requests,
                     postflight_inventory_sha256=postflight_sha256,
+                    deadline_seconds=30,
                 )
+                self._ensure_audit(request.operation_id, status, prepared)
             except (KeyboardInterrupt, SystemExit):
                 raise
             except BaseException:
@@ -364,7 +419,7 @@ class OperationManager:
             except (KeyError, TypeError, json.JSONDecodeError):
                 raise OperationFailure("status_invalid") from None
             if (
-                state not in {"partial", "completed", "refused"}
+                state not in {"prepared", "not_ready", "partial", "completed", "refused"}
                 or set(value)
                 != {
                     "checkpoint_id",
@@ -536,6 +591,7 @@ class OperationManager:
         head_requests: int,
         delete_requests: int,
         postflight_inventory_sha256: str | None,
+        deadline_seconds: int | None = None,
     ):
         deleted_sha256s = {_record_sha256(record) for record in deleted}
         classifications = tuple(
@@ -545,7 +601,12 @@ class OperationManager:
             }
             for record in planned
         )
-        result_shards = self._write_result_shards(operation_id, classifications, started)
+        result_shards = self._write_result_shards(
+            operation_id,
+            classifications,
+            started,
+            deadline_seconds=deadline_seconds,
+        )
         deleted_records = tuple(record for record in planned if _record_sha256(record) in deleted_sha256s)
         remaining_records = tuple(record for record in planned if _record_sha256(record) not in deleted_sha256s)
         try:
@@ -586,7 +647,7 @@ class OperationManager:
         digest = hashlib.sha256(body).hexdigest()
         key = f"_retention/tombstones/{operation_id}/results/attempts/{attempt_sequence:06d}-{digest}.json"
         self._create_identical(key, body, self._max_summary_bytes)
-        self.check_deadline(started)
+        self.check_deadline(started, max_seconds=deadline_seconds)
         return status
 
     def _write_result_shards(
@@ -594,6 +655,8 @@ class OperationManager:
         operation_id: str,
         values: tuple[dict[str, str], ...],
         started: float,
+        *,
+        deadline_seconds: int | None = None,
     ) -> tuple[str, ...]:
         chunks: list[list[dict[str, str]]] = []
         current: list[dict[str, str]] = []
@@ -625,7 +688,7 @@ class OperationManager:
                 body,
                 self._max_result_shard_bytes,
             )
-            self.check_deadline(started)
+            self.check_deadline(started, max_seconds=deadline_seconds)
             digests.append(digest)
         return tuple(digests)
 
@@ -784,14 +847,14 @@ class OperationManager:
             raise OperationFailure("clock_invalid")
         return float(started)
 
-    def check_deadline(self, started: float) -> None:
+    def check_deadline(self, started: float, *, max_seconds: int | None = None) -> None:
         try:
             elapsed = self._monotonic() - started
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException:
             raise OperationFailure("clock_failed") from None
-        if elapsed < 0 or elapsed > self._max_active_seconds:
+        if elapsed < 0 or elapsed > (self._max_active_seconds if max_seconds is None else max_seconds):
             raise OperationFailure("operation_deadline")
 
 

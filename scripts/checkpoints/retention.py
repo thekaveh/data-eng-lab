@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import sys
+import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -70,19 +72,18 @@ def main(argv: list[str] | None = None) -> int:
 def _command(namespace) -> tuple[str, dict[str, object] | None, Path | None]:
     if namespace.command == "plan":
         facts = _read_json_file(namespace.facts)
-        if set(facts) != {"actor", "evaluated_at"} or any(
-            not isinstance(facts[field], str) for field in {"actor", "evaluated_at"}
-        ):
+        if set(facts) != {"actor"} or not isinstance(facts["actor"], str):
             raise CliFailure("file_invalid", 2)
         payload = {
             "actor": facts["actor"],
             "checkpoint_id": namespace.checkpoint_id,
-            "evaluated_at": facts["evaluated_at"],
             "prefix": namespace.prefix,
         }
         return "/v1/plans", payload, namespace.output
     if namespace.command == "prepare":
-        plan = _read_json_file(namespace.plan, max_bytes=_MAX_PLAN_BODY)
+        raw, plan = _read_json_file_with_bytes(namespace.plan, max_bytes=_MAX_PLAN_BODY)
+        if hashlib.sha256(raw).hexdigest() != namespace.plan_sha256:
+            raise CliFailure("plan_digest_mismatch", 2)
         return (
             "/v1/operations/prepare",
             {
@@ -119,7 +120,7 @@ def _request(path: str, payload: dict[str, object] | None, token: str) -> bytes:
     result: bytes | None = None
     primary: BaseException | None = None
     try:
-        response = _open(request, timeout=30)
+        response = _open(request, timeout=930 if path.endswith("/apply") else 30)
         raw = response.read(response_bound + 1)
         if type(raw) is not bytes or len(raw) > response_bound:
             raise CliFailure("response_invalid", 5)
@@ -179,32 +180,61 @@ def _open(request, timeout):
 
 
 def _read_json_file(path: Path, *, max_bytes: int = _MAX_BODY) -> dict[str, object]:
+    return _read_json_file_with_bytes(path, max_bytes=max_bytes)[1]
+
+
+def _read_json_file_with_bytes(path: Path, *, max_bytes: int = _MAX_BODY) -> tuple[bytes, dict[str, object]]:
+    def pairs(values):
+        result = {}
+        for key, value in values:
+            if key in result:
+                raise CliFailure("file_invalid", 2)
+            result[key] = value
+        return result
+
     try:
         with path.open("rb") as handle:
             body = handle.read(max_bytes + 1)
         if len(body) > max_bytes:
             raise CliFailure("file_too_large", 2)
-        value = json.loads(body.decode("utf-8"))
+        value = json.loads(body.decode("utf-8"), object_pairs_hook=pairs)
     except CliFailure:
         raise
     except (OSError, UnicodeError, json.JSONDecodeError):
         raise CliFailure("file_invalid", 2) from None
     if not isinstance(value, dict):
         raise CliFailure("file_invalid", 2)
-    return value
+    return body, value
 
 
 def _write_exclusive(path: Path, body: bytes) -> None:
+    temporary: Path | None = None
     try:
-        descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        if path.exists():
+            raise FileExistsError
+        descriptor, name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+        temporary = Path(name)
+        os.fchmod(descriptor, 0o600)
         with os.fdopen(descriptor, "wb") as handle:
             handle.write(body)
             handle.flush()
             os.fsync(handle.fileno())
+        os.link(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
     except FileExistsError:
         raise CliFailure("output_exists", 2) from None
     except OSError:
         raise CliFailure("output_write_failed", 5) from None
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError:
+                pass
 
 
 def _canonical(value: object, *, max_bytes: int = _MAX_BODY) -> bytes:

@@ -165,7 +165,16 @@ def test_compose_runtime_is_single_replica_internal_nonroot_and_fail_closed():
     assert runtime["platform"] == "linux/amd64"
     assert runtime["user"] == "65532:65532"
     assert runtime["read_only"] is True
-    assert runtime["deploy"] == {"replicas": 1}
+    assert runtime["cap_drop"] == ["ALL"]
+    assert runtime["security_opt"] == ["no-new-privileges:true"]
+    assert runtime["pids_limit"] == 128
+    assert runtime["deploy"] == {
+        "replicas": 1,
+        "resources": {
+            "limits": {"cpus": "1.0", "memory": "512M"},
+            "reservations": {"cpus": "0.1", "memory": "128M"},
+        },
+    }
     assert runtime["restart"] == "unless-stopped"
     assert "ports" not in runtime
     assert runtime["networks"] == ["backend-network"]
@@ -190,7 +199,8 @@ def test_runtime_image_is_pinned_minimal_and_contains_only_required_code():
     dockerfile = (ROOT / "checkpoints/retention.Dockerfile").read_text(encoding="utf-8")
     assert "python@sha256:" in dockerfile
     assert "uv@sha256:" in dockerfile
-    assert "uv sync --frozen --only-group dev --no-install-project" in dockerfile
+    assert "uv sync --frozen --only-group dev --no-install-project" not in dockerfile
+    assert "FROM " in dockerfile and " AS builder" in dockerfile
     assert "USER 65532:65532" in dockerfile
     assert 'ENTRYPOINT ["/opt/venv/bin/python", "-m", "scripts.checkpoints.service"]' in dockerfile
     assert "COPY infra" not in dockerfile

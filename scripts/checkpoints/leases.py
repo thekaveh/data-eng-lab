@@ -194,6 +194,10 @@ class LeaseManager:
             request.evidence.get("successful") is not True or request.evidence.get("exclusive_run") is not True
         ):
             raise LeaseFailure("terminal_evidence_invalid")
+        with self._locks.hold(request.checkpoint_id):
+            return self._terminal_locked(request)
+
+    def _terminal_locked(self, request: TerminalRequest) -> LeaseResult:
         key = self._lease_key(request.checkpoint_id)
         try:
             current_body, current_etag = self._gateway.read_control(
@@ -206,7 +210,7 @@ class LeaseManager:
         if current["epoch"] != request.epoch:
             raise LeaseFailure("lease_identity_mismatch")
         if current["state"] == "active":
-            result = self._transition(request, state=request.state, evidence=request.evidence)
+            result = self._transition_locked(request, state=request.state, evidence=request.evidence)
         elif current["state"] == request.state and current["terminal_evidence"] == dict(request.evidence):
             result = LeaseResult(request.epoch, current_etag, current_body)
         else:
@@ -267,28 +271,37 @@ class LeaseManager:
     ) -> LeaseResult:
         self._validate_identity_request(request.checkpoint_id, request.prefix, request.epoch)
         with self._locks.hold(request.checkpoint_id):
-            now = self._exact_now()
-            key = self._lease_key(request.checkpoint_id)
-            try:
-                body, etag = self._gateway.read_control(key, max_bytes=self._policy.bounds.max_summary_bytes)
-            except GatewayFailure:
-                raise LeaseFailure("lease_read_failed") from None
-            current = self._decode_lease(body)
-            self._require_identity(current, request.checkpoint_id, request.prefix)
-            if current["epoch"] != request.epoch:
-                raise LeaseFailure("lease_identity_mismatch")
-            if current["state"] != "active":
-                raise LeaseFailure("lease_not_active")
-            current["heartbeat_at"] = _format_utc(now)
-            current["expires_at"] = _format_utc(now + timedelta(seconds=self._policy.lease.ttl_seconds))
-            current["state"] = state
-            current["terminal_evidence"] = evidence
-            next_body = canonical_json_bytes(current, max_bytes=self._policy.bounds.max_summary_bytes)
-            try:
-                next_etag = self._gateway.replace_lease(key, etag, next_body)
-            except GatewayFailure:
-                raise LeaseFailure("lease_ownership_lost") from None
-            return LeaseResult(request.epoch, next_etag, next_body)
+            return self._transition_locked(request, state=state, evidence=evidence)
+
+    def _transition_locked(
+        self,
+        request: HeartbeatRequest | TerminalRequest,
+        *,
+        state: str,
+        evidence: Mapping[str, object] | None,
+    ) -> LeaseResult:
+        now = self._exact_now()
+        key = self._lease_key(request.checkpoint_id)
+        try:
+            body, etag = self._gateway.read_control(key, max_bytes=self._policy.bounds.max_summary_bytes)
+        except GatewayFailure:
+            raise LeaseFailure("lease_read_failed") from None
+        current = self._decode_lease(body)
+        self._require_identity(current, request.checkpoint_id, request.prefix)
+        if current["epoch"] != request.epoch:
+            raise LeaseFailure("lease_identity_mismatch")
+        if current["state"] != "active":
+            raise LeaseFailure("lease_not_active")
+        current["heartbeat_at"] = _format_utc(now)
+        current["expires_at"] = _format_utc(now + timedelta(seconds=self._policy.lease.ttl_seconds))
+        current["state"] = state
+        current["terminal_evidence"] = evidence
+        next_body = canonical_json_bytes(current, max_bytes=self._policy.bounds.max_summary_bytes)
+        try:
+            next_etag = self._gateway.replace_lease(key, etag, next_body)
+        except GatewayFailure:
+            raise LeaseFailure("lease_ownership_lost") from None
+        return LeaseResult(request.epoch, next_etag, next_body)
 
     def _validate_acquire(self, request: AcquireRequest):
         if not isinstance(request, AcquireRequest):

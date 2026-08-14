@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 
@@ -27,7 +28,7 @@ class Response:
 def test_cli_plan_uses_fixed_origin_token_header_and_canonical_output(monkeypatch, tmp_path, capsys):
     facts = tmp_path / "facts.json"
     facts.write_text(
-        '{"actor":"acceptance-engineering","evaluated_at":"2026-08-13T12:00:00Z"}',
+        '{"actor":"acceptance-engineering"}',
         encoding="utf-8",
     )
     output = tmp_path / "plan.json"
@@ -64,7 +65,6 @@ def test_cli_plan_uses_fixed_origin_token_header_and_canonical_output(monkeypatc
     assert json.loads(captured["body"]) == {
         "actor": "acceptance-engineering",
         "checkpoint_id": "go-live-streaming-test-v1",
-        "evaluated_at": "2026-08-13T12:00:00Z",
         "prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/",
     }
     assert output.read_bytes() == b'{"plan_sha256":"' + b"a" * 64 + b'","state":"accepted"}'
@@ -75,9 +75,10 @@ def test_cli_plan_uses_fixed_origin_token_header_and_canonical_output(monkeypatc
 @pytest.mark.parametrize(
     "facts_body",
     [
-        '{"actor":"acceptance-engineering"}',
-        '{"actor":"acceptance-engineering","evaluated_at":"2026-08-13T12:00:00Z","extra":true}',
-        '{"actor":"acceptance-engineering","evaluated_at":1}',
+        "{}",
+        '{"actor":"acceptance-engineering","extra":true}',
+        '{"actor":1}',
+        '{"actor":"first","actor":"second"}',
     ],
 )
 def test_cli_plan_rejects_nonexact_review_facts_before_network(monkeypatch, tmp_path, facts_body):
@@ -165,3 +166,70 @@ def test_cli_rejects_duplicate_or_oversized_response_before_output(monkeypatch, 
         monkeypatch.setattr(retention, "_open", lambda *_args, _body=body, **_kwargs: Response(_body))
         assert retention.main(arguments) == 5
     assert "accepted" not in capsys.readouterr().out
+
+
+def test_cli_prepare_binds_digest_to_exact_duplicate_safe_file_before_network(monkeypatch, tmp_path):
+    plan = tmp_path / "plan.json"
+    plan.write_bytes(b'{"schema_version":1,"schema_version":1}')
+    monkeypatch.setenv("CHECKPOINT_RETENTION_OPERATOR_TOKEN", "api-token")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_URI", "http://checkpoint-retention:8080")
+    monkeypatch.setattr(retention, "_open", lambda *_args, **_kwargs: pytest.fail("network attempted"))
+
+    duplicate_code = retention.main(
+        [
+            "prepare",
+            "--plan",
+            str(plan),
+            "--plan-sha256",
+            hashlib.sha256(plan.read_bytes()).hexdigest(),
+            "--review",
+            "review-86",
+            "--actor",
+            "acceptance-engineering",
+        ]
+    )
+    plan.write_bytes(b'{"schema_version":1,"shards":[],"summary":{}}\n')
+    wrong_digest_code = retention.main(
+        [
+            "prepare",
+            "--plan",
+            str(plan),
+            "--plan-sha256",
+            "a" * 64,
+            "--review",
+            "review-86",
+            "--actor",
+            "acceptance-engineering",
+        ]
+    )
+
+    assert duplicate_code == 2
+    assert wrong_digest_code == 2
+
+
+def test_cli_apply_timeout_covers_operation_deadline(monkeypatch):
+    captured = {}
+    monkeypatch.setenv("CHECKPOINT_RETENTION_OPERATOR_TOKEN", "api-token")
+    monkeypatch.setenv("CHECKPOINT_RETENTION_URI", "http://checkpoint-retention:8080")
+
+    def open_response(_request, timeout):
+        captured["timeout"] = timeout
+        return Response(b'{"state":"completed"}')
+
+    monkeypatch.setattr(retention, "_open", open_response)
+
+    assert (
+        retention.main(
+            [
+                "apply",
+                "--operation-id",
+                "550e8400-e29b-41d4-a716-446655440000",
+                "--plan-sha256",
+                "a" * 64,
+                "--confirm-prefix",
+                "streaming_test/550e8400-e29b-41d4-a716-446655440000/",
+            ]
+        )
+        == 0
+    )
+    assert captured["timeout"] > 900

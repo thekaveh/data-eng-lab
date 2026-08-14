@@ -172,6 +172,21 @@ def test_planner_refuses_terminal_identity_drift_before_accepting_a_plan():
         RetentionPlanner(ForeignTerminalGateway(), POLICY).plan(_request())
 
 
+@pytest.mark.parametrize("control", ["leases", "terminals"])
+def test_planner_requires_exact_schema_version_one_for_every_control(control):
+    class WrongVersionGateway(ReadOnlyGateway):
+        def read_control(self, key, *, max_bytes):
+            body, etag = super().read_control(key, max_bytes=max_bytes)
+            if f"/{control}/" in key:
+                value = json.loads(body)
+                value["schema_version"] = 2
+                body = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+            return body, etag
+
+    with pytest.raises(PlanFailure, match="lease_malformed|terminal_malformed"):
+        RetentionPlanner(WrongVersionGateway(), POLICY).plan(_request())
+
+
 def test_active_rotated_generation_refuses_before_decoding_stale_prior_terminal():
     current_uuid = "11111111-1111-4111-8111-111111111111"
     current_prefix = f"streaming_test/{current_uuid}/"
