@@ -191,12 +191,12 @@ prepare/quiescence protocol.
 
 The final service/runtime and layered acceptance correction represented by the
 recorded image is `d92f415`. The subsequent evidence update changes only this
-report. The exact final
+report and its traceability assertion. The exact final
 validation set was:
 
 | Gate | Result |
 |---|---|
-| Full offline Python suite | 3,304 passed, 2 expected opt-in skips, 72 infra/network deselections, 0 failures/errors in 51.87 s |
+| Full offline Python suite | 3,319 passed, 2 expected opt-in skips, 72 infra/network deselections, 0 failures/errors in 58.18 s |
 | Checkpoint-focused suite | 368 passed, 1 expected live skip in 1.55 s |
 | Final split-token/exact-image layered live replay | 1 passed, 0 skipped/failures/errors in 134.36 s |
 | Pinned-MinIO operation/restart integration | 2 passed in 2.48 s |
@@ -219,6 +219,11 @@ with isolated test-owned repository copies, HOME, Maven cache, and retained per-
 logs. Expected injected Spark action failures appeared only inside their negative
 tests; every suite completed with zero failed, aborted, canceled, ignored, or pending
 tests.
+
+The final authority/audit correction changes no Spark application source, POM, or
+JVM test. The six Java 17 Maven results above therefore remain exact for unchanged
+application bytes; the final wave reran every affected Python/runtime, pinned-MinIO,
+live, documentation, Compose, lint, and repository-invariant gate.
 
 ## Cleanup and preserved state
 
