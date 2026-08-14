@@ -164,28 +164,30 @@ semantics. The exact final validation set was:
 | Checkpoint-focused suite | 312 passed, 2 expected skips |
 | Final split-token live replay | 1 passed, 0 skipped/failures/errors in 160.518 s |
 | Pinned-MinIO operation/restart integration | 2 passed in 2.43 s |
-| GH Archive Maven suite, Java 17 | 19 passed |
-| MovieLens Maven suite, Java 17 | 12 passed |
-| NYC quality Maven suite, Java 17 | 37 passed |
-| NYC ETL Maven suite, Java 17 | 4 passed |
-| NYC medallion Maven suite, Java 17 | 2 passed |
-| TPC-H Maven suite, Java 17 | 9 passed |
+| GH Archive Maven suite, Java 17 | 19 passed in 4:10 |
+| MovieLens Maven suite, Java 17 | 12 passed in 1:49 |
+| NYC quality Maven suite, Java 17 | 37 passed in 2:43 |
+| NYC ETL Maven suite, Java 17 | 4 passed in 1:00 |
+| NYC medallion Maven suite, Java 17 | 2 passed in 56.090 s |
+| TPC-H Maven suite, Java 17 | 9 passed in 1:32 |
 | `make verify` | 0 findings, 0 errors |
 | `make docs-check` and `make docs-wiki` | strict site build and deterministic wiki check passed |
 | Ruff check and format check | passed |
 | Compose validation with both explicit non-secret token classes | `Compose config is valid.` |
 | Range `git diff --check` | passed |
 
-The Maven runs used the pinned `maven:3.9.11-eclipse-temurin-17` image at digest
-`sha256:e4a7ace3dc0d645ed97f8d9ad0b0d3f0b14fa8d150138f27f116d7105a639b82`
-with isolated test-owned Maven state. Expected injected Spark action failures appeared
-only inside their negative tests; every suite completed with zero failed, aborted,
-canceled, ignored, or pending tests.
+The Maven runs used the pinned `maven:3.9.11-eclipse-temurin-17` tag at exact local
+`linux/amd64` image ID
+`sha256:bbb7e05a6487b189e3dc833b6360b4f9eaf0154299fb4e67e764cad5cca33800`
+with isolated test-owned repository copies, HOME, Maven cache, and retained per-app
+logs. Expected injected Spark action failures appeared only inside their negative
+tests; every suite completed with zero failed, aborted, canceled, ignored, or pending
+tests.
 
 ## Cleanup and preserved state
 
-- Every test-owned data object and non-immutable capability control was removed by
-  exact key; immutable tombstone/audit evidence was preserved.
+- Every test-owned data object and the exact harness-owned capability control were
+  removed by exact key; immutable tombstone/audit evidence was preserved.
 - Standard `stop-all` teardown preserved volumes.
 - Final all-state project-container count was zero.
 - All 13 named project volumes remained.
