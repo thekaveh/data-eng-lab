@@ -1037,6 +1037,83 @@ def test_completed_missing_audit_is_not_repaired_when_exact_prefix_is_nonempty()
     )
 
 
+@pytest.mark.parametrize("unexpected_object", [False, True], ids=["empty", "unexpected-object"])
+def test_completed_backward_clock_always_proves_fresh_exact_absence(unexpected_object):
+    artifact = _artifact()
+    gateway = FakeGateway()
+    _prepared_manager(gateway, artifact)
+    forward = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=16),
+        revalidate=lambda *_args: artifact,
+    )
+    completed = forward.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    if unexpected_object:
+        gateway.data = (ObjectRecord(f"{PREFIX}foreign", "3" * 32, 3, NOW),)
+    before = dict(gateway.controls)
+    data_before = gateway.data
+    gateway.calls.clear()
+    backward = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda *_args: artifact,
+    )
+
+    if unexpected_object:
+        with pytest.raises(OperationFailure, match="status_invalid"):
+            backward.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    else:
+        assert backward.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX)).body == completed.body
+
+    assert any(call[0] == "inventory" for call in gateway.calls)
+    assert gateway.controls == before
+    assert gateway.data == data_before
+    assert not any(call[0] in {"create", "head", "delete"} for call in gateway.calls)
+
+
+def test_apply_freezes_validated_attempt_time_before_clock_steps_backward_during_evidence():
+    artifact = _artifact()
+    gateway = FakeGateway()
+    _prepared_manager(gateway, artifact)
+    first_key = artifact.shards[0].records[0].key
+
+    def partial(records):
+        gateway.data = tuple(record for record in gateway.data if record.key != first_key)
+        raise GatewayFailure("delete_partial", deleted_keys=(first_key,))
+
+    gateway.delete_records = partial
+    first = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=16),
+        revalidate=lambda *_args: artifact,
+    )
+    with pytest.raises(OperationFailure, match="delete_partial"):
+        first.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    remaining = _artifact_for_records(gateway.data)
+    gateway.delete_records = FakeGateway.delete_records.__get__(gateway)
+    wall_clock = iter(
+        [
+            NOW.replace(minute=17),
+            NOW.replace(minute=17),
+            NOW.replace(minute=15),
+        ]
+    )
+    retry = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: next(wall_clock),
+        revalidate=lambda *_args: remaining,
+    )
+
+    completed = retry.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+
+    assert json.loads(completed.body)["occurred_at"] == "2026-08-13T12:17:00Z"
+    assert retry.status(OPERATION_ID).body == completed.body
+
+
 @pytest.mark.parametrize(
     ("field", "replacement"),
     [("plan_sha256", "b" * 64), ("checkpoint_id", "another-valid-checkpoint")],

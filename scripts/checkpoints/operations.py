@@ -232,6 +232,7 @@ class OperationManager:
                 head_requests=0,
                 delete_requests=0,
                 postflight_inventory_sha256=None,
+                occurred_at=now,
             )
             self._ensure_audit(request.operation_id, status, prepared)
             return status
@@ -260,8 +261,6 @@ class OperationManager:
                 prior_occurred_at = _parse_utc(prior_value.get("occurred_at"))
                 if prior_occurred_at is None:
                     raise OperationFailure("status_invalid")
-                if now < prior_occurred_at:
-                    return prior_status
                 if prior_value["state"] == "completed":
                     self._prove_completed_absence(request.confirm_prefix, prior_status, started)
                     repaired = self._latest_status(
@@ -273,6 +272,8 @@ class OperationManager:
                     )
                     assert repaired is not None
                     return repaired
+                if now < prior_occurred_at:
+                    return prior_status
                 repaired = self._latest_status(
                     request.operation_id,
                     required=True,
@@ -315,6 +316,7 @@ class OperationManager:
                     head_requests=0,
                     delete_requests=0,
                     postflight_inventory_sha256=None,
+                    occurred_at=now,
                 )
                 self._ensure_audit(request.operation_id, status, prepared)
                 raise OperationFailure("revalidation_failed") from None
@@ -344,6 +346,7 @@ class OperationManager:
                     head_requests=0,
                     delete_requests=0,
                     postflight_inventory_sha256=None,
+                    occurred_at=now,
                 )
                 self._ensure_audit(request.operation_id, status, prepared)
                 raise OperationFailure("revalidation_mismatch")
@@ -364,6 +367,7 @@ class OperationManager:
                     head_requests=0,
                     delete_requests=0,
                     postflight_inventory_sha256=None,
+                    occurred_at=now,
                 )
                 self._ensure_audit(request.operation_id, status, prepared)
                 raise
@@ -432,6 +436,7 @@ class OperationManager:
                         delete_requests=delete_requests,
                         postflight_inventory_sha256=postflight_sha256,
                         deadline_seconds=30,
+                        occurred_at=now,
                         failed=(current_record,)
                         if primary.code == "head_mismatch" and current_record is not None
                         else tuple(record for record in current_batch if record not in deleted),
@@ -462,6 +467,7 @@ class OperationManager:
                 head_requests=head_requests,
                 delete_requests=delete_requests,
                 postflight_inventory_sha256=postflight_sha256,
+                occurred_at=now,
             )
             self._ensure_audit(request.operation_id, status, prepared)
             self.check_deadline(started)
@@ -911,6 +917,7 @@ class OperationManager:
         delete_requests: int,
         postflight_inventory_sha256: str | None,
         deadline_seconds: int | None = None,
+        occurred_at: datetime | None = None,
         failed: tuple[ObjectRecord, ...] = (),
     ):
         deleted_sha256s = {_record_sha256(record) for record in deleted}
@@ -962,7 +969,7 @@ class OperationManager:
                 "delete_requests": delete_requests,
                 "checkpoint_id": checkpoint_id,
                 "head_requests": head_requests,
-                "occurred_at": _format_utc(self._exact_now()),
+                "occurred_at": _format_utc(self._exact_now() if occurred_at is None else occurred_at),
                 "operation_id": operation_id,
                 "plan_sha256": plan_sha256,
                 "planned_objects": len(planned),
