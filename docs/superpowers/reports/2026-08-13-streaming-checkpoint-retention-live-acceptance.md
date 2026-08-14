@@ -9,7 +9,7 @@
 
 | Artifact | Exact identity |
 |---|---|
-| Retention service image | `sha256:395ce84266f26c703ed2fe26889d6e5c0838829baa786f762300b076ab1c4471` (`linux/amd64`) |
+| Retention service image | `sha256:39fb7ecc0f6122a55b1f32b6a3c902fa56a9c3c222fc1bd0648c23e25da48b65` (`linux/amd64`) |
 | Pinned MinIO image | `minio/minio:RELEASE.2025-09-07T16-13-09Z`, local image ID `sha256:8f08aee614800a237906bd48114d733e5ac5bfac4ccdf731f141b0e880d7a253` |
 | Pinned MinIO client | `minio/mc:RELEASE.2025-08-13T08-35-41Z`, local image ID `sha256:5dee113ef037d349ac22ab6c20193ade5c4701e2a38e3777fa1c1bec1c063ad1` |
 | Policy YAML file SHA-256 | `8b06b3cfd439652a4f70c9b2fc7e604321e953507096e63d872ef326db7568de` |
@@ -23,7 +23,7 @@ enabled only for the test-owned disposable proof. The deployed default remains
 
 ## Final split-token and exact-image layered replay
 
-The final architectural-correction replay passed `1 passed in 123.74s` with zero
+The final architectural-correction replay passed `1 passed in 134.36s` with zero
 failures, errors, or skips. It began and ended with zero all-state project
 containers and used standard volume-preserving teardown. The final service image
 above proved:
@@ -67,17 +67,23 @@ above proved:
 
 | Fixture UUID | Operation ID | Plan SHA-256 | Prepared at | State |
 |---|---|---|---|---|
-| `6621494d-18dd-4188-bde2-e943de125fe2` | `94a35704-2fd7-5a9e-a3ac-dc32dd34dfd4` | `ca7ef8262298de491fc586193c4cf498bc3eeac0d65f215a38b947a64289ca70` | `2026-08-15T21:31:39Z` | `prepared` → `not_ready` → `refused` → `completed`; exact two-object fixture empty |
+| `0e6901a4-9798-4d36-8154-9a4fd65a9c79` | `af9e6410-4d99-5879-98c7-0e4471d9c688` | `30775eb48e1f8d13d8e374abc6488cd2254864daa2fdbdf4f15f5b4b9fcf0b87` | `2026-08-15T22:19:15Z` | `prepared` → `not_ready` → `refused` → `completed`; exact two-object fixture empty |
 
 The completed attempt used result SHA-256
-`606e3dd85d244b92f7eb52148f7b1e2d86e71d6305ad62d09573474c85919c3e`,
+`9dc14cb488524ca784942debe7cc9a412b6d7183d41b9d79ccac4c20f92fcf91`,
 empty postflight inventory SHA-256
 `4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945`,
-manifest root `4093fdd6519b1c9e7f5556c312bdd7be23c48391f7b723eeb7e7e8128670691e`,
-and prefix digest `a6e4791907748cc494615a900e47081a66142465e43bd4332feceaeebb8eba4b`.
+manifest shard SHA-256 `59487ff1e0bfa171ce78e839756e8739361fadba86c50d898c279affbb3ee6c6`,
+and prefix digest `2175348aba89287fa97cb8f3bc5841fc3b4f7565e213fc516f1418fb88044a2d`.
 The refused attempt and audit used exact result SHA-256
-`021910b601d65dc5c56c3cf703918f5242c786ddb692d46c160f9c002331ad45`
+`48b9911ea548d3b71ddcdb648ce1a4aa40debb34dfdd22583700120236c5ed14`
 and exact refusal code `revalidation_mismatch` before any HEAD or delete request.
+The four canonical attempt UUIDs, in sequence, were
+`d13e49e9-2e41-577c-a67e-ba32630544e6`,
+`ff5577d8-c483-5ce7-a578-b3a330d1e776`,
+`daeeed62-f52b-5fa7-a14d-04ebe4d37b8a`, and
+`7b606b0c-cadf-5628-8036-61b0293db44d`; each is also the exact immutable
+audit filename for its attempt.
 The final operation implementation was also exercised against pinned disposable
 MinIO inside the same live gate: `1 passed`. That layer uses the real gateway,
 immutable result-classification shards, a fresh manager after partial persistence,
@@ -132,7 +138,7 @@ identity while retaining this wall-clock timing proof.
 
 ## Accelerated exact-delete proof
 
-The final isolated-clock operation is the `94a35704-...` operation above. Its clock
+The final isolated-clock operation is the `af9e6410-...` operation above. Its clock
 was injected only by assigning the imported exact-image runtime's internal clock in
 the mounted, test-owned process. Production service construction, HTTP routes, and
 Compose configuration expose no such input. The durable evidence contains exact
@@ -175,8 +181,8 @@ then returns one deterministic mixed partial response. The production manager:
 5. proves the exact original prefix empty; and
 6. returns the completed result idempotently without another delete.
 
-The final checkpoint-focused result is `353 passed, 2 expected integration skips in
-1.34s`, and the separately enabled pinned-MinIO result is `2 passed in 2.32s`. This layered
+The final checkpoint-focused result is `368 passed, 1 expected live skip in
+1.55s`, and the separately enabled pinned-MinIO result is `2 passed in 2.48s`. This layered
 proof exercises the final partial-result
 runtime bytes without another 900-second wait and without changing the immutable
 prepare/quiescence protocol.
@@ -184,16 +190,16 @@ prepare/quiescence protocol.
 ## Final repository verification
 
 The final service/runtime and layered acceptance correction represented by the
-recorded image is `cd9cdfd`. The subsequent evidence updates `032ffec` and `70bbbc0`
-change only this report. The exact final
+recorded image is `d92f415`. The subsequent evidence update changes only this
+report. The exact final
 validation set was:
 
 | Gate | Result |
 |---|---|
 | Full offline Python suite | 3,304 passed, 2 expected opt-in skips, 72 infra/network deselections, 0 failures/errors in 51.87 s |
-| Checkpoint-focused suite | 353 passed, 2 expected skips in 1.34 s |
-| Final split-token/exact-image layered live replay | 1 passed, 0 skipped/failures/errors in 123.74 s |
-| Pinned-MinIO operation/restart integration | 2 passed in 2.32 s |
+| Checkpoint-focused suite | 368 passed, 1 expected live skip in 1.55 s |
+| Final split-token/exact-image layered live replay | 1 passed, 0 skipped/failures/errors in 134.36 s |
+| Pinned-MinIO operation/restart integration | 2 passed in 2.48 s |
 | GH Archive Maven suite, Java 17 | 19 passed in each requested lifecycle pass; package succeeded in 6:35 |
 | MovieLens Maven suite, Java 17 | 12 passed in each requested lifecycle pass; package succeeded in 3:47 |
 | NYC quality Maven suite, Java 17 | 37 passed in each requested lifecycle pass; package succeeded in 4:57 |
