@@ -196,7 +196,7 @@ validation set was:
 
 | Gate | Result |
 |---|---|
-| Full offline Python suite | 3,319 passed, 2 expected opt-in skips, 72 infra/network deselections, 0 failures/errors in 58.18 s |
+| Full offline Python suite | 3,331 passed, 2 expected opt-in skips, 72 infra/network deselections, 0 failures/errors in 58.47 s |
 | Checkpoint-focused suite | 380 passed, 2 expected opt-in MinIO skips in 1.62 s |
 | Final split-token/exact-image layered live replay | 1 passed, 0 skipped/failures/errors in 150.88 s |
 | Pinned-MinIO operation/restart integration | 2 passed in 2.50 s |
