@@ -229,8 +229,9 @@ It grants no access to another bucket, bucket-root listing, data-object writes,
 checkpoint family-root deletion, or control deletion. Explicit denies cover root,
 unknown, and control deletion even if a future allow statement broadens.
 
-At startup, and in live acceptance, the service probes a random capability UUID. It
-proves:
+Once at startup, and in live acceptance, the service probes a random capability
+UUID, validates the complete report, and caches that immutable report for health
+polling. It proves:
 
 1. allowed exact-prefix list, get, control put, and disposable-fixture delete;
 2. denied other-bucket, root-list, unknown-prefix, data put, and control delete;
@@ -239,10 +240,13 @@ proves:
 5. missing-object `If-Match` behavior; and
 6. per-object multi-delete condition behavior when advertised.
 
-Capability objects live only under `_retention/capability/{uuid}/` and
-`streaming_test/{uuid}/_capability/`. The probe deletes its exact fixture and proves
-the control audit remains. An ambiguous response, unexpected success, transport
-failure, or cleanup mismatch makes health fail closed.
+Capability controls live only at `_retention/capability/{uuid}.json`; scoped
+permission probes use only `streaming_test/{uuid}/capability-{a,b}`. The maintenance
+identity proves exact absent-key deletes but cannot delete the immutable capability
+control. The exclusive live harness identifies the single control created since its
+owned stack start, reads and closes its bounded body, root-deletes only that exact
+test-owned key, and proves absence. An ambiguous response, unexpected success,
+transport failure, or cleanup mismatch makes startup fail closed.
 
 The pinned missing-object `If-Match` defect is recorded as a known capability. For
 manual rollout, lease replacement is accepted only with one service replica, a

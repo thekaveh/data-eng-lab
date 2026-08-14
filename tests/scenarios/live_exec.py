@@ -6,6 +6,7 @@ available or the live stack is not running.
 
 Container name convention: ``{PROJECT_NAME}-{service}`` (mirrors manifest.py).
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -28,6 +29,7 @@ from lakehouse.atlas_endpoints import resolve_http_endpoint  # noqa: E402
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _env_val(key: str, default: str = "") -> str:
     """Read a key from infra/.env; env-var takes precedence."""
@@ -83,6 +85,7 @@ def _rest_catalog_kwargs() -> dict:
 # Identifier normalization (issue #44)
 # ---------------------------------------------------------------------------
 
+
 def _catalog_identifier(table: str, catalog: str = "lakehouse") -> str:
     """Normalize a table identifier for pyiceberg's ``RestCatalog``.
 
@@ -98,13 +101,14 @@ def _catalog_identifier(table: str, catalog: str = "lakehouse") -> str:
     """
     prefix = f"{catalog}."
     if table.startswith(prefix) and table.count(".") >= 2:
-        return table[len(prefix):]
+        return table[len(prefix) :]
     return table
 
 
 # ---------------------------------------------------------------------------
 # snapshot_table
 # ---------------------------------------------------------------------------
+
 
 def snapshot_table(table: str) -> dict:
     """Snapshot an Iceberg table via pyiceberg + pyarrow.
@@ -123,10 +127,7 @@ def snapshot_table(table: str) -> dict:
     arrow_tbl = tbl.scan().to_arrow()
 
     # Schema: sorted "name:type" strings
-    schema = sorted(
-        f"{field.name}:{field.field_type}"
-        for field in tbl.schema().fields
-    )
+    schema = sorted(f"{field.name}:{field.field_type}" for field in tbl.schema().fields)
 
     row_count = len(arrow_tbl)
 
@@ -146,6 +147,7 @@ def snapshot_table(table: str) -> dict:
 # drop_table  (so PySpark writes fresh after Scala run)
 # ---------------------------------------------------------------------------
 
+
 def drop_table(table: str) -> None:
     """Drop an Iceberg table via pyiceberg REST catalog (best-effort; no-op if absent)."""
     from pyiceberg.catalog.rest import RestCatalog  # noqa: PLC0415
@@ -162,14 +164,14 @@ def drop_table(table: str) -> None:
 # run_zeppelin_note
 # ---------------------------------------------------------------------------
 
+
 def _bound_zeppelin_stream(note_content: str) -> str:
     """Make one scenario stream drain and stop in its start paragraph."""
     note = json.loads(note_content)
     candidates = [
         paragraph
         for paragraph in note["paragraphs"]
-        if "val query =" in paragraph.get("text", "")
-        and ".writeStream" in paragraph.get("text", "")
+        if "val query =" in paragraph.get("text", "") and ".writeStream" in paragraph.get("text", "")
     ]
     if len(candidates) != 1:
         raise ValueError(f"expected one Zeppelin streaming start paragraph, found {len(candidates)}")
@@ -256,6 +258,7 @@ def run_zeppelin_note(
 # run_jupyter_note
 # ---------------------------------------------------------------------------
 
+
 def _bound_jupyter_stream(note_content: str) -> str:
     """Make one scenario stream drain and stop in its start cell."""
     note = json.loads(note_content)
@@ -320,15 +323,15 @@ def run_jupyter_note(
     try:
         cp = subprocess.run(
             ["docker", "cp", str(nb_source), f"{container}:{nb_container}"],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
         )
     finally:
         if temporary_directory is not None:
             temporary_directory.cleanup()
     if cp.returncode != 0:
-        raise RuntimeError(
-            f"docker cp to {container} failed (rc={cp.returncode}): {cp.stderr.strip()}"
-        )
+        raise RuntimeError(f"docker cp to {container} failed (rc={cp.returncode}): {cp.stderr.strip()}")
 
     # Try papermill; fall back to nbconvert if papermill binary not found
     cmd = (
@@ -341,10 +344,10 @@ def run_jupyter_note(
 
     result = subprocess.run(
         ["docker", "exec", container, "sh", "-c", cmd],
-        capture_output=True, text=True, timeout=600,
+        capture_output=True,
+        text=True,
+        timeout=600,
     )
     combined = (result.stdout + result.stderr).strip()
     if result.returncode != 0:
-        raise RuntimeError(
-            f"Notebook execution failed in {container} (rc={result.returncode}):\n{combined}"
-        )
+        raise RuntimeError(f"Notebook execution failed in {container} (rc={result.returncode}):\n{combined}")

@@ -132,9 +132,7 @@ def parse_execution_modes(text: str) -> tuple[ExecutionMode, ...]:
             raise ExecutionModeError(f"{prefix} execution_entrypoint must be null or a non-empty string")
         child_issue = row["child_issue"]
         if child_issue is not None and (
-            isinstance(child_issue, bool)
-            or not isinstance(child_issue, int)
-            or child_issue < 1
+            isinstance(child_issue, bool) or not isinstance(child_issue, int) or child_issue < 1
         ):
             raise ExecutionModeError(f"{prefix} child_issue must be null or a positive integer")
         dependencies = _string_tuple(row["dependencies"], prefix, "dependencies")
@@ -183,9 +181,7 @@ def validate_execution_modes(modes: tuple[ExecutionMode, ...], root: Path) -> No
     discovered = {
         path.name
         for path in scenario_root.iterdir()
-        if path.is_dir()
-        and (path / "jupyter/notebook.ipynb").is_file()
-        and (path / "zeppelin/notebook.zpln").is_file()
+        if path.is_dir() and (path / "jupyter/notebook.ipynb").is_file() and (path / "zeppelin/notebook.zpln").is_file()
     }
     declared = {mode.scenario_id for mode in modes}
     if declared != discovered:

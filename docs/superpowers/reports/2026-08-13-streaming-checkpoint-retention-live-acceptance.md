@@ -9,7 +9,7 @@
 
 | Artifact | Exact identity |
 |---|---|
-| Retention service image | `sha256:a72ae4e0c2067d21a7b7a22a5c17001c787f8ae2260dddacbd6e64236e60d6f0` (`linux/amd64`) |
+| Retention service image | `sha256:e691423be6837e56754b51b3ff5404fe98235b6b50f327b1adc6d3a67563e1b9` (`linux/amd64`) |
 | Pinned MinIO image | `minio/minio:RELEASE.2025-09-07T16-13-09Z`, local image ID `sha256:8f08aee614800a237906bd48114d733e5ac5bfac4ccdf731f141b0e880d7a253` |
 | Pinned MinIO client | `minio/mc:RELEASE.2025-08-13T08-35-41Z`, local image ID `sha256:5dee113ef037d349ac22ab6c20193ade5c4701e2a38e3777fa1c1bec1c063ad1` |
 | Policy YAML SHA-256 | `8b06b3cfd439652a4f70c9b2fc7e604321e953507096e63d872ef326db7568de` |
@@ -22,7 +22,7 @@ enabled only for the test-owned disposable proof. The deployed default remains
 
 ## Final split-token runtime replay
 
-The final architectural-correction replay passed `1 passed in 146.446s` with zero
+The final architectural-correction replay passed `1 passed in 160.53s` with zero
 failures, errors, or skips. It began and ended with zero all-state project
 containers and used standard volume-preserving teardown. The final service image
 above proved:
@@ -30,8 +30,13 @@ above proved:
 - the lease-only bearer received HTTP 401 from the plan route, with exact bounded
   body `{"code":"unauthorized"}`;
 - the operator bearer received the same HTTP 401 contract from lease acquire;
-- `/healthz` became ready only after observed conditional create, verified
-  conditional replace/readback, and expected-denied control deletion;
+- startup became ready only after one randomized observed conditional-create and
+  conflict proof, verified conditional replace/readback, expected-denied stale and
+  missing replace, exact-leaf list/get/delete and multi-delete, plus denied family
+  root, foreign bucket, data put, unknown-control put, and control delete. The
+  immutable result was cached for subsequent `/healthz` calls; the harness bounded,
+  read, closed, root-cleaned, and proved absence of the one test-owned capability
+  control rather than creating a control on every health poll;
 - the actual maintenance credential retained the exact three allowed and four
   denied IAM results described below;
 - an active disposable lease made planning refuse with `lease_active`, then its
@@ -45,11 +50,11 @@ above proved:
 
 | Fixture UUID | Operation ID | Plan SHA-256 | Prepared at | State |
 |---|---|---|---|---|
-| `39dc697c-4990-473b-b498-ad7cdbb86bb9` | `466eb401-074a-4690-8ce9-c40dbae5b0da` | `858594db6ceaab77d029bc4ccd168aa133726d798503340ae46e72f663fca70f` | `2026-08-13T20:00:48Z` | `not_ready`; changed fixture remained three objects |
-| `2bde7ad1-b7f3-44ba-a765-966e8db4fbf1` | `ebdf0ed7-ed52-43af-8dd1-48af357679f7` | `2074ee68bbbc95b90a41dbb0bb5a96eb7a58dcb3d720054d7f67a6907db6685f` | `2026-08-13T20:00:50Z` | `not_ready`; exact two-object fixture preserved |
+| `b5794925-bb9b-40ad-bf88-c5c4aa946df8` | `25b4e8c6-2328-44cb-80b7-20cca692b2d3` | `fe54c6298840c4b1b160cccc157627fedced451d783aa4154ec15039c204c08b` | `2026-08-13T21:03:35Z` | `not_ready`; changed fixture remained three objects |
+| `a6ba8036-792e-43ff-9acd-13f61a379124` | `239715ab-1b00-4046-bc84-bbc21b5064e6` | `5b3bf2b0ff528cfb0abaf64a044d08b809313cee1f1bda58a1f663a750f551e3` | `2026-08-13T21:03:36Z` | `not_ready`; exact two-object fixture preserved |
 
 The final operation implementation was also exercised against pinned disposable
-MinIO after the correction: `2 passed in 2.49s`. That layer uses the real gateway,
+MinIO after the correction: `2 passed in 2.43s`. That layer uses the real gateway,
 immutable result-classification shards, a fresh manager after partial persistence,
 original-manifest-only retry, completed audit recovery, and idempotence. It supplies
 the final-byte delete/restart proof without repeating the wall-clock wait below.
@@ -141,23 +146,24 @@ then returns one deterministic mixed partial response. The production manager:
 5. proves the exact original prefix empty; and
 6. returns the completed result idempotently without another delete.
 
-The predecessor pinned-MinIO integration result was `2 passed in 2.09s`. The focused gateway,
-operation, IAM-helper, metrics-helper, and live-harness result is `43 passed, 1
-expected live skip in 0.11s`. This layered proof exercises the final partial-result
+The final checkpoint-focused result is `312 passed, 2 expected integration skips`,
+and the separately enabled pinned-MinIO result is `2 passed in 2.43s`. This layered
+proof exercises the final partial-result
 runtime bytes without another 900-second wait and without changing the immutable
 prepare/quiescence protocol.
 
 ## Final repository verification
 
-The final service/runtime commit is `aab5a96`; the subsequent evidence commit changes
-documentation only. The exact final validation set was:
+The final service/runtime commit is `fd34113`; the subsequent evidence commit changes
+documentation plus Ruff-only formatting with an AST-equality proof and no runtime
+semantics. The exact final validation set was:
 
 | Gate | Result |
 |---|---|
-| Full offline Python suite | 3,274 passed, 43 expected live skips, 0 failures/errors in 58.817 s |
-| Checkpoint-focused suite | 292 passed, 2 expected skips |
-| Final split-token live replay | 1 passed, 0 skipped/failures/errors in 146.446 s |
-| Pinned-MinIO operation/restart integration | 2 passed in 2.49 s |
+| Full offline Python suite | 3,294 passed, 43 expected live skips, 0 failures/errors in 56.73 s |
+| Checkpoint-focused suite | 312 passed, 2 expected skips |
+| Final split-token live replay | 1 passed, 0 skipped/failures/errors in 160.518 s |
+| Pinned-MinIO operation/restart integration | 2 passed in 2.43 s |
 | GH Archive Maven suite, Java 17 | 19 passed |
 | MovieLens Maven suite, Java 17 | 12 passed |
 | NYC quality Maven suite, Java 17 | 37 passed |

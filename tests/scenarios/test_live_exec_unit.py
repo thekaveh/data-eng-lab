@@ -5,6 +5,7 @@ by `namespace.table`, NOT the Spark-style 3-part `lakehouse.namespace.table`.
 `_catalog_identifier` strips a leading catalog selector so callers can pass
 either form and pyiceberg receives the 2-part identifier it expects.
 """
+
 import importlib.util
 import json
 from pathlib import Path
@@ -13,9 +14,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def _live_exec():
-    spec = importlib.util.spec_from_file_location(
-        "live_exec", ROOT / "tests" / "scenarios" / "live_exec.py"
-    )
+    spec = importlib.util.spec_from_file_location("live_exec", ROOT / "tests" / "scenarios" / "live_exec.py")
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
     return m
@@ -58,6 +57,7 @@ def test_silver_and_gold_namespaces():
 # ---------------------------------------------------------------------------
 # Issue #51 — RestCatalog kwargs must set s3.region (pyarrow region-probe 400)
 # ---------------------------------------------------------------------------
+
 
 def _min_env(monkeypatch, **extra):
     """Set the four keys _rest_catalog_kwargs requires so it doesn't raise."""
@@ -119,11 +119,7 @@ def test_every_streaming_pair_accepts_the_bounded_execution_transform():
     )
     for scenario in scenarios:
         root = ROOT / "scenarios" / scenario
-        zeppelin = le._bound_zeppelin_stream(
-            (root / "zeppelin/notebook.zpln").read_text(encoding="utf-8")
-        )
-        jupyter = le._bound_jupyter_stream(
-            (root / "jupyter/notebook.ipynb").read_text(encoding="utf-8")
-        )
+        zeppelin = le._bound_zeppelin_stream((root / "zeppelin/notebook.zpln").read_text(encoding="utf-8"))
+        jupyter = le._bound_jupyter_stream((root / "jupyter/notebook.ipynb").read_text(encoding="utf-8"))
         assert "query.processAllAvailable()" in zeppelin
         assert "query.processAllAvailable()" in jupyter

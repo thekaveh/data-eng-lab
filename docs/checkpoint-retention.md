@@ -143,9 +143,12 @@ and conditional delete guarantees required for destructive scheduling. A MinIO p
 advance or equivalent proven capability plus a separate reviewed change is mandatory
 before any automatic or scheduled destructive apply.
 
-The service health probe performs actual conditional create, verified conditional
-replace/readback, and expected-denied control deletion using the maintenance
-credential. Constants alone never make health ready. One shared per-checkpoint lock
+Service startup performs one randomized actual conditional-create/conflict proof,
+verified conditional replace/readback, stale/missing replace denials, exact-leaf
+list/get/delete and multi-delete, plus negative scope and control-delete probes with
+the maintenance credential. It caches that immutable observed report for health;
+health polling performs no new storage mutation. Constants alone never make health
+ready. One shared per-checkpoint lock
 serializes lease acquire/transition with apply from its final lease reread through
 HEAD, delete, postflight, immutable result, and audit. This is deliberately only a
 single-replica manual safety boundary.
