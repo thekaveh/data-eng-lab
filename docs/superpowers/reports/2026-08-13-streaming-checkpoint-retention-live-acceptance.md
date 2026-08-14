@@ -1,6 +1,6 @@
 # Issue #86 streaming checkpoint retention live acceptance
 
-**Date:** 2026-08-13
+**Date:** 2026-08-14
 **Branch:** `codex/86-streaming-checkpoint-retention`
 **Base:** `3b3d4e272cbe2021e30512047d959f5a792bc512`
 **Boundary:** manual-only exact-leaf apply; automatic and scheduled destructive apply remain disabled
@@ -9,10 +9,11 @@
 
 | Artifact | Exact identity |
 |---|---|
-| Retention service image | `sha256:e691423be6837e56754b51b3ff5404fe98235b6b50f327b1adc6d3a67563e1b9` (`linux/amd64`) |
+| Retention service image | `sha256:e6108178b397afdd5cc382cfcd8d096122d5f38c7ac0c2c664e1a4d9854ef416` (`linux/amd64`) |
 | Pinned MinIO image | `minio/minio:RELEASE.2025-09-07T16-13-09Z`, local image ID `sha256:8f08aee614800a237906bd48114d733e5ac5bfac4ccdf731f141b0e880d7a253` |
 | Pinned MinIO client | `minio/mc:RELEASE.2025-08-13T08-35-41Z`, local image ID `sha256:5dee113ef037d349ac22ab6c20193ade5c4701e2a38e3777fa1c1bec1c063ad1` |
-| Policy YAML SHA-256 | `8b06b3cfd439652a4f70c9b2fc7e604321e953507096e63d872ef326db7568de` |
+| Policy YAML file SHA-256 | `8b06b3cfd439652a4f70c9b2fc7e604321e953507096e63d872ef326db7568de` |
+| Canonical loaded-policy SHA-256 | `305332e957226528242e7739a5b7b0253328f529ee4c9873b8402bae48fc7a89` |
 | IAM policy SHA-256 | `f99e615481c6367a2e6b857604eb50417b827895dd5398f4b15408abf1effe62` |
 | Capability profile | `minio-2025-09-manual-verified-readback` |
 
@@ -20,9 +21,9 @@ The service ran as one non-root, read-only-filesystem replica. Destructive mode 
 enabled only for the test-owned disposable proof. The deployed default remains
 `false`. No Atlas source or gitlink file changed.
 
-## Final split-token runtime replay
+## Final split-token and exact-image layered replay
 
-The final architectural-correction replay passed `1 passed in 160.53s` with zero
+The final architectural-correction replay passed `1 passed in 121.48s` with zero
 failures, errors, or skips. It began and ended with zero all-state project
 containers and used standard volume-preserving teardown. The final service image
 above proved:
@@ -39,22 +40,37 @@ above proved:
   control rather than creating a control on every health poll;
 - the actual maintenance credential retained the exact three allowed and four
   denied IAM results described below;
-- an active disposable lease made planning refuse with `lease_active`, then its
-  exact stopped terminal evidence enabled byte-identical repeated eligible plans;
-- two reviewed immutable prepares returned `not_ready` before 900 seconds and made
-  zero checkpoint-data deletes; and
+- an active disposable lease made planning refuse with `lease_active`; after its
+  exact stopped terminal evidence, the fresh real-wall-clock plan remained safely
+  refused with exact codes `future_clock,retention_quarantine` and made zero
+  checkpoint-data deletes;
+- a caller-supplied `evaluated_at` field was rejected with HTTP 400
+  `request_invalid`, proving that no API or configuration surface can advance the
+  production evaluation clock;
+- an isolated one-shot process used this exact final image, the production runtime
+  composition, actual MinIO/IAM, and a test-only in-process clock to evaluate the
+  disposable leaf at terminal plus 86,401 seconds, prepare it, return `not_ready`,
+  then apply it at prepared plus 901 seconds. The injection exists only in the
+  mounted acceptance script and is not reachable through service API/configuration;
+- the accelerated operation deleted exactly its two 15-byte manifest objects,
+  performed four HEADs and one delete request, proved the exact postflight empty
+  inventory SHA-256, and wrote three append-only result attempts plus three complete
+  audits for `prepared`, `not_ready`, and `completed`; and
 - the paused `schedule=None` DAG, closed metrics, unrelated sentinel, and exact
-  production snapshot SHA-256
-  `19bd48d158628d31d62193a25a0be88714e293c9e1fa78ae754659c5b4cee217`
-  were unchanged.
+  production snapshot were unchanged.
 
 | Fixture UUID | Operation ID | Plan SHA-256 | Prepared at | State |
 |---|---|---|---|---|
-| `b5794925-bb9b-40ad-bf88-c5c4aa946df8` | `25b4e8c6-2328-44cb-80b7-20cca692b2d3` | `fe54c6298840c4b1b160cccc157627fedced451d783aa4154ec15039c204c08b` | `2026-08-13T21:03:35Z` | `not_ready`; changed fixture remained three objects |
-| `a6ba8036-792e-43ff-9acd-13f61a379124` | `239715ab-1b00-4046-bc84-bbc21b5064e6` | `5b3bf2b0ff528cfb0abaf64a044d08b809313cee1f1bda58a1f663a750f551e3` | `2026-08-13T21:03:36Z` | `not_ready`; exact two-object fixture preserved |
+| `4e0ab655-8803-47d9-8589-292818e782ee` | `30ff6714-83ba-4146-8ab4-c74c7f306f21` | `11982517be4eb680e0afec80588d5ccb26875e48090902d622d493611c0a83c0` | `2026-08-15T19:47:43Z` | `prepared` → `not_ready` → `completed`; exact two-object fixture empty |
 
+The completed attempt used result SHA-256
+`dee161cd7d35657567f505043ac81e847453183dade599397c1fe5479d75688f`,
+empty postflight inventory SHA-256
+`4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945`,
+manifest root `718f354daf69ae60922630a1bd6a38d17946a053bfdf290e8a9ae17df8ace75d`,
+and prefix digest `1775b31d60f918767c77665736a4e45edff83a1b5f16dfc9457fb2eff6788bce`.
 The final operation implementation was also exercised against pinned disposable
-MinIO after the correction: `2 passed in 2.43s`. That layer uses the real gateway,
+MinIO inside the same live gate: `1 passed`. That layer uses the real gateway,
 immutable result-classification shards, a fresh manager after partial persistence,
 original-manifest-only retry, completed audit recovery, and idempotence. It supplies
 the final-byte delete/restart proof without repeating the wall-clock wait below.
@@ -105,13 +121,15 @@ identity while retaining this wall-clock timing proof.
 
 ## Accelerated exact-delete proof
 
-A separate isolated-clock run used disposable UUID
-`d207b095-441c-43e0-9ac7-adbfec3122f7` and operation
-`84c6f055-b3b5-45d9-8c0b-e7ddf685a515`. The clock moved from prepare to
-`prepared_at + 901 seconds` only inside the test-owned process. The real service and
-S3 protocol deleted exactly two approved objects, wrote one completed status and one
-audit, left the fixture empty, preserved the production snapshot SHA above, and
-finished with zero project containers.
+The final isolated-clock operation is the `30ff6714-...` operation above. Its clock
+was injected only by assigning the imported exact-image runtime's internal clock in
+the mounted, test-owned process. Production service construction, HTTP routes, and
+Compose configuration expose no such input. The durable evidence contains exact
+attempt sequences 1–3 and three corresponding audits; the terminal completed audit
+records actor `issue86-accelerated-exact-image`, review
+`issue86-live-reviewed`, one delete request, four HEAD requests, two objects and 15
+bytes deleted, zero remaining objects/bytes, and the exact capability, policy,
+manifest, prefix, plan, result, and postflight hashes recorded above.
 
 ## Actual maintenance-credential IAM proof
 
@@ -146,24 +164,24 @@ then returns one deterministic mixed partial response. The production manager:
 5. proves the exact original prefix empty; and
 6. returns the completed result idempotently without another delete.
 
-The final checkpoint-focused result is `312 passed, 2 expected integration skips`,
-and the separately enabled pinned-MinIO result is `2 passed in 2.43s`. This layered
+The final checkpoint-focused result is `330 passed, 2 expected integration skips`,
+and the separately enabled pinned-MinIO result is `2 passed in 2.20s`. This layered
 proof exercises the final partial-result
 runtime bytes without another 900-second wait and without changing the immutable
 prepare/quiescence protocol.
 
 ## Final repository verification
 
-The final service/runtime commit is `fd34113`; the subsequent evidence commit changes
-documentation plus Ruff-only formatting with an AST-equality proof and no runtime
-semantics. The exact final validation set was:
+The final service/runtime commit is `74649b2`; the layered acceptance harness is
+`085622e`. The subsequent evidence update changes only this report. The exact final
+validation set was:
 
 | Gate | Result |
 |---|---|
-| Full offline Python suite | 3,294 passed, 43 expected live skips, 0 failures/errors in 53.33 s |
-| Checkpoint-focused suite | 312 passed, 2 expected skips |
-| Final split-token live replay | 1 passed, 0 skipped/failures/errors in 160.518 s |
-| Pinned-MinIO operation/restart integration | 2 passed in 2.43 s |
+| Full offline Python suite | 3,312 passed, 43 expected live skips, 0 failures/errors in 52.53 s |
+| Checkpoint-focused suite | 330 passed, 2 expected skips in 1.39 s |
+| Final split-token/exact-image layered live replay | 1 passed, 0 skipped/failures/errors in 121.48 s |
+| Pinned-MinIO operation/restart integration | 2 passed in 2.20 s |
 | GH Archive Maven suite, Java 17 | 19 passed in 4:10 |
 | MovieLens Maven suite, Java 17 | 12 passed in 1:49 |
 | NYC quality Maven suite, Java 17 | 37 passed in 2:43 |
@@ -172,7 +190,7 @@ semantics. The exact final validation set was:
 | TPC-H Maven suite, Java 17 | 9 passed in 1:32 |
 | `make verify` | 0 findings, 0 errors |
 | `make docs-check` and `make docs-wiki` | strict site build and deterministic wiki check passed |
-| Ruff check and format check | passed |
+| Ruff check; scoped changed-file format check | passed |
 | Compose validation with both explicit non-secret token classes | `Compose config is valid.` |
 | Range `git diff --check` | passed |
 
