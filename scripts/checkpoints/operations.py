@@ -217,7 +217,8 @@ class OperationManager:
                     repair_audits=True,
                 )
                 assert repaired is not None
-                if repaired.state == "completed":
+                repaired_at = _parse_utc(json.loads(repaired.body).get("occurred_at"))
+                if repaired.state in {"refused", "partial", "completed"} or repaired_at is None or now < repaired_at:
                     return repaired
             status = self._record_status(
                 request.operation_id,

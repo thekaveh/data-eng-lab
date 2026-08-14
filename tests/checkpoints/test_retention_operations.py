@@ -925,6 +925,46 @@ def test_sequential_same_progress_refusals_remain_ordered_and_retryable():
     assert latest["primary_category"] == "head_mismatch"
 
 
+@pytest.mark.parametrize("progressed_state", ["refused", "partial"])
+def test_backward_clock_after_progress_returns_authoritative_history_without_append(progressed_state):
+    artifact = _artifact()
+    gateway = FakeGateway()
+    _prepared_manager(gateway, artifact)
+    if progressed_state == "refused":
+        gateway.head_failure = GatewayFailure("head_mismatch")
+    else:
+        first_key = artifact.shards[0].records[0].key
+
+        def partial(records):
+            gateway.data = tuple(record for record in gateway.data if record.key != first_key)
+            raise GatewayFailure("delete_partial", deleted_keys=(first_key,))
+
+        gateway.delete_records = partial
+    forward = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda *_args: artifact,
+    )
+    with pytest.raises(OperationFailure):
+        forward.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    before = dict(gateway.controls)
+    gateway.calls.clear()
+    backward = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=14, second=59),
+        revalidate=lambda *_args: artifact,
+    )
+
+    returned = backward.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+
+    assert returned.state == progressed_state
+    assert backward.status(OPERATION_ID).state == progressed_state
+    assert gateway.controls == before
+    assert not any(call[0] == "create" for call in gateway.calls)
+
+
 def test_completed_recovery_validates_result_shards_and_exact_absence_before_audit():
     artifact = _artifact()
     gateway = FakeGateway()
@@ -980,8 +1020,7 @@ def test_completed_missing_audit_is_not_repaired_when_exact_prefix_is_nonempty()
     completed_audit = next(
         key
         for key, (body, _etag) in gateway.controls.items()
-        if key.startswith(f"_retention/audits/{OPERATION_ID}/")
-        and json.loads(body)["decision"] == "completed"
+        if key.startswith(f"_retention/audits/{OPERATION_ID}/") and json.loads(body)["decision"] == "completed"
     )
     del gateway.controls[completed_audit]
     gateway.data = (ObjectRecord(f"{PREFIX}foreign", "3" * 32, 3, NOW),)
@@ -991,8 +1030,7 @@ def test_completed_missing_audit_is_not_repaired_when_exact_prefix_is_nonempty()
         manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
     assert completed_audit not in gateway.controls
     assert not any(
-        call[0] == "create" and call[1].startswith(f"_retention/audits/{OPERATION_ID}/")
-        for call in gateway.calls
+        call[0] == "create" and call[1].startswith(f"_retention/audits/{OPERATION_ID}/") for call in gateway.calls
     )
 
 
