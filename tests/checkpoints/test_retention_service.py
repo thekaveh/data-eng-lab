@@ -4,6 +4,7 @@ import importlib
 import json
 import traceback
 import types
+from contextlib import contextmanager
 from datetime import datetime, timezone
 
 import pytest
@@ -41,6 +42,73 @@ def test_import_has_no_network_or_server_side_effect(monkeypatch):
     monkeypatch.setattr("socket.socket", lambda *_args, **_kwargs: pytest.fail("import opened socket"))
     module = importlib.reload(module)
     assert callable(module.create_server)
+
+
+def test_apply_metrics_bound_saturates_without_replay_overcount():
+    module = _service()
+    backend = module.RuntimeBackend(
+        gateway=types.SimpleNamespace(probe_capabilities=lambda: {"automatic_apply": False}),
+        leases=object(),
+        planner=object(),
+        operations=object(),
+        policy=types.SimpleNamespace(entries={}),
+        destructive_enabled=False,
+    )
+    for index in range(module._METRIC_OPERATION_CACHE + 1):
+        backend._record_apply_metrics(
+            {
+                "attempt_sequence": 1,
+                "deleted_bytes": 1,
+                "deleted_objects": 1,
+                "operation_id": f"operation-{index}",
+                "state": "completed",
+            }
+        )
+    backend._record_apply_metrics(
+        {
+            "attempt_sequence": 1,
+            "deleted_bytes": 1,
+            "deleted_objects": 1,
+            "operation_id": "operation-0",
+            "state": "completed",
+        }
+    )
+
+    assert len(backend._apply_metric_totals) == module._METRIC_OPERATION_CACHE
+    assert backend._metrics["checkpoint_retention_deleted_objects_total"][("completed",)] == 4096
+
+
+def test_runtime_wraps_status_in_one_aggregate_gateway_deadline():
+    module = _service()
+    events = []
+
+    class Gateway:
+        @contextmanager
+        def operation_deadline(self, check):
+            events.append("enter")
+            check()
+            yield
+            check()
+            events.append("exit")
+
+        def probe_capabilities(self):
+            return {"automatic_apply": False}
+
+    operations = types.SimpleNamespace(
+        status=lambda _operation_id: events.append("status") or types.SimpleNamespace(body=b'{"state":"prepared"}')
+    )
+    backend = module.RuntimeBackend(
+        gateway=Gateway(),
+        leases=object(),
+        planner=object(),
+        operations=operations,
+        policy=types.SimpleNamespace(entries={}),
+        destructive_enabled=False,
+        monotonic=lambda: 0.0,
+    )
+
+    assert backend.invoke("status", None, "550e8400-e29b-41d4-a716-446655440000") == {"state": "prepared"}
+    assert events == ["enter", "status", "exit"]
 
 
 def test_health_and_metrics_are_bounded_fixed_public_internal_routes():

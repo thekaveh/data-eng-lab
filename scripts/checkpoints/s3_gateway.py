@@ -132,14 +132,14 @@ class S3Gateway:
             }
             if token is not None:
                 request["ContinuationToken"] = token
+            self._check_operation_deadline()
             try:
-                self._check_operation_deadline()
                 page = self._client.list_objects_v2(**request)
-                self._check_operation_deadline()
             except (KeyboardInterrupt, SystemExit):
                 raise
             except BaseException:
                 raise GatewayFailure("inventory_failed") from None
+            self._check_operation_deadline()
             self._check_deadline(started)
             pages += 1
             if pages > self._policy.bounds.max_pages or not isinstance(page, Mapping):
@@ -195,10 +195,9 @@ class S3Gateway:
         )
         if type(max_bytes) is not int or max_bytes < 1 or max_bytes > bound:
             raise GatewayFailure("control_bound_invalid")
+        self._check_operation_deadline()
         try:
-            self._check_operation_deadline()
             response = self._client.get_object(Bucket=self._policy.bucket, Key=key)
-            self._check_operation_deadline()
         except (KeyboardInterrupt, SystemExit):
             raise
         except ClientError as error:
@@ -208,6 +207,7 @@ class S3Gateway:
             raise GatewayFailure("control_read_failed") from None
         except BaseException:
             raise GatewayFailure("control_read_failed") from None
+        self._check_operation_deadline()
         if not isinstance(response, Mapping):
             raise GatewayFailure("control_response_invalid")
         stream = response.get("Body")
@@ -219,11 +219,9 @@ class S3Gateway:
             if type(length) is not int or length < 0 or length > max_bytes:
                 raise GatewayFailure("control_body_bound")
             body = stream.read(max_bytes + 1)
-            self._check_operation_deadline()
             if type(body) is not bytes or len(body) != length or len(body) > max_bytes:
                 raise GatewayFailure("control_body_invalid")
             etag = _parse_etag(response.get("ETag"))
-            return body, etag
         except (KeyboardInterrupt, SystemExit, GatewayFailure) as error:
             primary = error
             raise
@@ -240,6 +238,8 @@ class S3Gateway:
             except BaseException:
                 if primary is None:
                     raise GatewayFailure("control_close_failed") from None
+        self._check_operation_deadline()
+        return body, etag
 
     def create_control(self, key: str, body: bytes) -> str:
         return self._write_control(key, body, if_none_match=True, etag=None)
@@ -259,18 +259,18 @@ class S3Gateway:
             or max_keys > 1_024
         ):
             raise GatewayFailure("control_prefix_invalid")
+        self._check_operation_deadline()
         try:
-            self._check_operation_deadline()
             response = self._client.list_objects_v2(
                 Bucket=self._policy.bucket,
                 Prefix=prefix,
                 MaxKeys=max_keys + 1,
             )
-            self._check_operation_deadline()
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException:
             raise GatewayFailure("control_list_failed") from None
+        self._check_operation_deadline()
         contents = response.get("Contents", []) if isinstance(response, Mapping) else None
         if not isinstance(contents, list) or response.get("IsTruncated") is not False or len(contents) > max_keys:
             raise GatewayFailure("control_list_bound")
@@ -289,10 +289,9 @@ class S3Gateway:
         if not isinstance(record, ObjectRecord):
             raise GatewayFailure("object_record_invalid")
         self._validate_data_key(record.key)
+        self._check_operation_deadline()
         try:
-            self._check_operation_deadline()
             response = self._client.head_object(Bucket=self._policy.bucket, Key=record.key)
-            self._check_operation_deadline()
             actual_etag = _parse_etag(response.get("ETag"))
         except (KeyboardInterrupt, SystemExit):
             raise
@@ -300,6 +299,7 @@ class S3Gateway:
             raise
         except BaseException:
             raise GatewayFailure("head_failed") from None
+        self._check_operation_deadline()
         if (
             not isinstance(response, Mapping)
             or actual_etag != record.etag
@@ -322,10 +322,9 @@ class S3Gateway:
             "Bucket": self._policy.bucket,
             "Delete": {"Objects": [{"Key": record.key} for record in ordered], "Quiet": False},
         }
+        self._check_operation_deadline()
         try:
-            self._check_operation_deadline()
             response = self._client.delete_objects(**request)
-            self._check_operation_deadline()
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException:
@@ -517,15 +516,15 @@ class S3Gateway:
             request["IfNoneMatch"] = "*"
         else:
             request["IfMatch"] = f'"{etag}"'
+        self._check_operation_deadline()
         try:
-            self._check_operation_deadline()
             response = self._client.put_object(**request)
-            self._check_operation_deadline()
             written_etag = _parse_etag(response.get("ETag"))
         except (KeyboardInterrupt, SystemExit):
             raise
         except BaseException:
             raise GatewayFailure("control_write_failed") from None
+        self._check_operation_deadline()
         read_body, read_etag = self.read_control(key, max_bytes=len(body))
         if read_body != body or read_etag != written_etag:
             raise GatewayFailure("control_readback_mismatch")

@@ -97,29 +97,39 @@ class OperationManager:
         artifact = self._validate_prepare(request)
         summary = artifact.summary
         base = f"_retention/tombstones/{request.operation_id}"
+        prepared_key = f"{base}/prepared.json"
         for shard in artifact.shards:
             key = f"{base}/manifest/{shard.index}-{shard.sha256}.json"
             self._create_identical(key, shard.body, len(shard.body))
-        prepared = {
+        prepared_identity = {
             "actor": request.actor,
             "checkpoint_id": summary["checkpoint_id"],
             "evaluated_at": summary["evaluated_at"],
             "inventory_sha256": summary["inventory"]["sha256"],
-            "manifest_shards": tuple(shard.sha256 for shard in artifact.shards),
+            "manifest_shards": [shard.sha256 for shard in artifact.shards],
             "operation_id": request.operation_id,
             "plan_sha256": request.plan_sha256,
             "policy_sha256": summary["policy_sha256"],
             "prefix": summary["prefix"],
             "prefix_sha256": summary["prefix_sha256"],
-            "prepared_at": _format_utc(self._exact_now()),
             "review": request.review,
             "schema_version": 1,
         }
-        try:
-            body = canonical_json_bytes(prepared, max_bytes=self._max_summary_bytes)
-        except RecordFailure:
-            raise OperationFailure("prepared_body_invalid") from None
-        self._create_identical(f"{base}/prepared.json", body, self._max_summary_bytes)
+        prepared = self._existing_prepared(prepared_key, request.operation_id)
+        if prepared is not None:
+            if {key: value for key, value in prepared.items() if key != "prepared_at"} != prepared_identity:
+                raise OperationFailure("control_conflict")
+            prior = self._latest_status(request.operation_id, required=False)
+            if prior is not None:
+                self._ensure_audit(request.operation_id, prior, prepared)
+                return prior
+        else:
+            prepared = {**prepared_identity, "prepared_at": _format_utc(self._exact_now())}
+            try:
+                body = canonical_json_bytes(prepared, max_bytes=self._max_summary_bytes)
+            except RecordFailure:
+                raise OperationFailure("prepared_body_invalid") from None
+            self._create_identical(prepared_key, body, self._max_summary_bytes)
         records = tuple(record for shard in artifact.shards for record in shard.records)
         status = self._record_status(
             request.operation_id,
@@ -196,6 +206,7 @@ class OperationManager:
         if prior_status is not None:
             try:
                 prior_value = json.loads(prior_status.body)
+                self._ensure_audit(request.operation_id, prior_status, prepared)
                 if prior_value["state"] == "completed":
                     self._read_result_classification(base, prior_value, records)
                     remaining = self._gateway.inventory(request.confirm_prefix)
@@ -294,8 +305,8 @@ class OperationManager:
                 current_batch = remaining_records[offset : offset + self._max_delete_keys]
                 for record in current_batch:
                     current_record = record
-                    self._gateway.head_record(record)
                     head_requests += 1
+                    self._gateway.head_record(record)
                     self.check_deadline(started)
                 delete_requests += 1
                 self._gateway.delete_records(current_batch)
@@ -414,11 +425,21 @@ class OperationManager:
             },
             max_bytes=self._max_summary_bytes,
         )
-        self._create_identical(
-            f"_retention/audits/{operation_id}/{hashlib.sha256(audit_body).hexdigest()}.json",
-            audit_body,
-            self._max_summary_bytes,
-        )
+        key = f"_retention/audits/{operation_id}/{hashlib.sha256(audit_body).hexdigest()}.json"
+        try:
+            existing, _etag = self._gateway.read_control(key, max_bytes=self._max_summary_bytes)
+        except GatewayFailure as error:
+            if error.code == "operation_deadline":
+                raise OperationFailure("operation_deadline") from None
+            if error.code != "control_missing":
+                raise OperationFailure("audit_read_failed") from None
+        except KeyError:
+            pass
+        else:
+            if existing != audit_body:
+                raise OperationFailure("control_conflict")
+            return
+        self._create_identical(key, audit_body, self._max_summary_bytes)
 
     def status(self, operation_id: str) -> OperationStatus:
         if _UUID.fullmatch(operation_id or "") is None:
@@ -603,8 +624,29 @@ class OperationManager:
             return body
         except (KeyboardInterrupt, SystemExit):
             raise
+        except GatewayFailure as error:
+            if error.code == "operation_deadline":
+                raise OperationFailure("operation_deadline") from None
+            raise OperationFailure(code) from None
         except BaseException:
             raise OperationFailure(code) from None
+
+    def _existing_prepared(self, key: str, operation_id: str) -> dict[str, object] | None:
+        try:
+            body, _etag = self._gateway.read_control(key, max_bytes=self._max_summary_bytes)
+        except GatewayFailure as error:
+            if error.code == "control_missing":
+                return None
+            if error.code == "operation_deadline":
+                raise OperationFailure("operation_deadline") from None
+            raise OperationFailure("prepared_read_failed") from None
+        except KeyError:
+            return None
+        except (KeyboardInterrupt, SystemExit):
+            raise
+        except BaseException:
+            raise OperationFailure("prepared_read_failed") from None
+        return self._decode_prepared(body, operation_id)
 
     def _record_status(
         self,
@@ -839,6 +881,19 @@ class OperationManager:
             self._gateway.create_control(key, body)
         except (KeyboardInterrupt, SystemExit):
             raise
+        except GatewayFailure as error:
+            if error.code == "operation_deadline":
+                raise OperationFailure("operation_deadline") from None
+            try:
+                existing, _etag = self._gateway.read_control(key, max_bytes=bound)
+            except (KeyboardInterrupt, SystemExit):
+                raise
+            except GatewayFailure as read_error:
+                if read_error.code == "operation_deadline":
+                    raise OperationFailure("operation_deadline") from None
+                raise OperationFailure("control_create_failed") from None
+            if existing != body:
+                raise OperationFailure("control_conflict")
         except BaseException:
             try:
                 existing, _etag = self._gateway.read_control(key, max_bytes=bound)
@@ -852,6 +907,10 @@ class OperationManager:
             readback, _etag = self._gateway.read_control(key, max_bytes=bound)
         except (KeyboardInterrupt, SystemExit):
             raise
+        except GatewayFailure as error:
+            if error.code == "operation_deadline":
+                raise OperationFailure("operation_deadline") from None
+            raise OperationFailure("control_readback_failed") from None
         except BaseException:
             raise OperationFailure("control_readback_failed") from None
         if readback != body:

@@ -323,7 +323,8 @@ payloads.
 
 Prepare reparses the local artifact and requires exact plan/body/shard SHA equality,
 an eligible decision, the same live policy SHA, and reviewed actor/review fields. It
-creates a random operation UUID and writes:
+derives one canonical UUIDv5 operation ID from the exact plan SHA, actor, and review
+identity; callers cannot supply or override it. It writes:
 
 ```text
 _retention/tombstones/{operation_id}/manifest/{index}-{sha256}.json
@@ -333,8 +334,10 @@ _retention/tombstones/{operation_id}/prepared.json
 Every shard uses `If-None-Match: *`; `prepared.json` is written last and binds the
 ordered shard list, root digest, policy/plan SHA, prefix digest, actor/review, and
 whole-second preparation time. Prepared body size is bounded by the policy summary
-limit. A duplicate exact prepare returns the same status only when the caller names
-the same operation ID and every object is byte-identical; any collision refuses.
+limit. A duplicate exact prepare recomputes the same operation ID, reuses the first
+authoritative `prepared_at`, and returns the existing immutable status without
+creating another attempt. Every plan/actor/review/policy/prefix/manifest field must
+match; any collision refuses.
 
 Orphan shards created before a failed prepared write are never authoritative and
 cannot be applied. They remain evidence for a bounded operator reconciliation; #86

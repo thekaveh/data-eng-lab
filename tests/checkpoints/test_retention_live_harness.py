@@ -264,16 +264,47 @@ def test_operation_evidence_requires_exact_plan_prepare_result_and_audit_identit
     prefix = "streaming_test/11111111-1111-4111-8111-111111111111/"
     plan_sha = "a" * 64
     evidence = {
-        "audit": {"operation_id": operation_id, "plan_sha256": plan_sha, "decision": "completed"},
+        "audits": [
+            {
+                "attempt_sequence": sequence,
+                "decision": state,
+                "operation_id": operation_id,
+                "plan_sha256": plan_sha,
+                "primary_category": category,
+                "refusal_codes": [] if category is None else [category],
+            }
+            for sequence, state, category in (
+                (1, "prepared", None),
+                (2, "not_ready", "quiescence_not_ready"),
+                (3, "refused", "revalidation_mismatch"),
+                (4, "completed", None),
+            )
+        ],
+        "attempts": [
+            {
+                "attempt_sequence": sequence,
+                "operation_id": operation_id,
+                "plan_sha256": plan_sha,
+                "primary_category": category,
+                "state": state,
+            }
+            for sequence, state, category in (
+                (1, "prepared", None),
+                (2, "not_ready", "quiescence_not_ready"),
+                (3, "refused", "revalidation_mismatch"),
+                (4, "completed", None),
+            )
+        ],
         "plan": {"summary": {"decision": "eligible", "prefix": prefix}, "plan_sha256": plan_sha},
         "prepared": {"operation_id": operation_id, "plan_sha256": plan_sha, "prefix": prefix},
-        "result": {"operation_id": operation_id, "plan_sha256": plan_sha, "state": "completed"},
     }
     assert live._assert_operation_evidence(evidence, operation_id, plan_sha, prefix) is None
     for category in evidence:
         changed = json.loads(json.dumps(evidence))
         if category == "plan":
             changed[category]["plan_sha256"] = "b" * 64
+        elif category in {"attempts", "audits"}:
+            changed[category][2]["primary_category"] = "head_mismatch"
         else:
             changed[category].update(operation_id="22222222-2222-4222-8222-222222222222")
         with pytest.raises(AssertionError, match="evidence mismatch"):
@@ -341,7 +372,8 @@ def test_final_runtime_live_executes_destructive_refusal_partial_retry_and_evide
     assert 'wait_signal("removed.ready")' in source
     assert "add_changed_object()" in source
     assert "remove_changed_object()" in source
-    assert "evaluated_at" not in source[source.index("def _plan(") : source.index("def _prepare(")]
+    assert "_semantic_plan_binding(repeated_plan) == _semantic_plan_binding(retained_plan)" in source
+    assert "evaluated_at" not in source[source.index("def _plan(") : source.index("def _semantic_plan_binding(")]
     assert "_volume_inventory" in source
 
 

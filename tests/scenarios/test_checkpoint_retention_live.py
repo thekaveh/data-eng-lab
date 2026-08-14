@@ -303,12 +303,18 @@ def _assert_stable_snapshot(before: dict[str, object], after: dict[str, object])
 
 
 def _assert_operation_evidence(evidence: dict[str, object], operation_id: str, plan_sha256: str, prefix: str) -> None:
-    if set(evidence) != {"audit", "plan", "prepared", "result"}:
+    if set(evidence) != {"audits", "attempts", "plan", "prepared"}:
         raise AssertionError("operation evidence mismatch")
     plan = evidence["plan"]
     prepared = evidence["prepared"]
-    result = evidence["result"]
-    audit = evidence["audit"]
+    attempts = evidence["attempts"]
+    audits = evidence["audits"]
+    expected = (
+        (1, "prepared", None, []),
+        (2, "not_ready", "quiescence_not_ready", ["quiescence_not_ready"]),
+        (3, "refused", "revalidation_mismatch", ["revalidation_mismatch"]),
+        (4, "completed", None, []),
+    )
     if (
         not isinstance(plan, dict)
         or not isinstance(plan.get("summary"), dict)
@@ -319,16 +325,33 @@ def _assert_operation_evidence(evidence: dict[str, object], operation_id: str, p
         or prepared.get("operation_id") != operation_id
         or prepared.get("plan_sha256") != plan_sha256
         or prepared.get("prefix") != prefix
-        or not isinstance(result, dict)
-        or result.get("operation_id") != operation_id
-        or result.get("plan_sha256") != plan_sha256
-        or result.get("state") != "completed"
-        or not isinstance(audit, dict)
-        or audit.get("operation_id") != operation_id
-        or audit.get("plan_sha256") != plan_sha256
-        or audit.get("decision") != "completed"
+        or not isinstance(attempts, list)
+        or not isinstance(audits, list)
+        or len(attempts) != 4
+        or len(audits) != 4
     ):
         raise AssertionError("operation evidence mismatch")
+    ordered_attempts = sorted(attempts, key=lambda value: value.get("attempt_sequence", -1))
+    ordered_audits = sorted(audits, key=lambda value: value.get("attempt_sequence", -1))
+    for attempt, audit, (sequence, state, primary, refusal_codes) in zip(
+        ordered_attempts, ordered_audits, expected, strict=True
+    ):
+        if (
+            not isinstance(attempt, dict)
+            or attempt.get("attempt_sequence") != sequence
+            or attempt.get("state") != state
+            or attempt.get("primary_category") != primary
+            or attempt.get("operation_id") != operation_id
+            or attempt.get("plan_sha256") != plan_sha256
+            or not isinstance(audit, dict)
+            or audit.get("attempt_sequence") != sequence
+            or audit.get("decision") != state
+            or audit.get("primary_category") != primary
+            or audit.get("refusal_codes") != refusal_codes
+            or audit.get("operation_id") != operation_id
+            or audit.get("plan_sha256") != plan_sha256
+        ):
+            raise AssertionError("operation evidence mismatch")
 
 
 def _parse_metrics(body: bytes) -> dict[str, int]:
@@ -541,6 +564,14 @@ def _plan(identity: dict[str, object]) -> tuple[dict[str, object], str]:
     return artifact, __import__("hashlib").sha256(body).hexdigest()
 
 
+def _semantic_plan_binding(artifact: dict[str, object]) -> dict[str, object]:
+    value = json.loads(json.dumps(artifact))
+    if not isinstance(value, dict) or not isinstance(value.get("summary"), dict):
+        raise AssertionError("plan binding invalid")
+    value["summary"].pop("evaluated_at", None)
+    return value
+
+
 def _prepare(artifact: dict[str, object], digest: str) -> dict[str, object]:
     return _service(
         "POST",
@@ -605,13 +636,9 @@ def _operation_evidence(
     audit_keys = sorted(item.get("Key") for item in audits.get("Contents", []))
     results = [_read_json_object(client, key) for key in attempt_keys]
     audit_values = [_read_json_object(client, key) for key in audit_keys]
-    completed = [value for value in results if value.get("state") == "completed"]
-    completed_audits = [value for value in audit_values if value.get("decision") == "completed"]
-    if len(completed) != 1 or len(completed_audits) != 1:
-        raise AssertionError("operation evidence invalid")
     plan = dict(artifact)
     plan["plan_sha256"] = plan_sha256
-    return {"audit": completed_audits[0], "plan": plan, "prepared": prepared, "result": completed[0]}
+    return {"audits": audit_values, "attempts": results, "plan": plan, "prepared": prepared}
 
 
 def _validate_accelerated_result(raw: bytes) -> dict[str, object]:
@@ -964,6 +991,8 @@ def test_checkpoint_retention_live_acceptance():
             retained_plan, _retained_sha = _plan(identities[0])
             assert retained_plan["summary"]["decision"] == "refused"
             assert retained_plan["summary"]["refusal_codes"] == ["future_clock", "retention_quarantine"]
+            repeated_plan, _repeated_sha = _plan(identities[0])
+            assert _semantic_plan_binding(repeated_plan) == _semantic_plan_binding(retained_plan)
             assert len(_inventory(root, identities[0]["prefix"])) == 2
             injected_status, injected_body = _service_status(
                 "POST",

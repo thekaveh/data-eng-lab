@@ -90,7 +90,9 @@ class RetentionPlanner:
         matched = self._validate_request(request)
         try:
             records = self._gateway.inventory(request.prefix)
-        except GatewayFailure:
+        except GatewayFailure as error:
+            if error.code == "operation_deadline":
+                raise
             raise PlanFailure("inventory_failed") from None
         if not records:
             raise PlanFailure("inventory_empty")
@@ -158,6 +160,8 @@ class RetentionPlanner:
         except GatewayFailure as error:
             if error.code == "control_missing":
                 return None
+            if error.code == "operation_deadline":
+                raise
             raise PlanFailure("control_read_failed") from None
         return decode(body, etag)
 

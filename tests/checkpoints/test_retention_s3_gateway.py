@@ -419,6 +419,49 @@ def test_head_and_delete_require_every_exact_original_record_result():
     with pytest.raises(GatewayFailure, match="delete_response_invalid"):
         gateway.delete_records((record,))
 
+
+def test_operation_deadline_is_not_sanitized_as_head_failure():
+    from scripts.checkpoints.operations import OperationFailure
+
+    client = FakeS3()
+    record = ObjectRecord(f"{PREFIX}state", "a" * 32, 4, NOW)
+    client.objects[record.key] = (b"data", record.etag, NOW)
+    gateway = S3Gateway(client, POLICY, monotonic=lambda: 0.0)
+    checks = 0
+
+    def expire_after_head():
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            raise OperationFailure("operation_deadline")
+
+    with gateway.operation_deadline(expire_after_head):
+        with pytest.raises(OperationFailure, match="operation_deadline"):
+            gateway.head_record(record)
+
+
+def test_successful_delete_response_is_not_erased_by_post_call_deadline():
+    from scripts.checkpoints.operations import OperationFailure
+
+    client = FakeS3()
+    record = ObjectRecord(f"{PREFIX}state", "a" * 32, 4, NOW)
+    client.delete_response = {"Deleted": [{"Key": record.key}], "Errors": []}
+    gateway = S3Gateway(client, POLICY, monotonic=lambda: 0.0)
+    checks = 0
+
+    def expire_after_delete():
+        nonlocal checks
+        checks += 1
+        if checks == 2:
+            raise OperationFailure("operation_deadline")
+
+    gateway._operation.check = expire_after_delete
+    try:
+        assert gateway.delete_records((record,)) == (record.key,)
+    finally:
+        del gateway._operation.check
+    assert any(operation == "delete" for operation, _request in client.calls)
+
     client.delete_response = {"Deleted": [{"Key": record.key}, {"Key": record.key}], "Errors": []}
     with pytest.raises(GatewayFailure, match="delete_response_invalid"):
         gateway.delete_records((record,))

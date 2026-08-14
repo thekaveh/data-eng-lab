@@ -241,7 +241,10 @@ git commit -m "feat(checkpoints): generate immutable dry-run plans (#86)"
 
 - [ ] **Step 1: Write failing prepare tests**
 
-Cover plan/body/shard SHA mismatch, refused plan, policy drift, actor/review bounds, immutable shard-first/prepared-last ordering, conditional conflict, byte-identical idempotence, orphan shards remaining non-authoritative, and prepared body bounds.
+Cover plan/body/shard SHA mismatch, refused plan, policy drift, actor/review bounds,
+immutable shard-first/prepared-last ordering, conditional conflict, deterministic
+UUIDv5 identity, reuse of the first authoritative `prepared_at` and status on an
+exact retry, orphan shards remaining non-authoritative, and prepared body bounds.
 
 - [ ] **Step 2: Verify prepare RED**
 

@@ -129,6 +129,24 @@ def test_prepare_writes_immutable_shards_before_authoritative_prepared_record():
     assert status.state == "prepared"
 
 
+def test_identical_prepare_retry_reuses_first_authoritative_time_and_evidence():
+    gateway = FakeGateway()
+    artifact = _artifact()
+    clock = [NOW]
+    manager = OperationManager(gateway, policy_sha256="a" * 64, now=lambda: clock[0])
+    request = PrepareRequest(OPERATION_ID, artifact, artifact.sha256, "review-86", "acceptance-engineering")
+
+    first = manager.prepare(request)
+    first_controls = dict(gateway.controls)
+    clock[0] += timedelta(seconds=1)
+    second = manager.prepare(request)
+
+    assert second.body == first.body
+    assert gateway.controls == first_controls
+    prepared = json.loads(gateway.controls[f"_retention/tombstones/{OPERATION_ID}/prepared.json"][0])
+    assert prepared["prepared_at"] == "2026-08-13T12:00:00Z"
+
+
 def test_prepare_and_not_ready_are_queryable_immutable_audited_attempts():
     gateway = FakeGateway()
     artifact = _artifact()
@@ -489,8 +507,12 @@ def test_predelete_head_failure_persists_refused_failed_classification_and_audit
     status = manager.status(OPERATION_ID)
     assert status.state == "refused"
     assert json.loads(status.body)["primary_category"] == "head_mismatch"
-    audit_keys = [key for key in gateway.controls if key.startswith(f"_retention/audits/{OPERATION_ID}/")]
-    audit = json.loads(gateway.controls[sorted(audit_keys)[-1]][0])
+    audit_values = [
+        json.loads(body)
+        for key, (body, _etag) in gateway.controls.items()
+        if key.startswith(f"_retention/audits/{OPERATION_ID}/")
+    ]
+    audit = next(value for value in audit_values if value["decision"] == "refused")
     assert audit["refusal_codes"] == ["head_mismatch"]
     shard = json.loads(
         gateway.controls[
@@ -577,6 +599,34 @@ def test_head_failure_prevents_every_delete_and_control_flow_is_not_wrapped():
         assert not any(call[0] == "delete" for call in gateway.calls)
 
 
+def test_failed_head_attempt_is_counted_in_refused_status_and_audit():
+    artifact = _artifact()
+    gateway = FakeGateway()
+    _prepared_manager(gateway, artifact)
+    gateway.head_failure = GatewayFailure("head_mismatch")
+    manager = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda *_args: artifact,
+    )
+
+    with pytest.raises(OperationFailure, match="head_mismatch"):
+        manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+
+    status = json.loads(manager.status(OPERATION_ID).body)
+    assert status["state"] == "refused"
+    assert status["head_requests"] == 1
+    audits = [
+        json.loads(body)
+        for key, (body, _etag) in gateway.controls.items()
+        if key.startswith(f"_retention/audits/{OPERATION_ID}/")
+    ]
+    refused = [audit for audit in audits if audit["decision"] == "refused"]
+    assert len(refused) == 1
+    assert refused[0]["head_requests"] == 1
+
+
 def test_deleted_but_audit_failed_recovery_never_deletes_again():
     artifact = _artifact()
     gateway = FakeGateway()
@@ -606,6 +656,33 @@ def test_deleted_but_audit_failed_recovery_never_deletes_again():
     assert recovered.state == "completed"
     assert sum(call[0] == "delete" for call in gateway.calls) == delete_count
     assert any(key.startswith(f"_retention/audits/{OPERATION_ID}/") for key in gateway.controls)
+
+
+def test_retry_repairs_missing_refused_audit_before_next_attempt():
+    artifact = _artifact()
+    gateway = FakeGateway()
+    _prepared_manager(gateway, artifact)
+    gateway.head_failure = GatewayFailure("head_mismatch")
+    gateway.create_failure_suffix = f"audits/{OPERATION_ID}/"
+    manager = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda *_args: artifact,
+    )
+
+    with pytest.raises(OperationFailure, match="head_mismatch"):
+        manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    gateway.create_failure_suffix = None
+    with pytest.raises(OperationFailure, match="head_mismatch"):
+        manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+
+    audits = [
+        json.loads(body)
+        for key, (body, _etag) in gateway.controls.items()
+        if key.startswith(f"_retention/audits/{OPERATION_ID}/")
+    ]
+    assert any(audit["decision"] == "refused" and audit["attempt_sequence"] == 2 for audit in audits)
 
 
 def test_deleted_but_unpersisted_progress_refuses_restart_without_redelete_or_inference():

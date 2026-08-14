@@ -7,6 +7,7 @@ import json
 import os
 import re
 import threading
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -27,7 +28,7 @@ from scripts.checkpoints.operations import ApplyRequest, OperationFailure, Opera
 from scripts.checkpoints.planner import PlanFailure, PlanRequest, RetentionPlanner
 from scripts.checkpoints.policy import CheckpointPolicy, load_policy
 from scripts.checkpoints.records import RecordFailure, canonical_json_bytes, decode_plan_artifact
-from scripts.checkpoints.s3_gateway import S3Gateway, build_s3_client
+from scripts.checkpoints.s3_gateway import GatewayFailure, S3Gateway, build_s3_client
 
 
 class ServiceFailure(ValueError):
@@ -76,6 +77,8 @@ class RuntimeBackend:
         destructive_enabled: bool,
         now=None,
         operation_id=None,
+        monotonic=None,
+        max_operation_seconds: int = 900,
     ) -> None:
         self._gateway = gateway
         self._leases = leases
@@ -85,6 +88,8 @@ class RuntimeBackend:
         self._destructive_enabled = destructive_enabled
         self._now = now or (lambda: datetime.now(timezone.utc).replace(microsecond=0))
         self._operation_id = operation_id
+        self._monotonic = monotonic or time.monotonic
+        self._max_operation_seconds = max_operation_seconds
         self._client = getattr(gateway, "_client", None)
         self._metrics: dict[str, dict[tuple[str, ...], int]] = {}
         self._metrics_lock = threading.RLock()
@@ -150,6 +155,32 @@ class RuntimeBackend:
             self._metrics.setdefault(metric, {})[(label,)] = amount
 
     def invoke(self, action: str, payload: dict[str, object] | None, operation_id: str | None):
+        started = self._monotonic()
+
+        def check_deadline() -> None:
+            if self._monotonic() - started > self._max_operation_seconds:
+                raise GatewayFailure("operation_deadline")
+
+        deadline = getattr(self._gateway, "operation_deadline", None)
+        try:
+            if callable(deadline):
+                with deadline(check_deadline):
+                    return self._invoke(action, payload, operation_id)
+            result = self._invoke(action, payload, operation_id)
+            check_deadline()
+            return result
+        except GatewayFailure as error:
+            if error.code == "operation_deadline":
+                self.record_request_failure("timeout")
+                raise ServiceFailure("operation_deadline", status=504) from None
+            raise
+        except OperationFailure as error:
+            if error.code == "operation_deadline":
+                self.record_request_failure("timeout")
+                raise ServiceFailure("operation_deadline", status=504) from None
+            raise
+
+    def _invoke(self, action: str, payload: dict[str, object] | None, operation_id: str | None):
         if action == "lease_acquire":
             value = _exact_payload(payload, {"checkpoint_id", "owner_id", "prefix", "session_id", "workload"})
             result = self._leases.acquire(
@@ -289,6 +320,8 @@ class RuntimeBackend:
             except ServiceFailure:
                 raise
             except OperationFailure as error:
+                if error.code == "operation_deadline":
+                    raise ServiceFailure("operation_deadline", status=504) from None
                 raise ServiceFailure(error.code, status=409, state="partial" if error.partial else "refused") from None
             except (RecordFailure, ValueError, TypeError):
                 raise ServiceFailure("request_invalid") from None
@@ -353,6 +386,11 @@ class RuntimeBackend:
         ):
             return
         with self._metrics_lock:
+            if (
+                operation_id not in self._apply_metric_totals
+                and len(self._apply_metric_totals) >= _METRIC_OPERATION_CACHE
+            ):
+                return
             previous_objects, previous_bytes = self._apply_metric_totals.get(operation_id, (0, 0))
             if deleted_objects < previous_objects or deleted_bytes < previous_bytes:
                 return
@@ -364,13 +402,13 @@ class RuntimeBackend:
                 self._increment("checkpoint_retention_deleted_bytes_total", state, byte_delta)
             self._apply_metric_totals[operation_id] = (deleted_objects, deleted_bytes)
             transition = (operation_id, state, result.get("attempt_sequence"))
-            if state == "partial" and transition not in self._apply_metric_transitions:
-                self._increment("checkpoint_retention_partial_total", "partial")
-            self._apply_metric_transitions.add(transition)
-            while len(self._apply_metric_totals) > _METRIC_OPERATION_CACHE:
-                self._apply_metric_totals.pop(next(iter(self._apply_metric_totals)))
-            while len(self._apply_metric_transitions) > _METRIC_OPERATION_CACHE * 4:
-                self._apply_metric_transitions.pop()
+            if (
+                transition not in self._apply_metric_transitions
+                and len(self._apply_metric_transitions) < _METRIC_OPERATION_CACHE * 4
+            ):
+                if state == "partial":
+                    self._increment("checkpoint_retention_partial_total", "partial")
+                self._apply_metric_transitions.add(transition)
         checkpoint_id = result.get("checkpoint_id")
         if state == "completed" and checkpoint_id in getattr(
             __import__("scripts.checkpoints.metrics", fromlist=["_CHECKPOINT_IDS"]),

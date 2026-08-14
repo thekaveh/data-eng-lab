@@ -122,6 +122,8 @@ class LeaseManager:
             try:
                 body, etag = self._gateway.read_control(key, max_bytes=self._policy.bounds.max_summary_bytes)
             except GatewayFailure as error:
+                if error.code == "operation_deadline":
+                    raise
                 if error.code != "control_missing":
                     raise LeaseFailure("lease_read_failed") from None
                 existing = None
@@ -170,7 +172,9 @@ class LeaseManager:
                     if replace_etag is None
                     else self._gateway.replace_lease(key, replace_etag, body)
                 )
-            except GatewayFailure:
+            except GatewayFailure as error:
+                if error.code == "operation_deadline":
+                    raise
                 raise LeaseFailure("lease_create_failed" if replace_etag is None else "lease_replace_failed") from None
             return LeaseResult(epoch, etag, body)
 
@@ -203,7 +207,9 @@ class LeaseManager:
             current_body, current_etag = self._gateway.read_control(
                 key, max_bytes=self._policy.bounds.max_summary_bytes
             )
-        except GatewayFailure:
+        except GatewayFailure as error:
+            if error.code == "operation_deadline":
+                raise
             raise LeaseFailure("lease_read_failed") from None
         current = self._decode_lease(current_body)
         self._require_identity(current, request.checkpoint_id, request.prefix)
@@ -251,6 +257,8 @@ class LeaseManager:
             try:
                 existing, etag = self._gateway.read_control(key, max_bytes=self._policy.bounds.max_summary_bytes)
             except GatewayFailure as error:
+                if error.code == "operation_deadline":
+                    raise
                 if error.code != "control_missing":
                     raise
                 self._gateway.create_control(key, body)
@@ -259,6 +267,10 @@ class LeaseManager:
                     self._gateway.replace_lease(key, etag, body)
         except (KeyboardInterrupt, SystemExit):
             raise
+        except GatewayFailure as error:
+            if error.code == "operation_deadline":
+                raise
+            raise LeaseFailure("terminal_record_failed") from None
         except BaseException:
             raise LeaseFailure("terminal_record_failed") from None
 
@@ -299,7 +311,9 @@ class LeaseManager:
         next_body = canonical_json_bytes(current, max_bytes=self._policy.bounds.max_summary_bytes)
         try:
             next_etag = self._gateway.replace_lease(key, etag, next_body)
-        except GatewayFailure:
+        except GatewayFailure as error:
+            if error.code == "operation_deadline":
+                raise
             raise LeaseFailure("lease_ownership_lost") from None
         return LeaseResult(request.epoch, next_etag, next_body)
 
