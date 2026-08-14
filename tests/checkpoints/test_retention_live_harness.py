@@ -323,11 +323,43 @@ def test_final_runtime_live_executes_destructive_refusal_partial_retry_and_evide
     source = LIVE.read_text(encoding="utf-8")
 
     assert "timedelta(days=2)" not in source
+    assert "retention_quarantine" in source
+    assert "_run_accelerated_exact_image(" in source
+    assert "service._now = lambda: clock[0]" in source
+    assert '"PYTHONPATH=/workspace"' in source
+    assert "--env" in source
+    assert (
+        "CHECKPOINT_RETENTION_OPERATOR_TOKEN"
+        not in source[source.index("def _run_accelerated_exact_image") : source.index("def _volume_inventory")]
+    )
     assert "_assert_operation_evidence(" in source[source.index("def test_checkpoint_retention_live_acceptance") :]
-    for state in ('["state"] == "completed"', '["state"] == "refused"', "_run_layered_partial_retry()"):
+    for state in ('["state"] == "completed"', '["state"] == "not_ready"', "_run_layered_partial_retry()"):
         assert state in source
-    assert source.count("_wait_apply(") >= 3
+    assert "evaluated_at" not in source[source.index("def _plan(") : source.index("def _prepare(")]
     assert "_volume_inventory" in source
+
+
+def test_accelerated_exact_image_result_is_closed_and_bounded():
+    live = _live()
+    result = {
+        "artifact": {"summary": {"decision": "eligible", "prefix": "streaming_test/x/"}},
+        "completed": {"state": "completed"},
+        "image_id": "sha256:" + "a" * 64,
+        "metrics": "checkpoint_retention_plans_total 1\n",
+        "not_ready": {"state": "not_ready"},
+        "operation_id": "550e8400-e29b-41d4-a716-446655440000",
+        "plan_sha256": "b" * 64,
+    }
+    assert live._validate_accelerated_result(json.dumps(result).encode("ascii")) == result
+    for invalid in (
+        b"x" * 65_537,
+        b"{}",
+        json.dumps({**result, "unknown": True}).encode("ascii"),
+        json.dumps({**result, "image_id": "latest"}).encode("ascii"),
+        json.dumps({**result, "completed": {"state": "refused"}}).encode("ascii"),
+    ):
+        with pytest.raises(AssertionError, match="accelerated evidence invalid"):
+            live._validate_accelerated_result(invalid)
 
 
 def test_live_identity_is_one_explicit_bounded_value_for_provisioning_and_probe():

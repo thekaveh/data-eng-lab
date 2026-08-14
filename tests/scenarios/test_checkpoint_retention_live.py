@@ -4,6 +4,7 @@ import json
 import os
 import re
 import subprocess
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -385,13 +386,20 @@ def _service(method: str, path: str, payload: dict[str, object] | None = None) -
     return value
 
 
-def _service_status(method: str, path: str, token_name: str) -> tuple[int, dict[str, object]]:
+def _service_status(
+    method: str,
+    path: str,
+    token_name: str,
+    payload: dict[str, object] | None = None,
+) -> tuple[int, dict[str, object]]:
+    body = b"{}" if payload is None else json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("ascii")
     script = (
         "import json,os,urllib.error,urllib.request;"
+        f"body={body!r};"
         "request=urllib.request.Request("
-        f"'http://127.0.0.1:8080{path}',data=b'{{}}',method='{method}',"
+        f"'http://127.0.0.1:8080{path}',data=body,method='{method}',"
         f"headers={{'Authorization':'Bearer '+os.environ['{token_name}'],"
-        "'Content-Type':'application/json','Content-Length':'2'});"
+        "'Content-Type':'application/json','Content-Length':str(len(body))});"
         "\ntry:\n response=urllib.request.urlopen(request,timeout=30);status=response.status"
         "\nexcept urllib.error.HTTPError as error:\n response=error;status=error.code"
         f"\nraw=response.read({MAX_RESPONSE_BYTES + 1});response.close();"
@@ -605,6 +613,175 @@ def _operation_evidence(
     return {"audit": completed_audits[0], "plan": plan, "prepared": prepared, "result": completed[0]}
 
 
+def _validate_accelerated_result(raw: bytes) -> dict[str, object]:
+    if type(raw) is not bytes or not raw or len(raw) > MAX_RESPONSE_BYTES:
+        raise AssertionError("accelerated evidence invalid")
+    try:
+        value = json.loads(raw)
+    except (UnicodeError, json.JSONDecodeError):
+        raise AssertionError("accelerated evidence invalid") from None
+    if not isinstance(value, dict) or set(value) != {
+        "artifact",
+        "completed",
+        "image_id",
+        "metrics",
+        "not_ready",
+        "operation_id",
+        "plan_sha256",
+    }:
+        raise AssertionError("accelerated evidence invalid")
+    artifact = value["artifact"]
+    completed = value["completed"]
+    not_ready = value["not_ready"]
+    if (
+        not isinstance(artifact, dict)
+        or not isinstance(artifact.get("summary"), dict)
+        or artifact["summary"].get("decision") != "eligible"
+        or not isinstance(completed, dict)
+        or completed.get("state") != "completed"
+        or not isinstance(not_ready, dict)
+        or not_ready.get("state") != "not_ready"
+        or not isinstance(value["image_id"], str)
+        or re.fullmatch(r"sha256:[0-9a-f]{64}", value["image_id"]) is None
+        or not isinstance(value["operation_id"], str)
+        or RUN_UUID.fullmatch(value["operation_id"]) is None
+        or not isinstance(value["plan_sha256"], str)
+        or SHA256.fullmatch(value["plan_sha256"]) is None
+    ):
+        raise AssertionError("accelerated evidence invalid")
+    if not isinstance(value["metrics"], str):
+        raise AssertionError("accelerated evidence invalid")
+    _parse_metrics(value["metrics"].encode("ascii"))
+    return value
+
+
+def _run_accelerated_exact_image(identity: dict[str, object]) -> tuple[dict[str, object], datetime]:
+    project = _env("PROJECT_NAME", "data-eng-lab")
+    container = f"{project}-checkpoint-retention-1"
+    image_id = _run("docker", "inspect", container, "--format", "{{.Image}}").stdout.strip()
+    network = _run(
+        "docker",
+        "inspect",
+        container,
+        "--format",
+        "{{range $name, $_ := .NetworkSettings.Networks}}{{$name}}{{end}}",
+    ).stdout.strip()
+    if (
+        re.fullmatch(r"sha256:[0-9a-f]{64}", image_id) is None
+        or re.fullmatch(r"[A-Za-z0-9_.-]{1,128}", network) is None
+    ):
+        raise AssertionError("accelerated runtime identity invalid")
+    script = f"""\
+import hashlib
+import json
+from datetime import datetime, timedelta, timezone
+
+import scripts.checkpoints.service as service
+
+identity = {json.dumps(identity, sort_keys=True)!r}
+identity = json.loads(identity)
+clock = [datetime.now(timezone.utc).replace(microsecond=0)]
+service._now = lambda: clock[0]
+runtime = service.build_runtime()
+try:
+    lease = runtime.invoke("lease_acquire", {{
+        "checkpoint_id": identity["checkpoint_id"],
+        "owner_id": "issue86-accelerated-exact-image",
+        "prefix": identity["prefix"],
+        "session_id": "issue86-accelerated-exact-image",
+        "workload": identity["workload"],
+    }}, None)
+    runtime.invoke("lease_terminal", {{
+        "checkpoint_id": identity["checkpoint_id"],
+        "epoch": lease["epoch"],
+        "evidence": {{
+            "exclusive_run": True,
+            "generation": identity["generation"],
+            "recovery_approved": True,
+            "sink_disposition_approved": True,
+            "source_available": True,
+            "successful": True,
+        }},
+        "prefix": identity["prefix"],
+        "state": "stopped",
+    }}, None)
+    clock[0] += timedelta(seconds=86401)
+    artifact = runtime.invoke("plan", {{
+        "actor": "issue86-accelerated-exact-image",
+        "checkpoint_id": identity["checkpoint_id"],
+        "prefix": identity["prefix"],
+    }}, None)
+    plan_body = json.dumps(artifact, sort_keys=True, separators=(",", ":")).encode("ascii")
+    plan_sha256 = hashlib.sha256(plan_body).hexdigest()
+    prepared = runtime.invoke("prepare", {{
+        "actor": "issue86-accelerated-exact-image",
+        "plan": artifact,
+        "plan_sha256": plan_sha256,
+        "review": "issue86-live-reviewed",
+    }}, None)
+    operation_id = prepared["operation_id"]
+    request = {{"confirm_prefix": identity["prefix"], "plan_sha256": plan_sha256}}
+    not_ready = runtime.invoke("apply", request, operation_id)
+    clock[0] += timedelta(seconds=901)
+    completed = runtime.invoke("apply", request, operation_id)
+    print(json.dumps({{
+        "artifact": artifact,
+        "completed": completed,
+        "image_id": {image_id!r},
+        "metrics": runtime.metrics().decode("ascii"),
+        "not_ready": not_ready,
+        "operation_id": operation_id,
+        "plan_sha256": plan_sha256,
+    }}, sort_keys=True, separators=(",", ":")))
+finally:
+    runtime.close()
+"""
+    started_at = datetime.now(timezone.utc) - timedelta(seconds=1)
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "MINIO_RETENTION_ACCESS_KEY": LIVE_RETENTION_ACCESS_KEY,
+            "MINIO_RETENTION_SECRET_KEY": _env("MINIO_RETENTION_SECRET_KEY"),
+        }
+    )
+    with tempfile.TemporaryDirectory(prefix="issue86-accelerated-") as directory:
+        script_path = Path(directory) / "proof.py"
+        script_path.write_text(script, encoding="utf-8")
+        result = subprocess.run(
+            [
+                "docker",
+                "run",
+                "--rm",
+                "--network",
+                network,
+                "--env",
+                "MINIO_RETENTION_ACCESS_KEY",
+                "--env",
+                "MINIO_RETENTION_SECRET_KEY",
+                "--env",
+                "DESTRUCTIVE_ENABLED=true",
+                "--env",
+                "PYTHONPATH=/workspace",
+                "--mount",
+                f"type=bind,source={script_path},target=/proof/proof.py,readonly",
+                "--entrypoint",
+                "/opt/venv/bin/python",
+                image_id,
+                "/proof/proof.py",
+            ],
+            cwd=ROOT,
+            env=environment,
+            capture_output=True,
+            timeout=180,
+        )
+    if result.returncode != 0 or len(result.stdout) > MAX_RESPONSE_BYTES or len(result.stderr) > MAX_RESPONSE_BYTES:
+        raise AssertionError("accelerated exact-image proof failed")
+    for secret in (_env("MINIO_RETENTION_SECRET_KEY"),):
+        if secret and secret.encode() in result.stdout + result.stderr:
+            raise AssertionError("accelerated exact-image proof leaked a credential")
+    return _validate_accelerated_result(result.stdout), started_at
+
+
 def _run_layered_partial_retry() -> None:
     environment = dict(os.environ)
     environment["RUN_MINIO_INTEGRATION"] = "1"
@@ -720,39 +897,44 @@ def test_checkpoint_retention_live_acceptance():
             assert "lease_active" in active_plan["summary"]["refusal_codes"]
             _service("POST", "/v1/leases/terminal", _terminal_payload(identities[0], active["epoch"]))
 
-            first_plan, first_sha = _plan(identities[0])
-            repeated_plan, repeated_sha = _plan(identities[0])
-            assert first_plan["summary"]["decision"] == repeated_plan["summary"]["decision"]
-            assert first_plan["summary"]["inventory"] == repeated_plan["summary"]["inventory"]
-            assert first_plan["summary"]["decision"] == "eligible"
-            first_prepared = _prepare(first_plan, first_sha)
-
-            second_lease = _service("POST", "/v1/leases/acquire", _lease_payload(identities[1], "issue86-live-success"))
-            _service("POST", "/v1/leases/terminal", _terminal_payload(identities[1], second_lease["epoch"]))
-            second_plan, second_sha = _plan(identities[1])
-            assert second_plan["summary"]["decision"] == "eligible"
-            second_prepared = _prepare(second_plan, second_sha)
-
-            not_ready = _service(
+            retained_plan, _retained_sha = _plan(identities[0])
+            assert retained_plan["summary"]["decision"] == "refused"
+            assert retained_plan["summary"]["refusal_codes"] == ["future_clock", "retention_quarantine"]
+            assert len(_inventory(root, identities[0]["prefix"])) == 2
+            injected_status, injected_body = _service_status(
                 "POST",
-                f"/v1/operations/{second_prepared['operation_id']}/apply",
-                {"confirm_prefix": identities[1]["prefix"], "plan_sha256": second_sha},
+                "/v1/plans",
+                "CHECKPOINT_RETENTION_OPERATOR_TOKEN",
+                {
+                    "actor": "issue86-live-acceptance",
+                    "checkpoint_id": identities[0]["checkpoint_id"],
+                    "evaluated_at": "2099-01-01T00:00:00Z",
+                    "prefix": identities[0]["prefix"],
+                },
             )
-            assert not_ready["state"] == "not_ready"
-            put_owned(f"{identities[0]['prefix']}state/changed", b"changed")
+            assert (injected_status, injected_body) == (400, {"code": "request_invalid"})
 
-            completed = _wait_apply(second_prepared["operation_id"], identities[1]["prefix"], second_sha)
-            assert completed["state"] == "completed"
-            refused = _wait_apply(first_prepared["operation_id"], identities[0]["prefix"], first_sha)
-            assert refused["state"] == "refused"
-            evidence = _operation_evidence(root, second_plan, second_prepared["operation_id"], second_sha)
+            accelerated, accelerated_started_at = _run_accelerated_exact_image(identities[1])
+            owned_resources.enter_context(_owned_runtime_capability(root, accelerated_started_at))
+            assert accelerated["not_ready"]["state"] == "not_ready"
+            assert accelerated["completed"]["state"] == "completed"
+            accelerated_metrics = _parse_metrics(accelerated["metrics"].encode("ascii"))
+            assert accelerated_metrics['checkpoint_retention_plans_total{decision="eligible"}'] == 1
+            assert accelerated_metrics['checkpoint_retention_prepared_total{outcome="completed"}'] == 1
+            assert accelerated_metrics['checkpoint_retention_deleted_objects_total{outcome="completed"}'] == 2
+            evidence = _operation_evidence(
+                root,
+                accelerated["artifact"],
+                accelerated["operation_id"],
+                accelerated["plan_sha256"],
+            )
             _assert_operation_evidence(
                 evidence,
-                second_prepared["operation_id"],
-                second_sha,
+                accelerated["operation_id"],
+                accelerated["plan_sha256"],
                 identities[1]["prefix"],
             )
-            assert len(_inventory(root, identities[0]["prefix"])) == 3
+            assert len(_inventory(root, identities[0]["prefix"])) == 2
             assert _inventory(root, identities[1]["prefix"]) == ()
             assert root.head_object(Bucket="checkpoints", Key=denied_key)["ContentLength"] == len(b"preserve")
 
@@ -769,9 +951,9 @@ def test_checkpoint_retention_live_acceptance():
                 f"body=response.read({MAX_METRICS_BYTES + 1});response.close();sys.stdout.buffer.write(body)",
             )
             metrics = _parse_metrics(metrics_result.stdout.encode("ascii"))
-            assert metrics['checkpoint_retention_plans_total{decision="eligible"}'] >= 3
-            assert metrics['checkpoint_retention_plans_total{decision="refused"}'] >= 1
-            assert metrics['checkpoint_retention_prepared_total{outcome="completed"}'] == 2
+            assert metrics.get('checkpoint_retention_plans_total{decision="eligible"}', 0) == 0
+            assert metrics['checkpoint_retention_plans_total{decision="refused"}'] >= 2
+            assert metrics.get('checkpoint_retention_prepared_total{outcome="completed"}', 0) == 0
             assert (
                 metrics['checkpoint_retention_lease_heartbeat_age_seconds{checkpoint_id="go-live-streaming-test-v1"}']
                 >= 0
