@@ -647,3 +647,14 @@ def test_runbook_uses_actor_only_facts_and_locked_runtime_install():
     assert "only `actor`" in manual
     assert "uv export --frozen" in dockerfile
     assert "--require-hashes" in dockerfile
+
+
+def test_live_report_names_the_actual_final_runtime_correction():
+    report = (
+        Path(__file__).resolve().parents[2]
+        / "docs/superpowers/reports/2026-08-13-streaming-checkpoint-retention-live-acceptance.md"
+    ).read_text(encoding="utf-8")
+    final_verification = report.split("## Final repository verification", 1)[1]
+
+    assert "`cd9cdfd`" in final_verification
+    assert "`6e32da2`" not in final_verification

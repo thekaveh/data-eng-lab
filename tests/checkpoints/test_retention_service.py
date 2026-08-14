@@ -154,6 +154,43 @@ def test_runtime_rejects_invalid_deadline_configuration_and_clock_regression():
         backend.invoke("status", None, "550e8400-e29b-41d4-a716-446655440000")
 
 
+@pytest.mark.parametrize("signal", [KeyboardInterrupt, SystemExit])
+@pytest.mark.parametrize("phase", ["initial", "deadline_check"])
+def test_runtime_deadline_clock_preserves_control_flow_exceptions(signal, phase):
+    module = _service()
+
+    class Gateway:
+        @contextmanager
+        def operation_deadline(self, check):
+            check()
+            yield
+
+        def probe_capabilities(self):
+            return {"automatic_apply": False}
+
+    calls = 0
+
+    def monotonic():
+        nonlocal calls
+        calls += 1
+        if phase == "initial" or calls > 1:
+            raise signal()
+        return 0.0
+
+    backend = module.RuntimeBackend(
+        gateway=Gateway(),
+        leases=object(),
+        planner=object(),
+        operations=types.SimpleNamespace(status=lambda _: None),
+        policy=types.SimpleNamespace(entries={}),
+        destructive_enabled=False,
+        monotonic=monotonic,
+    )
+
+    with pytest.raises(signal):
+        backend.invoke("status", None, "550e8400-e29b-41d4-a716-446655440000")
+
+
 def test_prepare_retry_returns_authoritative_progressed_state_without_hybrid_rewrite(monkeypatch):
     module = _service()
     completed = {

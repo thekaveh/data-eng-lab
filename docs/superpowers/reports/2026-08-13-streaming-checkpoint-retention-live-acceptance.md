@@ -183,8 +183,9 @@ prepare/quiescence protocol.
 
 ## Final repository verification
 
-The final service/runtime and layered acceptance correction is `6e32da2`. The
-subsequent evidence update changes only this report. The exact final
+The final service/runtime and layered acceptance correction represented by the
+recorded image is `cd9cdfd`. The subsequent evidence updates `032ffec` and `70bbbc0`
+change only this report. The exact final
 validation set was:
 
 | Gate | Result |

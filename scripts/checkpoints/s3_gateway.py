@@ -33,7 +33,8 @@ _CONTROL_KEY = re.compile(
     r"(?:leases|terminals)/[a-z0-9][a-z0-9_-]{0,127}\.json|"
     r"tombstones/[0-9a-f-]{36}/(?:manifest/[0-9]+-[0-9a-f]{64}\.json|prepared\.json|"
     r"results/(?:attempts/[0-9]{6}-[0-9a-f]{64}\.json|shards/[0-9a-f]{64}\.json))|"
-    r"audits/[0-9a-f-]{36}/[0-9a-f]{64}\.json|"
+    r"audits/[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}/"
+    r"[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json|"
     r"capability/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}\.json"
     r")"
 )

@@ -168,6 +168,8 @@ class RuntimeBackend:
     def invoke(self, action: str, payload: dict[str, object] | None, operation_id: str | None):
         try:
             started = self._monotonic()
+        except (KeyboardInterrupt, SystemExit):
+            raise
         except BaseException:
             raise ServiceFailure("operation_deadline", status=504) from None
         if isinstance(started, bool) or not isinstance(started, (int, float)) or not math.isfinite(started):
@@ -176,6 +178,8 @@ class RuntimeBackend:
         def check_deadline() -> None:
             try:
                 elapsed = self._monotonic() - started
+            except (KeyboardInterrupt, SystemExit):
+                raise
             except BaseException:
                 raise GatewayFailure("operation_deadline") from None
             if isinstance(elapsed, bool) or not isinstance(elapsed, (int, float)) or not math.isfinite(elapsed):

@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Callable
@@ -115,12 +116,19 @@ class OperationManager:
             "review": request.review,
             "schema_version": 1,
         }
+        records = tuple(record for shard in artifact.shards for record in shard.records)
         prepared = self._existing_prepared(prepared_key, request.operation_id)
         if prepared is not None:
             if {key: value for key, value in prepared.items() if key != "prepared_at"} != prepared_identity:
                 raise OperationFailure("control_conflict")
-            prior = self._latest_status(request.operation_id, required=False)
+            prior = self._latest_status(
+                request.operation_id,
+                required=False,
+                prepared=prepared,
+                records=records,
+            )
             if prior is not None:
+                self._ensure_audit(request.operation_id, prior, prepared)
                 return prior
         else:
             prepared = {**prepared_identity, "prepared_at": _format_utc(self._exact_now())}
@@ -129,7 +137,6 @@ class OperationManager:
             except RecordFailure:
                 raise OperationFailure("prepared_body_invalid") from None
             self._create_identical(prepared_key, body, self._max_summary_bytes)
-        records = tuple(record for shard in artifact.shards for record in shard.records)
         status = self._record_status(
             request.operation_id,
             prepared["checkpoint_id"],
@@ -172,7 +179,13 @@ class OperationManager:
         if prepared_at is None or evaluated_at is None:
             raise OperationFailure("prepared_invalid")
         if now < prepared_at + timedelta(seconds=self._quiescence_seconds):
-            records = self._read_manifest(base, prepared["manifest_shards"])
+            records = self._read_bound_manifest(base, prepared)
+            self._latest_status(
+                request.operation_id,
+                required=False,
+                prepared=prepared,
+                records=records,
+            )
             status = self._record_status(
                 request.operation_id,
                 prepared["checkpoint_id"],
@@ -198,9 +211,14 @@ class OperationManager:
 
     def _apply_locked(self, request, prepared, evaluated_at, base, started) -> OperationStatus:
         self.check_deadline(started)
-        records = self._read_manifest(base, prepared["manifest_shards"])
+        records = self._read_bound_manifest(base, prepared)
         self.check_deadline(started)
-        prior_status = self._latest_status(request.operation_id, required=False)
+        prior_status = self._latest_status(
+            request.operation_id,
+            required=False,
+            prepared=prepared,
+            records=records,
+        )
         prior_deleted: set[str] = set()
         if prior_status is not None:
             try:
@@ -408,10 +426,16 @@ class OperationManager:
         prepared: dict[str, object],
     ) -> None:
         value = json.loads(status.body)
+        attempt_id = str(
+            uuid.uuid5(
+                uuid.UUID(operation_id),
+                f"{value['attempt_sequence']}:{hashlib.sha256(status.body).hexdigest()}",
+            )
+        )
         audit_body = canonical_json_bytes(
             {
                 "actor": prepared["actor"],
-                "attempt_id": hashlib.sha256(status.body).hexdigest(),
+                "attempt_id": attempt_id,
                 "attempt_sequence": value["attempt_sequence"],
                 "capability_profile": "minio-2025-09-manual-verified-readback",
                 "checkpoint_id": prepared["checkpoint_id"],
@@ -442,7 +466,7 @@ class OperationManager:
             },
             max_bytes=self._max_summary_bytes,
         )
-        key = f"_retention/audits/{operation_id}/{hashlib.sha256(audit_body).hexdigest()}.json"
+        key = f"_retention/audits/{operation_id}/{attempt_id}.json"
         try:
             existing, _etag = self._gateway.read_control(key, max_bytes=self._max_summary_bytes)
         except GatewayFailure as error:
@@ -461,11 +485,27 @@ class OperationManager:
     def status(self, operation_id: str) -> OperationStatus:
         if _UUID.fullmatch(operation_id or "") is None:
             raise OperationFailure("operation_id_invalid")
-        status = self._latest_status(operation_id, required=True)
+        base = f"_retention/tombstones/{operation_id}"
+        prepared_body = self._read_control(f"{base}/prepared.json", self._max_summary_bytes, "prepared_read_failed")
+        prepared = self._decode_prepared(prepared_body, operation_id)
+        records = self._read_bound_manifest(base, prepared)
+        status = self._latest_status(
+            operation_id,
+            required=True,
+            prepared=prepared,
+            records=records,
+        )
         assert status is not None
         return status
 
-    def _latest_status(self, operation_id: str, *, required: bool) -> OperationStatus | None:
+    def _latest_status(
+        self,
+        operation_id: str,
+        *,
+        required: bool,
+        prepared: dict[str, object],
+        records: tuple[ObjectRecord, ...],
+    ) -> OperationStatus | None:
         try:
             keys = self._gateway.list_controls(
                 f"_retention/tombstones/{operation_id}/results/attempts/",
@@ -557,10 +597,41 @@ class OperationManager:
                     and _SHA256.fullmatch(value["postflight_inventory_sha256"] or "") is None
                 )
                 or value.get("operation_id") != operation_id
+                or value.get("checkpoint_id") != prepared.get("checkpoint_id")
+                or value.get("plan_sha256") != prepared.get("plan_sha256")
                 or not key.endswith(f"/{value['attempt_sequence']:06d}-{hashlib.sha256(body).hexdigest()}.json")
             ):
                 raise OperationFailure("status_invalid")
-            statuses.append((value["attempt_sequence"], value, OperationStatus(operation_id, state, body)))
+            deleted = self._read_result_classification(
+                f"_retention/tombstones/{operation_id}",
+                value,
+                records,
+            )
+            if (
+                (
+                    state in {"prepared", "not_ready"}
+                    and (
+                        deleted
+                        or value["deleted_bytes"] != 0
+                        or value["head_requests"] != 0
+                        or value["delete_requests"] != 0
+                        or value["postflight_inventory_sha256"] is not None
+                    )
+                )
+                or (state == "not_ready" and value["primary_category"] != "quiescence_not_ready")
+                or (state == "partial" and not deleted)
+                or (
+                    state == "completed"
+                    and (
+                        len(deleted) != len(records)
+                        or value["remaining_objects"] != 0
+                        or value["remaining_bytes"] != 0
+                        or value["postflight_inventory_sha256"] != inventory_sha256(())
+                    )
+                )
+            ):
+                raise OperationFailure("status_invalid")
+            statuses.append((value["attempt_sequence"], value, deleted, OperationStatus(operation_id, state, body)))
         if not statuses:
             if required:
                 raise OperationFailure("status_missing")
@@ -568,14 +639,42 @@ class OperationManager:
         statuses.sort(key=lambda item: item[0])
         if tuple(item[0] for item in statuses) != tuple(range(1, len(statuses) + 1)):
             raise OperationFailure("status_ambiguous")
-        last_deleted = -1
-        for _sequence, value, _status in statuses:
-            if value["deleted_objects"] < last_deleted:
+        if statuses[0][1]["state"] != "prepared":
+            raise OperationFailure("status_ambiguous")
+        last_deleted: set[str] = set()
+        last_occurred_at: datetime | None = None
+        last_state_rank = -1
+        state_ranks = {"prepared": 0, "not_ready": 1, "refused": 2, "partial": 2, "completed": 3}
+        for index, (_sequence, value, deleted, _status) in enumerate(statuses):
+            occurred_at = _parse_utc(value["occurred_at"])
+            state = value["state"]
+            state_rank = state_ranks[state]
+            if (
+                (index > 0 and state == "prepared")
+                or state_rank < last_state_rank
+                or not last_deleted.issubset(deleted)
+                or (last_occurred_at is not None and occurred_at < last_occurred_at)
+                or (state == "not_ready" and deleted)
+                or (state == "partial" and not deleted)
+                or (state == "completed" and len(deleted) != len(records))
+            ):
                 raise OperationFailure("status_ambiguous")
-            last_deleted = value["deleted_objects"]
+            last_deleted = deleted
+            last_occurred_at = occurred_at
+            last_state_rank = state_rank
         if any(item[1]["state"] == "completed" for item in statuses[:-1]):
             raise OperationFailure("status_ambiguous")
-        return statuses[-1][2]
+        return statuses[-1][3]
+
+    def _read_bound_manifest(
+        self,
+        base: str,
+        prepared: dict[str, object],
+    ) -> tuple[ObjectRecord, ...]:
+        records = self._read_manifest(base, prepared.get("manifest_shards"))
+        if prepared.get("inventory_sha256") != inventory_sha256(records):
+            raise OperationFailure("status_invalid")
+        return records
 
     def _read_manifest(self, base: str, shard_sha256s: object) -> tuple[ObjectRecord, ...]:
         invalid_digests = not isinstance(shard_sha256s, list) or any(

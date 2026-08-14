@@ -229,6 +229,18 @@ def test_control_reads_are_bounded_closed_and_exact_key_only():
             gateway.read_control(key, max_bytes=64)
 
 
+def test_audit_control_key_requires_exact_operation_and_attempt_uuids():
+    client = FakeS3()
+    attempt_id = "11111111-1111-5111-8111-111111111111"
+    key = f"_retention/audits/{RUN_UUID}/{attempt_id}.json"
+    client.objects[key] = (b"{}", "a" * 32, NOW)
+    gateway = S3Gateway(client, POLICY, monotonic=lambda: 0.0)
+
+    assert gateway.read_control(key, max_bytes=64)[0] == b"{}"
+    with pytest.raises(GatewayFailure, match="control_key_invalid"):
+        gateway.read_control(f"_retention/audits/{RUN_UUID}/{'a' * 64}.json", max_bytes=64)
+
+
 def test_manifest_read_uses_manifest_shard_bound_while_summary_controls_stay_small():
     client = FakeS3()
     client.objects[MANIFEST] = (b"[]", "a" * 32, NOW)
