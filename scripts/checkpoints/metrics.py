@@ -64,7 +64,14 @@ _REFUSALS = {
     "policy_drift",
     "revalidation_mismatch",
 }
-_OUTCOMES = {"backend_failure", "invalid_request", "unauthorized", "timeout", "capability_failed"}
+_OUTCOMES = {
+    "backend_failure",
+    "capability_failed",
+    "invalid_request",
+    "metrics_saturated",
+    "timeout",
+    "unauthorized",
+}
 _METRICS = {
     "checkpoint_retention_objects": ("checkpoint_id", _CHECKPOINT_IDS),
     "checkpoint_retention_bytes": ("checkpoint_id", _CHECKPOINT_IDS),

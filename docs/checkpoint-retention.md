@@ -206,6 +206,9 @@ The closed Prometheus registry includes
 `checkpoint_retention_request_failures_total`. Labels are limited to closed
 `checkpoint_id`, `decision`, `refusal_code`, and `outcome` values. Prefixes, keys,
 operation IDs, actors, reviews, ETags, and digests are forbidden labels. The bounded
+apply replay cache emits the exact `metrics_saturated` outcome once if it reaches its
+4,096-operation bound, making any subsequent conservative undercount explicit.
+The bounded
 internal `/metrics` endpoint ships; parent-overlay Prometheus scrape integration is
 blocked at the current Atlas pin because it cannot be added without an Atlas source
 change.

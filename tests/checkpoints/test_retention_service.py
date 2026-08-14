@@ -76,6 +76,118 @@ def test_apply_metrics_bound_saturates_without_replay_overcount():
 
     assert len(backend._apply_metric_totals) == module._METRIC_OPERATION_CACHE
     assert backend._metrics["checkpoint_retention_deleted_objects_total"][("completed",)] == 4096
+    assert backend._metrics["checkpoint_retention_request_failures_total"][("metrics_saturated",)] == 1
+
+
+def test_operation_deadline_is_recorded_once_as_timeout_at_http_boundary():
+    module = _service()
+
+    class Gateway:
+        @contextmanager
+        def operation_deadline(self, _check):
+            yield
+
+        def probe_capabilities(self):
+            return {"automatic_apply": False}
+
+    operations = types.SimpleNamespace(
+        status=lambda _operation_id: (_ for _ in ()).throw(
+            __import__("scripts.checkpoints.operations", fromlist=["OperationFailure"]).OperationFailure(
+                "operation_deadline"
+            )
+        )
+    )
+    backend = module.RuntimeBackend(
+        gateway=Gateway(),
+        leases=object(),
+        planner=object(),
+        operations=operations,
+        policy=types.SimpleNamespace(entries={}),
+        destructive_enabled=False,
+    )
+    app = module.RetentionApplication(backend, lease_token="lease", operator_token="operator")
+
+    with pytest.raises(module.ServiceFailure, match="operation_deadline") as failure:
+        app.dispatch(
+            "GET",
+            "/v1/operations/550e8400-e29b-41d4-a716-446655440000",
+            (("Authorization", "Bearer operator"),),
+            b"",
+        )
+    assert failure.value.status == 504
+    assert backend._metrics["checkpoint_retention_request_failures_total"] == {("timeout",): 1}
+
+
+def test_runtime_rejects_invalid_deadline_configuration_and_clock_regression():
+    module = _service()
+    common = {
+        "gateway": types.SimpleNamespace(probe_capabilities=lambda: {"automatic_apply": False}),
+        "leases": object(),
+        "planner": object(),
+        "operations": object(),
+        "policy": types.SimpleNamespace(entries={}),
+        "destructive_enabled": False,
+    }
+    with pytest.raises(module.ServiceFailure, match="runtime_config_invalid"):
+        module.RuntimeBackend(**common, max_operation_seconds=0)
+    invalid_clock = module.RuntimeBackend(**common, monotonic=lambda: True)
+    with pytest.raises(module.ServiceFailure, match="operation_deadline"):
+        invalid_clock.invoke("status", None, "550e8400-e29b-41d4-a716-446655440000")
+
+    ticks = iter((10.0, 9.0))
+
+    class Gateway:
+        @contextmanager
+        def operation_deadline(self, check):
+            check()
+            yield
+            check()
+
+        def probe_capabilities(self):
+            return {"automatic_apply": False}
+
+    backend = module.RuntimeBackend(
+        **{**common, "gateway": Gateway(), "operations": types.SimpleNamespace(status=lambda _: None)},
+        monotonic=lambda: next(ticks),
+    )
+    with pytest.raises(module.ServiceFailure, match="operation_deadline"):
+        backend.invoke("status", None, "550e8400-e29b-41d4-a716-446655440000")
+
+
+def test_prepare_retry_returns_authoritative_progressed_state_without_hybrid_rewrite(monkeypatch):
+    module = _service()
+    completed = {
+        "attempt_sequence": 4,
+        "operation_id": "550e8400-e29b-41d4-a716-446655440000",
+        "state": "completed",
+    }
+    operations = types.SimpleNamespace(
+        prepare=lambda _request: types.SimpleNamespace(
+            body=json.dumps(completed, sort_keys=True, separators=(",", ":")).encode()
+        )
+    )
+    monkeypatch.setattr(
+        module,
+        "decode_plan_artifact",
+        lambda *_args, **_kwargs: types.SimpleNamespace(
+            summary={"prefix": "streaming_test/550e8400-e29b-41d4-a716-446655440000/"}
+        ),
+    )
+    backend = module.RuntimeBackend(
+        gateway=types.SimpleNamespace(probe_capabilities=lambda: {"automatic_apply": False}),
+        leases=object(),
+        planner=object(),
+        operations=operations,
+        policy=types.SimpleNamespace(entries={}, bounds=types.SimpleNamespace(max_manifest_shard_bytes=1_048_576)),
+        destructive_enabled=True,
+    )
+    backend._require_disposable = lambda _prefix: None
+    result = backend.invoke(
+        "prepare",
+        {"actor": "operator", "plan": {}, "plan_sha256": "a" * 64, "review": "review-86"},
+        None,
+    )
+    assert result == completed
 
 
 def test_runtime_wraps_status_in_one_aggregate_gateway_deadline():

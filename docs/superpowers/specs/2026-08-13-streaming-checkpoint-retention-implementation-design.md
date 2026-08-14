@@ -335,9 +335,10 @@ Every shard uses `If-None-Match: *`; `prepared.json` is written last and binds t
 ordered shard list, root digest, policy/plan SHA, prefix digest, actor/review, and
 whole-second preparation time. Prepared body size is bounded by the policy summary
 limit. A duplicate exact prepare recomputes the same operation ID, reuses the first
-authoritative `prepared_at`, and returns the existing immutable status without
-creating another attempt. Every plan/actor/review/policy/prefix/manifest field must
-match; any collision refuses.
+authoritative `prepared_at`, and returns the current authoritative immutable status
+without creating another attempt: the original prepared status while no progress
+exists, otherwise the latest not-ready, refused, partial, or completed status unchanged.
+Every plan/actor/review/policy/prefix/manifest field must match; any collision refuses.
 
 Orphan shards created before a failed prepared write are never authoritative and
 cannot be applied. They remain evidence for a bounded operator reconciliation; #86
@@ -438,7 +439,9 @@ Metrics are:
 
 Operation IDs, prefixes, keys, actor, review, endpoint, ETag, and digests are never
 labels. Metrics are reconstructed from bounded in-memory state and current control
-records; they do not introduce an unbounded local database.
+records; they do not introduce an unbounded local database. If the 4,096-operation
+apply replay cache saturates, one closed `metrics_saturated` request-failure outcome
+makes the conservative loss of later per-operation deltas explicit.
 
 The parent overlay adds a Prometheus scrape only if it can mount a consumer-owned
 supplemental config without editing Atlas. Otherwise the authenticated/internal

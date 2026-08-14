@@ -121,7 +121,6 @@ class OperationManager:
                 raise OperationFailure("control_conflict")
             prior = self._latest_status(request.operation_id, required=False)
             if prior is not None:
-                self._ensure_audit(request.operation_id, prior, prepared)
                 return prior
         else:
             prepared = {**prepared_identity, "prepared_at": _format_utc(self._exact_now())}
@@ -206,7 +205,6 @@ class OperationManager:
         if prior_status is not None:
             try:
                 prior_value = json.loads(prior_status.body)
-                self._ensure_audit(request.operation_id, prior_status, prepared)
                 if prior_value["state"] == "completed":
                     self._read_result_classification(base, prior_value, records)
                     remaining = self._gateway.inventory(request.confirm_prefix)
@@ -216,6 +214,7 @@ class OperationManager:
                     self._ensure_audit(request.operation_id, prior_status, prepared)
                     return prior_status
                 prior_deleted = self._read_result_classification(base, prior_value, records)
+                self._ensure_audit(request.operation_id, prior_status, prepared)
             except (KeyError, TypeError, json.JSONDecodeError, RecordFailure):
                 raise OperationFailure("status_invalid") from None
         remaining_records = tuple(record for record in records if _record_sha256(record) not in prior_deleted)
@@ -226,6 +225,10 @@ class OperationManager:
                 current = self._revalidate(request.confirm_prefix, self._exact_now())
             except (KeyboardInterrupt, SystemExit):
                 raise
+            except (OperationFailure, GatewayFailure) as error:
+                if error.code == "operation_deadline":
+                    raise OperationFailure("operation_deadline") from None
+                raise OperationFailure("revalidation_failed") from None
             except BaseException:
                 status = self._record_status(
                     request.operation_id,
@@ -291,6 +294,10 @@ class OperationManager:
                 )
                 self._ensure_audit(request.operation_id, status, prepared)
                 raise
+            except GatewayFailure as error:
+                if error.code == "operation_deadline":
+                    raise OperationFailure("operation_deadline") from None
+                raise OperationFailure("revalidation_failed") from None
             except BaseException:
                 raise OperationFailure("revalidation_failed") from None
         head_requests = 0
@@ -337,24 +344,33 @@ class OperationManager:
             primary.partial = bool(deleted)
             try:
                 cleanup_started = self._start_deadline()
-                status = self._record_status(
-                    request.operation_id,
-                    prepared["checkpoint_id"],
-                    "partial" if deleted else "refused",
-                    request.plan_sha256,
-                    deleted,
-                    records,
-                    primary.code,
-                    cleanup_started,
-                    head_requests=head_requests,
-                    delete_requests=delete_requests,
-                    postflight_inventory_sha256=postflight_sha256,
-                    deadline_seconds=30,
-                    failed=(current_record,)
-                    if primary.code == "head_mismatch" and current_record is not None
-                    else tuple(record for record in current_batch if record not in deleted),
-                )
-                self._ensure_audit(request.operation_id, status, prepared)
+
+                def persist_failure() -> None:
+                    status = self._record_status(
+                        request.operation_id,
+                        prepared["checkpoint_id"],
+                        "partial" if deleted else "refused",
+                        request.plan_sha256,
+                        deleted,
+                        records,
+                        primary.code,
+                        cleanup_started,
+                        head_requests=head_requests,
+                        delete_requests=delete_requests,
+                        postflight_inventory_sha256=postflight_sha256,
+                        deadline_seconds=30,
+                        failed=(current_record,)
+                        if primary.code == "head_mismatch" and current_record is not None
+                        else tuple(record for record in current_batch if record not in deleted),
+                    )
+                    self._ensure_audit(request.operation_id, status, prepared)
+
+                cleanup_deadline = getattr(self._gateway, "operation_deadline", None)
+                if callable(cleanup_deadline):
+                    with cleanup_deadline(lambda: self.check_deadline(cleanup_started, max_seconds=30)):
+                        persist_failure()
+                else:
+                    persist_failure()
             except (KeyboardInterrupt, SystemExit):
                 raise
             except BaseException:
@@ -410,6 +426,7 @@ class OperationManager:
                 "operation_id": operation_id,
                 "plan_sha256": value["plan_sha256"],
                 "planned_objects": value["planned_objects"],
+                "planned_bytes": value["deleted_bytes"] + value["remaining_bytes"],
                 "policy_sha256": prepared["policy_sha256"],
                 "postflight_inventory_sha256": value["postflight_inventory_sha256"],
                 "prepared_at": prepared["prepared_at"],
@@ -456,7 +473,13 @@ class OperationManager:
             )
         except (KeyboardInterrupt, SystemExit):
             raise
-        except BaseException:
+        except GatewayFailure as error:
+            if error.code == "operation_deadline":
+                raise OperationFailure("operation_deadline") from None
+            raise OperationFailure("status_read_failed") from None
+        except BaseException as error:
+            if getattr(error, "code", None) == "operation_deadline":
+                raise OperationFailure("operation_deadline") from None
             raise OperationFailure("status_read_failed") from None
         statuses: list[tuple[int, dict[str, object], OperationStatus]] = []
         for key in keys:
@@ -491,8 +514,22 @@ class OperationManager:
                     "state",
                 }
                 or not canonical
+                or value.get("schema_version") != 1
+                or not isinstance(value.get("checkpoint_id"), str)
+                or _IDENTIFIER.fullmatch(value["checkpoint_id"]) is None
+                or not isinstance(value.get("plan_sha256"), str)
+                or _SHA256.fullmatch(value["plan_sha256"]) is None
                 or type(deleted_objects) is not int
                 or deleted_objects < 0
+                or type(value.get("deleted_bytes")) is not int
+                or value["deleted_bytes"] < 0
+                or type(value.get("planned_objects")) is not int
+                or value["planned_objects"] < 1
+                or type(value.get("remaining_objects")) is not int
+                or value["remaining_objects"] < 0
+                or deleted_objects + value["remaining_objects"] != value["planned_objects"]
+                or type(value.get("remaining_bytes")) is not int
+                or value["remaining_bytes"] < 0
                 or type(value.get("attempt_sequence")) is not int
                 or value["attempt_sequence"] < 1
                 or _parse_utc(value.get("occurred_at")) is None
@@ -500,6 +537,21 @@ class OperationManager:
                 or value["head_requests"] < 0
                 or type(value.get("delete_requests")) is not int
                 or value["delete_requests"] < 0
+                or not isinstance(value.get("result_shards"), list)
+                or not value["result_shards"]
+                or len(set(value["result_shards"])) != len(value["result_shards"])
+                or any(
+                    not isinstance(digest, str) or _SHA256.fullmatch(digest) is None
+                    for digest in value["result_shards"]
+                )
+                or (state in {"prepared", "completed"} and value.get("primary_category") is not None)
+                or (
+                    state in {"not_ready", "partial", "refused"}
+                    and (
+                        not isinstance(value.get("primary_category"), str)
+                        or _IDENTIFIER.fullmatch(value["primary_category"]) is None
+                    )
+                )
                 or (
                     value.get("postflight_inventory_sha256") is not None
                     and _SHA256.fullmatch(value["postflight_inventory_sha256"] or "") is None
@@ -517,16 +569,10 @@ class OperationManager:
         if tuple(item[0] for item in statuses) != tuple(range(1, len(statuses) + 1)):
             raise OperationFailure("status_ambiguous")
         last_deleted = -1
-        signatures: dict[tuple[str, int], tuple[object, ...]] = {}
         for _sequence, value, _status in statuses:
             if value["deleted_objects"] < last_deleted:
                 raise OperationFailure("status_ambiguous")
             last_deleted = value["deleted_objects"]
-            signature_key = (value["state"], value["deleted_objects"])
-            signature = (value["primary_category"], value["remaining_objects"], value["result_shards"])
-            if signature_key in signatures and signatures[signature_key] != signature:
-                raise OperationFailure("status_ambiguous")
-            signatures[signature_key] = signature
         if any(item[1]["state"] == "completed" for item in statuses[:-1]):
             raise OperationFailure("status_ambiguous")
         return statuses[-1][2]
@@ -628,7 +674,9 @@ class OperationManager:
             if error.code == "operation_deadline":
                 raise OperationFailure("operation_deadline") from None
             raise OperationFailure(code) from None
-        except BaseException:
+        except BaseException as error:
+            if getattr(error, "code", None) == "operation_deadline":
+                raise OperationFailure("operation_deadline") from None
             raise OperationFailure(code) from None
 
     def _existing_prepared(self, key: str, operation_id: str) -> dict[str, object] | None:
@@ -644,7 +692,9 @@ class OperationManager:
             return None
         except (KeyboardInterrupt, SystemExit):
             raise
-        except BaseException:
+        except BaseException as error:
+            if getattr(error, "code", None) == "operation_deadline":
+                raise OperationFailure("operation_deadline") from None
             raise OperationFailure("prepared_read_failed") from None
         return self._decode_prepared(body, operation_id)
 
@@ -695,7 +745,13 @@ class OperationManager:
             )
         except (KeyboardInterrupt, SystemExit):
             raise
-        except BaseException:
+        except GatewayFailure as error:
+            if error.code == "operation_deadline":
+                raise OperationFailure("operation_deadline") from None
+            raise OperationFailure("status_read_failed") from None
+        except BaseException as error:
+            if getattr(error, "code", None) == "operation_deadline":
+                raise OperationFailure("operation_deadline") from None
             raise OperationFailure("status_read_failed") from None
         attempt_sequence = len(existing_keys) + 1
         if attempt_sequence > 1_024:
@@ -826,7 +882,14 @@ class OperationManager:
         if set(observed) != expected:
             raise OperationFailure("status_invalid")
         deleted = {digest for digest, outcome in observed.items() if outcome == "deleted"}
-        if len(deleted) != status.get("deleted_objects"):
+        by_digest = {_record_sha256(record): record for record in records}
+        if (
+            len(deleted) != status.get("deleted_objects")
+            or len(records) != status.get("planned_objects")
+            or sum(by_digest[digest].size_bytes for digest in deleted) != status.get("deleted_bytes")
+            or sum(record.size_bytes for digest, record in by_digest.items() if digest not in deleted)
+            != status.get("remaining_bytes")
+        ):
             raise OperationFailure("status_invalid")
         return deleted
 
@@ -894,12 +957,16 @@ class OperationManager:
                 raise OperationFailure("control_create_failed") from None
             if existing != body:
                 raise OperationFailure("control_conflict")
-        except BaseException:
+        except BaseException as error:
+            if getattr(error, "code", None) == "operation_deadline":
+                raise OperationFailure("operation_deadline") from None
             try:
                 existing, _etag = self._gateway.read_control(key, max_bytes=bound)
             except (KeyboardInterrupt, SystemExit):
                 raise
-            except BaseException:
+            except BaseException as read_error:
+                if getattr(read_error, "code", None) == "operation_deadline":
+                    raise OperationFailure("operation_deadline") from None
                 raise OperationFailure("control_create_failed") from None
             if existing != body:
                 raise OperationFailure("control_conflict")

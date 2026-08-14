@@ -296,7 +296,9 @@ class LeaseManager:
         key = self._lease_key(request.checkpoint_id)
         try:
             body, etag = self._gateway.read_control(key, max_bytes=self._policy.bounds.max_summary_bytes)
-        except GatewayFailure:
+        except GatewayFailure as error:
+            if error.code == "operation_deadline":
+                raise
             raise LeaseFailure("lease_read_failed") from None
         current = self._decode_lease(body)
         self._require_identity(current, request.checkpoint_id, request.prefix)

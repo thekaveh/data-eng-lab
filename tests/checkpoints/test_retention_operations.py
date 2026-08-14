@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -133,7 +134,13 @@ def test_identical_prepare_retry_reuses_first_authoritative_time_and_evidence():
     gateway = FakeGateway()
     artifact = _artifact()
     clock = [NOW]
-    manager = OperationManager(gateway, policy_sha256="a" * 64, now=lambda: clock[0])
+    manager = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: clock[0],
+        quiescence_seconds=0,
+        revalidate=lambda *_args: artifact,
+    )
     request = PrepareRequest(OPERATION_ID, artifact, artifact.sha256, "review-86", "acceptance-engineering")
 
     first = manager.prepare(request)
@@ -145,6 +152,40 @@ def test_identical_prepare_retry_reuses_first_authoritative_time_and_evidence():
     assert gateway.controls == first_controls
     prepared = json.loads(gateway.controls[f"_retention/tombstones/{OPERATION_ID}/prepared.json"][0])
     assert prepared["prepared_at"] == "2026-08-13T12:00:00Z"
+
+    completed = manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    after_completed = manager.prepare(request)
+    assert after_completed.body == completed.body
+    assert after_completed.state == "completed"
+
+
+def test_revalidation_deadline_is_not_persisted_as_revalidation_failure():
+    artifact = _artifact()
+    gateway = FakeGateway()
+    _prepared_manager(gateway, artifact)
+    manager = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda *_args: (_ for _ in ()).throw(OperationFailure("operation_deadline")),
+    )
+
+    with pytest.raises(OperationFailure, match="operation_deadline"):
+        manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    assert manager.status(OPERATION_ID).state == "prepared"
+
+
+def test_status_deadline_preserves_timeout_category():
+    gateway = FakeGateway()
+
+    def deadline_list(_prefix, *, max_keys):
+        raise GatewayFailure("operation_deadline")
+
+    gateway.list_controls = deadline_list
+    manager = OperationManager(gateway, policy_sha256="a" * 64, now=lambda: NOW)
+
+    with pytest.raises(OperationFailure, match="operation_deadline"):
+        manager.status(OPERATION_ID)
 
 
 def test_prepare_and_not_ready_are_queryable_immutable_audited_attempts():
@@ -794,29 +835,32 @@ def test_restart_revalidates_exact_original_manifest_minus_persisted_deleted_set
     assert gateway.data == ()
 
 
-def test_conflicting_same_progress_attempts_fail_closed_instead_of_sorting_one():
+def test_sequential_same_progress_refusals_remain_ordered_and_retryable():
     artifact = _artifact()
     gateway = FakeGateway()
     _prepared_manager(gateway, artifact)
-    manager = OperationManager(
+    mismatch = OperationManager(
         gateway,
         policy_sha256="a" * 64,
         now=lambda: NOW.replace(minute=15),
+        revalidate=lambda *_args: _artifact(decision="refused"),
+    )
+    with pytest.raises(OperationFailure, match="revalidation_mismatch"):
+        mismatch.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+
+    gateway.head_failure = GatewayFailure("head_mismatch")
+    retry = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=16),
         revalidate=lambda *_args: artifact,
     )
-    gateway.delete_failure = OperationFailure("delete_partial")
-    with pytest.raises(OperationFailure, match="delete_partial"):
-        manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
-    attempt_key = next(key for key in gateway.controls if "/results/attempts/" in key)
-    value = json.loads(gateway.controls[attempt_key][0])
-    value["primary_category"] = "postflight_not_empty"
-    value["attempt_sequence"] = 2
-    body = canonical_json_bytes(value)
-    conflicting = attempt_key.rsplit("/", 1)[0] + "/000002-" + __import__("hashlib").sha256(body).hexdigest() + ".json"
-    gateway.controls[conflicting] = (body, "f" * 32)
+    with pytest.raises(OperationFailure, match="head_mismatch"):
+        retry.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
 
-    with pytest.raises(OperationFailure, match="status_ambiguous"):
-        manager.status(OPERATION_ID)
+    latest = json.loads(retry.status(OPERATION_ID).body)
+    assert latest["attempt_sequence"] == 3
+    assert latest["primary_category"] == "head_mismatch"
 
 
 def test_completed_recovery_validates_result_shards_and_exact_absence_before_audit():
@@ -843,6 +887,102 @@ def test_completed_recovery_validates_result_shards_and_exact_absence_before_aud
             now=lambda: NOW.replace(minute=15),
             revalidate=lambda *_args: _artifact_for_records(gateway.data),
         ).apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    assert not any(key.startswith(f"_retention/audits/{OPERATION_ID}/") for key in gateway.controls)
+
+
+@pytest.mark.parametrize(("field", "invalid"), [("schema_version", 999), ("deleted_bytes", 999)])
+def test_malformed_status_is_rejected_before_missing_audit_repair(field, invalid):
+    artifact = _artifact()
+    gateway = FakeGateway()
+    _prepared_manager(gateway, artifact)
+    gateway.head_failure = GatewayFailure("head_mismatch")
+    gateway.create_failure_suffix = f"audits/{OPERATION_ID}/"
+    manager = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=lambda *_args: artifact,
+    )
+    with pytest.raises(OperationFailure, match="head_mismatch"):
+        manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    gateway.create_failure_suffix = None
+    attempt_key = sorted(key for key in gateway.controls if "/results/attempts/" in key)[-1]
+    value = json.loads(gateway.controls.pop(attempt_key)[0])
+    value[field] = invalid
+    body = canonical_json_bytes(value)
+    replacement = (
+        attempt_key.rsplit("/", 1)[0]
+        + "/"
+        + f"{value['attempt_sequence']:06d}-"
+        + __import__("hashlib").sha256(body).hexdigest()
+        + ".json"
+    )
+    gateway.controls[replacement] = (body, "f" * 32)
+    audit_keys = {key for key in gateway.controls if key.startswith(f"_retention/audits/{OPERATION_ID}/")}
+
+    with pytest.raises(OperationFailure, match="status_invalid"):
+        manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    assert {key for key in gateway.controls if key.startswith(f"_retention/audits/{OPERATION_ID}/")} == audit_keys
+
+
+def test_post_delete_deadline_rebinds_bounded_cleanup_to_persist_partial_evidence():
+    artifact = _artifact()
+    clock = [0.0]
+
+    class DeadlineGateway(FakeGateway):
+        def __init__(self):
+            super().__init__()
+            self.check = None
+
+        @contextmanager
+        def operation_deadline(self, check):
+            prior = self.check
+            self.check = check
+            try:
+                check()
+                yield
+                check()
+            finally:
+                self.check = prior
+
+        def _checked(self):
+            if self.check is not None:
+                self.check()
+
+        def list_controls(self, prefix, *, max_keys):
+            self._checked()
+            return super().list_controls(prefix, max_keys=max_keys)
+
+        def read_control(self, key, *, max_bytes):
+            self._checked()
+            return super().read_control(key, max_bytes=max_bytes)
+
+        def create_control(self, key, body):
+            self._checked()
+            return super().create_control(key, body)
+
+        def delete_records(self, records):
+            deleted = super().delete_records(records)
+            clock[0] = 901.0
+            return deleted
+
+    gateway = DeadlineGateway()
+    _prepared_manager(gateway, artifact)
+    manager = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        monotonic=lambda: clock[0],
+        revalidate=lambda *_args: artifact,
+    )
+
+    with pytest.raises(OperationFailure, match="operation_deadline") as failure:
+        manager.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+    assert failure.value.partial is True
+    latest = json.loads(manager.status(OPERATION_ID).body)
+    assert latest["state"] == "partial"
+    assert latest["deleted_objects"] == 2
+    assert any(key.startswith(f"_retention/audits/{OPERATION_ID}/") for key in gateway.controls)
 
 
 def test_completed_audit_binds_prepare_identity_policy_manifest_result_and_absence():
@@ -866,6 +1006,7 @@ def test_completed_audit_binds_prepare_identity_policy_manifest_result_and_absen
     assert audit["review"] == "review-86"
     assert audit["policy_sha256"] == "a" * 64
     assert audit["plan_sha256"] == artifact.sha256
+    assert audit["planned_bytes"] == 3
     assert audit["manifest_shards"] == [shard.sha256 for shard in artifact.shards]
     assert audit["prepared_at"] == "2026-08-13T12:00:00Z"
     assert audit["evaluated_at"] == "2026-08-13T12:00:00Z"

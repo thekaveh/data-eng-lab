@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hmac
 import json
+import math
 import os
 import re
 import threading
@@ -80,6 +81,8 @@ class RuntimeBackend:
         monotonic=None,
         max_operation_seconds: int = 900,
     ) -> None:
+        if type(max_operation_seconds) is not int or not 1 <= max_operation_seconds <= 900:
+            raise ServiceFailure("runtime_config_invalid")
         self._gateway = gateway
         self._leases = leases
         self._planner = planner
@@ -95,6 +98,7 @@ class RuntimeBackend:
         self._metrics_lock = threading.RLock()
         self._apply_metric_totals: dict[str, tuple[int, int]] = {}
         self._apply_metric_transitions: set[tuple[str, str, object]] = set()
+        self._metric_saturated = False
         self._capabilities: Mapping[str, object] | None = None
 
     def health(self) -> dict[str, object]:
@@ -140,7 +144,14 @@ class RuntimeBackend:
             return render_metrics(fallback)
 
     def record_request_failure(self, outcome: str) -> None:
-        if outcome not in {"backend_failure", "capability_failed", "invalid_request", "timeout", "unauthorized"}:
+        if outcome not in {
+            "backend_failure",
+            "capability_failed",
+            "invalid_request",
+            "metrics_saturated",
+            "timeout",
+            "unauthorized",
+        }:
             outcome = "backend_failure"
         self._increment("checkpoint_retention_request_failures_total", outcome)
 
@@ -155,10 +166,21 @@ class RuntimeBackend:
             self._metrics.setdefault(metric, {})[(label,)] = amount
 
     def invoke(self, action: str, payload: dict[str, object] | None, operation_id: str | None):
-        started = self._monotonic()
+        try:
+            started = self._monotonic()
+        except BaseException:
+            raise ServiceFailure("operation_deadline", status=504) from None
+        if isinstance(started, bool) or not isinstance(started, (int, float)) or not math.isfinite(started):
+            raise ServiceFailure("operation_deadline", status=504)
 
         def check_deadline() -> None:
-            if self._monotonic() - started > self._max_operation_seconds:
+            try:
+                elapsed = self._monotonic() - started
+            except BaseException:
+                raise GatewayFailure("operation_deadline") from None
+            if isinstance(elapsed, bool) or not isinstance(elapsed, (int, float)) or not math.isfinite(elapsed):
+                raise GatewayFailure("operation_deadline")
+            if elapsed < 0 or elapsed > self._max_operation_seconds:
                 raise GatewayFailure("operation_deadline")
 
         deadline = getattr(self._gateway, "operation_deadline", None)
@@ -171,12 +193,10 @@ class RuntimeBackend:
             return result
         except GatewayFailure as error:
             if error.code == "operation_deadline":
-                self.record_request_failure("timeout")
                 raise ServiceFailure("operation_deadline", status=504) from None
             raise
         except OperationFailure as error:
             if error.code == "operation_deadline":
-                self.record_request_failure("timeout")
                 raise ServiceFailure("operation_deadline", status=504) from None
             raise
 
@@ -246,8 +266,6 @@ class RuntimeBackend:
                         return result
                     self._increment("checkpoint_retention_partial_total", "partial")
                     raise ServiceFailure(error.code, status=409, state="partial") from None
-                outcome = "timeout" if error.code == "operation_deadline" else "backend_failure"
-                self.record_request_failure(outcome)
                 raise ServiceFailure(
                     error.code,
                     status=504 if error.code == "operation_deadline" else 409,
@@ -312,7 +330,6 @@ class RuntimeBackend:
                     PrepareRequest(identifier, artifact, payload["plan_sha256"], payload["review"], payload["actor"])
                 )
                 result = json.loads(status.body)
-                result["state"] = "prepared"
                 self._increment("checkpoint_retention_prepared_total", "completed")
                 return result
             except (KeyboardInterrupt, SystemExit):
@@ -390,6 +407,9 @@ class RuntimeBackend:
                 operation_id not in self._apply_metric_totals
                 and len(self._apply_metric_totals) >= _METRIC_OPERATION_CACHE
             ):
+                if not self._metric_saturated:
+                    self._increment("checkpoint_retention_request_failures_total", "metrics_saturated")
+                    self._metric_saturated = True
                 return
             previous_objects, previous_bytes = self._apply_metric_totals.get(operation_id, (0, 0))
             if deleted_objects < previous_objects or deleted_bytes < previous_bytes:
@@ -624,7 +644,7 @@ class RetentionApplication:
                 "unauthorized"
                 if error.code == "unauthorized"
                 else "timeout"
-                if error.code == "request_timeout"
+                if error.code in {"operation_deadline", "request_timeout"}
                 else "capability_failed"
                 if error.code == "capability_failed"
                 else "invalid_request"

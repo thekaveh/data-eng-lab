@@ -112,8 +112,9 @@ The changed-inventory operation was:
 
 Before those applies, the same fixture identity was refused while its lease was
 active, terminalized with exact generation evidence, and produced the same inventory,
-policy, prefix, and decision binding on repeated dry run under server-owned
-whole-second evaluation clocks. The unrelated sentinel survived. The production
+policy, prefix, and decision binding on repeated dry run under the then-supported
+caller-supplied whole-second evaluation clock. The final-runtime evidence above, not
+this historical run, proves repetition under the corrected server-owned clock. The unrelated sentinel survived. The production
 snapshot remained exactly
 `19bd48d158628d31d62193a25a0be88714e293c9e1fa78ae754659c5b4cee217`.
 The Airflow API returned `checkpoint_retention` paused; its source contract has

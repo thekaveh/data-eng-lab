@@ -126,6 +126,18 @@ def test_acquire_creates_exact_canonical_active_lease_and_readback_etag():
     assert gateway.calls[1][0:2] == ("create", LEASE_KEY)
 
 
+def test_heartbeat_preserves_operation_deadline_category():
+    gateway = FakeGateway()
+    gateway.controls[LEASE_KEY] = (_active_body(), "a" * 32)
+
+    def deadline_read(_key, *, max_bytes):
+        raise GatewayFailure("operation_deadline")
+
+    gateway.read_control = deadline_read
+    with pytest.raises(GatewayFailure, match="operation_deadline"):
+        _manager(gateway).heartbeat(HeartbeatRequest(CHECKPOINT_ID, PREFIX, EPOCH))
+
+
 @pytest.mark.parametrize(
     ("heartbeat", "expires", "code"),
     [

@@ -244,7 +244,8 @@ git commit -m "feat(checkpoints): generate immutable dry-run plans (#86)"
 Cover plan/body/shard SHA mismatch, refused plan, policy drift, actor/review bounds,
 immutable shard-first/prepared-last ordering, conditional conflict, deterministic
 UUIDv5 identity, reuse of the first authoritative `prepared_at` and status on an
-exact retry, orphan shards remaining non-authoritative, and prepared body bounds.
+exact retry, unchanged return of the latest authoritative status after progress,
+orphan shards remaining non-authoritative, and prepared body bounds.
 
 - [ ] **Step 2: Verify prepare RED**
 

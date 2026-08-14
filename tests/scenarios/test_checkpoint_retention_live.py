@@ -97,7 +97,7 @@ METRIC_CONTRACTS = {
     "checkpoint_retention_partial_total": ("outcome", DECISIONS),
     "checkpoint_retention_request_failures_total": (
         "outcome",
-        {"backend_failure", "invalid_request", "unauthorized", "timeout", "capability_failed"},
+        {"backend_failure", "capability_failed", "invalid_request", "metrics_saturated", "timeout", "unauthorized"},
     ),
 }
 

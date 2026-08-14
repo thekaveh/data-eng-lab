@@ -207,12 +207,12 @@ class S3Gateway:
             raise GatewayFailure("control_read_failed") from None
         except BaseException:
             raise GatewayFailure("control_read_failed") from None
-        self._check_operation_deadline()
         if not isinstance(response, Mapping):
             raise GatewayFailure("control_response_invalid")
         stream = response.get("Body")
         primary: BaseException | None = None
         try:
+            self._check_operation_deadline()
             if stream is None or not hasattr(stream, "read"):
                 raise GatewayFailure("control_response_invalid")
             length = response.get("ContentLength")
@@ -225,7 +225,10 @@ class S3Gateway:
         except (KeyboardInterrupt, SystemExit, GatewayFailure) as error:
             primary = error
             raise
-        except BaseException:
+        except BaseException as error:
+            if getattr(error, "code", None) == "operation_deadline":
+                primary = error
+                raise
             primary = GatewayFailure("control_read_failed")
             raise primary from None
         finally:

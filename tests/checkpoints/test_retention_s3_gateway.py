@@ -471,6 +471,26 @@ def test_successful_delete_response_is_not_erased_by_post_call_deadline():
         gateway.delete_records((record,))
 
 
+def test_post_get_deadline_still_closes_response_body_exactly_once():
+    from scripts.checkpoints.operations import OperationFailure
+
+    client = FakeS3()
+    client.objects[CONTROL] = (b"{}", "a" * 32, NOW)
+    gateway = S3Gateway(client, POLICY, monotonic=lambda: 0.0)
+    checks = 0
+
+    def expire_after_get():
+        nonlocal checks
+        checks += 1
+        if checks == 3:
+            raise OperationFailure("operation_deadline")
+
+    with pytest.raises(OperationFailure, match="operation_deadline"):
+        with gateway.operation_deadline(expire_after_get):
+            gateway.read_control(CONTROL, max_bytes=65_536)
+    assert client.bodies[-1].close_count == 1
+
+
 def test_dependency_and_cleanup_failures_are_bounded_and_never_chain_raw_details():
     class BrokenS3(FakeS3):
         def list_objects_v2(self, **_request):
