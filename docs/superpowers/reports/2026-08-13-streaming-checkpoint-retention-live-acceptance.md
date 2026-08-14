@@ -160,7 +160,7 @@ semantics. The exact final validation set was:
 
 | Gate | Result |
 |---|---|
-| Full offline Python suite | 3,294 passed, 43 expected live skips, 0 failures/errors in 56.73 s |
+| Full offline Python suite | 3,294 passed, 43 expected live skips, 0 failures/errors in 53.33 s |
 | Checkpoint-focused suite | 312 passed, 2 expected skips |
 | Final split-token live replay | 1 passed, 0 skipped/failures/errors in 160.518 s |
 | Pinned-MinIO operation/restart integration | 2 passed in 2.43 s |
