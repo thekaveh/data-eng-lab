@@ -189,16 +189,16 @@ validation set was:
 
 | Gate | Result |
 |---|---|
-| Full offline Python suite | 3,325 passed, 43 expected live skips, 0 failures/errors in 52.02 s |
+| Full offline Python suite | 3,304 passed, 2 expected opt-in skips, 72 infra/network deselections, 0 failures/errors in 51.87 s |
 | Checkpoint-focused suite | 353 passed, 2 expected skips in 1.34 s |
 | Final split-token/exact-image layered live replay | 1 passed, 0 skipped/failures/errors in 123.74 s |
 | Pinned-MinIO operation/restart integration | 2 passed in 2.32 s |
-| GH Archive Maven suite, Java 17 | 19 passed in 4:10 |
-| MovieLens Maven suite, Java 17 | 12 passed in 1:49 |
-| NYC quality Maven suite, Java 17 | 37 passed in 2:43 |
-| NYC ETL Maven suite, Java 17 | 4 passed in 1:00 |
-| NYC medallion Maven suite, Java 17 | 2 passed in 56.090 s |
-| TPC-H Maven suite, Java 17 | 9 passed in 1:32 |
+| GH Archive Maven suite, Java 17 | 19 passed in each requested lifecycle pass; package succeeded in 6:35 |
+| MovieLens Maven suite, Java 17 | 12 passed in each requested lifecycle pass; package succeeded in 3:47 |
+| NYC quality Maven suite, Java 17 | 37 passed in each requested lifecycle pass; package succeeded in 4:57 |
+| NYC ETL Maven suite, Java 17 | 4 passed in each requested lifecycle pass; package succeeded in 1:04 |
+| NYC medallion Maven suite, Java 17 | 2 passed in each requested lifecycle pass; package succeeded in 58.175 s |
+| TPC-H Maven suite, Java 17 | 9 passed in each requested lifecycle pass; package succeeded in 2:07 |
 | `make verify` | 0 findings, 0 errors |
 | `make docs-check` and `make docs-wiki` | strict site build and deterministic wiki check passed |
 | Ruff check; scoped changed-file format check | passed |
