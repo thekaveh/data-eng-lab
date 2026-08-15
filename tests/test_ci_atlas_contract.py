@@ -147,6 +147,7 @@ def test_ci_contract_jobs_initialize_atlas_and_scope_validation_only_credentials
     )
     assert validation["env"] == expected_environment
     assert all("env" not in step for step in static_job["steps"])
+    assert ("cp", "atlas.env.user.example", "atlas.env.user") in _executable_commands(static_job)
 
 
 def test_static_ci_does_not_run_obsolete_host_tpch_network_install():

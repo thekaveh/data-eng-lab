@@ -44,6 +44,8 @@ jobs:
           enable-cache: true
       - name: Set up Python
         run: uv python install 3.11
+      - name: Prepare consumer validation environment
+        run: cp atlas.env.user.example atlas.env.user
       - name: Shellcheck
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
