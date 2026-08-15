@@ -18,3 +18,8 @@
 !lakehouse/
 !lakehouse/__init__.py
 !lakehouse/atlas_endpoints.py
+!scripts/
+!scripts/checkpoints/
+!scripts/checkpoints/**
+!checkpoints/
+!checkpoints/retention-policy.yaml

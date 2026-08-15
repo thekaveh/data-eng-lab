@@ -24,6 +24,7 @@ brand:
   repo_url: "https://github.com/thekaveh/data-eng-lab"
 
 env:
+  file: ./atlas.env.user              # ignored maintenance credentials; copy the tracked example
   values:
     BASE_PORT: auto                 # durable free 100-port block, persisted; avoids 63000
                                     # collisions with sibling Atlas stacks (atlas#751)

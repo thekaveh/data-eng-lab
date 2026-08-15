@@ -67,22 +67,11 @@ OUTPUT_TABLES = {
     "sessionization-gh_archive-spark-iceberg": ("lakehouse.silver.gh_sessions",),
 }
 
-CHECKPOINTS = {
-    "streaming_ingest-events-spark-iceberg": "events",
-    "streaming_ingest-gh_archive-spark-iceberg": "gh_events_file",
-    "streaming_windows-events-spark-iceberg": "event_windows",
-    "cdc_streaming-online_retail-spark-iceberg": "online_retail_cdc",
-}
-
-# This legacy reset exists only to give paired notebooks equivalent state on an
-# exclusive disposable stack. The GH Archive value is deliberately identified as
-# an unsafe family-root reset: issue #86 must replace it with the approved exact-
-# generation, lease/tombstone-controlled implementation before any schedule exists.
-CHECKPOINT_RESET_POLICY = {
-    "mode": "exclusive_disposable_stack_only",
-    "unsafe_roots": ("gh_events_file",),
-    "networked_replacement_issue": 86,
-    "schedule": "disabled",
+STREAMING_SCENARIOS = {
+    "streaming_ingest-events-spark-iceberg",
+    "streaming_ingest-gh_archive-spark-iceberg",
+    "streaming_windows-events-spark-iceberg",
+    "cdc_streaming-online_retail-spark-iceberg",
 }
 
 DISCOVERED = {
@@ -94,7 +83,7 @@ assert len(SCENARIOS) == 19
 assert len(set(SCENARIOS)) == 19
 assert set(SCENARIOS) == DISCOVERED
 assert set(OUTPUT_TABLES) == set(SCENARIOS)
-assert set(CHECKPOINTS) < set(SCENARIOS)
+assert STREAMING_SCENARIOS < set(SCENARIOS)
 
 
 def _live_exec():
@@ -107,11 +96,10 @@ def _live_exec():
 
 
 def _reset_scenario(live_exec, scenario: str) -> None:
-    """Remove only the output state owned by one scenario execution."""
-    for table in OUTPUT_TABLES[scenario]:
-        live_exec.drop_table(table)
-    if checkpoint := CHECKPOINTS.get(scenario):
-        live_exec.clear_checkpoint(checkpoint)
+    """Reset batch outputs; preserve all streaming tables and checkpoint state."""
+    if scenario not in STREAMING_SCENARIOS:
+        for table in OUTPUT_TABLES[scenario]:
+            live_exec.drop_table(table)
 
 
 @pytest.mark.skipif(
@@ -123,7 +111,7 @@ def test_paired_notebooks_reexecute_to_completion(scenario: str):
     """Run both peers from equivalent scenario-local output state."""
     live_exec = _live_exec()
     root = ROOT / "scenarios" / scenario
-    bounded_stream = scenario in CHECKPOINTS
+    bounded_stream = scenario in STREAMING_SCENARIOS
     _reset_scenario(live_exec, scenario)
     live_exec.run_zeppelin_note(str(root / "zeppelin/notebook.zpln"), bounded_stream=bounded_stream)
     _reset_scenario(live_exec, scenario)

@@ -11,6 +11,7 @@ import yaml
 
 from scripts.scenario_execution import (
     CLASSIFICATIONS,
+    SUPPORT_DAGS,
     ExecutionModeError,
     check_projection,
     load_execution_modes,
@@ -95,9 +96,7 @@ def test_matrix_covers_every_paired_scenario_exactly_once():
     discovered = {
         path.name
         for path in (ROOT / "scenarios").iterdir()
-        if path.is_dir()
-        and (path / "jupyter/notebook.ipynb").is_file()
-        and (path / "zeppelin/notebook.zpln").is_file()
+        if path.is_dir() and (path / "jupyter/notebook.ipynb").is_file() and (path / "zeppelin/notebook.zpln").is_file()
     }
     assert len(modes) == 19
     assert len({mode.scenario_id for mode in modes}) == 19
@@ -106,10 +105,7 @@ def test_matrix_covers_every_paired_scenario_exactly_once():
 
 def test_reviewed_classifications_children_and_entrypoints_are_frozen():
     modes = load_execution_modes(MATRIX, ROOT)
-    actual = {
-        mode.scenario_id: (mode.classification, mode.child_issue, mode.execution_entrypoint)
-        for mode in modes
-    }
+    actual = {mode.scenario_id: (mode.classification, mode.child_issue, mode.execution_entrypoint) for mode in modes}
     assert actual == EXPECTED
     counts = {classification: 0 for classification in CLASSIFICATIONS}
     for mode in modes:
@@ -303,6 +299,7 @@ def test_no_scenario_local_dag_or_runtime_empty_operator_remains():
     assert all("EmptyOperator" not in path.read_text(encoding="utf-8") for path in production_dags)
     consumer_dags = sorted((ROOT / "airflow-dags").rglob("dag.py"))
     assert [path.relative_to(ROOT).as_posix() for path in consumer_dags] == [
+        "airflow-dags/checkpoint_retention/dag.py",
         "airflow-dags/trino_bi/dag.py",
     ]
 
@@ -319,11 +316,9 @@ def test_production_dag_mount_and_matrix_entrypoints_agree():
     assert "../scenarios:/opt/airflow/dags" not in overlay
     assert overlay.count("../spark-apps:/opt/airflow/dags/data_eng_lab_spark_apps:ro") == 2
     modes = load_execution_modes(MATRIX, ROOT)
-    assert {
-        mode.execution_entrypoint
-        for mode in modes
-        if mode.execution_entrypoint is not None
-    } == {
+    assert {mode.execution_entrypoint for mode in modes if mode.execution_entrypoint is not None} | set(
+        SUPPORT_DAGS
+    ) == {
         path.relative_to(ROOT).as_posix()
         for parent in (ROOT / "spark-apps", ROOT / "airflow-dags")
         for path in parent.rglob("dag.py")
@@ -372,10 +367,7 @@ def test_current_public_docs_never_publish_no_op_dags_or_false_triggers():
     assert not re.search(r"atlas\s*(?:issue\s*)?#?\s*(?:268|269)", text, re.IGNORECASE)
     assert "airflow dags trigger batch_ingest_nyc_taxi" not in text
     assert "airflow dags trigger medallion_nyc_taxi" not in text
-    obsolete = {
-        match.group(1)
-        for match in re.finditer(r"airflow dags trigger ([a-z0-9_]+)", text)
-    }
+    obsolete = {match.group(1) for match in re.finditer(r"airflow dags trigger ([a-z0-9_]+)", text)}
     assert obsolete <= {
         "gh_archive_flatten_sessionization",
         "movielens_feature_pipeline",
@@ -466,9 +458,7 @@ def _notebook_executable_text(scenario_id: str) -> tuple[str, str]:
     root = ROOT / "scenarios" / scenario_id
     jupyter = json.loads((root / "jupyter/notebook.ipynb").read_text(encoding="utf-8"))
     jupyter_code = "\n".join(
-        "".join(cell.get("source", []))
-        if isinstance(cell.get("source", []), list)
-        else cell.get("source", "")
+        "".join(cell.get("source", [])) if isinstance(cell.get("source", []), list) else cell.get("source", "")
         for cell in jupyter["cells"]
         if cell.get("cell_type") == "code"
     )
@@ -485,10 +475,10 @@ def test_data_quality_docs_match_both_executable_notebooks_exactly():
     jupyter, zeppelin = _notebook_executable_text("data_quality-nyc_taxi-spark-iceberg")
     exact_contract = {
         'spark.table("lakehouse.bronze.nyc_taxi_trips")',
-        'fare_amount > 0 AND passenger_count BETWEEN 1 AND 6',
-        'lakehouse.silver.nyc_taxi_clean',
-        'lakehouse.silver.nyc_taxi_quarantine',
-        'createOrReplace()',
+        "fare_amount > 0 AND passenger_count BETWEEN 1 AND 6",
+        "lakehouse.silver.nyc_taxi_clean",
+        "lakehouse.silver.nyc_taxi_quarantine",
+        "createOrReplace()",
     }
     assert all(value in jupyter and value in zeppelin for value in exact_contract)
     forbidden = (
@@ -503,7 +493,7 @@ def test_data_quality_docs_match_both_executable_notebooks_exactly():
         ROOT / "docs/scenarios/data_quality-nyc_taxi-spark-iceberg.md",
     ):
         text = path.read_text(encoding="utf-8")
-        assert all(value in text for value in exact_contract - {'createOrReplace()'})
+        assert all(value in text for value in exact_contract - {"createOrReplace()"})
         assert "createOrReplace" in text
         assert all(value not in text.casefold() for value in forbidden), path
         assert "without production provenance" in text

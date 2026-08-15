@@ -26,6 +26,7 @@ jobs:
           MINIO_ROOT_PASSWORD: ci-placeholder-password
         run: |
           cp infra/.env.example infra/.env
+          cp atlas.env.user.example atlas.env.user
           cd infra
           ./start.sh env backfill
           ./start.sh --consumer ../atlas.consumer.yml compose validate
@@ -43,6 +44,8 @@ jobs:
           enable-cache: true
       - name: Set up Python
         run: uv python install 3.11
+      - name: Prepare consumer validation environment
+        run: cp atlas.env.user.example atlas.env.user
       - name: Shellcheck
         run: |
           sudo apt-get update && sudo apt-get install -y shellcheck
