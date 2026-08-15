@@ -529,4 +529,9 @@ def test_dockerignore_is_deny_by_default_and_allows_only_build_inputs():
         "!lakehouse/",
         "!lakehouse/__init__.py",
         "!lakehouse/atlas_endpoints.py",
+        "!scripts/",
+        "!scripts/checkpoints/",
+        "!scripts/checkpoints/**",
+        "!checkpoints/",
+        "!checkpoints/retention-policy.yaml",
     }

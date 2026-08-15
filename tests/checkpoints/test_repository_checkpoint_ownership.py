@@ -132,32 +132,27 @@ def test_go_live_scratch_path_maps_to_disposable_acceptance_owner():
     entry = POLICY.entries["go-live-streaming-test-v1"]
     go_live = (ROOT / "docs/go-live.md").read_text(encoding="utf-8")
 
-    assert entry.prefix == "streaming_test/"
+    assert entry.prefix == "streaming_test/{run_uuid}/"
     assert entry.durability == "disposable_acceptance"
     assert entry.sink == "s3a://lakehouse/bronze/streaming_test"
     assert "s3a://checkpoints/streaming_test" in go_live
     assert entry.sink in go_live
 
 
-def test_exhaustive_gate_declares_unsafe_root_reset_and_disabled_replacement():
+def test_exhaustive_gate_preserves_all_streaming_state_without_root_reset():
     harness = ROOT / "tests/scenarios/test_notebook_reproducibility_live.py"
-    checkpoints = _literal_assignment(harness, "CHECKPOINTS")
-    reset_policy = _literal_assignment(harness, "CHECKPOINT_RESET_POLICY")
+    streaming = _literal_assignment(harness, "STREAMING_SCENARIOS")
 
-    assert reset_policy == {
-        "mode": "exclusive_disposable_stack_only",
-        "unsafe_roots": ("gh_events_file",),
-        "networked_replacement_issue": 86,
-        "schedule": "disabled",
+    assert streaming == {
+        "streaming_ingest-events-spark-iceberg",
+        "streaming_ingest-gh_archive-spark-iceberg",
+        "streaming_windows-events-spark-iceberg",
+        "cdc_streaming-online_retail-spark-iceberg",
     }
-    assert checkpoints == {
-        "streaming_ingest-events-spark-iceberg": "events",
-        "streaming_ingest-gh_archive-spark-iceberg": "gh_events_file",
-        "streaming_windows-events-spark-iceberg": "event_windows",
-        "cdc_streaming-online_retail-spark-iceberg": "online_retail_cdc",
-    }
-    for prefix in set(checkpoints.values()) - set(reset_policy["unsafe_roots"]):
-        POLICY.match_prefix(f"{prefix}/")
+    text = harness.read_text(encoding="utf-8")
+    assert "clear_checkpoint" not in text
+    assert "CHECKPOINT_RESET_POLICY" not in text
+    assert "if scenario not in STREAMING_SCENARIOS" in text
 
 
 def test_unknown_stale_upstream_and_control_prefixes_remain_unowned():

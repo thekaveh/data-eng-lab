@@ -2,7 +2,7 @@
 <html lang="en">
 <head><meta charset="utf-8"><title>data-eng-lab — overview</title></head>
 <body>
-  <!-- Verified against atlas.consumer.yml, compose/data-eng-lab.yml, scenarios/execution-modes.yaml, and the five production Spark-app DAGs on 2026-08-12. -->
+  <!-- Verified against atlas.consumer.yml, compose/data-eng-lab.yml, checkpoints/retention-policy.yaml, scenarios/execution-modes.yaml, and current DAG inventory on 2026-08-13. -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" font-family="'JetBrains Mono', 'Courier New', monospace" role="img" aria-labelledby="diagram-title diagram-description">
   <title id="diagram-title">data-eng-lab overview architecture</title>
   <desc id="diagram-description">End-to-end view of source systems, Atlas infrastructure, processing, storage, and analytics in data-eng-lab.</desc>
@@ -77,6 +77,13 @@
   <!-- Trino → Iceberg REST (reads) -->
   <path d="M 475 340 Q 495 280 513 240" fill="none" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#ah-violet)"/>
   <text x="480" y="290" fill="#94a3b8" font-size="8">SQL reads</text>
+
+  <!-- Airflow dry-run planning → checkpoint retention -->
+  <path d="M 235 345 Q 385 430 513 438" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrowhead)"/>
+  <text x="390" y="414" fill="#fb7185" font-size="8" text-anchor="middle">manual dry-run only</text>
+
+  <!-- Checkpoint retention → exact checkpoint leaf -->
+  <path d="M 715 438 Q 738 420 753 385" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrowhead)"/>
 
   <!-- Spark → bronze (writes) -->
   <path d="M 375 270 Q 365 400 350 518" fill="none" stroke="#34d399" stroke-width="1.5" marker-end="url(#ah-emerald)"/>
@@ -154,6 +161,14 @@
   <text x="615" y="358" fill="#94a3b8" font-size="9" text-anchor="middle">catalog metadata</text>
   <text x="615" y="374" fill="#a78bfa" font-size="8" text-anchor="middle">jdbc:postgresql:5432</text>
 
+  <!-- Checkpoint retention security boundary -->
+  <rect x="515" y="400" width="200" height="80" rx="6" fill="#0f172a"/>
+  <rect x="515" y="400" width="200" height="80" rx="6" fill="rgba(136,19,55,0.4)" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="4,4"/>
+  <text x="615" y="424" fill="white" font-size="11" font-weight="600" text-anchor="middle">Checkpoint Retention</text>
+  <text x="615" y="442" fill="#94a3b8" font-size="8" text-anchor="middle">leases · immutable plans · audits</text>
+  <text x="615" y="458" fill="#fb7185" font-size="8" text-anchor="middle">manual exact-leaf apply</text>
+  <text x="615" y="472" fill="#94a3b8" font-size="7" text-anchor="middle">single replica · scoped MinIO IAM</text>
+
   <!-- Storage MinIO (amber, cloud) -->
   <rect x="755" y="120" width="170" height="350" rx="6" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1.5"/>
   <text x="840" y="145" fill="white" font-size="12" font-weight="600" text-anchor="middle">MinIO</text>
@@ -176,6 +191,7 @@
   <line x1="770" y1="340" x2="910" y2="340" stroke="#fbbf24" stroke-width="0.5" opacity="0.5"/>
   <text x="840" y="365" fill="white" font-size="10" font-weight="600" text-anchor="middle">checkpoints/</text>
   <text x="840" y="380" fill="#94a3b8" font-size="8" text-anchor="middle">streaming state</text>
+  <text x="840" y="396" fill="#fb7185" font-size="7" text-anchor="middle">_retention/ controls</text>
 
   <text x="840" y="455" fill="#fbbf24" font-size="8" text-anchor="middle">s3a:// scheme</text>
 

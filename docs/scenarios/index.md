@@ -90,7 +90,7 @@ Each scenario follows a dual-notebook pattern across Zeppelin and JupyterHub. Th
 
 The three broker-backed scenarios require Redpanda and their Kafka topics (created through `REDPANDA_DEMO_TOPICS` or a scenario producer). The GH Archive streaming-ingest scenario instead requests one resolver-verified immutable file set. All four store checkpoint state in MinIO's `checkpoints` bucket, so a rerun resumes from the last processed offset or file unless its checkpoint is intentionally reset.
 
-The [checkpoint retention policy](../checkpoint-retention.md) owns those paths and keeps active or uncertain state fail-closed. Issue #86 must supply leases, scoped credentials, tombstones, and a destructive disposable-fixture live gate; scheduling remains disabled until that implementation is reviewed.
+The [checkpoint retention runbook](../checkpoint-retention.md) owns those paths and keeps active or uncertain state fail-closed. Issue #86 supplies writer leases, scoped credentials, immutable tombstones/audits, manual-only exact-leaf apply, and disposable live evidence. Its separate support DAG is paused, dry-run-only, and has `schedule=None`; automatic and scheduled destructive apply remain disabled pending stronger MinIO capabilities.
 
 ## 3. See Also
 

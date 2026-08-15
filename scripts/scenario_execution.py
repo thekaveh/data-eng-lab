@@ -19,6 +19,7 @@ CLASSIFICATIONS = (
     "intentionally unscheduled long-running streaming",
     "deprecated or superseded",
 )
+SUPPORT_DAGS = ("airflow-dags/checkpoint_retention/dag.py",)
 
 _TOP_LEVEL_FIELDS = {"version", "scenarios"}
 _ROW_FIELDS = {
@@ -131,9 +132,7 @@ def parse_execution_modes(text: str) -> tuple[ExecutionMode, ...]:
             raise ExecutionModeError(f"{prefix} execution_entrypoint must be null or a non-empty string")
         child_issue = row["child_issue"]
         if child_issue is not None and (
-            isinstance(child_issue, bool)
-            or not isinstance(child_issue, int)
-            or child_issue < 1
+            isinstance(child_issue, bool) or not isinstance(child_issue, int) or child_issue < 1
         ):
             raise ExecutionModeError(f"{prefix} child_issue must be null or a positive integer")
         dependencies = _string_tuple(row["dependencies"], prefix, "dependencies")
@@ -182,9 +181,7 @@ def validate_execution_modes(modes: tuple[ExecutionMode, ...], root: Path) -> No
     discovered = {
         path.name
         for path in scenario_root.iterdir()
-        if path.is_dir()
-        and (path / "jupyter/notebook.ipynb").is_file()
-        and (path / "zeppelin/notebook.zpln").is_file()
+        if path.is_dir() and (path / "jupyter/notebook.ipynb").is_file() and (path / "zeppelin/notebook.zpln").is_file()
     }
     declared = {mode.scenario_id for mode in modes}
     if declared != discovered:
@@ -229,10 +226,12 @@ def validate_execution_modes(modes: tuple[ExecutionMode, ...], root: Path) -> No
         for parent in (root / "spark-apps", root / "airflow-dags")
         for path in parent.rglob("dag.py")
     }
-    if declared_entrypoints != actual_entrypoints:
+    support_entrypoints = {path for path in SUPPORT_DAGS if (root / path).is_file()}
+    if declared_entrypoints | support_entrypoints != actual_entrypoints:
         raise ExecutionModeError(
             "production DAG inventory mismatch: "
-            f"declared={sorted(declared_entrypoints)}, actual={sorted(actual_entrypoints)}"
+            f"declared={sorted(declared_entrypoints)}, support={sorted(support_entrypoints)}, "
+            f"actual={sorted(actual_entrypoints)}"
         )
     scenario_dags = sorted(path.relative_to(root).as_posix() for path in scenario_root.rglob("dag.py"))
     if scenario_dags:
@@ -250,8 +249,9 @@ def render_markdown(modes: tuple[ExecutionMode, ...]) -> str:
         "",
         "`nyc_taxi_etl`, `nyc_taxi_medallion`, `nyc_taxi_data_quality`, `tpch_star_schema`, "
         "`movielens_feature_pipeline`, `gh_archive_flatten_sessionization`, `tpch_bi_query`, "
-        "and `nyc_taxi_trino_daily` are eight "
-        "production DAGs today. An "
+        "and `nyc_taxi_trino_daily` are eight production DAGs today. The separate "
+        "`checkpoint_retention` support DAG "
+        "is paused, manual, and dry-run-only with `schedule=None`. An "
         "approved child issue is a delivery boundary, not a runnable DAG. Notebook-only "
         "and continuous-stream scenarios run from their paired Zeppelin or Jupyter notebooks.",
         "",

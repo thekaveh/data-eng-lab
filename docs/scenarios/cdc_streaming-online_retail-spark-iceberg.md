@@ -25,7 +25,7 @@ Checkpoint: `s3a://checkpoints/online_retail_cdc`
 
 ### Checkpoint policy (#85)
 
-Checkpoint ID `streaming-online-retail-cdc-v1` is owned by **Streaming Data Engineering** and classified as a **durable stream**. While active or uncertain it is never age-deleted. Eligibility requires reviewed retirement, a stopped or retired terminal lease, approved recovery, and a 30-day quarantine. CDC recovery is not assumed safe: source retention, event ordering, and sink corrections must be reviewed. Automated deletion remains disabled until issue #86 implements the lease, tombstone, credential, and live-validation boundary.
+Checkpoint ID `streaming-online-retail-cdc-v1` is owned by **Streaming Data Engineering** and classified as a **durable stream**. While active or uncertain it is never age-deleted. Eligibility requires reviewed retirement, a stopped or retired terminal lease, approved recovery, and a 30-day quarantine. CDC recovery is not assumed safe: source retention, event ordering, and sink corrections must be reviewed. Manual exact-leaf retention is available through issue #86's reviewed plan/prepare/apply protocol. Automated and scheduled deletion remain disabled pending stronger MinIO cross-process CAS and conditional delete proof.
 
 ### 2.2 Output Tables
 

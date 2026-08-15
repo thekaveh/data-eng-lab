@@ -14,6 +14,8 @@ ROOT = Path(__file__).resolve().parents[2]
 POLICY_PATH = ROOT / "checkpoints" / "retention-policy.yaml"
 NOW = datetime(2026, 8, 13, 12, 0, 0, tzinfo=timezone.utc)
 GENERATION_PREFIX = "gh_events_file/tiny/" + "a" * 32 + "/" + "b" * 64 + "/"
+RUN_UUID = "550e8400-e29b-41d4-a716-446655440000"
+SCRATCH_PREFIX = f"streaming_test/{RUN_UUID}/"
 
 
 @pytest.fixture
@@ -296,10 +298,10 @@ def test_generation_identity_mismatch_and_root_fail_closed(policy):
 
 def test_disposable_scratch_requires_successful_exclusive_stopped_run(policy):
     eligible = _facts(
-        prefix="streaming_test/",
+        prefix=SCRATCH_PREFIX,
         lease=_lease(
             checkpoint_id="go-live-streaming-test-v1",
-            prefix="streaming_test/",
+            prefix=SCRATCH_PREFIX,
             state="stopped",
             age=timedelta(days=1),
         ),
@@ -307,6 +309,7 @@ def test_disposable_scratch_requires_successful_exclusive_stopped_run(policy):
             state="stopped",
             age=timedelta(days=1),
             retirement_review=None,
+            generation={"run_uuid": RUN_UUID},
             exclusive_run=True,
             successful=True,
         ),
@@ -326,6 +329,18 @@ def test_disposable_scratch_requires_successful_exclusive_stopped_run(policy):
             policy, replace(eligible, terminal=replace(eligible.terminal, successful=False))
         ).refusal_codes
     )
+    assert (
+        "generation_identity_mismatch"
+        in api.evaluate_retention(
+            policy,
+            replace(
+                eligible,
+                terminal=replace(eligible.terminal, generation={"run_uuid": "00000000-0000-0000-0000-000000000000"}),
+            ),
+        ).refusal_codes
+    )
+    with pytest.raises(api.PolicyError, match="unknown_prefix"):
+        api.evaluate_retention(policy, replace(eligible, prefix="streaming_test/"))
 
 
 @pytest.mark.parametrize(
@@ -333,8 +348,8 @@ def test_disposable_scratch_requires_successful_exclusive_stopped_run(policy):
     [
         ("events/", "completed", "stopped"),
         (GENERATION_PREFIX, "retired", "completed"),
-        ("streaming_test/", "completed", "stopped"),
-        ("streaming_test/", "stopped", "successful"),
+        (SCRATCH_PREFIX, "completed", "stopped"),
+        (SCRATCH_PREFIX, "stopped", "successful"),
     ],
 )
 def test_class_specific_lease_and_terminal_state_matrix_fails_closed(
@@ -353,7 +368,7 @@ def test_class_specific_lease_and_terminal_state_matrix_fails_closed(
     else:
         selected_policy = policy
         checkpoint_id = "go-live-streaming-test-v1"
-        generation = {}
+        generation = {"run_uuid": RUN_UUID}
         review = None
     facts = _facts(
         prefix=prefix,
@@ -410,10 +425,10 @@ def test_lease_clock_order_and_exact_ttl_are_mandatory(policy, lease):
 )
 def test_untyped_supplied_facts_refuse_without_raw_exceptions(policy, target, field, value, code):
     facts = _facts(
-        prefix="streaming_test/",
+        prefix=SCRATCH_PREFIX,
         lease=_lease(
             checkpoint_id="go-live-streaming-test-v1",
-            prefix="streaming_test/",
+            prefix=SCRATCH_PREFIX,
             state="stopped",
             age=timedelta(days=1),
         ),
@@ -421,6 +436,7 @@ def test_untyped_supplied_facts_refuse_without_raw_exceptions(policy, target, fi
             state="stopped",
             age=timedelta(days=1),
             retirement_review=None,
+            generation={"run_uuid": RUN_UUID},
             exclusive_run=True,
             successful=True,
         ),

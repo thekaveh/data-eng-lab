@@ -79,7 +79,7 @@ checkpoints:
     concurrent_writers: forbidden
     retirement_authorization: not_applicable
   - checkpoint_id: go-live-streaming-test-v1
-    prefix: streaming_test/
+    prefix: streaming_test/{run_uuid}/
     owner: Lab Acceptance Engineering
     workload: go-live-streaming-test
     source: bounded_synthetic

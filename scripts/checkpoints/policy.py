@@ -141,6 +141,15 @@ class CheckpointPolicy:
     def match_prefix(self, prefix: str) -> MatchedCheckpoint:
         _validate_concrete_prefix(prefix, self.control_prefix)
         for entry in self.entries.values():
+            if entry.prefix == _SCRATCH_TEMPLATE:
+                match = _SCRATCH_PATTERN.fullmatch(prefix)
+                if match:
+                    return MatchedCheckpoint(
+                        entry.checkpoint_id,
+                        prefix,
+                        MappingProxyType(match.groupdict()),
+                    )
+                continue
             if not entry.scales:
                 if prefix == entry.prefix:
                     return MatchedCheckpoint(entry.checkpoint_id, prefix, {})
@@ -229,10 +238,14 @@ _ENTRY_KEYS = frozenset(
 _GENERATION_ENTRY_KEYS = _ENTRY_KEYS | {"scales"}
 _DURABLE_ENTRY_KEYS = _ENTRY_KEYS | {"retired_at", "retirement_review"}
 _GENERATION_TEMPLATE = "gh_events_file/{scale}/{publication_id}/{manifest_sha256}/"
+_SCRATCH_TEMPLATE = "streaming_test/{run_uuid}/"
 _GENERATION_PATTERN = re.compile(
     r"gh_events_file/(?P<scale>tiny|small|medium)/"
     r"(?P<publication_id>[0-9a-f]{32})/"
     r"(?P<manifest_sha256>[0-9a-f]{64})/"
+)
+_SCRATCH_PATTERN = re.compile(
+    r"streaming_test/(?P<run_uuid>[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/"
 )
 _SAFE_FIXED_PREFIX = re.compile(r"(?:[a-z0-9][a-z0-9_-]*/)+")
 _SAFE_REVIEW = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,127}")
@@ -299,7 +312,7 @@ _EXPECTED_ENTRIES: Mapping[str, Mapping[str, Any]] = {
         "scales": ("tiny", "small", "medium"),
     },
     "go-live-streaming-test-v1": {
-        "prefix": "streaming_test/",
+        "prefix": _SCRATCH_TEMPLATE,
         "owner": "Lab Acceptance Engineering",
         "workload": "go-live-streaming-test",
         "source": "bounded_synthetic",
@@ -595,7 +608,7 @@ def _require_exact_int(value: object, expected: int, code: str) -> None:
 def _validate_registry_prefix(prefix: object, control_prefix: str) -> None:
     if not isinstance(prefix, str):
         raise PolicyError("invalid_type")
-    if prefix == _GENERATION_TEMPLATE:
+    if prefix in {_GENERATION_TEMPLATE, _SCRATCH_TEMPLATE}:
         return
     _validate_concrete_prefix(prefix, control_prefix)
     if _SAFE_FIXED_PREFIX.fullmatch(prefix) is None:
@@ -778,6 +791,8 @@ def _evaluate_terminal(
         if not isinstance(terminal.generation, Mapping) or dict(terminal.generation) != dict(matched.generation):
             refusal_codes.append("generation_identity_mismatch")
     elif entry.durability == "disposable_acceptance":
+        if not isinstance(terminal.generation, Mapping) or dict(terminal.generation) != dict(matched.generation):
+            refusal_codes.append("generation_identity_mismatch")
         if terminal.exclusive_run is not True:
             refusal_codes.append("exclusive_run_required")
         if terminal.successful is not True:
