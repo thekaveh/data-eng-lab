@@ -46,6 +46,7 @@ def _assert_required_commands(job: dict) -> None:
     commands = _executable_commands(job)
     for required in (
         ("cp", "infra/.env.example", "infra/.env"),
+        ("cp", "atlas.env.user.example", "atlas.env.user"),
         ("./start.sh", "env", "backfill"),
         ("./start.sh", "--consumer", "../atlas.consumer.yml", "compose", "validate"),
         ("./start.sh", "--consumer", "../atlas.consumer.yml", "doctor", "--format", "json"),
@@ -142,9 +143,7 @@ def test_ci_contract_jobs_initialize_atlas_and_scope_validation_only_credentials
         assert "env" not in job
 
     validation = next(
-        step
-        for step in atlas_job["steps"]
-        if step.get("name") == "Validate the pinned Atlas consumer contract"
+        step for step in atlas_job["steps"] if step.get("name") == "Validate the pinned Atlas consumer contract"
     )
     assert validation["env"] == expected_environment
     assert all("env" not in step for step in static_job["steps"])
@@ -219,14 +218,7 @@ def test_non_live_ci_guard_rejects_live_operations():
 def test_non_live_ci_guard_rejects_wrapped_endpoint_assertions():
     with_env_wrapped_endpoint_assert = {"steps": [{"run": "env X=1 ./start.sh endpoints assert"}]}
     with_conditional_endpoint_assert = {
-        "steps": [
-            {
-                "run": (
-                    "if command ./start.sh --consumer ../atlas.consumer.yml "
-                    "endpoints assert; then :; fi"
-                )
-            }
-        ]
+        "steps": [{"run": ("if command ./start.sh --consumer ../atlas.consumer.yml endpoints assert; then :; fi")}]
     }
     for job in (with_env_wrapped_endpoint_assert, with_conditional_endpoint_assert):
         try:
@@ -261,6 +253,7 @@ def test_non_live_ci_guard_rejects_indirect_shell_execution():
 def test_required_ci_command_guard_rejects_comments_and_echoes():
     required_lines = (
         "cp infra/.env.example infra/.env",
+        "cp atlas.env.user.example atlas.env.user",
         "./start.sh env backfill",
         "./start.sh --consumer ../atlas.consumer.yml compose validate",
         "./start.sh --consumer ../atlas.consumer.yml doctor --format json",

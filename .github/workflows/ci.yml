@@ -26,6 +26,7 @@ jobs:
           MINIO_ROOT_PASSWORD: ci-placeholder-password
         run: |
           cp infra/.env.example infra/.env
+          cp atlas.env.user.example atlas.env.user
           cd infra
           ./start.sh env backfill
           ./start.sh --consumer ../atlas.consumer.yml compose validate
