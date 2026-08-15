@@ -656,6 +656,6 @@ def test_live_report_names_the_actual_final_runtime_correction():
     ).read_text(encoding="utf-8")
     final_verification = report.split("## Final repository verification", 1)[1]
 
-    assert "`0292a42`" in final_verification
+    assert "`394db7f`" in final_verification
     assert "`6e32da2`" not in final_verification
-    assert "386 passed, 2 expected" in report
+    assert "389 passed, 2 expected" in report
