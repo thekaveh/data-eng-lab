@@ -200,26 +200,20 @@ class OperationManager:
             raise OperationFailure("prepared_invalid")
         if now < prepared_at + timedelta(seconds=self._quiescence_seconds):
             records = self._read_bound_manifest(base, prepared)
-            prior = self._latest_status(
+            prior = self._latest_or_reconstruct_prepared(request.operation_id, prepared, records, started)
+            if prior.state == "completed":
+                self._prove_completed_absence(prepared["prefix"], prior, started)
+            repaired = self._latest_status(
                 request.operation_id,
-                required=False,
+                required=True,
                 prepared=prepared,
                 records=records,
+                repair_audits=True,
             )
-            if prior is not None:
-                if prior.state == "completed":
-                    self._prove_completed_absence(prepared["prefix"], prior, started)
-                repaired = self._latest_status(
-                    request.operation_id,
-                    required=True,
-                    prepared=prepared,
-                    records=records,
-                    repair_audits=True,
-                )
-                assert repaired is not None
-                repaired_at = _parse_utc(json.loads(repaired.body).get("occurred_at"))
-                if repaired.state in {"refused", "partial", "completed"} or repaired_at is None or now < repaired_at:
-                    return repaired
+            assert repaired is not None
+            repaired_at = _parse_utc(json.loads(repaired.body).get("occurred_at"))
+            if repaired.state in {"refused", "partial", "completed"} or repaired_at is None or now < repaired_at:
+                return repaired
             status = self._record_status(
                 request.operation_id,
                 prepared["checkpoint_id"],
@@ -244,36 +238,54 @@ class OperationManager:
         with self._locks.hold(checkpoint_id):
             return self._apply_locked(request, prepared, evaluated_at, base, started, now)
 
-    def _apply_locked(self, request, prepared, evaluated_at, base, started, now) -> OperationStatus:
-        self.check_deadline(started)
-        records = self._read_bound_manifest(base, prepared)
-        self.check_deadline(started)
-        prior_status = self._latest_status(
-            request.operation_id,
+    def _latest_or_reconstruct_prepared(
+        self,
+        operation_id: str,
+        prepared: dict[str, object],
+        records: tuple[ObjectRecord, ...],
+        started: float,
+    ) -> OperationStatus:
+        prior = self._latest_status(
+            operation_id,
             required=False,
             prepared=prepared,
             records=records,
         )
+        if prior is not None:
+            return prior
+        prepared_at = _parse_utc(prepared.get("prepared_at"))
+        if prepared_at is None:
+            raise OperationFailure("prepared_invalid")
+        status = self._record_status(
+            operation_id,
+            prepared["checkpoint_id"],
+            "prepared",
+            prepared["plan_sha256"],
+            [],
+            records,
+            None,
+            started,
+            head_requests=0,
+            delete_requests=0,
+            postflight_inventory_sha256=None,
+            occurred_at=prepared_at,
+        )
+        self._ensure_audit(operation_id, status, prepared)
+        return status
+
+    def _apply_locked(self, request, prepared, evaluated_at, base, started, now) -> OperationStatus:
+        self.check_deadline(started)
+        records = self._read_bound_manifest(base, prepared)
+        self.check_deadline(started)
+        prior_status = self._latest_or_reconstruct_prepared(request.operation_id, prepared, records, started)
         prior_deleted: set[str] = set()
-        if prior_status is not None:
-            try:
-                prior_value = json.loads(prior_status.body)
-                prior_occurred_at = _parse_utc(prior_value.get("occurred_at"))
-                if prior_occurred_at is None:
-                    raise OperationFailure("status_invalid")
-                if prior_value["state"] == "completed":
-                    self._prove_completed_absence(request.confirm_prefix, prior_status, started)
-                    repaired = self._latest_status(
-                        request.operation_id,
-                        required=True,
-                        prepared=prepared,
-                        records=records,
-                        repair_audits=True,
-                    )
-                    assert repaired is not None
-                    return repaired
-                if now < prior_occurred_at:
-                    return prior_status
+        try:
+            prior_value = json.loads(prior_status.body)
+            prior_occurred_at = _parse_utc(prior_value.get("occurred_at"))
+            if prior_occurred_at is None:
+                raise OperationFailure("status_invalid")
+            if prior_value["state"] == "completed":
+                self._prove_completed_absence(request.confirm_prefix, prior_status, started)
                 repaired = self._latest_status(
                     request.operation_id,
                     required=True,
@@ -282,15 +294,26 @@ class OperationManager:
                     repair_audits=True,
                 )
                 assert repaired is not None
-                prior_status = repaired
-                prior_value = json.loads(prior_status.body)
-                prior_deleted = {
-                    digest
-                    for digest, outcome in self._read_result_classification(base, prior_value, records).items()
-                    if outcome == "deleted"
-                }
-            except (KeyError, TypeError, json.JSONDecodeError, RecordFailure):
-                raise OperationFailure("status_invalid") from None
+                return repaired
+            if now < prior_occurred_at:
+                return prior_status
+            repaired = self._latest_status(
+                request.operation_id,
+                required=True,
+                prepared=prepared,
+                records=records,
+                repair_audits=True,
+            )
+            assert repaired is not None
+            prior_status = repaired
+            prior_value = json.loads(prior_status.body)
+            prior_deleted = {
+                digest
+                for digest, outcome in self._read_result_classification(base, prior_value, records).items()
+                if outcome == "deleted"
+            }
+        except (KeyError, TypeError, json.JSONDecodeError, RecordFailure):
+            raise OperationFailure("status_invalid") from None
         remaining_records = tuple(record for record in records if _record_sha256(record) not in prior_deleted)
         if remaining_records:
             if self._revalidate is None:

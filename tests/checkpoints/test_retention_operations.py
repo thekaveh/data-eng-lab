@@ -183,6 +183,49 @@ def test_identical_prepare_retry_repairs_missing_prepare_audit_idempotently():
     assert len([key for key in gateway.controls if key.startswith(f"_retention/audits/{OPERATION_ID}/")]) == 1
 
 
+def test_apply_reconstructs_missing_initial_prepared_evidence_before_destructive_work():
+    gateway = FakeGateway()
+    artifact = _artifact()
+    request = PrepareRequest(OPERATION_ID, artifact, artifact.sha256, "review-86", "acceptance-engineering")
+    gateway.create_failure_suffix = "/results/attempts/"
+    failed = OperationManager(gateway, policy_sha256="a" * 64, now=lambda: NOW)
+
+    with pytest.raises(OperationFailure):
+        failed.prepare(request)
+    assert f"_retention/tombstones/{OPERATION_ID}/prepared.json" in gateway.controls
+    assert not any("/results/attempts/" in key for key in gateway.controls)
+
+    gateway.create_failure_suffix = None
+
+    def revalidate(*_args):
+        gateway.calls.append(("revalidate",))
+        return artifact
+
+    retry = OperationManager(
+        gateway,
+        policy_sha256="a" * 64,
+        now=lambda: NOW.replace(minute=15),
+        revalidate=revalidate,
+    )
+    before_retry = len(gateway.calls)
+
+    completed = retry.apply(ApplyRequest(OPERATION_ID, artifact.sha256, PREFIX))
+
+    retry_calls = gateway.calls[before_retry:]
+    attempt_create = next(
+        index for index, call in enumerate(retry_calls) if call[0] == "create" and "/results/attempts/" in call[1]
+    )
+    first_destructive_work = next(
+        index for index, call in enumerate(retry_calls) if call[0] in {"revalidate", "head", "delete"}
+    )
+    assert attempt_create < first_destructive_work
+    assert json.loads(completed.body)["attempt_sequence"] == 2
+    assert retry.status(OPERATION_ID).body == completed.body
+    attempts = [key for key in gateway.controls if "/results/attempts/" in key]
+    audits = [key for key in gateway.controls if key.startswith(f"_retention/audits/{OPERATION_ID}/")]
+    assert len(attempts) == len(audits) == 2
+
+
 def test_progressed_prepare_retry_repairs_every_validated_historical_audit():
     gateway = FakeGateway()
     artifact = _artifact()
