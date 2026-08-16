@@ -125,7 +125,7 @@ def test_health_and_metrics_routes_are_exact(monkeypatch: pytest.MonkeyPatch) ->
         assert body == render_metrics(result)
 
 
-@pytest.mark.parametrize("method", ["GET", "POST", "PATCH"])
+@pytest.mark.parametrize("method", ["GET", "POST", "PATCH", "PROPFIND"])
 def test_service_rejects_duplicate_request_headers(monkeypatch: pytest.MonkeyPatch, method: str) -> None:
     with _running_server(monkeypatch, ProbeResult(True, 0.25, 200, "success")) as address:
         client = socket.create_connection(address, timeout=2)
@@ -170,6 +170,7 @@ def test_environment_contract_is_fixed_and_bounded() -> None:
         ("POST", "/metrics", 405),
         ("PATCH", "/metrics", 405),
         ("OPTIONS", "/metrics", 405),
+        ("PROPFIND", "/metrics", 405),
         ("HEAD", "/healthz", 405),
     ],
 )

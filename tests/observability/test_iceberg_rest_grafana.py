@@ -79,3 +79,10 @@ def test_dashboard_queries_cover_current_slos_outcome_and_alerts() -> None:
     assert "quantile_over_time(0.95" in expressions[3] and "[30d]" in expressions[3]
     assert "probe_result" in expressions[4] and "== 1" in expressions[4]
     assert expressions[5].startswith("ALERTS{")
+
+
+def test_dashboard_query_contract_documents_prometheus_scrape_availability() -> None:
+    design = (ROOT / "docs/superpowers/specs/2026-08-15-iceberg-rest-observability-design.md").read_text()
+    plan = (ROOT / "docs/superpowers/plans/2026-08-15-iceberg-rest-observability.md").read_text()
+    assert "Prometheus `up`" in design
+    assert "Prometheus `up`" in plan

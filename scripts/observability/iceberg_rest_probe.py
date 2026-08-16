@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import math
 import os
 import socket
+import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections.abc import Mapping
 from dataclasses import dataclass
+from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, NoReturn
 
@@ -140,6 +143,109 @@ class _RejectRedirects(urllib.request.HTTPRedirectHandler):
         return None
 
 
+class _DeadlineHTTPResponse(http.client.HTTPResponse):
+    _deadline_timer: threading.Timer | None = None
+
+    def close(self) -> None:
+        timer = self._deadline_timer
+        if timer is not None:
+            timer.cancel()
+            self._deadline_timer = None
+        super().close()
+
+
+class _DeadlineConnectionMixin:
+    response_class = _DeadlineHTTPResponse
+
+    def __init__(
+        self,
+        *args: Any,
+        deadline: float,
+        monotonic: Any,
+        **kwargs: Any,
+    ) -> None:
+        self._absolute_deadline = deadline
+        self._monotonic = monotonic
+        self._deadline_timer: threading.Timer | None = None
+        super().__init__(*args, **kwargs)
+
+    def connect(self) -> None:
+        super().connect()  # type: ignore[misc]
+        remaining = self._absolute_deadline - self._monotonic()
+        sock = self.sock  # type: ignore[attr-defined]
+        if remaining <= 0 or sock is None:
+            self.close()  # type: ignore[attr-defined]
+            raise TimeoutError
+        sock.settimeout(remaining)
+        timer = threading.Timer(remaining, self._expire, args=(sock,))
+        timer.daemon = True
+        timer.start()
+        self._deadline_timer = timer
+
+    @staticmethod
+    def _expire(sock: socket.socket) -> None:
+        try:
+            sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+
+    def getresponse(self) -> _DeadlineHTTPResponse:
+        try:
+            response = super().getresponse()  # type: ignore[misc]
+        except BaseException:
+            timer = self._deadline_timer
+            if timer is not None:
+                timer.cancel()
+            self.close()  # type: ignore[attr-defined]
+            raise
+        response._deadline_timer = self._deadline_timer
+        return response
+
+
+class _DeadlineHTTPConnection(_DeadlineConnectionMixin, http.client.HTTPConnection):
+    pass
+
+
+class _DeadlineHTTPSConnection(_DeadlineConnectionMixin, http.client.HTTPSConnection):
+    pass
+
+
+class _DeadlineHTTPHandler(urllib.request.HTTPHandler):
+    def __init__(self, deadline: float, monotonic: Any) -> None:
+        super().__init__()
+        self._deadline = deadline
+        self._monotonic = monotonic
+
+    def http_open(self, request: urllib.request.Request) -> Any:
+        def connection(host: str, **kwargs: Any) -> _DeadlineHTTPConnection:
+            return _DeadlineHTTPConnection(
+                host,
+                deadline=self._deadline,
+                monotonic=self._monotonic,
+                **kwargs,
+            )
+
+        return self.do_open(connection, request)
+
+
+class _DeadlineHTTPSHandler(urllib.request.HTTPSHandler):
+    def __init__(self, deadline: float, monotonic: Any) -> None:
+        super().__init__()
+        self._deadline = deadline
+        self._monotonic = monotonic
+
+    def https_open(self, request: urllib.request.Request) -> Any:
+        def connection(host: str, **kwargs: Any) -> _DeadlineHTTPSConnection:
+            return _DeadlineHTTPSConnection(
+                host,
+                deadline=self._deadline,
+                monotonic=self._monotonic,
+                **kwargs,
+            )
+
+        return self.do_open(connection, request, context=self._context)
+
+
 def _validate_probe_config(config: ProbeConfig) -> str:
     try:
         parsed = urllib.parse.urlsplit(config.origin)
@@ -173,15 +279,20 @@ def probe_catalog(
     """Perform one bounded request against the configured catalog origin."""
 
     url = _validate_probe_config(config)
+    started = monotonic()
+    deadline = started + config.timeout_seconds
     if opener is None:
-        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _RejectRedirects())
+        opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler({}),
+            _RejectRedirects(),
+            _DeadlineHTTPHandler(deadline, monotonic),
+            _DeadlineHTTPSHandler(deadline, monotonic),
+        )
     request = urllib.request.Request(
         url,
         method="GET",
         headers={"Accept": "application/json", "User-Agent": "data-eng-lab-probe/1"},
     )
-    started = monotonic()
-    deadline = started + config.timeout_seconds
     try:
         response = opener.open(request, timeout=config.timeout_seconds)
         try:
@@ -200,14 +311,21 @@ def probe_catalog(
             status = int(error.code)
         finally:
             error.close()
-        return ProbeResult(False, max(0.0, monotonic() - started), status, "http_error")
+        duration = max(0.0, monotonic() - started)
+        if monotonic() >= deadline:
+            return ProbeResult(False, duration, 0, "timeout")
+        return ProbeResult(False, duration, status, "http_error")
     except (TimeoutError, socket.timeout):
         return ProbeResult(False, max(0.0, monotonic() - started), 0, "timeout")
     except urllib.error.URLError as error:
-        category = "timeout" if isinstance(error.reason, TimeoutError) else "unavailable"
+        category = "timeout" if isinstance(error.reason, TimeoutError) or monotonic() >= deadline else "unavailable"
+        return ProbeResult(False, max(0.0, monotonic() - started), 0, category)
+    except http.client.HTTPException:
+        category = "timeout" if monotonic() >= deadline else "unavailable"
         return ProbeResult(False, max(0.0, monotonic() - started), 0, category)
     except OSError:
-        return ProbeResult(False, max(0.0, monotonic() - started), 0, "unavailable")
+        category = "timeout" if monotonic() >= deadline else "unavailable"
+        return ProbeResult(False, max(0.0, monotonic() - started), 0, category)
 
     duration = max(0.0, monotonic() - started)
     if status < 200 or status >= 300:
@@ -378,6 +496,17 @@ def build_server(config: ProbeConfig, *, host: str = "0.0.0.0", port: int = 8080
 
         def do_TRACE(self) -> None:  # noqa: N802
             self._method_not_allowed()
+
+        def send_error(
+            self,
+            code: int,
+            message: str | None = None,
+            explain: str | None = None,
+        ) -> None:
+            if code == HTTPStatus.NOT_IMPLEMENTED and message is not None and message.startswith("Unsupported method"):
+                self._method_not_allowed()
+                return
+            super().send_error(code, message, explain)
 
         def _method_not_allowed(self) -> None:
             if self._has_duplicate_headers():

@@ -235,7 +235,9 @@ Require a finite strict JSON object with stable UID/title/tags/refresh, datasour
 UID `Prometheus`, unique panel IDs, non-overlapping grid positions, and panels for
 current availability, current latency, 30-day availability, 30-day p95 latency,
 current closed outcome, and active alerts. Assert every PromQL expression uses
-only the issue-owned metrics or `ALERTS` with fixed job/target filters.
+only the issue-owned metrics, `ALERTS`, or Prometheus `up` with fixed job/target
+filters. `up` is limited to the availability denominator so missing scrapes count
+as failed time.
 
 - [ ] **Step 2: Verify RED**
 

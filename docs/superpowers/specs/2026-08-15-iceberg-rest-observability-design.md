@@ -124,6 +124,10 @@ The exporter owns exactly these synthetic series:
 | `data_eng_lab_iceberg_rest_synthetic_probe_http_status_code` | gauge | `target="catalog"` | bounded HTTP status, or 0 without a response |
 | `data_eng_lab_iceberg_rest_synthetic_probe_result` | gauge | `target="catalog", result=<closed value>` | one-hot outcome classification |
 
+Dashboard queries are closed to these issue-owned series, `ALERTS`, and
+Prometheus `up`. The `up` series is used only to count configured exporter
+scrape failures as unavailable time rather than silently excluding them.
+
 The closed result values are `success`, `slow`, `malformed`, `timeout`,
 `http_error`, and `unavailable`. `slow` means an otherwise valid response took
 more than the one-second SLO threshold. Only one result series has value 1 per

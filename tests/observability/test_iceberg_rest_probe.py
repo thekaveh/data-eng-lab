@@ -225,6 +225,40 @@ def test_probe_enforces_total_deadline_across_incremental_reads() -> None:
     assert len(response.fp.raw._sock.timeouts) >= 2
 
 
+def test_probe_enforces_total_deadline_while_response_headers_drip() -> None:
+    class DripHeaderHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            response = (
+                b"HTTP/1.1 200 OK\r\n"
+                + b"X-Drip: "
+                + (b"x" * 200)
+                + b"\r\nContent-Type: application/json\r\nContent-Length: 15\r\n\r\n"
+                + b'{"defaults":{}}'
+            )
+            try:
+                for byte in response:
+                    self.connection.sendall(bytes((byte,)))
+                    time.sleep(0.02)
+            except OSError:
+                pass
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), DripHeaderHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    started = time.monotonic()
+    try:
+        result = probe_catalog(ProbeConfig(f"http://127.0.0.1:{server.server_port}", 0.1, 65_536))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+    assert result.result == "timeout"
+    assert time.monotonic() - started < 0.5
+
+
 def test_probe_classifies_timeout_and_unavailable_without_details() -> None:
     with _server(delay=0.1) as origin:
         timed_out = probe_catalog(ProbeConfig(origin, 0.01, 65_536))
