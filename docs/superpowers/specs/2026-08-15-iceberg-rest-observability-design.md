@@ -1,7 +1,7 @@
 # Iceberg REST synthetic observability design
 
-**Issue:** #90  
-**Date:** 2026-08-15  
+**Issue:** #90
+**Date:** 2026-08-15
 **Status:** Approved by the controlling autonomous goal directive
 
 ## 1. Purpose and boundary
