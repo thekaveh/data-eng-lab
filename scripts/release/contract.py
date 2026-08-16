@@ -160,6 +160,8 @@ class _RenderedChangelogParser(HTMLParser):
                 self._hidden_tags.append(normalized)
             return
         if normalized in _FOREIGN_CONTENT_ROOTS:
+            if self._capture is not None:
+                self.malformed = True
             self._foreign_tags.append(normalized)
             return
         if normalized == "h2":
@@ -178,7 +180,15 @@ class _RenderedChangelogParser(HTMLParser):
             if normalized not in _VOID_HTML_ELEMENTS:
                 self.malformed = True
             return
-        if self._hidden_tags or self._foreign_tags or normalized in _FOREIGN_CONTENT_ROOTS:
+        if self._hidden_tags:
+            return
+        if self._foreign_tags:
+            if normalized in {"annotation-xml", "foreignobject", "h2", "h3", "li"}:
+                self.malformed = True
+            return
+        if normalized in _FOREIGN_CONTENT_ROOTS:
+            if self._capture is not None:
+                self.malformed = True
             return
         if normalized not in _VOID_HTML_ELEMENTS:
             self.malformed = True

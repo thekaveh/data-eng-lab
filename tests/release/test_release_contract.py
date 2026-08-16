@@ -293,16 +293,23 @@ def test_changelog_state_rejects_ambiguous_html_visibility(tmp_path: Path, ambig
         validate_changelog_state(tmp_path, "0.1.0")
 
 
-def test_foreign_graphics_cannot_obscure_visible_release_heading(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "foreign",
+    [
+        '<svg><title>hidden</title><circle r="1"/></svg>0',
+        "<svg><text>0</text></svg>",
+        "<math><mtext>0</mtext></math>",
+    ],
+)
+def test_foreign_graphics_cannot_enter_release_heading(tmp_path: Path, foreign: str) -> None:
     _copy_changelogs(tmp_path)
     canonical = tmp_path / "docs" / "CHANGELOG.md"
     canonical.write_text(
-        canonical.read_text(encoding="utf-8")
-        + '\n<h2>2. [0.1.<svg><title>hidden</title><circle r="1"/></svg>0]</h2>\n',
+        canonical.read_text(encoding="utf-8") + f"\n<h2>2. [0.1.{foreign}]</h2>\n",
         encoding="utf-8",
     )
 
-    with pytest.raises(ReleaseContractFailure, match="^release_state_contradictory$"):
+    with pytest.raises(ReleaseContractFailure, match="^canonical_changelog_invalid$"):
         validate_changelog_state(tmp_path, "0.1.0")
 
 
@@ -314,6 +321,25 @@ def test_foreign_graphics_cannot_supply_unreleased_heading_text(tmp_path: Path) 
             "## 1. [Unreleased]",
             "<h2>1. [Unre<svg><text>leased</text></svg>]</h2>",
         ),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReleaseContractFailure, match="^canonical_changelog_invalid$"):
+        validate_changelog_state(tmp_path, "0.1.0")
+
+
+@pytest.mark.parametrize(
+    "integration",
+    [
+        "<svg><foreignObject/></svg>",
+        '<math><annotation-xml encoding="text/html"/></math>',
+    ],
+)
+def test_foreign_html_integration_rejects_when_self_closing(tmp_path: Path, integration: str) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_text(
+        canonical.read_text(encoding="utf-8") + f"\n{integration}\n",
         encoding="utf-8",
     )
 
