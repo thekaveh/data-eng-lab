@@ -10,6 +10,7 @@ from scripts.security.contract import (
     discover_inventory,
     load_yaml_exact,
     validate_dependabot,
+    validate_osv_workflow,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -141,3 +142,47 @@ updates:
 
     with pytest.raises(ContractFailure, match="dependabot_update_invalid"):
         validate_dependabot(tmp_path, DependencyInventory("/uv.lock", "/", ()))
+
+
+def test_yaml_loader_uses_github_yaml_boolean_semantics(tmp_path: Path) -> None:
+    config = tmp_path / "workflow.yml"
+    config.write_text("on: {workflow_dispatch: null}\nenabled: true\n", encoding="utf-8")
+
+    assert load_yaml_exact(config) == {
+        "on": {"workflow_dispatch": None},
+        "enabled": True,
+    }
+
+
+def test_osv_workflow_scans_only_the_discovered_manifests() -> None:
+    validate_osv_workflow(REPO_ROOT, discover_inventory(REPO_ROOT))
+
+
+@pytest.mark.parametrize(
+    "unsafe_operand",
+    ["--recursive", "./", "infra/", "graphify-out/"],
+)
+def test_osv_workflow_rejects_recursive_or_unowned_scan_operands(tmp_path: Path, unsafe_operand: str) -> None:
+    workflow = tmp_path / ".github" / "workflows" / "dependency-security.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text(
+        f"""\
+name: Dependency vulnerability audit
+on: {{pull_request: {{branches: [develop, main]}}}}
+permissions: {{}}
+jobs:
+  pull-request-scan:
+    if: github.event_name == 'pull_request'
+    permissions: {{contents: read}}
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@8deb546fdb875b9996d27d4950be7312dac076a1
+    with:
+      scan-args: |-
+        {unsafe_operand}
+      upload-sarif: false
+      fail-on-vuln: true
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractFailure, match="osv_workflow_invalid"):
+        validate_osv_workflow(tmp_path, DependencyInventory("/uv.lock", "/", ()))

@@ -1,0 +1,55 @@
+name: Dependency vulnerability audit
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+  push:
+    branches:
+      - develop
+      - main
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: dependency-security-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  pull-request-scan:
+    if: github.event_name == 'pull_request'
+    permissions:
+      contents: read
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@8deb546fdb875b9996d27d4950be7312dac076a1 # v2.5.0
+    with:
+      scan-args: |-
+        --lockfile=uv.lock
+        --lockfile=spark-apps/gh-archive-pipeline/pom.xml
+        --lockfile=spark-apps/movielens-feature-pipeline/pom.xml
+        --lockfile=spark-apps/nyc-taxi-data-quality/pom.xml
+        --lockfile=spark-apps/nyc-taxi-etl/pom.xml
+        --lockfile=spark-apps/nyc-taxi-medallion/pom.xml
+        --lockfile=spark-apps/tpch-star-schema/pom.xml
+      upload-sarif: false
+      fail-on-vuln: true
+
+  full-scan:
+    if: github.event_name != 'pull_request'
+    permissions:
+      actions: read
+      contents: read
+      security-events: write
+    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@8deb546fdb875b9996d27d4950be7312dac076a1 # v2.5.0
+    with:
+      scan-args: |-
+        --lockfile=uv.lock
+        --lockfile=spark-apps/gh-archive-pipeline/pom.xml
+        --lockfile=spark-apps/movielens-feature-pipeline/pom.xml
+        --lockfile=spark-apps/nyc-taxi-data-quality/pom.xml
+        --lockfile=spark-apps/nyc-taxi-etl/pom.xml
+        --lockfile=spark-apps/nyc-taxi-medallion/pom.xml
+        --lockfile=spark-apps/tpch-star-schema/pom.xml
+      upload-sarif: true
+      fail-on-vuln: true

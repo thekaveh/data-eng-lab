@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -64,6 +65,17 @@ class _ExactSafeLoader(yaml.SafeLoader):
                 raise ContractFailure("yaml_duplicate_key")
             mapping[key] = self.construct_object(value_node, deep=deep)
         return mapping
+
+
+_ExactSafeLoader.yaml_implicit_resolvers = {
+    key: [(tag, expression) for tag, expression in resolvers if tag != "tag:yaml.org,2002:bool"]
+    for key, resolvers in yaml.SafeLoader.yaml_implicit_resolvers.items()
+}
+_ExactSafeLoader.add_implicit_resolver(
+    "tag:yaml.org,2002:bool",
+    re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"),
+    list("tTfF"),
+)
 
 
 def _validate_tree(value: object) -> None:
@@ -170,3 +182,65 @@ def validate_dependabot(root: Path, inventory: DependencyInventory) -> None:
         raise ContractFailure("dependabot_uv_inventory_mismatch")
     if tuple(sorted(by_ecosystem.get("maven", []))) != inventory.maven_directories:
         raise ContractFailure("dependabot_maven_inventory_mismatch")
+
+
+def _osv_operands(inventory: DependencyInventory) -> tuple[str, ...]:
+    return (f"--lockfile={inventory.uv_lock.removeprefix('/')}",) + tuple(
+        f"--lockfile={directory.removeprefix('/')}/pom.xml" for directory in inventory.maven_directories
+    )
+
+
+def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
+    workflow = load_yaml_exact(root / ".github" / "workflows" / "dependency-security.yml")
+    if set(workflow) != {"name", "on", "permissions", "concurrency", "jobs"}:
+        raise ContractFailure("osv_workflow_invalid")
+    expected_branches = {"branches": ["develop", "main"]}
+    if workflow["on"] != {
+        "pull_request": expected_branches,
+        "push": expected_branches,
+        "workflow_dispatch": None,
+    }:
+        raise ContractFailure("osv_workflow_invalid")
+    if workflow["permissions"] != {} or workflow["concurrency"] != {
+        "group": "dependency-security-${{ github.workflow }}-${{ github.ref }}",
+        "cancel-in-progress": False,
+    }:
+        raise ContractFailure("osv_workflow_invalid")
+    jobs = workflow["jobs"]
+    if not isinstance(jobs, dict) or set(jobs) != {
+        "pull-request-scan",
+        "full-scan",
+    }:
+        raise ContractFailure("osv_workflow_invalid")
+    expected_uses = (
+        "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@8deb546fdb875b9996d27d4950be7312dac076a1"
+    )
+    expected_args = "\n".join(_osv_operands(inventory))
+    expected_jobs = {
+        "pull-request-scan": {
+            "if": "github.event_name == 'pull_request'",
+            "permissions": {"contents": "read"},
+            "uses": expected_uses,
+            "with": {
+                "scan-args": expected_args,
+                "upload-sarif": False,
+                "fail-on-vuln": True,
+            },
+        },
+        "full-scan": {
+            "if": "github.event_name != 'pull_request'",
+            "permissions": {
+                "actions": "read",
+                "contents": "read",
+                "security-events": "write",
+            },
+            "uses": expected_uses,
+            "with": {
+                "scan-args": expected_args,
+                "upload-sarif": True,
+                "fail-on-vuln": True,
+            },
+        },
+    }
+    if jobs != expected_jobs:
+        raise ContractFailure("osv_workflow_invalid")

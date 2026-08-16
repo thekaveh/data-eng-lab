@@ -42,7 +42,7 @@ vendored, build, or user-owned surfaces and are not dependency authorities.
 
 Dependabot maintains the three package ecosystems. A pinned OSV-Scanner
 reusable workflow scans only the seven exact dependency manifests on pull
-requests, merged branches, a weekly schedule, and manual dispatch. Advanced
+requests, merged branches, and manual dispatch. Advanced
 CodeQL analyzes the two supported source classes present here: Python and
 GitHub Actions workflows.
 
@@ -90,7 +90,7 @@ repository-directory operands are forbidden.
 
 Pull requests to `develop` or `main` run a fail-on-vulnerability full-manifest
 scan without SARIF upload and with `contents: read` only. Pushes to `develop`
-or `main`, the weekly schedule, and manual dispatch run the same fail-on-
+or `main` and manual dispatch run the same fail-on-
 vulnerability scan with `contents: read`, `actions: read`, and
 `security-events: write`, and upload SARIF. Thus a PR cannot gain code-scanning
 write permission, while a merged analysis can satisfy the issue's GitHub
@@ -111,7 +111,7 @@ that limitation is documented rather than silently overstated.
 
 `.github/workflows/codeql.yml` is an advanced setup using CodeQL Action v4 at
 immutable commit `ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd`. It runs on pull
-requests and pushes for `develop` and `main`, weekly, and by manual dispatch.
+requests and pushes for `develop` and `main`, and by manual dispatch.
 The matrix contains exactly `python` and `actions`; both use `build-mode: none`
 and `security-extended` queries. Checkout is pinned, does not persist
 credentials, and does not initialize submodules.
@@ -182,4 +182,3 @@ has completed, the final `develop` CI is green, and the trees are backsynchroniz
 - [GitHub CodeQL supported languages](https://docs.github.com/en/code-security/concepts/code-scanning/codeql/codeql-code-scanning)
 - [GitHub advanced CodeQL setup](https://docs.github.com/en/code-security/code-scanning/creating-an-advanced-setup-for-code-scanning)
 - [GitHub security policies](https://docs.github.com/en/code-security/getting-started/adding-a-security-policy-to-your-repository)
-

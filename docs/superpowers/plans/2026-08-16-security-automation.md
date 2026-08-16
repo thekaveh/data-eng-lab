@@ -112,7 +112,7 @@ Commit: `ci: cover parent dependency manifests with Dependabot (#92)`
 
 - [ ] **Step 1: Write workflow RED tests**
 
-Require pull-request and merged/scheduled/manual paths; exact seven lockfile
+Require pull-request and merged/manual paths; exact seven lockfile
 operands; no recursive/directory operand; `fail-on-vuln: true`; PR SARIF false
 with only `contents: read`; merged SARIF true with only contents/actions read and
 security-events write; immutable OSV SHA; concurrency bounds; and no secrets.
@@ -149,7 +149,7 @@ Commit: `ci: audit exact dependency manifests with OSV (#92)`
 
 Require exact `python` and `actions` matrix, build mode none, security-extended
 queries, immutable checkout/CodeQL SHAs, no submodules or persisted credentials,
-least permissions, push/PR main+develop, weekly/manual triggers, concurrency,
+least permissions, push/PR main+develop, manual triggers, concurrency,
 and closed exclusions for Atlas/generated/build/user-owned paths.
 
 - [ ] **Step 2: Observe RED**
@@ -269,4 +269,3 @@ Move #92 to Done only when GitHub analyses are visible, add an evidence-backed
 closeout comment, remove local/remote feature refs and worktree safely, preserve
 user-owned untracked paths, and confirm no open PRs, equal main/develop trees,
 zero task containers, preserved volumes, and unchanged protected hashes.
-
