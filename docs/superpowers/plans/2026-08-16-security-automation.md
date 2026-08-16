@@ -131,8 +131,10 @@ Expected: the OSV workflow is missing.
 
 Call the pinned OSV scanner and reporter actions directly from both jobs with
 mutually exclusive event guards. On PRs, scan the exact base and proposed SHAs
-into separate isolated, bounded, valid JSON results and compare them. On merged
-or manual runs, report the complete current baseline without treating inherited
+into separate isolated, bounded, valid JSON results and compare them. Bind the
+target result digest and revalidate it plus the still-absent proposed result and
+SARIF paths after the untrusted proposed checkout. On merged or manual runs,
+report the complete current baseline without treating inherited
 findings as scanner failure. Grant only the full-analysis job code-scanning
 permission and upload its SARIF result separately.
 

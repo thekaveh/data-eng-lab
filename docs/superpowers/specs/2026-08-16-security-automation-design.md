@@ -99,7 +99,10 @@ six POMs. Recursive flags and repository-directory operands are forbidden.
 
 Pull requests to `develop` or `main` check out and scan the exact target SHA,
 retain its bounded result, then check out and scan the proposed merge SHA. The
-reporter compares `--old` and `--new` and fails only on vulnerabilities newly
+target JSON is SHA-256-bound before checkout and its regular-file type, size,
+syntax, and digest are revalidated afterward; the new-result and SARIF paths
+must remain absent. This closes the untrusted proposed-tree boundary while
+preserving the target result. The reporter compares `--old` and `--new` and fails only on vulnerabilities newly
 introduced by the proposal. It does not upload SARIF and receives only
 `contents: read`. Pushes to `develop` or `main` and manual dispatch scan the
 complete current manifest set, report the inherited baseline without failing

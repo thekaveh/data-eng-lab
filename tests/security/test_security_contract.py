@@ -249,6 +249,17 @@ def test_osv_pull_request_scan_compares_base_and_head_without_failing_on_baselin
     head_checkout = next(step for step in steps if step.get("name") == "Checkout proposed revision")
     assert head_checkout["with"]["ref"] == "${{ github.sha }}"
     assert head_checkout["with"]["clean"] is False
+    binding = next(step for step in steps if step.get("name") == "Bind target scanner output")
+    assert binding["id"] == "bind-target"
+    assert "sha256sum" in binding["run"]
+    boundary = next(step for step in steps if step.get("name") == "Revalidate scanner output boundary")
+    assert boundary["env"]["EXPECTED_OLD_SHA256"] == "${{ steps.bind-target.outputs.sha256 }}"
+    assert 'test ! -L "${OLD_RESULTS_FILE}"' in boundary["run"]
+    assert 'test "${actual}" = "${EXPECTED_OLD_SHA256}"' in boundary["run"]
+    assert 'test ! -e "${NEW_RESULTS_FILE}"' in boundary["run"]
+    assert 'test ! -L "${NEW_RESULTS_FILE}"' in boundary["run"]
+    assert 'test ! -e "${SARIF_FILE}"' in boundary["run"]
+    assert 'test ! -L "${SARIF_FILE}"' in boundary["run"]
 
     scanners = [step for step in steps if step.get("name", "").startswith("Scan exact")]
     assert [step["name"] for step in scanners] == [

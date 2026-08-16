@@ -72,6 +72,18 @@ jobs:
           test "${size}" -gt 0
           test "${size}" -le 67108864
           python3 -m json.tool "${RESULTS_FILE}" >/dev/null
+      - name: Bind target scanner output
+        id: bind-target
+        env:
+          RESULTS_FILE: ${{ github.workspace }}/.osv-old-${{ github.run_id }}-${{ github.run_attempt }}.json
+        run: |-
+          set -eu
+          test -f "${RESULTS_FILE}"
+          test ! -L "${RESULTS_FILE}"
+          digest="$(sha256sum -- "${RESULTS_FILE}")"
+          digest="${digest%% *}"
+          test "${#digest}" -eq 64
+          printf 'sha256=%s\n' "${digest}" >> "${GITHUB_OUTPUT}"
       - name: Checkout proposed revision
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
@@ -80,6 +92,27 @@ jobs:
           persist-credentials: false
           submodules: false
           clean: false
+      - name: Revalidate scanner output boundary
+        env:
+          OLD_RESULTS_FILE: ${{ github.workspace }}/.osv-old-${{ github.run_id }}-${{ github.run_attempt }}.json
+          NEW_RESULTS_FILE: ${{ github.workspace }}/.osv-new-${{ github.run_id }}-${{ github.run_attempt }}.json
+          SARIF_FILE: ${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
+          EXPECTED_OLD_SHA256: ${{ steps.bind-target.outputs.sha256 }}
+        run: |-
+          set -eu
+          test -f "${OLD_RESULTS_FILE}"
+          test ! -L "${OLD_RESULTS_FILE}"
+          size="$(wc -c < "${OLD_RESULTS_FILE}")"
+          test "${size}" -gt 0
+          test "${size}" -le 67108864
+          python3 -m json.tool "${OLD_RESULTS_FILE}" >/dev/null
+          actual="$(sha256sum -- "${OLD_RESULTS_FILE}")"
+          actual="${actual%% *}"
+          test "${actual}" = "${EXPECTED_OLD_SHA256}"
+          test ! -e "${NEW_RESULTS_FILE}"
+          test ! -L "${NEW_RESULTS_FILE}"
+          test ! -e "${SARIF_FILE}"
+          test ! -L "${SARIF_FILE}"
       - name: Scan exact proposed dependency manifests
         uses: google/osv-scanner-action/osv-scanner-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
         with:

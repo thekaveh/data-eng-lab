@@ -54,7 +54,11 @@ Every OSV finding is actionable by default. A pull request scans both its exact
 target revision and proposed revision, then fails only when the proposal adds a
 vulnerability. This is OSV's supported differential PR model and prevents the
 repository's inherited Spark and protected-lock baseline from making every PR
-permanently red. Merged and manually dispatched scans report the complete
+permanently red. The target result is SHA-256-bound before the proposed checkout
+and its type, size, JSON structure, and digest are revalidated afterward; the
+proposed result and SARIF paths must still be absent. A proposed tree entry
+therefore cannot replace or alias the trusted baseline. Merged and manually
+dispatched scans report the complete
 baseline and upload SARIF to GitHub code scanning without converting existing
 findings into a workflow-infrastructure failure. Neither path relies on a
 severity threshold because vulnerability records do not expose one uniform

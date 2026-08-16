@@ -313,6 +313,49 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
             )
         ),
     }
+    bind_target_step = {
+        "name": "Bind target scanner output",
+        "id": "bind-target",
+        "env": {"RESULTS_FILE": host_old},
+        "run": "\n".join(
+            (
+                "set -eu",
+                'test -f "${RESULTS_FILE}"',
+                'test ! -L "${RESULTS_FILE}"',
+                'digest="$(sha256sum -- "${RESULTS_FILE}")"',
+                'digest="${digest%% *}"',
+                'test "${#digest}" -eq 64',
+                'printf \'sha256=%s\\n\' "${digest}" >> "${GITHUB_OUTPUT}"',
+            )
+        ),
+    }
+    revalidate_boundary_step = {
+        "name": "Revalidate scanner output boundary",
+        "env": {
+            "OLD_RESULTS_FILE": host_old,
+            "NEW_RESULTS_FILE": host_new,
+            "SARIF_FILE": f"{host_result_prefix}.sarif",
+            "EXPECTED_OLD_SHA256": "${{ steps.bind-target.outputs.sha256 }}",
+        },
+        "run": "\n".join(
+            (
+                "set -eu",
+                'test -f "${OLD_RESULTS_FILE}"',
+                'test ! -L "${OLD_RESULTS_FILE}"',
+                'size="$(wc -c < "${OLD_RESULTS_FILE}")"',
+                'test "${size}" -gt 0',
+                'test "${size}" -le 67108864',
+                'python3 -m json.tool "${OLD_RESULTS_FILE}" >/dev/null',
+                'actual="$(sha256sum -- "${OLD_RESULTS_FILE}")"',
+                'actual="${actual%% *}"',
+                'test "${actual}" = "${EXPECTED_OLD_SHA256}"',
+                'test ! -e "${NEW_RESULTS_FILE}"',
+                'test ! -L "${NEW_RESULTS_FILE}"',
+                'test ! -e "${SARIF_FILE}"',
+                'test ! -L "${SARIF_FILE}"',
+            )
+        ),
+    }
     pr_reporter_step = {
         "name": "Fail on a newly introduced vulnerability",
         "uses": f"google/osv-scanner-action/osv-reporter-action@{scanner_sha}",
@@ -354,7 +397,9 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
                 pr_prepare_step,
                 scanner_step("Scan exact target dependency manifests", container_old),
                 validate_step("Validate target scanner output", host_old),
+                bind_target_step,
                 checkout_step("Checkout proposed revision", ref="${{ github.sha }}", clean=False),
+                revalidate_boundary_step,
                 scanner_step("Scan exact proposed dependency manifests", container_new),
                 validate_step("Validate proposed scanner output", host_new),
                 pr_reporter_step,
