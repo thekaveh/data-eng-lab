@@ -160,12 +160,12 @@ The authoritative post-change state is:
 | Protection | State | Evidence |
 |---|---|---|
 | Vulnerability alerts | Enabled | `GET /repos/thekaveh/data-eng-lab/vulnerability-alerts` returns HTTP 204 |
-| Dependabot security updates | Enabled | The automated-security-fixes endpoint returns `enabled: true`; security PRs #149 and #150 target `main` |
+| Dependabot security updates | Enabled | The automated-security-fixes endpoint returns `enabled: true`; version PRs #140 through #148 and security PRs #149 and #150 are recorded separately |
 | Secret scanning | Enabled | The repository settings object reports enabled and the alerts endpoint is readable |
 | Push protection | Enabled | GitHub rejected the official dummy-token probe with `GH013` and `GITHUB PUSH PROTECTION` |
 | Non-provider patterns | Unsupported | GitHub retained disabled after an enable request |
 | Partner validity checks | Unsupported | GitHub retained disabled after an enable request |
-| Code scanning | Active | Current Python and Actions CodeQL analyses are visible through the analyses API |
+| Code scanning | Active | Actions analysis `1624984013` and Python analysis `1624984946` are visible through the analyses API at commit `45512297ed0b31837c01bdf8222e3a521bea7362` |
 
 The enabling operations were the documented
 `PUT /repos/thekaveh/data-eng-lab/vulnerability-alerts`,
@@ -206,9 +206,12 @@ uv run python -m scripts.security.repository_protections \
 ```
 
 Success emits only `repository_security_ok`. The evidence binds the exact
-settings, readable APIs, observed Dependabot behavior, CodeQL categories,
-official dummy probe, cleanup, and plan limitations without storing a token or
-raw API response.
+settings, readable APIs, exact Dependabot pull-request numbers, exact CodeQL
+analysis IDs, and the exact probe ref and commit
+(`refs/heads/codex/93-push-protection-probe-20260816T0640Z` at
+`31baba903f63ff457d19659c74af40b0f5869245`). It also binds the official dummy
+probe outcome, cleanup, and plan limitations without storing a token or raw API
+response.
 
 ## 9. Closure evidence
 

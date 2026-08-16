@@ -38,6 +38,20 @@ def test_runbook_records_optional_plan_boundary_and_no_real_secret() -> None:
     assert "private vulnerability reporting remains outside issue #93" in text.lower()
 
 
+def test_docs_bind_exact_server_side_evidence_identities() -> None:
+    runbook = " ".join(RUNBOOK.read_text(encoding="utf-8").split())
+    design = " ".join(DESIGN.read_text(encoding="utf-8").split())
+    for text in (runbook, design):
+        assert "exact Dependabot pull-request numbers" in text
+        assert "exact CodeQL analysis IDs" in text
+        assert "exact probe ref and commit" in text
+    assert "#140 through #148" in runbook
+    assert "#149 and #150" in runbook
+    assert "1624984013" in runbook
+    assert "1624984946" in runbook
+    assert "31baba903f63ff457d19659c74af40b0f5869245" in runbook
+
+
 def test_design_and_plan_preserve_offline_and_gitflow_boundaries() -> None:
     design = DESIGN.read_text(encoding="utf-8")
     plan = PLAN.read_text(encoding="utf-8")

@@ -141,6 +141,15 @@ def _validate_limitations(settings: dict[str, object], limitations: object) -> N
         _fail("limitations_invalid")
 
 
+def _valid_pr_numbers(value: object) -> bool:
+    return (
+        isinstance(value, list)
+        and bool(value)
+        and all(type(number) is int and number > 0 for number in value)
+        and value == sorted(set(value))
+    )
+
+
 def validate_evidence(body: bytes) -> dict[str, object]:
     """Validate one canonical repository-security evidence document."""
 
@@ -172,29 +181,65 @@ def validate_evidence(body: bytes) -> dict[str, object]:
         _fail("settings_shape_invalid")
 
     dependabot = value["dependabot"]
-    if dependabot != {
-        "alerts_endpoint": "readable",
-        "automated_security_fixes": "enabled",
-        "security_update_pull_requests": "observed",
-        "version_update_pull_requests": "observed",
-        "vulnerability_alerts": "enabled",
+    if not isinstance(dependabot, dict) or set(dependabot) != {
+        "alerts_endpoint",
+        "automated_security_fixes",
+        "security_update_pull_requests",
+        "version_update_pull_requests",
+        "vulnerability_alerts",
     }:
+        _fail("dependabot_not_enabled")
+    if (
+        dependabot["alerts_endpoint"] != "readable"
+        or dependabot["automated_security_fixes"] != "enabled"
+        or dependabot["vulnerability_alerts"] != "enabled"
+        or not _valid_pr_numbers(dependabot["security_update_pull_requests"])
+        or not _valid_pr_numbers(dependabot["version_update_pull_requests"])
+        or set(dependabot["security_update_pull_requests"]) & set(dependabot["version_update_pull_requests"])
+    ):
         _fail("dependabot_not_enabled")
 
     secret_scanning = value["secret_scanning"]
-    if secret_scanning != {
-        "alerts_endpoint": "readable",
-        "probe_fixture": "github_official_dummy",
-        "probe_remote_ref": "absent",
-        "push_protection_probe": "blocked",
+    if not isinstance(secret_scanning, dict) or set(secret_scanning) != {
+        "alerts_endpoint",
+        "probe_commit_sha",
+        "probe_fixture",
+        "probe_ref",
+        "probe_remote_ref",
+        "push_protection_probe",
     }:
+        _fail("push_probe_invalid")
+    probe_sha = secret_scanning["probe_commit_sha"]
+    probe_ref = secret_scanning["probe_ref"]
+    if (
+        secret_scanning["alerts_endpoint"] != "readable"
+        or secret_scanning["probe_fixture"] != "github_official_dummy"
+        or secret_scanning["probe_remote_ref"] != "absent"
+        or secret_scanning["push_protection_probe"] != "blocked"
+        or not isinstance(probe_sha, str)
+        or re.fullmatch(r"[0-9a-f]{40}", probe_sha) is None
+        or probe_sha == commit_sha
+        or not isinstance(probe_ref, str)
+        or re.fullmatch(r"refs/heads/codex/93-push-protection-probe-[0-9]{8}T[0-9]{4}Z", probe_ref) is None
+    ):
         _fail("push_probe_invalid")
 
     code_scanning = value["code_scanning"]
-    if code_scanning != {
-        "analysis_commit_sha": commit_sha,
-        "categories": ["actions", "python"],
+    if not isinstance(code_scanning, dict) or set(code_scanning) != {
+        "analysis_commit_sha",
+        "analysis_ids",
+        "categories",
     }:
+        _fail("code_scanning_invalid")
+    analysis_ids = code_scanning["analysis_ids"]
+    if (
+        code_scanning["analysis_commit_sha"] != commit_sha
+        or code_scanning["categories"] != ["actions", "python"]
+        or not isinstance(analysis_ids, dict)
+        or set(analysis_ids) != {"actions", "python"}
+        or any(type(identifier) is not int or identifier < 1 for identifier in analysis_ids.values())
+        or len(set(analysis_ids.values())) != 2
+    ):
         _fail("code_scanning_invalid")
     _validate_limitations(settings, value["limitations"])
     return value

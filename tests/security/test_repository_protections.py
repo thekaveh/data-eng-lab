@@ -29,18 +29,21 @@ def valid_evidence() -> dict[str, object]:
         "dependabot": {
             "alerts_endpoint": "readable",
             "automated_security_fixes": "enabled",
-            "security_update_pull_requests": "observed",
-            "version_update_pull_requests": "observed",
+            "security_update_pull_requests": [149, 150],
+            "version_update_pull_requests": list(range(140, 149)),
             "vulnerability_alerts": "enabled",
         },
         "secret_scanning": {
             "alerts_endpoint": "readable",
+            "probe_commit_sha": "b" * 40,
             "probe_fixture": "github_official_dummy",
+            "probe_ref": "refs/heads/codex/93-push-protection-probe-20260816T0640Z",
             "probe_remote_ref": "absent",
             "push_protection_probe": "blocked",
         },
         "code_scanning": {
             "analysis_commit_sha": commit,
+            "analysis_ids": {"actions": 101, "python": 102},
             "categories": ["actions", "python"],
         },
         "limitations": [
@@ -91,7 +94,23 @@ def test_valid_evidence_is_accepted_and_normalized() -> None:
             "dependabot_not_enabled",
         ),
         (
+            lambda value: value["dependabot"].update(security_update_pull_requests=[149, 149]),
+            "dependabot_not_enabled",
+        ),
+        (
+            lambda value: value["dependabot"].update(security_update_pull_requests=[140, 150]),
+            "dependabot_not_enabled",
+        ),
+        (
             lambda value: value["secret_scanning"].update(push_protection_probe="bypassed"),
+            "push_probe_invalid",
+        ),
+        (
+            lambda value: value["secret_scanning"].update(probe_ref="refs/heads/main"),
+            "push_probe_invalid",
+        ),
+        (
+            lambda value: value["secret_scanning"].update(probe_commit_sha=value["commit_sha"]),
             "push_probe_invalid",
         ),
         (
@@ -100,6 +119,14 @@ def test_valid_evidence_is_accepted_and_normalized() -> None:
         ),
         (
             lambda value: value["code_scanning"].update(analysis_commit_sha="b" * 40),
+            "code_scanning_invalid",
+        ),
+        (
+            lambda value: value["code_scanning"].update(analysis_ids={"actions": True, "python": 102}),
+            "code_scanning_invalid",
+        ),
+        (
+            lambda value: value["code_scanning"].update(analysis_ids={"actions": 101, "python": 101}),
             "code_scanning_invalid",
         ),
     ],

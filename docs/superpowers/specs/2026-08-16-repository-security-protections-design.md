@@ -38,9 +38,12 @@ most 16 levels and 4,096 nodes, and contains only these top-level fields:
 - `captured_at`, canonical whole-second UTC;
 - `commit_sha`, a lowercase 40-character Git object ID;
 - `settings`, a closed map of the five repository settings;
-- `dependabot`, binding both alert and security-update API results;
-- `secret_scanning`, binding alert API readability and the safe probe result;
-- `code_scanning`, binding the exact commit and required analysis categories;
+- `dependabot`, binding both alert API results and the exact Dependabot
+  pull-request numbers, with security and version updates kept disjoint;
+- `secret_scanning`, binding alert API readability and the exact probe ref and
+  commit for the safe rejection result;
+- `code_scanning`, binding the exact commit, required categories, and exact
+  CodeQL analysis IDs;
 - `limitations`, a bounded list containing only unsupported optional features.
 
 The verifier emits one canonical JSON summary on success and a single bounded
