@@ -103,12 +103,13 @@ Commit: `feat(release): define offline state contract (#94)`
 
 - [ ] **Step 1: Write changelog RED tests**
 
-Require one exact `## 1. [Unreleased]` heading in `docs/CHANGELOG.md`, at least
-one nonempty Added/Changed entry, no dated `0.1.0` release heading, and root
+Require one visible numbered `Unreleased` H2 in `docs/CHANGELOG.md`, at least
+one nonempty Added/Changed entry, no dated `0.1.0` release H2, and root
 `CHANGELOG.md` containing only its title, the exact current-state statement,
-and a relative link to `docs/CHANGELOG.md`. Reject duplicate Unreleased
-headings, a released `0.1.0` section, root change bullets, wrong links, and
-contradictory state.
+and a relative link to `docs/CHANGELOG.md`. Recognize ATX and Setext H2 forms
+with LF or CRLF, exclude fenced examples and HTML comments, and fail closed on
+raw HTML blocks. Reject duplicate Unreleased headings, a released `0.1.0`
+section, root change bullets, wrong links, and contradictory state.
 
 ```python
 canonical = read("docs/CHANGELOG.md")

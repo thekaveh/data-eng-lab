@@ -85,8 +85,10 @@ It reads bounded regular UTF-8 files only, parses `pyproject.toml` with
 `tomllib`, and validates:
 
 - one strict SemVer project version, currently `0.1.0`;
-- one numbered `Unreleased` section in the canonical changelog and no released
-  version section while the policy says intentionally unreleased;
+- one visible numbered `Unreleased` H2 in the canonical changelog and no visible
+  released-version H2 while the policy says intentionally unreleased; both ATX
+  and Setext forms, including CRLF, are recognized, while fenced examples and
+  HTML comments are excluded and raw HTML blocks fail closed;
 - the root changelog index, README, policy page, and manifest all identify the
   same authority and state;
 - the owned, non-symlink manifest satisfies the complete canonical three-surface

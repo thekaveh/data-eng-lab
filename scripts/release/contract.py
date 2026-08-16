@@ -121,7 +121,7 @@ release notes, and the explicit authorization required to publish.
 def _markdown_h2s(text: str) -> tuple[_MarkdownH2, ...]:
     """Return CommonMark ATX and Setext level-two headings in source order."""
     headings: list[_MarkdownH2] = []
-    atx = re.compile(r"^[ ]{0,3}##(?!#)[ \t]+(?P<content>[^\r\n]*?)[ \t]*$", re.MULTILINE)
+    atx = re.compile(r"^[ ]{0,3}##(?!#)[ \t]+(?P<content>[^\r\n]*?)[ \t]*\r?$", re.MULTILINE)
     for match in atx.finditer(text):
         content = re.sub(r"[ \t]+#+[ \t]*$", "", match.group("content")).strip()
         headings.append(_MarkdownH2(content, match.start(), match.end()))
@@ -134,10 +134,52 @@ def _markdown_h2s(text: str) -> tuple[_MarkdownH2, ...]:
     return tuple(sorted(headings, key=lambda heading: heading.start))
 
 
+def _visible_markdown(text: str) -> str:
+    """Mask fenced code and HTML comments while preserving source offsets."""
+    visible = list(text)
+
+    def mask(start: int, end: int) -> None:
+        for index in range(start, end):
+            if visible[index] not in {"\r", "\n"}:
+                visible[index] = " "
+
+    comments = re.compile(r"<!--.*?(?:-->|$)", re.DOTALL)
+    for match in comments.finditer(text):
+        mask(match.start(), match.end())
+
+    comment_masked = "".join(visible)
+    opening = re.compile(r"^[ ]{0,3}(?P<fence>`{3,}|~{3,})[^\r\n]*$")
+    active_fence: tuple[str, int] | None = None
+    offset = 0
+    for line in comment_masked.splitlines(keepends=True):
+        body = line.rstrip("\r\n")
+        if active_fence is None:
+            match = opening.fullmatch(body)
+            if match is not None:
+                fence = match.group("fence")
+                active_fence = (fence[0], len(fence))
+                mask(offset, offset + len(line))
+        else:
+            character, minimum = active_fence
+            closing = re.compile(rf"^[ ]{{0,3}}{re.escape(character)}{{{minimum},}}[ \t]*$")
+            mask(offset, offset + len(line))
+            if closing.fullmatch(body) is not None:
+                active_fence = None
+        offset += len(line)
+    return "".join(visible)
+
+
 def validate_changelog_state(root: Path, version: str) -> str:
     """Validate one detailed changelog and one exact repository index."""
     canonical = _read_owned_text(root, CANONICAL_CHANGELOG)
-    headings = _markdown_h2s(canonical)
+    visible = _visible_markdown(canonical)
+    if re.search(
+        r"^[ ]{0,3}</?[A-Za-z][A-Za-z0-9-]*(?:[ \t][^>]*)?/?>[ \t]*\r?$",
+        visible,
+        re.MULTILINE,
+    ):
+        raise ReleaseContractFailure("canonical_changelog_invalid")
+    headings = _markdown_h2s(visible)
     unreleased_headings = [
         heading
         for heading in headings
@@ -150,7 +192,7 @@ def validate_changelog_state(root: Path, version: str) -> str:
         (heading for heading in headings if heading.start > unreleased_heading.start),
         None,
     )
-    unreleased = canonical[unreleased_heading.end : next_heading.start if next_heading is not None else len(canonical)]
+    unreleased = visible[unreleased_heading.end : next_heading.start if next_heading is not None else len(visible)]
     if (
         re.search(r"^### (?:Added|Changed)$", unreleased, re.MULTILINE) is None
         or re.search(r"^- \S", unreleased, re.MULTILINE) is None

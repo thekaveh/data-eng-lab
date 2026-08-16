@@ -120,6 +120,55 @@ def test_changelog_state_rejects_duplicate_unreleased_heading(tmp_path: Path) ->
 @pytest.mark.parametrize(
     "heading",
     [
+        "## 2. [Unreleased]\r\n",
+        "## 2. [0.1.0] - 2026-08-16\r\n",
+    ],
+)
+def test_changelog_state_rejects_crlf_release_headings(tmp_path: Path, heading: str) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_bytes(canonical.read_bytes() + b"\n" + heading.encode("utf-8"))
+
+    code = "canonical_changelog_invalid" if "Unreleased" in heading else "release_state_contradictory"
+    with pytest.raises(ReleaseContractFailure, match=f"^{code}$"):
+        validate_changelog_state(tmp_path, "0.1.0")
+
+
+@pytest.mark.parametrize(
+    "opening,closing",
+    [
+        ("```markdown\n", "\n```"),
+        ("<!--\n", "\n-->"),
+        ("<div>\n", "\n</div>"),
+    ],
+)
+def test_changelog_state_rejects_hidden_only_unreleased_heading(tmp_path: Path, opening: str, closing: str) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_text(opening + canonical.read_text(encoding="utf-8") + closing, encoding="utf-8")
+
+    with pytest.raises(ReleaseContractFailure, match="^canonical_changelog_invalid$"):
+        validate_changelog_state(tmp_path, "0.1.0")
+
+
+@pytest.mark.parametrize(
+    "example",
+    [
+        "```markdown\n## 2. [0.1.0] - example\n```",
+        "<!--\n## 2. [0.1.0] - example\n-->",
+    ],
+)
+def test_changelog_state_ignores_hidden_release_heading_examples(tmp_path: Path, example: str) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_text(canonical.read_text(encoding="utf-8") + f"\n{example}\n", encoding="utf-8")
+
+    assert validate_changelog_state(tmp_path, "0.1.0") == "docs/CHANGELOG.md"
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
         "## 2. [Unreleased]",
         "  ## 2. [Unreleased]",
         "##  2. [Unreleased]",
