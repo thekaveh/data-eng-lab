@@ -364,7 +364,19 @@ def build_server(config: ProbeConfig, *, host: str = "0.0.0.0", port: int = 8080
         def do_DELETE(self) -> None:  # noqa: N802
             self._method_not_allowed()
 
+        def do_PATCH(self) -> None:  # noqa: N802
+            self._method_not_allowed()
+
+        def do_OPTIONS(self) -> None:  # noqa: N802
+            self._method_not_allowed()
+
         def do_HEAD(self) -> None:  # noqa: N802
+            self._method_not_allowed()
+
+        def do_CONNECT(self) -> None:  # noqa: N802
+            self._method_not_allowed()
+
+        def do_TRACE(self) -> None:  # noqa: N802
             self._method_not_allowed()
 
         def _method_not_allowed(self) -> None:
