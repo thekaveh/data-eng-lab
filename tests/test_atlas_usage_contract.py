@@ -227,9 +227,16 @@ def test_assembled_iceberg_rest_observability_is_internal_and_read_only():
 
     prometheus_mounts = {volume["target"]: volume for volume in services["prometheus"]["volumes"]}
     assert prometheus_mounts["/etc/prometheus/prometheus.yml"]["read_only"] is True
-    assert prometheus_mounts["/etc/prometheus/rules/iceberg-rest.yml"]["read_only"] is True
+    assert prometheus_mounts["/etc/data-eng-lab-prometheus/rules/iceberg-rest.yml"]["read_only"] is True
     grafana_mounts = {volume["target"]: volume for volume in services["grafana"]["volumes"]}
-    assert grafana_mounts["/etc/grafana/provisioning/dashboards/iceberg-rest.json"]["read_only"] is True
+    assert services["grafana"]["environment"]["GF_PATHS_PROVISIONING"] == ("/etc/data-eng-lab-grafana/provisioning")
+    assert grafana_mounts["/etc/data-eng-lab-grafana/provisioning/dashboards"]["read_only"] is True
+    assert grafana_mounts["/etc/data-eng-lab-grafana/issue-dashboards/iceberg-rest.json"]["read_only"] is True
+
+    for mounts in (prometheus_mounts, grafana_mounts):
+        readonly_targets = {target for target, volume in mounts.items() if volume.get("read_only") is True}
+        for parent in readonly_targets:
+            assert all(target == parent or not target.startswith(parent + "/") for target in mounts)
 
 
 def test_consumer_manifest_env_passes_pinned_atlas_scale_validation(tmp_path: Path):
