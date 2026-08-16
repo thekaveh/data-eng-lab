@@ -89,9 +89,12 @@ It reads bounded regular UTF-8 files only, parses `pyproject.toml` with
   version section while the policy says intentionally unreleased;
 - the root changelog index, README, policy page, and manifest all identify the
   same authority and state;
-- the manifest exposes the policy as repository operations `9.2` and preserves
-  the changelog as page `10`; and
-- no release/tag command or automatic release workflow is introduced.
+- the owned, non-symlink manifest satisfies the complete canonical three-surface
+  parser, exposes the policy as repository operations `9.2`, and preserves the
+  changelog as page `10`; and
+- the exact audited workflow inventory and SHA-256 digests remain unchanged, so
+  any workflow-byte change requires an explicit contract and review update
+  before release/tag automation can enter the repository.
 
 Success emits only `release_contract_ok`. Failures emit one bounded stable
 error code and never echo file contents. Live tag, release, and branch state is

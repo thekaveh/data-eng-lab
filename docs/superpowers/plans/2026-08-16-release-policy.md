@@ -192,8 +192,10 @@ Operations immediately after Security Automation.
 
 - [ ] **Step 4: Extend the validator and verify all three surfaces**
 
-Call `scripts.docs.manifest.load_manifest`, locate exact leaves, and reject
-wrong ids/numbers/titles/sources. Then run:
+Read the manifest through the bounded owned-file boundary, call the canonical
+`scripts.docs.manifest.parse_manifest`, locate exact leaves, and reject wrong
+three-surface metadata, ids, numbers, titles, or sources. The strict docs gate
+continues to validate every referenced filesystem path. Then run:
 
 ```bash
 uv run pytest -q tests/release
@@ -225,10 +227,11 @@ Commit: `docs: publish unreleased version policy (#94)`
 - [ ] **Step 1: Write command and no-automation RED tests**
 
 Require a phony `release-check` target invoking only
-`uv run python -m scripts.release.contract --root .`. Enumerate tracked
-`.github/workflows/*.yml` and reject release creation or package publication
-tokens: `gh release create`, `create-release`, `action-gh-release`,
-`gh-action-pypi-publish`, and `twine upload`.
+`uv run python -m scripts.release.contract --root .`. Enumerate exactly the
+audited `.github/workflows/*.yml` inventory and bind every owned workflow byte
+sequence to its reviewed SHA-256 digest. Reject additions, removals, symlinks,
+malformed YAML, or byte drift; a later workflow change must deliberately update
+the closed digest contract under review.
 
 - [ ] **Step 2: Run and observe RED**
 

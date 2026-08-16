@@ -102,7 +102,11 @@ def test_changelog_state_rejects_duplicate_unreleased_heading(tmp_path: Path) ->
     "heading",
     [
         "## 2. [Unreleased]",
+        "  ## 2. [Unreleased]",
+        "##  2. [Unreleased]",
         "## 2. [0.1.0]",
+        "  ## 2. [0.1.0] - 2026-08-16",
+        "##  2. [0.1.0]",
         "## 2. [0.1.0] - released",
     ],
 )
@@ -162,13 +166,18 @@ def _copy_workflows(root: Path) -> Path:
     [
         "gh release create",
         "gh api --method POST repos/example/project/releases",
+        "curl -X POST https://api.github.com/repos/example/project/releases",
         "git tag v0.1.0",
+        "git -c user.name=release tag v0.1.0",
         "git push origin refs/tags/v0.1.0",
         "actions/create-release@",
+        "ncipollo/release-action@0123456789012345678901234567890123456789",
         "softprops/action-gh-release@",
         "pypa/gh-action-pypi-publish@",
         "twine upload",
+        "uv publish",
         "./scripts/publish.sh",
+        "uv run python scripts/release/publish.py",
     ],
 )
 def test_release_automation_contract_rejects_publish_tokens(tmp_path: Path, token: str) -> None:
@@ -196,6 +205,26 @@ def test_release_automation_contract_rejects_new_workflow_even_without_known_tok
 
     with pytest.raises(ReleaseContractFailure, match="^release_automation_forbidden$"):
         validate_no_release_automation(tmp_path)
+
+
+def test_release_automation_contract_rejects_any_allowlisted_workflow_byte_change(tmp_path: Path) -> None:
+    workflow = _copy_workflows(tmp_path) / "ci.yml"
+    workflow.write_text(workflow.read_text(encoding="utf-8") + "\n# harmless drift\n", encoding="utf-8")
+
+    with pytest.raises(ReleaseContractFailure, match="^release_automation_forbidden$"):
+        validate_no_release_automation(tmp_path)
+
+
+def test_load_project_version_rejects_deep_toml_recursion(tmp_path: Path) -> None:
+    nested = "'0.1.0'"
+    for _ in range(500):
+        nested = f"[{nested}]"
+    tmp_path.joinpath("pyproject.toml").write_text(
+        f'[project]\nname = "data-eng-lab"\nversion = {nested}\n', encoding="utf-8"
+    )
+
+    with pytest.raises(ReleaseContractFailure, match="^project_metadata_invalid$"):
+        load_project_version(tmp_path)
 
 
 def test_release_contract_cli_emits_one_success_token() -> None:

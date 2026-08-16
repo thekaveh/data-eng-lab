@@ -127,3 +127,29 @@ def test_repository_validator_rejects_deep_manifest_without_traceback(tmp_path: 
 
     with pytest.raises(ReleaseContractFailure, match="^release_documentation_invalid$"):
         validate_repository(tmp_path)
+
+
+def test_repository_validator_rejects_external_manifest_symlink(tmp_path: Path) -> None:
+    _copy_release_surface(tmp_path)
+    external = tmp_path.parent / f"{tmp_path.name}-external-manifest.yaml"
+    external.write_bytes((ROOT / "docs" / "manifest.yaml").read_bytes())
+    manifest = tmp_path / "docs" / "manifest.yaml"
+    manifest.unlink()
+    manifest.symlink_to(external)
+
+    with pytest.raises(ReleaseContractFailure, match="^release_documentation_invalid$"):
+        validate_repository(tmp_path)
+
+
+def test_repository_validator_requires_complete_three_surface_manifest(tmp_path: Path) -> None:
+    _copy_release_surface(tmp_path)
+    (tmp_path / "docs" / "manifest.yaml").write_text(
+        """sections:
+  - {id: release-policy, number: '9.2', title: Release Policy, source: docs/release-policy.md}
+  - {id: changelog, number: '10', title: Changelog, source: docs/CHANGELOG.md}
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReleaseContractFailure, match="^release_documentation_invalid$"):
+        validate_repository(tmp_path)
