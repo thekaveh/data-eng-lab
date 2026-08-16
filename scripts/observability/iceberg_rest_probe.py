@@ -255,6 +255,10 @@ class _DeadlineConnectionMixin:
                 sock.close()
                 last_error = error
                 continue
+            except BaseException:
+                timer.cancel()
+                sock.close()
+                raise
             self.sock = sock  # type: ignore[attr-defined]
             self._deadline_timer = timer
             tunnel_host = self._tunnel_host  # type: ignore[attr-defined]
@@ -410,7 +414,7 @@ def probe_catalog(
     duration = max(0.0, monotonic() - started)
     if not 100 <= status <= 599:
         return ProbeResult(False, duration, 0, "malformed")
-    if status < 200 or status >= 300:
+    if status != 200:
         return ProbeResult(False, duration, status, "http_error")
     if content_type.split(";", 1)[0].strip().lower() != "application/json":
         return ProbeResult(False, duration, status, "malformed")

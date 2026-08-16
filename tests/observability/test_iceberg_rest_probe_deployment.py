@@ -61,11 +61,61 @@ def test_probe_service_and_observability_mounts_are_hardened_and_internal() -> N
     expected_mounts = {
         "prometheus": {
             "../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro",
-            "../observability/prometheus/rules/iceberg-rest.yml:/etc/prometheus/rules/iceberg-rest.yml:ro",
+            "../observability/prometheus/rules/iceberg-rest.yml:/etc/data-eng-lab-prometheus/rules/iceberg-rest.yml:ro",
         },
         "grafana": {
-            "../observability/grafana/iceberg-rest.json:/etc/grafana/provisioning/dashboards/iceberg-rest.json:ro"
+            "./services/grafana/config/provisioning/alerting:/etc/data-eng-lab-grafana/provisioning/alerting:ro",
+            "./services/grafana/config/provisioning/datasources:/etc/data-eng-lab-grafana/provisioning/datasources:ro",
+            "./services/grafana/config/provisioning/plugins:/etc/data-eng-lab-grafana/provisioning/plugins:ro",
+            "./services/grafana/config/provisioning/dashboards/app-tier.json:/etc/data-eng-lab-grafana/atlas-dashboards/app-tier.json:ro",
+            "./services/grafana/config/provisioning/dashboards/containers-and-host.json:/etc/data-eng-lab-grafana/atlas-dashboards/containers-and-host.json:ro",
+            "./services/grafana/config/provisioning/dashboards/kong.json:/etc/data-eng-lab-grafana/atlas-dashboards/kong.json:ro",
+            "./services/grafana/config/provisioning/dashboards/litellm.json:/etc/data-eng-lab-grafana/atlas-dashboards/litellm.json:ro",
+            "./services/grafana/config/provisioning/dashboards/n8n.json:/etc/data-eng-lab-grafana/atlas-dashboards/n8n.json:ro",
+            "./services/grafana/config/provisioning/dashboards/postgres-redis.json:/etc/data-eng-lab-grafana/atlas-dashboards/postgres-redis.json:ro",
+            "./services/grafana/config/provisioning/dashboards/stack-overview.json:/etc/data-eng-lab-grafana/atlas-dashboards/stack-overview.json:ro",
+            "../observability/grafana/provisioning:/etc/data-eng-lab-grafana/provisioning/dashboards:ro",
+            "../observability/grafana/iceberg-rest.json:/etc/data-eng-lab-grafana/issue-dashboards/iceberg-rest.json:ro",
         },
     }
     for service, mounts in expected_mounts.items():
         assert mounts.issubset(set(services[service]["volumes"]))
+    assert services["grafana"]["environment"]["GF_PATHS_PROVISIONING"] == ("/etc/data-eng-lab-grafana/provisioning")
+
+
+def test_observability_mounts_never_nest_under_atlas_readonly_parents() -> None:
+    overlay = yaml.safe_load((ROOT / "compose/data-eng-lab.yml").read_text(encoding="utf-8"))
+    base_paths = {
+        "prometheus": ROOT / "infra/services/prometheus/compose.yml",
+        "grafana": ROOT / "infra/services/grafana/compose.yml",
+    }
+    for service, base_path in base_paths.items():
+        base = yaml.safe_load(base_path.read_text(encoding="utf-8"))
+        readonly_parents = {
+            volume.split(":")[1] for volume in base["services"][service]["volumes"] if volume.endswith(":ro")
+        }
+        overlay_targets = {volume.split(":")[1] for volume in overlay["services"][service]["volumes"]}
+        for parent in readonly_parents:
+            assert all(target == parent or not target.startswith(parent + "/") for target in overlay_targets)
+
+
+def test_grafana_consumer_provisioning_preserves_atlas_and_adds_issue_dashboard() -> None:
+    path = ROOT / "observability/grafana/provisioning/dashboards.yml"
+    document = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert document["apiVersion"] == 1
+    providers = document["providers"]
+    assert [(item["name"], item["folder"], item["options"]["path"]) for item in providers] == [
+        ("atlas", "Atlas", "/etc/data-eng-lab-grafana/atlas-dashboards"),
+        ("data-eng-lab", "Data Engineering Lab", "/etc/data-eng-lab-grafana/issue-dashboards"),
+    ]
+
+    overlay = yaml.safe_load((ROOT / "compose/data-eng-lab.yml").read_text(encoding="utf-8"))
+    mounted_names = {
+        Path(volume.split(":", 1)[0]).name
+        for volume in overlay["services"]["grafana"]["volumes"]
+        if "/atlas-dashboards/" in volume
+    }
+    source_names = {
+        path.name for path in (ROOT / "infra/services/grafana/config/provisioning/dashboards").glob("*.json")
+    }
+    assert mounted_names == source_names

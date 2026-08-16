@@ -13,6 +13,7 @@ from typing import Self
 
 import pytest
 
+from scripts.observability import iceberg_rest_probe
 from scripts.observability.iceberg_rest_probe import (
     ProbeConfig,
     ProbeFailure,
@@ -303,6 +304,51 @@ def test_probe_closes_nonstandard_http_status_as_malformed_metrics() -> None:
         server.server_close()
         thread.join(timeout=1)
     assert result == ProbeResult(False, result.duration_seconds, 0, "malformed")
+
+
+def test_probe_requires_exact_http_200_for_success() -> None:
+    with _server(status=201) as origin:
+        result = probe_catalog(ProbeConfig(origin, 0.2, 65_536))
+    assert result == ProbeResult(False, result.duration_seconds, 201, "http_error")
+
+
+@pytest.mark.parametrize("error", [KeyboardInterrupt(), SystemExit(2)])
+def test_connect_preserves_control_flow_and_closes_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    error: BaseException,
+) -> None:
+    class FakeSocket:
+        closed = False
+
+        def bind(self, _address: object) -> None:
+            return
+
+        def settimeout(self, _timeout: float) -> None:
+            return
+
+        def connect(self, _address: object) -> None:
+            raise error
+
+        def shutdown(self, _how: int) -> None:
+            return
+
+        def close(self) -> None:
+            self.closed = True
+
+    fake = FakeSocket()
+    monkeypatch.setattr(socket, "socket", lambda *_args: fake)
+    connection = iceberg_rest_probe._DeadlineHTTPConnection(
+        "iceberg-rest:8181",
+        timeout=2.0,
+        deadline=time.monotonic() + 2.0,
+        monotonic=time.monotonic,
+        addresses=((socket.AF_INET, socket.SOCK_STREAM, 0, "", ("127.0.0.1", 8181)),),
+    )
+    with pytest.raises(type(error)):
+        connection.connect()
+    assert fake.closed is True
+    timer = connection._deadline_timer
+    assert timer is None or not timer.is_alive()
 
 
 def test_probe_classifies_timeout_and_unavailable_without_details() -> None:

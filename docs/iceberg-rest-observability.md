@@ -35,9 +35,9 @@ The closed result values are:
 |---|---|
 | `success` | Valid catalog configuration returned in at most one second. |
 | `slow` | Valid catalog configuration returned after more than one second. |
-| `malformed` | A 2xx response violated content-type, size, JSON, or Iceberg field bounds. |
+| `malformed` | A response used an invalid status or a 200 response violated content-type, size, JSON, or Iceberg field bounds. |
 | `timeout` | The bounded catalog request timed out. |
-| `http_error` | The catalog returned a non-2xx status or redirect. |
+| `http_error` | The catalog returned any status other than 200, including a redirect. |
 | `unavailable` | The fixed catalog origin could not be reached. |
 
 `success` and `slow` both count as available. All other outcomes count as

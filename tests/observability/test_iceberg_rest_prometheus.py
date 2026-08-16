@@ -30,6 +30,7 @@ def test_generated_prometheus_config_preserves_atlas_and_adds_one_final_job() ->
     assert OUTPUT_PATH.read_bytes() == rendered
     actual = yaml.safe_load(rendered)
     expected = copy.deepcopy(base)
+    expected["rule_files"].append("/etc/data-eng-lab-prometheus/rules/*.yml")
     jobs = expected["scrape_configs"]
     assert isinstance(jobs, list)
     jobs.append(

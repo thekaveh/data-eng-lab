@@ -48,11 +48,24 @@ services:
   prometheus:
     volumes:
       - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
-      - ../observability/prometheus/rules/iceberg-rest.yml:/etc/prometheus/rules/iceberg-rest.yml:ro
+      - ../observability/prometheus/rules/iceberg-rest.yml:/etc/data-eng-lab-prometheus/rules/iceberg-rest.yml:ro
 
   grafana:
+    environment:
+      GF_PATHS_PROVISIONING: /etc/data-eng-lab-grafana/provisioning
     volumes:
-      - ../observability/grafana/iceberg-rest.json:/etc/grafana/provisioning/dashboards/iceberg-rest.json:ro
+      - ./services/grafana/config/provisioning/alerting:/etc/data-eng-lab-grafana/provisioning/alerting:ro
+      - ./services/grafana/config/provisioning/datasources:/etc/data-eng-lab-grafana/provisioning/datasources:ro
+      - ./services/grafana/config/provisioning/plugins:/etc/data-eng-lab-grafana/provisioning/plugins:ro
+      - ./services/grafana/config/provisioning/dashboards/app-tier.json:/etc/data-eng-lab-grafana/atlas-dashboards/app-tier.json:ro
+      - ./services/grafana/config/provisioning/dashboards/containers-and-host.json:/etc/data-eng-lab-grafana/atlas-dashboards/containers-and-host.json:ro
+      - ./services/grafana/config/provisioning/dashboards/kong.json:/etc/data-eng-lab-grafana/atlas-dashboards/kong.json:ro
+      - ./services/grafana/config/provisioning/dashboards/litellm.json:/etc/data-eng-lab-grafana/atlas-dashboards/litellm.json:ro
+      - ./services/grafana/config/provisioning/dashboards/n8n.json:/etc/data-eng-lab-grafana/atlas-dashboards/n8n.json:ro
+      - ./services/grafana/config/provisioning/dashboards/postgres-redis.json:/etc/data-eng-lab-grafana/atlas-dashboards/postgres-redis.json:ro
+      - ./services/grafana/config/provisioning/dashboards/stack-overview.json:/etc/data-eng-lab-grafana/atlas-dashboards/stack-overview.json:ro
+      - ../observability/grafana/provisioning:/etc/data-eng-lab-grafana/provisioning/dashboards:ro
+      - ../observability/grafana/iceberg-rest.json:/etc/data-eng-lab-grafana/issue-dashboards/iceberg-rest.json:ro
 
   checkpoint-retention-init:
     image: ${MINIO_INIT_IMAGE}

@@ -48,6 +48,13 @@ def render_prometheus_config(base: Mapping[str, object]) -> bytes:
         _invalid()
 
     rendered = copy.deepcopy(base)
+    rendered_rules = rendered["rule_files"]
+    if not isinstance(rendered_rules, list) or any(not isinstance(item, str) for item in rendered_rules):
+        _invalid()
+    consumer_rules = "/etc/data-eng-lab-prometheus/rules/*.yml"
+    if consumer_rules in rendered_rules:
+        _invalid()
+    rendered_rules.append(consumer_rules)
     rendered_jobs = rendered["scrape_configs"]
     if not isinstance(rendered_jobs, list):
         _invalid()
