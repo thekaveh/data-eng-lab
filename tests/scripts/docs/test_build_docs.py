@@ -76,6 +76,15 @@ def test_render_mkdocs_uses_generated_site_and_has_no_repo_controls(manifest):
     assert "19 paired scenarios, 17 Scala/PySpark parity pairs" in config
 
 
+def test_repository_mkdocs_description_matches_maven_app_inventory():
+    repo_root = Path(__file__).resolve().parents[3]
+    manifest = load_manifest(repo_root / "docs/manifest.yaml", repo_root)
+    app_count = len(tuple((repo_root / "spark-apps").glob("*/pom.xml")))
+
+    assert app_count == 6
+    assert f"{app_count} CI-built Maven apps" in render_mkdocs_yml(manifest)
+
+
 def test_render_site_and_wiki_are_complete(tmp_repo, manifest):
     render_site(manifest, tmp_repo, tmp_repo / "generated/site")
     render_wiki(manifest, tmp_repo, tmp_repo / "generated/wiki")
