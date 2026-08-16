@@ -128,11 +128,10 @@ Expected: the OSV workflow is missing.
 
 - [ ] **Step 3: Implement workflow and validation**
 
-Call the pinned OSV scanner and reporter actions directly from the read-only PR
-job. Call `google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml`
-at `8deb546fdb875b9996d27d4950be7312dac076a1` only from the full-analysis job,
-whose permissions satisfy the reusable workflow, with mutually exclusive event
-guards.
+Call the pinned OSV scanner and reporter actions directly from both jobs with
+mutually exclusive event guards. Require an isolated, bounded, valid JSON result
+before reporting. Grant only the full-analysis job code-scanning permission and
+upload its SARIF result separately.
 
 - [ ] **Step 4: Verify GREEN and commit**
 

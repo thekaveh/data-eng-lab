@@ -35,7 +35,7 @@ jobs:
         uses: google/osv-scanner-action/osv-scanner-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
         with:
           scan-args: |-
-            --output=results.json
+            --output=${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
             --format=json
             --lockfile=uv.lock
             --lockfile=requirements.txt:datasets/tpch-lock-requirements.txt
@@ -46,31 +46,77 @@ jobs:
             --lockfile=spark-apps/nyc-taxi-medallion/pom.xml
             --lockfile=spark-apps/tpch-star-schema/pom.xml
         continue-on-error: true
+      - name: Validate scanner output
+        if: always() && !cancelled()
+        env:
+          RESULTS_FILE: ${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+        run: |-
+          set -eu
+          test -f "${RESULTS_FILE}"
+          size="$(wc -c < "${RESULTS_FILE}")"
+          test "${size}" -gt 0
+          test "${size}" -le 67108864
+          python3 -m json.tool "${RESULTS_FILE}" >/dev/null
       - name: Fail on a known vulnerability
         uses: google/osv-scanner-action/osv-reporter-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
         with:
           scan-args: |-
-            --output=results.sarif
-            --new=results.json
+            --output=${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
+            --new=${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
             --gh-annotations=true
             --fail-on-vuln=true
 
   full-scan:
     if: github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     permissions:
       actions: read
       contents: read
       security-events: write
-    uses: google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@8deb546fdb875b9996d27d4950be7312dac076a1 # v2.5.0
-    with:
-      scan-args: |-
-        --lockfile=uv.lock
-        --lockfile=requirements.txt:datasets/tpch-lock-requirements.txt
-        --lockfile=spark-apps/gh-archive-pipeline/pom.xml
-        --lockfile=spark-apps/movielens-feature-pipeline/pom.xml
-        --lockfile=spark-apps/nyc-taxi-data-quality/pom.xml
-        --lockfile=spark-apps/nyc-taxi-etl/pom.xml
-        --lockfile=spark-apps/nyc-taxi-medallion/pom.xml
-        --lockfile=spark-apps/tpch-star-schema/pom.xml
-      upload-sarif: true
-      fail-on-vuln: true
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+      - name: Scan exact dependency manifests
+        uses: google/osv-scanner-action/osv-scanner-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
+        with:
+          scan-args: |-
+            --output=${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+            --format=json
+            --lockfile=uv.lock
+            --lockfile=requirements.txt:datasets/tpch-lock-requirements.txt
+            --lockfile=spark-apps/gh-archive-pipeline/pom.xml
+            --lockfile=spark-apps/movielens-feature-pipeline/pom.xml
+            --lockfile=spark-apps/nyc-taxi-data-quality/pom.xml
+            --lockfile=spark-apps/nyc-taxi-etl/pom.xml
+            --lockfile=spark-apps/nyc-taxi-medallion/pom.xml
+            --lockfile=spark-apps/tpch-star-schema/pom.xml
+        continue-on-error: true
+      - name: Validate scanner output
+        if: always() && !cancelled()
+        env:
+          RESULTS_FILE: ${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+        run: |-
+          set -eu
+          test -f "${RESULTS_FILE}"
+          size="$(wc -c < "${RESULTS_FILE}")"
+          test "${size}" -gt 0
+          test "${size}" -le 67108864
+          python3 -m json.tool "${RESULTS_FILE}" >/dev/null
+      - name: Fail on a known vulnerability
+        uses: google/osv-scanner-action/osv-reporter-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
+        with:
+          scan-args: |-
+            --output=${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
+            --new=${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+            --gh-annotations=false
+            --fail-on-vuln=true
+      - name: Upload OSV SARIF
+        if: always() && !cancelled()
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
+        with:
+          sarif_file: ${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif

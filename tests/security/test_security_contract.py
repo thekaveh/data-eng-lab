@@ -229,11 +229,27 @@ def test_osv_pull_request_scan_does_not_call_a_permission_elevating_workflow() -
 
     assert "uses" not in job
     assert job["permissions"] == {"contents": "read"}
-    assert [step["uses"] for step in job["steps"]] == [
+    assert [step["uses"] for step in job["steps"] if "uses" in step] == [
         "actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8",
         "google/osv-scanner-action/osv-scanner-action@06b2ab4348248b456ee06c9e953637f55e03504f",
         "google/osv-scanner-action/osv-reporter-action@06b2ab4348248b456ee06c9e953637f55e03504f",
     ]
+
+
+def test_osv_jobs_fail_closed_on_missing_or_malformed_scanner_output() -> None:
+    workflow = load_yaml_exact(REPO_ROOT / ".github" / "workflows" / "dependency-security.yml")
+    for name in ("pull-request-scan", "full-scan"):
+        job = workflow["jobs"][name]
+        assert "uses" not in job
+        steps = job["steps"]
+        validator = next(step for step in steps if step.get("name") == "Validate scanner output")
+        assert validator["if"] == "always() && !cancelled()"
+        assert validator["env"] == {
+            "RESULTS_FILE": "${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json"
+        }
+        assert "python3 -m json.tool" in validator["run"]
+        scanner = next(step for step in steps if step.get("name") == "Scan exact dependency manifests")
+        assert "${{ runner.temp }}/osv-results-" in scanner["with"]["scan-args"]
 
 
 @pytest.mark.parametrize(
