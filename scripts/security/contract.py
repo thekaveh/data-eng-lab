@@ -233,16 +233,70 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
     scanner_sha = "06b2ab4348248b456ee06c9e953637f55e03504f"
     host_result_prefix = "${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}"
     container_result_prefix = "/github/workspace/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}"
-    checkout_step = {
-        "name": "Checkout",
-        "uses": "actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8",
-        "with": {
+    host_old = "${{ github.workspace }}/.osv-old-${{ github.run_id }}-${{ github.run_attempt }}.json"
+    host_new = "${{ github.workspace }}/.osv-new-${{ github.run_id }}-${{ github.run_attempt }}.json"
+    container_old = "/github/workspace/.osv-old-${{ github.run_id }}-${{ github.run_attempt }}.json"
+    container_new = "/github/workspace/.osv-new-${{ github.run_id }}-${{ github.run_attempt }}.json"
+    checkout_uses = "actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8"
+
+    def checkout_step(name: str, *, ref: str | None = None, clean: bool | None = None) -> dict[str, object]:
+        options: dict[str, object] = {
             "fetch-depth": 1,
             "persist-credentials": False,
             "submodules": False,
+        }
+        if ref is not None:
+            options = {"ref": ref, **options}
+        if clean is not None:
+            options["clean"] = clean
+        return {"name": name, "uses": checkout_uses, "with": options}
+
+    def scanner_step(name: str, output: str) -> dict[str, object]:
+        return {
+            "name": name,
+            "uses": f"google/osv-scanner-action/osv-scanner-action@{scanner_sha}",
+            "with": {"scan-args": "\n".join((f"--output={output}", "--format=json", *_osv_operands(inventory)))},
+            "continue-on-error": True,
+        }
+
+    def validate_step(name: str, result_file: str) -> dict[str, object]:
+        return {
+            "name": name,
+            "if": "always() && !cancelled()",
+            "env": {"RESULTS_FILE": result_file},
+            "run": "\n".join(
+                (
+                    "set -eu",
+                    'test -f "${RESULTS_FILE}"',
+                    'size="$(wc -c < "${RESULTS_FILE}")"',
+                    'test "${size}" -gt 0',
+                    'test "${size}" -le 67108864',
+                    'python3 -m json.tool "${RESULTS_FILE}" >/dev/null',
+                )
+            ),
+        }
+
+    pr_prepare_step = {
+        "name": "Prepare scanner output",
+        "env": {
+            "OLD_RESULTS_FILE": host_old,
+            "NEW_RESULTS_FILE": host_new,
+            "SARIF_FILE": f"{host_result_prefix}.sarif",
         },
+        "run": "\n".join(
+            (
+                "set -eu",
+                'rm -f -- "${OLD_RESULTS_FILE}" "${NEW_RESULTS_FILE}" "${SARIF_FILE}"',
+                'test ! -e "${OLD_RESULTS_FILE}"',
+                'test ! -L "${OLD_RESULTS_FILE}"',
+                'test ! -e "${NEW_RESULTS_FILE}"',
+                'test ! -L "${NEW_RESULTS_FILE}"',
+                'test ! -e "${SARIF_FILE}"',
+                'test ! -L "${SARIF_FILE}"',
+            )
+        ),
     }
-    prepare_step = {
+    full_prepare_step = {
         "name": "Prepare scanner output",
         "env": {
             "RESULTS_FILE": f"{host_result_prefix}.json",
@@ -259,47 +313,35 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
             )
         ),
     }
-    scanner_step = {
-        "name": "Scan exact dependency manifests",
-        "uses": f"google/osv-scanner-action/osv-scanner-action@{scanner_sha}",
+    pr_reporter_step = {
+        "name": "Fail on a newly introduced vulnerability",
+        "uses": f"google/osv-scanner-action/osv-reporter-action@{scanner_sha}",
         "with": {
             "scan-args": "\n".join(
-                (f"--output={container_result_prefix}.json", "--format=json", *_osv_operands(inventory))
+                (
+                    f"--output={container_result_prefix}.sarif",
+                    f"--old={container_old}",
+                    f"--new={container_new}",
+                    "--gh-annotations=true",
+                    "--fail-on-vuln=true",
+                )
             )
         },
-        "continue-on-error": True,
     }
-    validate_step = {
-        "name": "Validate scanner output",
-        "if": "always() && !cancelled()",
-        "env": {"RESULTS_FILE": f"{host_result_prefix}.json"},
-        "run": "\n".join(
-            (
-                "set -eu",
-                'test -f "${RESULTS_FILE}"',
-                'size="$(wc -c < "${RESULTS_FILE}")"',
-                'test "${size}" -gt 0',
-                'test "${size}" -le 67108864',
-                'python3 -m json.tool "${RESULTS_FILE}" >/dev/null',
-            )
-        ),
-    }
-
-    def reporter_step(annotations: bool) -> dict[str, object]:
-        return {
-            "name": "Fail on a known vulnerability",
-            "uses": f"google/osv-scanner-action/osv-reporter-action@{scanner_sha}",
-            "with": {
-                "scan-args": "\n".join(
-                    (
-                        f"--output={container_result_prefix}.sarif",
-                        f"--new={container_result_prefix}.json",
-                        f"--gh-annotations={'true' if annotations else 'false'}",
-                        "--fail-on-vuln=true",
-                    )
+    full_reporter_step = {
+        "name": "Report complete vulnerability baseline",
+        "uses": f"google/osv-scanner-action/osv-reporter-action@{scanner_sha}",
+        "with": {
+            "scan-args": "\n".join(
+                (
+                    f"--output={container_result_prefix}.sarif",
+                    f"--new={container_result_prefix}.json",
+                    "--gh-annotations=false",
+                    "--fail-on-vuln=false",
                 )
-            },
-        }
+            )
+        },
+    }
 
     expected_jobs = {
         "pull-request-scan": {
@@ -307,7 +349,16 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
             "runs-on": "ubuntu-24.04",
             "timeout-minutes": 15,
             "permissions": {"contents": "read"},
-            "steps": [checkout_step, prepare_step, scanner_step, validate_step, reporter_step(True)],
+            "steps": [
+                checkout_step("Checkout target revision", ref="${{ github.event.pull_request.base.sha }}"),
+                pr_prepare_step,
+                scanner_step("Scan exact target dependency manifests", container_old),
+                validate_step("Validate target scanner output", host_old),
+                checkout_step("Checkout proposed revision", ref="${{ github.sha }}", clean=False),
+                scanner_step("Scan exact proposed dependency manifests", container_new),
+                validate_step("Validate proposed scanner output", host_new),
+                pr_reporter_step,
+            ],
         },
         "full-scan": {
             "if": "github.event_name != 'pull_request'",
@@ -319,11 +370,11 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
                 "security-events": "write",
             },
             "steps": [
-                checkout_step,
-                prepare_step,
-                scanner_step,
-                validate_step,
-                reporter_step(False),
+                checkout_step("Checkout"),
+                full_prepare_step,
+                scanner_step("Scan exact dependency manifests", f"{container_result_prefix}.json"),
+                validate_step("Validate scanner output", f"{host_result_prefix}.json"),
+                full_reporter_step,
                 {
                     "name": "Upload OSV SARIF",
                     "if": "always() && !cancelled()",

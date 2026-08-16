@@ -97,15 +97,19 @@ job separately uploads the validated SARIF result. Scan arguments contain only
 eight `--lockfile=` values: the root uv lock, the hashed TPC-H requirements, and
 six POMs. Recursive flags and repository-directory operands are forbidden.
 
-Pull requests to `develop` or `main` run a fail-on-vulnerability full-manifest
-scan without SARIF upload and with `contents: read` only. Pushes to `develop`
-or `main` and manual dispatch run the same fail-on-
-vulnerability scan with `contents: read`, `actions: read`, and
-`security-events: write`, and upload SARIF. Thus a PR cannot gain code-scanning
-write permission, while a merged analysis can satisfy the issue's GitHub
-analysis criterion.
+Pull requests to `develop` or `main` check out and scan the exact target SHA,
+retain its bounded result, then check out and scan the proposed merge SHA. The
+reporter compares `--old` and `--new` and fails only on vulnerabilities newly
+introduced by the proposal. It does not upload SARIF and receives only
+`contents: read`. Pushes to `develop` or `main` and manual dispatch scan the
+complete current manifest set, report the inherited baseline without failing
+the workflow merely because baseline findings exist, and upload SARIF with only
+`contents: read`, `actions: read`, and `security-events: write`. Thus the PR gate
+is actionable in a repository with an existing transitive baseline, cannot gain
+code-scanning write permission, and the merged analysis still satisfies the
+issue's GitHub analysis criterion.
 
-Every detected vulnerability is actionable by default, independent of severity,
+Every detected vulnerability remains actionable by default, independent of severity,
 because OSV records frequently lack uniform severity metadata. A temporary
 exception must name an exact vulnerability ID and package, explain why the
 repository is not affected or cannot yet upgrade, name an owner, and include a

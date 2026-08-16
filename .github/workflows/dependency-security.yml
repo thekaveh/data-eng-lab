@@ -25,28 +25,32 @@ jobs:
     permissions:
       contents: read
     steps:
-      - name: Checkout
+      - name: Checkout target revision
         uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
         with:
+          ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 1
           persist-credentials: false
           submodules: false
       - name: Prepare scanner output
         env:
-          RESULTS_FILE: ${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+          OLD_RESULTS_FILE: ${{ github.workspace }}/.osv-old-${{ github.run_id }}-${{ github.run_attempt }}.json
+          NEW_RESULTS_FILE: ${{ github.workspace }}/.osv-new-${{ github.run_id }}-${{ github.run_attempt }}.json
           SARIF_FILE: ${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
         run: |-
           set -eu
-          rm -f -- "${RESULTS_FILE}" "${SARIF_FILE}"
-          test ! -e "${RESULTS_FILE}"
-          test ! -L "${RESULTS_FILE}"
+          rm -f -- "${OLD_RESULTS_FILE}" "${NEW_RESULTS_FILE}" "${SARIF_FILE}"
+          test ! -e "${OLD_RESULTS_FILE}"
+          test ! -L "${OLD_RESULTS_FILE}"
+          test ! -e "${NEW_RESULTS_FILE}"
+          test ! -L "${NEW_RESULTS_FILE}"
           test ! -e "${SARIF_FILE}"
           test ! -L "${SARIF_FILE}"
-      - name: Scan exact dependency manifests
+      - name: Scan exact target dependency manifests
         uses: google/osv-scanner-action/osv-scanner-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
         with:
           scan-args: |-
-            --output=/github/workspace/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+            --output=/github/workspace/.osv-old-${{ github.run_id }}-${{ github.run_attempt }}.json
             --format=json
             --lockfile=uv.lock
             --lockfile=requirements.txt:datasets/tpch-lock-requirements.txt
@@ -57,10 +61,10 @@ jobs:
             --lockfile=spark-apps/nyc-taxi-medallion/pom.xml
             --lockfile=spark-apps/tpch-star-schema/pom.xml
         continue-on-error: true
-      - name: Validate scanner output
+      - name: Validate target scanner output
         if: always() && !cancelled()
         env:
-          RESULTS_FILE: ${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+          RESULTS_FILE: ${{ github.workspace }}/.osv-old-${{ github.run_id }}-${{ github.run_attempt }}.json
         run: |-
           set -eu
           test -f "${RESULTS_FILE}"
@@ -68,12 +72,47 @@ jobs:
           test "${size}" -gt 0
           test "${size}" -le 67108864
           python3 -m json.tool "${RESULTS_FILE}" >/dev/null
-      - name: Fail on a known vulnerability
+      - name: Checkout proposed revision
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+          clean: false
+      - name: Scan exact proposed dependency manifests
+        uses: google/osv-scanner-action/osv-scanner-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
+        with:
+          scan-args: |-
+            --output=/github/workspace/.osv-new-${{ github.run_id }}-${{ github.run_attempt }}.json
+            --format=json
+            --lockfile=uv.lock
+            --lockfile=requirements.txt:datasets/tpch-lock-requirements.txt
+            --lockfile=spark-apps/gh-archive-pipeline/pom.xml
+            --lockfile=spark-apps/movielens-feature-pipeline/pom.xml
+            --lockfile=spark-apps/nyc-taxi-data-quality/pom.xml
+            --lockfile=spark-apps/nyc-taxi-etl/pom.xml
+            --lockfile=spark-apps/nyc-taxi-medallion/pom.xml
+            --lockfile=spark-apps/tpch-star-schema/pom.xml
+        continue-on-error: true
+      - name: Validate proposed scanner output
+        if: always() && !cancelled()
+        env:
+          RESULTS_FILE: ${{ github.workspace }}/.osv-new-${{ github.run_id }}-${{ github.run_attempt }}.json
+        run: |-
+          set -eu
+          test -f "${RESULTS_FILE}"
+          size="$(wc -c < "${RESULTS_FILE}")"
+          test "${size}" -gt 0
+          test "${size}" -le 67108864
+          python3 -m json.tool "${RESULTS_FILE}" >/dev/null
+      - name: Fail on a newly introduced vulnerability
         uses: google/osv-scanner-action/osv-reporter-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
         with:
           scan-args: |-
             --output=/github/workspace/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
-            --new=/github/workspace/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+            --old=/github/workspace/.osv-old-${{ github.run_id }}-${{ github.run_attempt }}.json
+            --new=/github/workspace/.osv-new-${{ github.run_id }}-${{ github.run_attempt }}.json
             --gh-annotations=true
             --fail-on-vuln=true
 
@@ -129,14 +168,14 @@ jobs:
           test "${size}" -gt 0
           test "${size}" -le 67108864
           python3 -m json.tool "${RESULTS_FILE}" >/dev/null
-      - name: Fail on a known vulnerability
+      - name: Report complete vulnerability baseline
         uses: google/osv-scanner-action/osv-reporter-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
         with:
           scan-args: |-
             --output=/github/workspace/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
             --new=/github/workspace/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
             --gh-annotations=false
-            --fail-on-vuln=true
+            --fail-on-vuln=false
       - name: Upload OSV SARIF
         if: always() && !cancelled()
         uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4

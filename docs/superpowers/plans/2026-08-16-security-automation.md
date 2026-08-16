@@ -115,9 +115,10 @@ Commit: `ci: cover parent dependency manifests with Dependabot (#92)`
 
 - [ ] **Step 1: Write workflow RED tests**
 
-Require pull-request and merged/manual paths; exact eight lockfile
-operands; no recursive/directory operand; `fail-on-vuln: true`; PR SARIF false
-with only `contents: read`; merged SARIF true with only contents/actions read and
+Require pull-request and merged/manual paths; exact eight lockfile operands; no
+recursive/directory operand; an exact target-versus-proposal PR comparison with
+`fail-on-vuln: true`; PR SARIF false with only `contents: read`; complete merged
+SARIF reporting with `fail-on-vuln: false` and only contents/actions read plus
 security-events write; immutable OSV SHA; concurrency bounds; and no secrets.
 
 - [ ] **Step 2: Observe RED**
@@ -129,9 +130,11 @@ Expected: the OSV workflow is missing.
 - [ ] **Step 3: Implement workflow and validation**
 
 Call the pinned OSV scanner and reporter actions directly from both jobs with
-mutually exclusive event guards. Require an isolated, bounded, valid JSON result
-before reporting. Grant only the full-analysis job code-scanning permission and
-upload its SARIF result separately.
+mutually exclusive event guards. On PRs, scan the exact base and proposed SHAs
+into separate isolated, bounded, valid JSON results and compare them. On merged
+or manual runs, report the complete current baseline without treating inherited
+findings as scanner failure. Grant only the full-analysis job code-scanning
+permission and upload its SARIF result separately.
 
 - [ ] **Step 4: Verify GREEN and commit**
 

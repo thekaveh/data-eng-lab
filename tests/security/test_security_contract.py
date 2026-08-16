@@ -118,7 +118,7 @@ def test_dependabot_and_osv_cover_the_hashed_tpch_requirements() -> None:
     scanner = next(
         step
         for step in workflow["jobs"]["pull-request-scan"]["steps"]
-        if step.get("name") == "Scan exact dependency manifests"
+        if step.get("name") == "Scan exact proposed dependency manifests"
     )
     arguments = scanner["with"]["scan-args"]
     assert "--lockfile=requirements.txt:datasets/tpch-lock-requirements.txt" in arguments.splitlines()
@@ -232,8 +232,41 @@ def test_osv_pull_request_scan_does_not_call_a_permission_elevating_workflow() -
     assert [step["uses"] for step in job["steps"] if "uses" in step] == [
         "actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8",
         "google/osv-scanner-action/osv-scanner-action@06b2ab4348248b456ee06c9e953637f55e03504f",
+        "actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8",
+        "google/osv-scanner-action/osv-scanner-action@06b2ab4348248b456ee06c9e953637f55e03504f",
         "google/osv-scanner-action/osv-reporter-action@06b2ab4348248b456ee06c9e953637f55e03504f",
     ]
+
+
+def test_osv_pull_request_scan_compares_base_and_head_without_failing_on_baseline() -> None:
+    workflow = load_yaml_exact(REPO_ROOT / ".github" / "workflows" / "dependency-security.yml")
+    steps = workflow["jobs"]["pull-request-scan"]["steps"]
+
+    base_checkout = steps[0]
+    assert base_checkout["name"] == "Checkout target revision"
+    assert base_checkout["with"]["ref"] == "${{ github.event.pull_request.base.sha }}"
+    assert base_checkout["with"]["fetch-depth"] == 1
+    head_checkout = next(step for step in steps if step.get("name") == "Checkout proposed revision")
+    assert head_checkout["with"]["ref"] == "${{ github.sha }}"
+    assert head_checkout["with"]["clean"] is False
+
+    scanners = [step for step in steps if step.get("name", "").startswith("Scan exact")]
+    assert [step["name"] for step in scanners] == [
+        "Scan exact target dependency manifests",
+        "Scan exact proposed dependency manifests",
+    ]
+    reporter = next(step for step in steps if step.get("name") == "Fail on a newly introduced vulnerability")
+    arguments = reporter["with"]["scan-args"]
+    assert "--old=/github/workspace/.osv-old-" in arguments
+    assert "--new=/github/workspace/.osv-new-" in arguments
+    assert "--fail-on-vuln=true" in arguments
+
+    full_reporter = next(
+        step
+        for step in workflow["jobs"]["full-scan"]["steps"]
+        if step.get("name") == "Report complete vulnerability baseline"
+    )
+    assert "--fail-on-vuln=false" in full_reporter["with"]["scan-args"]
 
 
 def test_osv_jobs_fail_closed_on_missing_or_malformed_scanner_output() -> None:
@@ -244,19 +277,20 @@ def test_osv_jobs_fail_closed_on_missing_or_malformed_scanner_output() -> None:
         steps = job["steps"]
         prefix = "${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}"
         prepare = next(step for step in steps if step.get("name") == "Prepare scanner output")
-        assert prepare["env"] == {
-            "RESULTS_FILE": f"{prefix}.json",
-            "SARIF_FILE": f"{prefix}.sarif",
-        }
+        assert prepare["env"]["SARIF_FILE"] == f"{prefix}.sarif"
         assert "rm -f --" in prepare["run"]
-        validator = next(step for step in steps if step.get("name") == "Validate scanner output")
-        assert validator["if"] == "always() && !cancelled()"
-        assert validator["env"] == {"RESULTS_FILE": f"{prefix}.json"}
-        assert "python3 -m json.tool" in validator["run"]
-        scanner = next(step for step in steps if step.get("name") == "Scan exact dependency manifests")
-        assert "/github/workspace/.osv-results-" in scanner["with"]["scan-args"]
-        assert "${{ github.workspace }}" not in scanner["with"]["scan-args"]
-        reporter = next(step for step in steps if step.get("name") == "Fail on a known vulnerability")
+        validators = [step for step in steps if step.get("name", "").startswith("Validate ")]
+        expected_count = 2 if name == "pull-request-scan" else 1
+        assert len(validators) == expected_count
+        for validator in validators:
+            assert validator["if"] == "always() && !cancelled()"
+            assert "python3 -m json.tool" in validator["run"]
+        scanners = [step for step in steps if step.get("name", "").startswith("Scan exact")]
+        assert len(scanners) == expected_count
+        for scanner in scanners:
+            assert "/github/workspace/.osv-" in scanner["with"]["scan-args"]
+            assert "${{ github.workspace }}" not in scanner["with"]["scan-args"]
+        reporter = next(step for step in steps if "vulnerability" in step.get("name", ""))
         assert "/github/workspace/.osv-results-" in reporter["with"]["scan-args"]
         assert "${{ github.workspace }}" not in reporter["with"]["scan-args"]
 

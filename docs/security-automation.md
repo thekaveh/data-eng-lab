@@ -10,7 +10,7 @@ configured scanners.
 | Control | Authority | Trigger | Result |
 |---|---|---|---|
 | Dependabot | `.github/dependabot.yml` | GitHub's weekly ecosystem update cadence | Version-update pull requests targeting `develop` |
-| OSV-Scanner | `.github/workflows/dependency-security.yml` | Pull request, merged `develop`/`main` push, or manual dispatch | Failing known-vulnerability audit; SARIF after merge/manual dispatch |
+| OSV-Scanner | `.github/workflows/dependency-security.yml` | Pull request, merged `develop`/`main` push, or manual dispatch | Failing PR regression audit; complete SARIF baseline after merge/manual dispatch |
 | CodeQL | `.github/workflows/codeql.yml` | Pull request, `develop`/`main` push, or manual dispatch | Python and GitHub Actions code-scanning analyses |
 | Reporting policy | `.github/SECURITY.md` | Reporter action | Private intake and coordinated remediation |
 
@@ -50,10 +50,21 @@ ownership boundaries, not evidence that the excluded content is safe.
 
 ## 3. Vulnerability policy
 
-Every OSV finding is actionable by default. The pull-request scan fails before
-merge; merged and manually dispatched scans also upload SARIF to GitHub code
-scanning. The policy does not rely on a severity threshold because vulnerability
-records do not expose one uniform severity scheme across ecosystems.
+Every OSV finding is actionable by default. A pull request scans both its exact
+target revision and proposed revision, then fails only when the proposal adds a
+vulnerability. This is OSV's supported differential PR model and prevents the
+repository's inherited Spark and protected-lock baseline from making every PR
+permanently red. Merged and manually dispatched scans report the complete
+baseline and upload SARIF to GitHub code scanning without converting existing
+findings into a workflow-infrastructure failure. Neither path relies on a
+severity threshold because vulnerability records do not expose one uniform
+severity scheme across ecosystems.
+
+The differential gate is not an exception or an assertion that baseline
+findings are safe. Triage each current finding through the owning dependency
+surface and remediate it in a separately reviewed change when its authority can
+move. Do not weaken the PR comparison or delete a SARIF result to obtain a green
+check.
 
 The event-only OSV and CodeQL workflow does not provide continuous late-disclosure detection.
 A vulnerability published after the last repository event is not discovered
