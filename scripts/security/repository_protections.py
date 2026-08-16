@@ -202,20 +202,37 @@ def validate_evidence(body: bytes) -> dict[str, object]:
     secret_scanning = value["secret_scanning"]
     if not isinstance(secret_scanning, dict) or set(secret_scanning) != {
         "alerts_endpoint",
+        "local_probe_branch",
+        "local_probe_worktree",
         "probe_commit_sha",
         "probe_fixture",
         "probe_ref",
         "probe_remote_ref",
+        "push_exit_code",
         "push_protection_probe",
+        "rejection_markers",
+        "secret_alert_count_after",
+        "secret_alert_count_before",
     }:
         _fail("push_probe_invalid")
     probe_sha = secret_scanning["probe_commit_sha"]
     probe_ref = secret_scanning["probe_ref"]
+    alert_count_before = secret_scanning["secret_alert_count_before"]
+    alert_count_after = secret_scanning["secret_alert_count_after"]
     if (
         secret_scanning["alerts_endpoint"] != "readable"
+        or secret_scanning["local_probe_branch"] != "absent"
+        or secret_scanning["local_probe_worktree"] != "absent"
         or secret_scanning["probe_fixture"] != "github_official_dummy"
         or secret_scanning["probe_remote_ref"] != "absent"
+        or secret_scanning["push_exit_code"] != 1
         or secret_scanning["push_protection_probe"] != "blocked"
+        or secret_scanning["rejection_markers"] != ["GH013", "GITHUB PUSH PROTECTION", "Push cannot contain secrets"]
+        or type(alert_count_before) is not int
+        or alert_count_before < 0
+        or type(alert_count_after) is not int
+        or alert_count_after < 0
+        or alert_count_after > alert_count_before
         or not isinstance(probe_sha, str)
         or re.fullmatch(r"[0-9a-f]{40}", probe_sha) is None
         or probe_sha == commit_sha

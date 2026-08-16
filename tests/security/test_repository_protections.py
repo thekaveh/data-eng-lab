@@ -35,11 +35,21 @@ def valid_evidence() -> dict[str, object]:
         },
         "secret_scanning": {
             "alerts_endpoint": "readable",
+            "local_probe_branch": "absent",
+            "local_probe_worktree": "absent",
             "probe_commit_sha": "b" * 40,
             "probe_fixture": "github_official_dummy",
             "probe_ref": "refs/heads/codex/93-push-protection-probe-20260816T0640Z",
             "probe_remote_ref": "absent",
+            "push_exit_code": 1,
             "push_protection_probe": "blocked",
+            "rejection_markers": [
+                "GH013",
+                "GITHUB PUSH PROTECTION",
+                "Push cannot contain secrets",
+            ],
+            "secret_alert_count_after": 0,
+            "secret_alert_count_before": 0,
         },
         "code_scanning": {
             "analysis_commit_sha": commit,
@@ -114,6 +124,22 @@ def test_valid_evidence_is_accepted_and_normalized() -> None:
             "push_probe_invalid",
         ),
         (
+            lambda value: value["secret_scanning"].update(push_exit_code=0),
+            "push_probe_invalid",
+        ),
+        (
+            lambda value: value["secret_scanning"].update(rejection_markers=["GH013"]),
+            "push_probe_invalid",
+        ),
+        (
+            lambda value: value["secret_scanning"].update(secret_alert_count_after=1),
+            "push_probe_invalid",
+        ),
+        (
+            lambda value: value["secret_scanning"].update(local_probe_branch="present"),
+            "push_probe_invalid",
+        ),
+        (
             lambda value: value["code_scanning"].update(categories=["python"]),
             "code_scanning_invalid",
         ),
@@ -144,6 +170,12 @@ def test_optional_enabled_settings_require_no_limitation() -> None:
     value["settings"]["secret_scanning_validity_checks"] = "enabled"
     value["limitations"] = []
     assert validate_evidence(encoded(value))["limitations"] == []
+
+
+def test_historical_snapshot_timestamp_remains_valid() -> None:
+    value = valid_evidence()
+    value["captured_at"] = "2000-01-01T00:00:00Z"
+    assert validate_evidence(encoded(value))["captured_at"] == "2000-01-01T00:00:00Z"
 
 
 def test_optional_unsupported_settings_require_exact_limitation() -> None:

@@ -210,8 +210,10 @@ settings, readable APIs, exact Dependabot pull-request numbers, exact CodeQL
 analysis IDs, and the exact probe ref and commit
 (`refs/heads/codex/93-push-protection-probe-20260816T0640Z` at
 `31baba903f63ff457d19659c74af40b0f5869245`). It also binds the official dummy
-probe outcome, cleanup, and plan limitations without storing a token or raw API
-response.
+probe exit status and rejection markers, before/after alert counts, local and
+remote cleanup, and plan limitations without storing a token or raw API
+response. It is a historical snapshot, not a perpetual freshness claim: read
+the live API state again before promotion.
 
 ## 9. Closure evidence
 

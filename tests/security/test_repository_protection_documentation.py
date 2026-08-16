@@ -52,6 +52,15 @@ def test_docs_bind_exact_server_side_evidence_identities() -> None:
     assert "31baba903f63ff457d19659c74af40b0f5869245" in runbook
 
 
+def test_docs_define_historical_snapshot_and_constant_cli_output() -> None:
+    runbook = " ".join(RUNBOOK.read_text(encoding="utf-8").split())
+    design = " ".join(DESIGN.read_text(encoding="utf-8").split())
+    for text in (runbook, design):
+        assert "historical snapshot" in text
+        assert "repository_security_ok" in text
+    assert "read the live API state again before promotion" in runbook
+
+
 def test_design_and_plan_preserve_offline_and_gitflow_boundaries() -> None:
     design = DESIGN.read_text(encoding="utf-8")
     plan = PLAN.read_text(encoding="utf-8")

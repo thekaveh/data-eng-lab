@@ -12,8 +12,10 @@ checks disabled. CodeQL and OSV analyses are already visible after merge.
 
 Enable and verify the protections through GitHub's documented repository APIs,
 then retain only a bounded, secret-free evidence summary in the repository. A
-small pure validator accepts that summary and refuses malformed, duplicate-key,
-oversized, stale, wrong-repository, or incomplete evidence. It does not call
+small pure validator accepts that historical snapshot and refuses malformed,
+duplicate-key, oversized, wrong-repository, or incomplete evidence. The UTC
+timestamp is an immutable observation time, not a freshness claim; promotion
+must re-read live GitHub state. The validator does not call
 GitHub, read credentials, mutate settings, or treat workflow presence as proof.
 
 The selected required state is:
@@ -41,13 +43,15 @@ most 16 levels and 4,096 nodes, and contains only these top-level fields:
 - `dependabot`, binding both alert API results and the exact Dependabot
   pull-request numbers, with security and version updates kept disjoint;
 - `secret_scanning`, binding alert API readability and the exact probe ref and
-  commit for the safe rejection result;
+  commit, sanitized rejection markers and exit status, before/after alert
+  counts, and local/remote cleanup for the safe rejection result;
 - `code_scanning`, binding the exact commit, required categories, and exact
   CodeQL analysis IDs;
 - `limitations`, a bounded list containing only unsupported optional features.
 
-The verifier emits one canonical JSON summary on success and a single bounded
-error code on failure. It never echoes an input document or a credential.
+The verifier emits the constant success token `repository_security_ok` and a
+single bounded error code on failure. It never echoes an input document or a
+credential.
 
 ## Safe mutation and probe
 
