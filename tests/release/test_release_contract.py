@@ -233,6 +233,10 @@ def test_changelog_state_ignores_comment_marker_inside_fenced_example(tmp_path: 
         '<div style="display:none" style="display:block"><h3>Added</h3><ul><li>hidden only</li></ul></div>',
         "<dialog><h3>Added</h3><ul><li>hidden only</li></ul></dialog>",
         "<details><h3>Added</h3><ul><li>hidden only</li></ul></details>",
+        "<select><option>x</option><h3>Added</h3><ul><li>hidden only</li></ul></select>",
+        "<canvas><h3>Added</h3><ul><li>hidden only</li></ul></canvas>",
+        "<video><h3>Added</h3><ul><li>hidden only</li></ul></video>",
+        "<div popover><h3>Added</h3><ul><li>hidden only</li></ul></div>",
     ],
 )
 def test_changelog_state_rejects_hidden_only_subsection_evidence(tmp_path: Path, hidden_evidence: str) -> None:
@@ -242,6 +246,25 @@ def test_changelog_state_rejects_hidden_only_subsection_evidence(tmp_path: Path,
         f"# Changelog\n\n## 1. [Unreleased]\n{hidden_evidence}\n",
         encoding="utf-8",
     )
+
+    with pytest.raises(ReleaseContractFailure, match="^canonical_changelog_invalid$"):
+        validate_changelog_state(tmp_path, "0.1.0")
+
+
+@pytest.mark.parametrize(
+    "container",
+    [
+        "<select><option>x</option>{evidence}</select>",
+        "<canvas>{evidence}</canvas>",
+        "<video>{evidence}</video>",
+        "<div popover>{evidence}</div>",
+    ],
+)
+def test_changelog_state_rejects_governance_evidence_in_ambiguous_containers(tmp_path: Path, container: str) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    evidence = "<h2>1. [Unreleased]</h2><h3>Added</h3><ul><li>hidden only</li></ul>"
+    canonical.write_text(f"# Changelog\n\n{container.format(evidence=evidence)}\n", encoding="utf-8")
 
     with pytest.raises(ReleaseContractFailure, match="^canonical_changelog_invalid$"):
         validate_changelog_state(tmp_path, "0.1.0")

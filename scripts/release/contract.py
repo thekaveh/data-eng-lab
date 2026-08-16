@@ -89,6 +89,7 @@ _VOID_HTML_ELEMENTS = frozenset(
 )
 _NON_RENDERED_HTML_ELEMENTS = frozenset({"datalist", "noscript", "script", "style", "template"})
 _FOREIGN_CONTENT_ROOTS = frozenset({"math", "svg"})
+_AMBIGUOUS_RENDERING_ELEMENTS = frozenset({"canvas", "select", "video"})
 _HTML_HEADINGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 _GOVERNANCE_HTML_ELEMENTS = _HTML_HEADINGS | {"li"}
 
@@ -147,10 +148,15 @@ class _RenderedChangelogParser(HTMLParser):
             self.malformed = True
             return
         attributes = {name.casefold(): value for name, value in attrs}
-        if normalized == "details" and "open" not in attributes:
+        if (
+            normalized in _AMBIGUOUS_RENDERING_ELEMENTS
+            or (normalized == "details" and "open" not in attributes)
+            or "popover" in attributes
+        ):
             if self._capture is not None:
                 self.malformed = True
-            self._ambiguous_tags.append(normalized)
+            if normalized not in _VOID_HTML_ELEMENTS:
+                self._ambiguous_tags.append(normalized)
             return
         if "class" in attributes or "style" in attributes:
             if self._capture is not None or normalized in _GOVERNANCE_HTML_ELEMENTS:
