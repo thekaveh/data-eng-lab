@@ -4,6 +4,11 @@ All notable changes to this project are documented here (Keep a Changelog format
 
 ## 1. [Unreleased]
 ### Added
+- GitHub repository security protections now enable Dependabot alerts and
+  security updates, secret scanning, and push protection with authoritative API
+  evidence, current CodeQL analyses, and a safe dummy-token rejection probe.
+  Paid Secret Protection-only non-provider patterns and validity checks remain
+  explicitly unsupported for this public user-owned repository.
 - NYC Taxi data-quality now runs as the serialized `nyc_taxi_data_quality` production DAG after a successful matching ETL logical date. The snapshot-bound Spark application conserves every Bronze row across clean and quarantine, idempotently records eight governed Gold facts, and exposes three fixed Trino dashboard queries. Canonical live acceptance proved same-date recovery, terminal Spark drivers, deterministic dashboards, unchanged source pointer, and volume-preserving cleanup.
 - The two Trino scenarios now run as staggered, serialized, read-only production DAGs through a
   bounded same-origin statement-protocol client. TPC-H fails closed on exact five-key provenance;

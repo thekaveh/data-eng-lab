@@ -72,10 +72,11 @@ check.
 
 The event-only OSV and CodeQL workflow does not provide continuous late-disclosure detection.
 A vulnerability published after the last repository event is not discovered
-until another event or manual dispatch. Until issue #93 enables repository
-Dependabot alerts, manually dispatch the dependency audit at least every seven days;
-do not proceed past #92 to another backlog item except #93. Once #93 proves the
-repository settings, Dependabot alerts become the continuous compensating monitor.
+until another event or manual dispatch. Repository Dependabot alerts are now the
+continuous compensating monitor; issue #93 proved the setting through the API
+and observed both version-update and security-update pull requests. Manually
+dispatch the dependency audit when investigating a newly disclosed issue or
+when authoritative Dependabot state is unavailable.
 Workflow scans remain the merge and source-analysis evidence rather than a
 recurring workflow.
 
@@ -148,15 +149,76 @@ CodeQL jobs receive `contents: read`, `actions: read`, and
 `security-events: write`; no job receives repository-content write, package,
 deployment, identity-token, or secret permission.
 
-Issue #93 owns repository security settings such as the dependency graph,
-Dependabot security updates, private vulnerability reporting, secret scanning,
-and push protection. #92 defines repository files and analysis workflows only;
-it must not report those settings as enabled before #93 proves them.
+Issue #93 enabled and verified the selected repository settings. #92 defines
+repository files and analysis workflows only; workflow files are not settings
+evidence.
 
-## 8. Closure evidence
+## 8. Repository security protections
+
+The authoritative post-change state is:
+
+| Protection | State | Evidence |
+|---|---|---|
+| Vulnerability alerts | Enabled | `GET /repos/thekaveh/data-eng-lab/vulnerability-alerts` returns HTTP 204 |
+| Dependabot security updates | Enabled | The automated-security-fixes endpoint returns `enabled: true`; security PRs #149 and #150 target `main` |
+| Secret scanning | Enabled | The repository settings object reports enabled and the alerts endpoint is readable |
+| Push protection | Enabled | GitHub rejected the official dummy-token probe with `GH013` and `GITHUB PUSH PROTECTION` |
+| Non-provider patterns | Unsupported | GitHub retained disabled after an enable request |
+| Partner validity checks | Unsupported | GitHub retained disabled after an enable request |
+| Code scanning | Active | Current Python and Actions CodeQL analyses are visible through the analyses API |
+
+The enabling operations were the documented
+`PUT /repos/thekaveh/data-eng-lab/vulnerability-alerts`,
+`PUT /repos/thekaveh/data-eng-lab/automated-security-fixes`, and narrowly scoped
+`PATCH /repos/thekaveh/data-eng-lab` requests for each `security_and_analysis`
+field. Always read the current state before a write and read it back afterward.
+Use `GET /repos/thekaveh/data-eng-lab/secret-scanning/alerts` and
+`GET /repos/thekaveh/data-eng-lab/code-scanning/analyses` to prove the server-side
+features, rather than inferring them from repository files. The authoritative
+UI is [Security and analysis settings](https://github.com/thekaveh/data-eng-lab/settings/security_analysis).
+
+Scanning for non-provider patterns and automatic partner validity checks
+requires an organization-owned repository on GitHub Team or Enterprise with
+Secret Protection. This public user-owned repository cannot enable either
+feature: both API attempts completed without error but the authoritative state
+remained disabled. Moving the repository to an eligible organization and
+licensing Secret Protection is the required authority change. Private
+vulnerability reporting remains outside issue #93 and is not claimed enabled.
+
+### Safe push-protection probe
+
+Use only [GitHub's published dummy token](https://docs.github.com/en/get-started/learning-to-code/storing-your-secrets-safely),
+never a live or generated credential. Create one unique temporary local branch
+and exact remote probe ref, commit the fixture in a dedicated file, and attempt
+the push. Require GitHub to reject it with `GH013`, `GITHUB PUSH PROTECTION`, and
+`Push cannot contain secrets`. Cancel the operation and never bypass the rule.
+Then prove the exact remote probe ref is absent with `git ls-remote --heads`,
+remove the temporary worktree and local branch, and confirm the secret-alert
+count did not increase. If the ref unexpectedly lands, delete only that exact
+remote ref immediately. This process uses no real credential.
+
+The secret-free canonical evidence is
+`docs/evidence/repository-security-protections.json`. Validate it locally:
+
+```bash
+uv run python -m scripts.security.repository_protections \
+  --evidence docs/evidence/repository-security-protections.json
+```
+
+Success emits only `repository_security_ok`. The evidence binds the exact
+settings, readable APIs, observed Dependabot behavior, CodeQL categories,
+official dummy probe, cleanup, and plan limitations without storing a token or
+raw API response.
+
+## 9. Closure evidence
 
 #92 is complete only after focused and full local gates pass, two independent
 reviews return no findings, GitFlow promotion and backsynchronization finish,
 OSV completes on merged code, CodeQL exposes current `python` and `actions`
 analyses, final `develop` CI is green, and protected repository state remains
 unchanged.
+
+#93 is complete only after the evidence validator and documentation gates pass,
+two independent reviews return C0/I0/M0 Ready Yes, GitFlow promotion and
+backsynchronization finish, final API reads and CI are green, and every temporary
+probe and feature ref is absent.

@@ -49,9 +49,10 @@ def test_runbook_discloses_and_compensates_for_event_only_scanning() -> None:
     text = RUNBOOK.read_text(encoding="utf-8")
 
     assert "does not provide continuous late-disclosure detection" in text
-    assert "manually dispatch the dependency audit at least every seven days" in text
-    assert "Dependabot alerts become the continuous compensating monitor" in text
-    assert "do not proceed past #92 to another backlog item except #93" in text
+    assert "Repository Dependabot alerts are now the" in text
+    assert "continuous compensating monitor" in text
+    assert "observed both version-update and security-update pull requests" in text
+    assert "when authoritative Dependabot state is unavailable" in text
 
 
 def test_design_and_plan_bind_the_complete_dependency_inventory() -> None:
