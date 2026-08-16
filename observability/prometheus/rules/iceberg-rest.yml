@@ -2,7 +2,7 @@ groups:
   - name: data-eng-lab-iceberg-rest-synthetic
     rules:
       - alert: IcebergRestSyntheticExporterMissing
-        expr: absent(up{job="iceberg-rest-synthetic",target="catalog"})
+        expr: up{job="iceberg-rest-synthetic",target="catalog"} == 0 or absent(up{job="iceberg-rest-synthetic",target="catalog"})
         for: 2m
         labels:
           severity: critical
@@ -11,7 +11,7 @@ groups:
           description: Prometheus cannot observe the fixed catalog probe target.
           runbook: docs/iceberg-rest-observability.md
       - alert: IcebergRestSyntheticUnavailable
-        expr: max_over_time(data_eng_lab_iceberg_rest_synthetic_probe_success{job="iceberg-rest-synthetic",target="catalog"}[2m]) == 0
+        expr: data_eng_lab_iceberg_rest_synthetic_probe_success{job="iceberg-rest-synthetic",target="catalog"} == 0
         for: 2m
         labels:
           severity: critical

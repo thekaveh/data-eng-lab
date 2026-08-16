@@ -181,12 +181,18 @@ def probe_catalog(
         headers={"Accept": "application/json", "User-Agent": "data-eng-lab-probe/1"},
     )
     started = monotonic()
+    deadline = started + config.timeout_seconds
     try:
         response = opener.open(request, timeout=config.timeout_seconds)
         try:
             status = int(response.status)
             content_type = response.headers.get("Content-Type", "")
-            body = response.read(config.max_body_bytes + 1)
+            body = _read_response_body(
+                response,
+                config.max_body_bytes,
+                deadline=deadline,
+                monotonic=monotonic,
+            )
         finally:
             response.close()
     except urllib.error.HTTPError as error:
@@ -208,12 +214,56 @@ def probe_catalog(
         return ProbeResult(False, duration, status, "http_error")
     if content_type.split(";", 1)[0].strip().lower() != "application/json":
         return ProbeResult(False, duration, status, "malformed")
+    if len(body) > config.max_body_bytes:
+        return ProbeResult(False, duration, status, "malformed")
     try:
         decode_catalog_config(body)
     except ProbeFailure:
         return ProbeResult(False, duration, status, "malformed")
     result = "slow" if duration > config.slow_seconds else "success"
     return ProbeResult(True, duration, status, result)
+
+
+def _read_response_body(
+    response: Any,
+    max_body_bytes: int,
+    *,
+    deadline: float,
+    monotonic: Any,
+) -> bytes:
+    read_one = getattr(response, "read1", None)
+    if not callable(read_one):
+        _set_response_deadline(response, deadline, monotonic)
+        body = response.read(max_body_bytes + 1)
+        if monotonic() > deadline:
+            raise TimeoutError
+        return body
+
+    chunks: list[bytes] = []
+    total = 0
+    while total <= max_body_bytes:
+        _set_response_deadline(response, deadline, monotonic)
+        chunk = read_one(min(8_192, max_body_bytes + 1 - total))
+        if monotonic() > deadline:
+            raise TimeoutError
+        if not chunk:
+            break
+        if not isinstance(chunk, bytes):
+            raise OSError
+        chunks.append(chunk)
+        total += len(chunk)
+    return b"".join(chunks)
+
+
+def _set_response_deadline(response: Any, deadline: float, monotonic: Any) -> None:
+    remaining = deadline - monotonic()
+    if remaining <= 0:
+        raise TimeoutError
+    stream = getattr(response, "fp", None)
+    raw = getattr(stream, "raw", None)
+    sock = getattr(raw, "_sock", None)
+    if sock is not None:
+        sock.settimeout(remaining)
 
 
 def _validate_result(value: ProbeResult) -> None:
@@ -290,6 +340,9 @@ def build_server(config: ProbeConfig, *, host: str = "0.0.0.0", port: int = 8080
         sys_version = ""
 
         def do_GET(self) -> None:  # noqa: N802
+            if self._has_duplicate_headers():
+                self._json(400, {"code": "header_duplicate"})
+                return
             if "?" in self.path or self.path not in {"/healthz", "/metrics"}:
                 self._json(404, {"code": "not_found"})
                 return
@@ -315,7 +368,19 @@ def build_server(config: ProbeConfig, *, host: str = "0.0.0.0", port: int = 8080
             self._method_not_allowed()
 
         def _method_not_allowed(self) -> None:
+            if self._has_duplicate_headers():
+                self._json(400, {"code": "header_duplicate"})
+                return
             self._json(405, {"code": "method_not_allowed"})
+
+        def _has_duplicate_headers(self) -> bool:
+            seen: set[str] = set()
+            for name, _value in self.headers.raw_items():
+                normalized = name.lower()
+                if normalized in seen:
+                    return True
+                seen.add(normalized)
+            return False
 
         def _json(self, status: int, value: Mapping[str, str]) -> None:
             body = json.dumps(value, sort_keys=True, separators=(",", ":")).encode("ascii")
@@ -335,8 +400,8 @@ def build_server(config: ProbeConfig, *, host: str = "0.0.0.0", port: int = 8080
     return HTTPServer((host, port), Handler)
 
 
-def _environment_float(name: str, default: float, maximum: float) -> float:
-    raw = os.environ.get(name, str(default))
+def _environment_float(environ: Mapping[str, str], name: str, default: float, maximum: float) -> float:
+    raw = environ.get(name, str(default))
     try:
         value = float(raw)
     except ValueError:
@@ -346,16 +411,38 @@ def _environment_float(name: str, default: float, maximum: float) -> float:
     return value
 
 
-def main() -> int:
-    origin = os.environ.get("ICEBERG_REST_PROBE_ORIGIN", FIXED_CATALOG_ORIGIN)
+def _environment_int(environ: Mapping[str, str], name: str, default: int, maximum: int) -> int:
+    raw = environ.get(name, str(default))
+    if not raw.isascii() or not raw.isdigit():
+        raise ProbeFailure("configuration_invalid")
+    value = int(raw)
+    if value <= 0 or value > maximum:
+        raise ProbeFailure("configuration_invalid")
+    return value
+
+
+def load_config(environ: Mapping[str, str] | None = None) -> ProbeConfig:
+    """Load the exact bounded production environment contract."""
+
+    values = os.environ if environ is None else environ
+    origin = values.get("ICEBERG_REST_PROBE_ORIGIN", FIXED_CATALOG_ORIGIN)
     if origin != FIXED_CATALOG_ORIGIN:
         raise ProbeFailure("configuration_invalid")
-    config = ProbeConfig(
+    return ProbeConfig(
         origin=origin,
-        timeout_seconds=_environment_float("ICEBERG_REST_PROBE_TIMEOUT_SECONDS", 2.0, 2.0),
-        max_body_bytes=MAX_CATALOG_BODY_BYTES,
-        slow_seconds=_environment_float("ICEBERG_REST_PROBE_SLOW_SECONDS", 1.0, 2.0),
+        timeout_seconds=_environment_float(values, "ICEBERG_REST_PROBE_TIMEOUT_SECONDS", 2.0, 2.0),
+        max_body_bytes=_environment_int(
+            values,
+            "ICEBERG_REST_PROBE_MAX_BODY_BYTES",
+            MAX_CATALOG_BODY_BYTES,
+            MAX_CATALOG_BODY_BYTES,
+        ),
+        slow_seconds=1.0,
     )
+
+
+def main() -> int:
+    config = load_config()
     server = build_server(config)
     try:
         server.serve_forever()

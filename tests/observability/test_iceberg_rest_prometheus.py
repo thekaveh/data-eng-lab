@@ -38,6 +38,7 @@ def test_generated_prometheus_config_preserves_atlas_and_adds_one_final_job() ->
             "scrape_interval": "30s",
             "scrape_timeout": "5s",
             "metrics_path": "/metrics",
+            "honor_labels": True,
             "static_configs": [{"targets": ["iceberg-rest-probe:8080"], "labels": {"target": "catalog"}}],
         }
     )
@@ -81,5 +82,7 @@ def test_alert_rules_are_closed_and_operator_actionable() -> None:
         assert rule["annotations"]["runbook"] == "docs/iceberg-rest-observability.md"
         assert "{{" not in str(rule["annotations"])
     assert "absent(up{" in rules[0]["expr"]
+    assert 'up{job="iceberg-rest-synthetic",target="catalog"} == 0' in rules[0]["expr"]
     assert "probe_success" in rules[1]["expr"]
+    assert "max_over_time" not in rules[1]["expr"]
     assert "probe_duration_seconds" in rules[2]["expr"]

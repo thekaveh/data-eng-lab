@@ -37,7 +37,8 @@ def _assert_contract(text: str) -> None:
     assert "upstream Iceberg" in text
     for value in (*METRICS, *RESULTS, *ALERTS):
         assert value in text
-    assert "avg_over_time" in text
+    assert "sum_over_time" in text
+    assert "count_over_time(up" in text
     assert "quantile_over_time(0.95" in text
     assert "retention_quarantine" not in text
 

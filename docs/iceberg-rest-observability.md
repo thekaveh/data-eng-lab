@@ -58,7 +58,7 @@ the exporter.
 The availability objective is 99.5% over 30 days:
 
 ```promql
-avg_over_time(data_eng_lab_iceberg_rest_synthetic_probe_success{job="iceberg-rest-synthetic",target="catalog"}[30d]) >= 0.995
+(sum_over_time(data_eng_lab_iceberg_rest_synthetic_probe_success{job="iceberg-rest-synthetic",target="catalog"}[30d]) or (0 * sum_over_time(up{job="iceberg-rest-synthetic",target="catalog"}[30d]))) / count_over_time(up{job="iceberg-rest-synthetic",target="catalog"}[30d]) >= 0.995
 ```
 
 The latency objective is a synthetic p95 of at most 1 second over 30 days:
@@ -67,6 +67,8 @@ The latency objective is a synthetic p95 of at most 1 second over 30 days:
 quantile_over_time(0.95, data_eng_lab_iceberg_rest_synthetic_probe_duration_seconds{job="iceberg-rest-synthetic",target="catalog"}[30d]) <= 1
 ```
 
+The denominator uses every scheduled scrape, including `up=0`, so exporter
+downtime counts as unavailable rather than disappearing from the objective.
 These are operational objectives for a periodic synthetic request, not native
 service-level request distributions.
 

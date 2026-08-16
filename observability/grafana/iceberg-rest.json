@@ -48,7 +48,7 @@
       "targets": [
         {
           "datasource": {"type": "prometheus", "uid": "Prometheus"},
-          "expr": "avg_over_time(data_eng_lab_iceberg_rest_synthetic_probe_success{job=\"iceberg-rest-synthetic\",target=\"catalog\"}[30d]) * 100",
+          "expr": "((sum_over_time(data_eng_lab_iceberg_rest_synthetic_probe_success{job=\"iceberg-rest-synthetic\",target=\"catalog\"}[30d]) or (0 * sum_over_time(up{job=\"iceberg-rest-synthetic\",target=\"catalog\"}[30d]))) / count_over_time(up{job=\"iceberg-rest-synthetic\",target=\"catalog\"}[30d])) * 100",
           "refId": "A"
         }
       ],

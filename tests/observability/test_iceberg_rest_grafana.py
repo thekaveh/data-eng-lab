@@ -10,6 +10,7 @@ ALLOWED_METRICS = {
     "data_eng_lab_iceberg_rest_synthetic_probe_duration_seconds",
     "data_eng_lab_iceberg_rest_synthetic_probe_result",
     "ALERTS",
+    "up",
 }
 
 
@@ -73,7 +74,8 @@ def test_dashboard_queries_cover_current_slos_outcome_and_alerts() -> None:
     expressions = [panel["targets"][0]["expr"] for panel in dashboard["panels"]]
     assert expressions[0].startswith("data_eng_lab_iceberg_rest_synthetic_probe_success{")
     assert expressions[1].startswith("data_eng_lab_iceberg_rest_synthetic_probe_duration_seconds{")
-    assert "avg_over_time" in expressions[2] and "[30d]" in expressions[2]
+    assert "sum_over_time" in expressions[2] and "count_over_time" in expressions[2]
+    assert "up{" in expressions[2] and "[30d]" in expressions[2]
     assert "quantile_over_time(0.95" in expressions[3] and "[30d]" in expressions[3]
     assert "probe_result" in expressions[4] and "== 1" in expressions[4]
     assert expressions[5].startswith("ALERTS{")

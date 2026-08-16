@@ -45,7 +45,7 @@ def test_probe_service_and_observability_mounts_are_hardened_and_internal() -> N
     assert probe["environment"] == {
         "ICEBERG_REST_PROBE_ORIGIN": "http://iceberg-rest:8181",
         "ICEBERG_REST_PROBE_TIMEOUT_SECONDS": "2",
-        "ICEBERG_REST_PROBE_SLOW_SECONDS": "1",
+        "ICEBERG_REST_PROBE_MAX_BODY_BYTES": "65536",
     }
     assert probe["networks"] == ["backend-network"]
     assert "ports" not in probe and "expose" not in probe

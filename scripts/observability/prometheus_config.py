@@ -57,6 +57,7 @@ def render_prometheus_config(base: Mapping[str, object]) -> bytes:
             "scrape_interval": "30s",
             "scrape_timeout": "5s",
             "metrics_path": "/metrics",
+            "honor_labels": True,
             "static_configs": [
                 {
                     "targets": ["iceberg-rest-probe:8080"],

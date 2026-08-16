@@ -3,6 +3,7 @@ from __future__ import annotations
 import http.client
 import json
 import math
+import socket
 import subprocess
 import sys
 import threading
@@ -17,6 +18,7 @@ from scripts.observability.iceberg_rest_probe import (
     ProbeFailure,
     ProbeResult,
     build_server,
+    load_config,
     render_metrics,
 )
 
@@ -121,6 +123,43 @@ def test_health_and_metrics_routes_are_exact(monkeypatch: pytest.MonkeyPatch) ->
         assert headers["content-type"] == "text/plain; version=0.0.4; charset=utf-8"
         assert int(headers["content-length"]) == len(body)
         assert body == render_metrics(result)
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_service_rejects_duplicate_request_headers(monkeypatch: pytest.MonkeyPatch, method: str) -> None:
+    with _running_server(monkeypatch, ProbeResult(True, 0.25, 200, "success")) as address:
+        client = socket.create_connection(address, timeout=2)
+        try:
+            client.sendall(
+                f"{method} /healthz HTTP/1.1\r\n".encode()
+                + f"Host: {address[0]}:{address[1]}\r\n".encode()
+                + b"X-Probe: one\r\nX-Probe: two\r\nConnection: close\r\n\r\n"
+            )
+            response = b""
+            while True:
+                chunk = client.recv(4_096)
+                if not chunk:
+                    break
+                response += chunk
+        finally:
+            client.close()
+    assert b" 400 " in response.split(b"\r\n", 1)[0]
+    assert response.endswith(b'{"code":"header_duplicate"}')
+
+
+def test_environment_contract_is_fixed_and_bounded() -> None:
+    config = load_config(
+        {
+            "ICEBERG_REST_PROBE_ORIGIN": "http://iceberg-rest:8181",
+            "ICEBERG_REST_PROBE_TIMEOUT_SECONDS": "2",
+            "ICEBERG_REST_PROBE_MAX_BODY_BYTES": "65536",
+        }
+    )
+    assert config == ProbeConfig("http://iceberg-rest:8181", 2.0, 65_536, 1.0)
+    with pytest.raises(ProbeFailure, match="^configuration_invalid$"):
+        load_config({"ICEBERG_REST_PROBE_ORIGIN": "http://other:8181"})
+    with pytest.raises(ProbeFailure, match="^configuration_invalid$"):
+        load_config({"ICEBERG_REST_PROBE_MAX_BODY_BYTES": "65537"})
 
 
 @pytest.mark.parametrize(

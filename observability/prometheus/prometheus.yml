@@ -71,6 +71,7 @@ scrape_configs:
   scrape_interval: 30s
   scrape_timeout: 5s
   metrics_path: /metrics
+  honor_labels: true
   static_configs:
   - targets:
     - iceberg-rest-probe:8080

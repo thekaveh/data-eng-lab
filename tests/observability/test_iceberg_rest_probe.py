@@ -172,6 +172,59 @@ def test_probe_rejects_redirects_without_following_them() -> None:
     assert result == ProbeResult(False, result.duration_seconds, 302, "http_error")
 
 
+def test_probe_enforces_configured_body_bound_below_global_ceiling() -> None:
+    body = b'{"defaults":{}}' + (b" " * 100)
+    with _server(body=body) as origin:
+        result = probe_catalog(ProbeConfig(origin, 0.2, 32))
+    assert result == ProbeResult(False, result.duration_seconds, 200, "malformed")
+
+
+def test_probe_enforces_total_deadline_across_incremental_reads() -> None:
+    clock = [0.0]
+
+    class Socket:
+        timeouts: list[float] = []
+
+        def settimeout(self, value: float) -> None:
+            self.timeouts.append(value)
+
+    class Raw:
+        _sock = Socket()
+
+    class File:
+        raw = Raw()
+
+    class Response:
+        status = 200
+        headers = {"Content-Type": "application/json"}
+        fp = File()
+        chunks = iter((b'{"defaults":', b"{}", b"}"))
+        closed = False
+
+        def read1(self, _size: int) -> bytes:
+            clock[0] += 0.06
+            return next(self.chunks, b"")
+
+        def close(self) -> None:
+            self.closed = True
+
+    response = Response()
+
+    class Opener:
+        def open(self, _request: object, timeout: float) -> Response:
+            assert timeout == 0.1
+            return response
+
+    result = probe_catalog(
+        ProbeConfig("http://127.0.0.1:8181", 0.1, 65_536),
+        opener=Opener(),
+        monotonic=lambda: clock[0],
+    )
+    assert result == ProbeResult(False, result.duration_seconds, 0, "timeout")
+    assert response.closed is True
+    assert len(response.fp.raw._sock.timeouts) >= 2
+
+
 def test_probe_classifies_timeout_and_unavailable_without_details() -> None:
     with _server(delay=0.1) as origin:
         timed_out = probe_catalog(ProbeConfig(origin, 0.01, 65_536))
