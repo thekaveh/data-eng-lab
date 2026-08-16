@@ -95,25 +95,26 @@ class _RenderedChangelogParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.sections: list[_RenderedH2] = []
-        self._tags: list[str] = []
-        self._capture: tuple[str, int] | None = None
+        self._capture: str | None = None
         self._captured: list[str] = []
+        self.malformed = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         del attrs
         normalized = tag.casefold()
-        self._tags.append(normalized)
         if normalized == "h2":
+            if self._capture in {"h2", "h3"}:
+                self.malformed = True
             self.sections.append(_RenderedH2())
-            self._capture = ("h2", len(self._tags))
+            self._capture = "h2"
             self._captured = []
         elif self._capture is None and self.sections and normalized in {"h3", "li"}:
-            self._capture = (normalized, len(self._tags))
+            self._capture = normalized
             self._captured = []
 
     def handle_endtag(self, tag: str) -> None:
         normalized = tag.casefold()
-        if self._capture == (normalized, len(self._tags)):
+        if self._capture == normalized:
             content = re.sub(r"\s+", " ", "".join(self._captured)).strip()
             section = self.sections[-1]
             if normalized == "h2":
@@ -124,8 +125,6 @@ class _RenderedChangelogParser(HTMLParser):
                 section.has_list_item = True
             self._capture = None
             self._captured = []
-        if self._tags and self._tags[-1] == normalized:
-            self._tags.pop()
 
     def handle_data(self, data: str) -> None:
         if self._capture is not None:
@@ -192,6 +191,8 @@ def _rendered_changelog_sections(text: str) -> tuple[_RenderedH2, ...]:
         parser = _RenderedChangelogParser()
         parser.feed(rendered)
         parser.close()
+        if parser.malformed or parser._capture is not None:
+            raise ValueError("rendered changelog is malformed")
     except Exception:
         raise ReleaseContractFailure("canonical_changelog_invalid") from None
     return tuple(parser.sections)

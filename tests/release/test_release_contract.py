@@ -7,6 +7,8 @@ from subprocess import run
 
 import pytest
 
+from scripts.docs.build_docs import render_mkdocs_yml
+from scripts.docs.manifest import load_manifest
 from scripts.release.contract import (
     RELEASE_MARKDOWN_EXTENSIONS,
     ReleaseContractFailure,
@@ -37,7 +39,7 @@ def test_release_changelog_uses_the_site_markdown_extension_set() -> None:
         "pymdownx.mark",
         "pymdownx.tilde",
     )
-    mkdocs = (ROOT / "mkdocs.yml").read_text(encoding="utf-8")
+    mkdocs = render_mkdocs_yml(load_manifest(ROOT / "docs" / "manifest.yaml", ROOT))
 
     assert RELEASE_MARKDOWN_EXTENSIONS == expected
     for extension in expected:
@@ -226,6 +228,9 @@ def test_changelog_state_ignores_comment_marker_inside_fenced_example(tmp_path: 
     "heading",
     [
         "## 2. **[0.1.0]** - 2026-08-16",
+        "## 2. [0.1.0]<br> - 2026-08-16",
+        '## 2. [0.1.0]<img alt="release"> - 2026-08-16',
+        "## 2. [0.1.0]<span> - 2026-08-16",
         "> ## 2. [0.1.0] - 2026-08-16",
         "- ## 2. [0.1.0] - 2026-08-16",
         "```lang`invalid\n## 2. [0.1.0] - 2026-08-16\n```",
