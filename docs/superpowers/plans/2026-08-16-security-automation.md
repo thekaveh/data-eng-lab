@@ -4,7 +4,7 @@
 
 **Goal:** Deliver exact parent-owned Dependabot coverage, fail-closed OSV dependency auditing, advanced CodeQL analysis, and synchronized security-reporting/remediation documentation for issue #92.
 
-**Architecture:** A strict repository contract derives the current dependency inventory and validates three pinned GitHub security configurations. Dependabot updates the exact GitHub Actions, uv, and six Maven surfaces; OSV scans the seven exact manifests without recursion; CodeQL analyzes Python and Actions only; canonical documentation states all exclusions and GitFlow remediation rules.
+**Architecture:** A strict repository contract derives the current dependency inventory and validates three pinned GitHub security configurations. Dependabot updates the exact GitHub Actions, uv, hashed pip-requirements, and six Maven surfaces; OSV scans the eight exact manifests without recursion; CodeQL analyzes Python and Actions only; canonical documentation states all exclusions and GitFlow remediation rules.
 
 **Tech Stack:** Python 3.11, PyYAML, pytest, GitHub Actions, Dependabot v2 configuration, OSV-Scanner Action v2.5.0, CodeQL Action v4, MkDocs/wiki projections.
 
@@ -14,7 +14,7 @@
 - Atlas gitlink remains `c6cf73d7168db1a7840fc45c9ed3e385071996d8`; do not edit `infra/` or advance the gitlink.
 - Do not start Atlas, run live acceptance, mutate repository security settings, change the dataset registry, create a release, or touch persistent project volumes.
 - Do not modify `uv.lock`, `pyproject.toml`, `datasets/registry.yaml`, the protected untracked Atlas plan, or `graphify-out/`.
-- Dependency authority is exactly root `uv.lock`, root GitHub Actions, and the six current parent-owned Spark-app POMs.
+- Dependency authority is exactly root `uv.lock`, root GitHub Actions, `datasets/tpch-lock-requirements.txt`, and the six current parent-owned Spark-app POMs.
 - OSV scan arguments contain only explicit `--lockfile=` operands; recursion and directory scans are forbidden.
 - CodeQL languages are exactly `python` and `actions`; Scala is unsupported and must never be represented as Java/Kotlin coverage.
 - Every `uses:` reference is a full immutable commit SHA. Pull-request scans have read-only token permissions.
@@ -32,7 +32,7 @@
 - Create: `tests/security/test_security_contract.py`
 
 **Interfaces:**
-- Produces: `DependencyInventory(uv_lock: str, action_directory: str, maven_directories: tuple[str, ...])`.
+- Produces: `DependencyInventory(uv_lock: str, action_directory: str, maven_directories: tuple[str, ...], pip_lockfiles: tuple[str, ...])`.
 - Produces: `discover_inventory(root: Path) -> DependencyInventory`.
 - Produces: `load_yaml_exact(path: Path) -> Mapping[str, object]` with duplicate-key rejection.
 - Produces CLI: `python -m scripts.security.contract --root .`.
@@ -78,9 +78,9 @@ Commit: `feat(security): define automation contract (#92)`
 
 - [ ] **Step 1: Write Dependabot RED tests**
 
-Require version 2; ecosystems exactly `github-actions`, `uv`, and `maven`;
-GitHub Actions and uv directories `/`; Maven directories equal discovered POM
-directories; weekly staggered schedules; target branch `develop`; bounded open
+Require version 2; ecosystems exactly `github-actions`, `uv`, `pip`, and `maven`;
+GitHub Actions and uv directories `/`, pip directory `/datasets`; Maven
+directories equal discovered POM directories; weekly staggered schedules; target branch `develop`; bounded open
 PRs; routine grouping; and no `infra` or generated path.
 
 - [ ] **Step 2: Observe RED**
@@ -91,7 +91,7 @@ Expected: the required configuration is missing.
 
 - [ ] **Step 3: Implement configuration and validator**
 
-Create one Actions entry, one uv entry, and six Maven entries. Validate exact
+Create one Actions entry, one uv entry, one pip entry, and six Maven entries. Validate exact
 keys/types, package-ecosystem values, schedules, target branches, directory
 equality, and bounds without silently ignoring unknown fields.
 
@@ -112,7 +112,7 @@ Commit: `ci: cover parent dependency manifests with Dependabot (#92)`
 
 - [ ] **Step 1: Write workflow RED tests**
 
-Require pull-request and merged/manual paths; exact seven lockfile
+Require pull-request and merged/manual paths; exact eight lockfile
 operands; no recursive/directory operand; `fail-on-vuln: true`; PR SARIF false
 with only `contents: read`; merged SARIF true with only contents/actions read and
 security-events write; immutable OSV SHA; concurrency bounds; and no secrets.
@@ -187,7 +187,7 @@ Commit: `ci: analyze Python and Actions with CodeQL (#92)`
 Require supported-line policy, private-reporting path and safe fallback,
 acknowledgement/remediation/disclosure flow, scanner triage, exact GitFlow
 handling for default-main security PRs, exception expiry, Scala/Test-Maven/Atlas
-limitations, seven-manifest inventory, #93 settings ownership, and three-surface
+limitations, eight-manifest inventory, #93 settings ownership, and three-surface
 manifest/projection declarations.
 
 - [ ] **Step 2: Observe RED**

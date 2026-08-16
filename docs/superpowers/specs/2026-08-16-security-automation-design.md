@@ -40,13 +40,14 @@ vendored, build, or user-owned surfaces and are not dependency authorities.
 
 ### 3.1. Selected: exact-manifest OSV plus advanced CodeQL
 
-Dependabot maintains the three package ecosystems. A pinned OSV-Scanner
-reusable workflow scans only the seven exact dependency manifests on pull
+Dependabot maintains the four package ecosystems. A pinned OSV-Scanner
+reusable workflow scans only the eight exact dependency manifests on pull
 requests, merged branches, and manual dispatch. Advanced
 CodeQL analyzes the two supported source classes present here: Python and
 GitHub Actions workflows.
 
-This approach is ecosystem-neutral, supports `uv.lock` and Maven POM resolution,
+This approach is ecosystem-neutral, supports `uv.lock`, hashed pip requirements,
+and Maven POM resolution,
 emits GitHub code-scanning results after merge, and makes exclusions explicit
 by never recursively scanning the repository.
 
@@ -65,9 +66,9 @@ complete current lock/POM set. It is not a substitute for #92's full audit.
 ## 4. Dependabot contract
 
 `.github/dependabot.yml` defines one weekly update entry for GitHub Actions at
-`/`, one for uv at `/`, and Maven entries for exactly the six application
-directories above. Version-update PRs target `develop`, use bounded open-PR
-limits, and group safe routine updates within each ecosystem.
+`/`, one for uv at `/`, one for pip at `/datasets`, and Maven entries for exactly
+the six application directories above. Version-update PRs target `develop`, use
+bounded open-PR limits, and group safe routine updates within each ecosystem.
 
 GitHub security updates are different: GitHub always opens them against the
 default branch and does not apply all version-update customizations. Because
@@ -78,15 +79,16 @@ backsynchronize `main` to `develop`. The security policy and runbook make this
 platform constraint explicit.
 
 A repository contract test derives current parent-owned POM directories and
-requires exact equality with Dependabot's Maven directories, so adding or
-removing an application cannot silently leave configuration stale.
+requires exact equality with Dependabot's Maven directories and binds the fixed
+hashed TPC-H requirements authority, so adding or removing an application cannot
+silently leave configuration stale.
 
 ## 5. Dependency-vulnerability audit contract
 
 `.github/workflows/dependency-security.yml` calls OSV-Scanner v2.5.0 at immutable
 commit `8deb546fdb875b9996d27d4950be7312dac076a1`. Scan arguments contain only
-seven `--lockfile=` values: the root uv lock and six POMs. Recursive flags and
-repository-directory operands are forbidden.
+eight `--lockfile=` values: the root uv lock, the hashed TPC-H requirements, and
+six POMs. Recursive flags and repository-directory operands are forbidden.
 
 Pull requests to `develop` or `main` run a fail-on-vulnerability full-manifest
 scan without SARIF upload and with `contents: read` only. Pushes to `develop`
@@ -106,6 +108,12 @@ is introduced by this issue.
 OSV Maven resolution covers production dependency graphs available from the
 POMs. OSV does not currently promise complete Maven test-dependency coverage;
 that limitation is documented rather than silently overstated.
+
+The workflows intentionally have no recurring schedule. PR, protected-branch,
+and manual triggers do not continuously discover vulnerabilities disclosed after
+the last repository event. Until #93 enables Dependabot alerts as the continuous
+monitor, maintainers manually dispatch the dependency audit at least every seven
+days and proceed directly from #92 to #93.
 
 ## 6. CodeQL contract
 

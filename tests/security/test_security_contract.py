@@ -28,11 +28,11 @@ EXPECTED_MAVEN_DIRECTORIES = (
 
 
 def test_inventory_is_exactly_the_parent_owned_dependency_surfaces() -> None:
-    assert discover_inventory(REPO_ROOT) == DependencyInventory(
-        uv_lock="/uv.lock",
-        action_directory="/",
-        maven_directories=EXPECTED_MAVEN_DIRECTORIES,
-    )
+    inventory = discover_inventory(REPO_ROOT)
+    assert inventory.uv_lock == "/uv.lock"
+    assert inventory.pip_lockfiles == ("/datasets/tpch-lock-requirements.txt",)
+    assert inventory.action_directory == "/"
+    assert inventory.maven_directories == EXPECTED_MAVEN_DIRECTORIES
 
 
 def test_inventory_rejects_a_symlinked_maven_manifest(tmp_path: Path) -> None:
@@ -89,8 +89,34 @@ def test_yaml_loader_rejects_oversized_input(tmp_path: Path) -> None:
         load_yaml_exact(config)
 
 
+def test_yaml_loader_closes_extreme_parser_depth(tmp_path: Path) -> None:
+    config = tmp_path / "recursive.yml"
+    config.write_text(
+        "\n".join(f"{'  ' * depth}level{depth}:" for depth in range(500)) + "\n" + "  " * 500 + "value: true\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractFailure, match="yaml_depth_exceeded"):
+        load_yaml_exact(config)
+
+
 def test_dependabot_covers_the_discovered_inventory_exactly() -> None:
     validate_dependabot(REPO_ROOT, discover_inventory(REPO_ROOT))
+
+
+def test_dependabot_and_osv_cover_the_hashed_tpch_requirements() -> None:
+    dependabot = load_yaml_exact(REPO_ROOT / ".github" / "dependabot.yml")
+    updates = dependabot["updates"]
+    assert isinstance(updates, list)
+    assert any(
+        update.get("package-ecosystem") == "pip" and update.get("directory") == "/datasets"
+        for update in updates
+        if isinstance(update, dict)
+    )
+
+    workflow = load_yaml_exact(REPO_ROOT / ".github" / "workflows" / "dependency-security.yml")
+    arguments = workflow["jobs"]["pull-request-scan"]["with"]["scan-args"]
+    assert "--lockfile=requirements.txt:datasets/tpch-lock-requirements.txt" in arguments.splitlines()
 
 
 def test_dependabot_rejects_a_missing_or_extra_maven_directory(tmp_path: Path) -> None:
@@ -139,6 +165,35 @@ updates:
     target-branch: main
     schedule: {interval: daily}
     open-pull-requests-limit: 99
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractFailure, match="dependabot_update_invalid"):
+        validate_dependabot(tmp_path, DependencyInventory("/uv.lock", "/", ()))
+
+
+@pytest.mark.parametrize(
+    "schedule",
+    [
+        "{interval: weekly, day: monday, time: '24:00', timezone: UTC}",
+        "{interval: weekly, day: monday, time: '99:99', timezone: UTC}",
+        "{interval: weekly, day: [monday], time: '04:10', timezone: UTC}",
+    ],
+)
+def test_dependabot_rejects_invalid_schedule_values(tmp_path: Path, schedule: str) -> None:
+    config = tmp_path / ".github" / "dependabot.yml"
+    config.parent.mkdir()
+    config.write_text(
+        f"""\
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule: {schedule}
+    open-pull-requests-limit: 2
+    groups: {{actions: {{patterns: ['*']}}}}
 """,
         encoding="utf-8",
     )

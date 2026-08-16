@@ -29,6 +29,7 @@ languages, or exclusions drift.
 OSV scans exactly these parent-owned manifests:
 
 - `uv.lock`;
+- `datasets/tpch-lock-requirements.txt`;
 - `spark-apps/gh-archive-pipeline/pom.xml`;
 - `spark-apps/movielens-feature-pipeline/pom.xml`;
 - `spark-apps/nyc-taxi-data-quality/pom.xml`;
@@ -36,10 +37,11 @@ OSV scans exactly these parent-owned manifests:
 - `spark-apps/nyc-taxi-medallion/pom.xml`; and
 - `spark-apps/tpch-star-schema/pom.xml`.
 
-Dependabot covers those Python and Maven authorities plus GitHub Actions at the
-repository root. Configuration tests derive the current Maven application
-directories and require exact equality; a new or removed POM cannot silently
-remain unconfigured.
+Dependabot covers both Python authorities, the Maven authorities, and GitHub
+Actions at the repository root. Configuration tests derive the current Maven
+application directories and require exact equality, while the hashed TPC-H
+requirements file is a fixed parent-owned inventory member. A new or removed
+POM cannot silently remain unconfigured.
 
 The scanners never recurse from `./`. They do not scan `infra/` (the pinned
 Atlas submodule), `site/`, `wiki/`, generated documentation, Maven `target/`
@@ -52,6 +54,15 @@ Every OSV finding is actionable by default. The pull-request scan fails before
 merge; merged and manually dispatched scans also upload SARIF to GitHub code
 scanning. The policy does not rely on a severity threshold because vulnerability
 records do not expose one uniform severity scheme across ecosystems.
+
+The event-only OSV and CodeQL workflow does not provide continuous late-disclosure detection.
+A vulnerability published after the last repository event is not discovered
+until another event or manual dispatch. Until issue #93 enables repository
+Dependabot alerts, manually dispatch the dependency audit at least every seven days;
+do not proceed past #92 to another backlog item except #93. Once #93 proves the
+repository settings, Dependabot alerts become the continuous compensating monitor.
+Workflow scans remain the merge and source-analysis evidence rather than a
+recurring workflow.
 
 Triage a finding in this order:
 

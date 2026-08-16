@@ -26,6 +26,7 @@ jobs:
     with:
       scan-args: |-
         --lockfile=uv.lock
+        --lockfile=requirements.txt:datasets/tpch-lock-requirements.txt
         --lockfile=spark-apps/gh-archive-pipeline/pom.xml
         --lockfile=spark-apps/movielens-feature-pipeline/pom.xml
         --lockfile=spark-apps/nyc-taxi-data-quality/pom.xml
@@ -45,6 +46,7 @@ jobs:
     with:
       scan-args: |-
         --lockfile=uv.lock
+        --lockfile=requirements.txt:datasets/tpch-lock-requirements.txt
         --lockfile=spark-apps/gh-archive-pipeline/pom.xml
         --lockfile=spark-apps/movielens-feature-pipeline/pom.xml
         --lockfile=spark-apps/nyc-taxi-data-quality/pom.xml

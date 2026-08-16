@@ -23,6 +23,7 @@ class DependencyInventory:
     uv_lock: str
     action_directory: str
     maven_directories: tuple[str, ...]
+    pip_lockfiles: tuple[str, ...] = ()
 
 
 def _require_owned_file(root: Path, path: Path) -> None:
@@ -37,6 +38,8 @@ def _require_owned_file(root: Path, path: Path) -> None:
 
 def discover_inventory(root: Path) -> DependencyInventory:
     _require_owned_file(root, root / "uv.lock")
+    pip_lockfile = root / "datasets" / "tpch-lock-requirements.txt"
+    _require_owned_file(root, pip_lockfile)
     manifests = sorted((root / "spark-apps").glob("*/pom.xml"))
     if not manifests:
         raise ContractFailure("inventory_manifest_invalid")
@@ -46,6 +49,7 @@ def discover_inventory(root: Path) -> DependencyInventory:
         uv_lock="/uv.lock",
         action_directory="/",
         maven_directories=tuple(f"/{manifest.parent.relative_to(root).as_posix()}" for manifest in manifests),
+        pip_lockfiles=(f"/{pip_lockfile.relative_to(root).as_posix()}",),
     )
 
 
@@ -99,7 +103,8 @@ def _validate_tree(value: object) -> None:
 
 def load_yaml_exact(path: Path) -> dict[str, object]:
     try:
-        body = path.read_bytes()
+        with path.open("rb") as stream:
+            body = stream.read(MAX_YAML_BYTES + 1)
     except OSError:
         raise ContractFailure("yaml_read_failed") from None
     if len(body) > MAX_YAML_BYTES:
@@ -109,6 +114,8 @@ def load_yaml_exact(path: Path) -> dict[str, object]:
         value = yaml.load(text, Loader=_ExactSafeLoader)
     except ContractFailure:
         raise
+    except RecursionError:
+        raise ContractFailure("yaml_depth_exceeded") from None
     except (UnicodeDecodeError, yaml.YAMLError):
         raise ContractFailure("yaml_malformed") from None
     if not isinstance(value, dict) or not all(isinstance(key, str) for key in value):
@@ -125,15 +132,21 @@ def _valid_schedule(value: object) -> bool:
         "timezone",
     }:
         return False
-    return (
-        value["interval"] == "weekly"
-        and value["day"] in {"monday", "tuesday", "wednesday", "thursday", "friday"}
-        and isinstance(value["time"], str)
-        and len(value["time"]) == 5
-        and value["time"][2] == ":"
-        and value["time"].replace(":", "").isdigit()
-        and value["timezone"] == "UTC"
-    )
+    day = value["day"]
+    time = value["time"]
+    if (
+        value["interval"] != "weekly"
+        or not isinstance(day, str)
+        or day not in {"monday", "tuesday", "wednesday", "thursday", "friday"}
+        or not isinstance(time, str)
+        or len(time) != 5
+        or time[2] != ":"
+        or not time.replace(":", "").isdigit()
+        or value["timezone"] != "UTC"
+    ):
+        return False
+    hour, minute = (int(part) for part in time.split(":"))
+    return 0 <= hour <= 23 and 0 <= minute <= 59
 
 
 def _valid_groups(value: object) -> bool:
@@ -167,7 +180,7 @@ def validate_dependabot(root: Path, inventory: DependencyInventory) -> None:
         limit = update["open-pull-requests-limit"]
         if (
             not isinstance(ecosystem, str)
-            or ecosystem not in {"github-actions", "uv", "maven"}
+            or ecosystem not in {"github-actions", "uv", "pip", "maven"}
             or not isinstance(directory, str)
             or update["target-branch"] != "develop"
             or not _valid_schedule(update["schedule"])
@@ -182,13 +195,18 @@ def validate_dependabot(root: Path, inventory: DependencyInventory) -> None:
         raise ContractFailure("dependabot_actions_inventory_mismatch")
     if by_ecosystem.get("uv") != ["/"]:
         raise ContractFailure("dependabot_uv_inventory_mismatch")
+    pip_directories = tuple(sorted(str(Path(lockfile).parent) for lockfile in inventory.pip_lockfiles))
+    if tuple(sorted(by_ecosystem.get("pip", []))) != pip_directories:
+        raise ContractFailure("dependabot_pip_inventory_mismatch")
     if tuple(sorted(by_ecosystem.get("maven", []))) != inventory.maven_directories:
         raise ContractFailure("dependabot_maven_inventory_mismatch")
 
 
 def _osv_operands(inventory: DependencyInventory) -> tuple[str, ...]:
-    return (f"--lockfile={inventory.uv_lock.removeprefix('/')}",) + tuple(
-        f"--lockfile={directory.removeprefix('/')}/pom.xml" for directory in inventory.maven_directories
+    return (
+        f"--lockfile={inventory.uv_lock.removeprefix('/')}",
+        *(f"--lockfile=requirements.txt:{path.removeprefix('/')}" for path in inventory.pip_lockfiles),
+        *(f"--lockfile={directory.removeprefix('/')}/pom.xml" for directory in inventory.maven_directories),
     )
 
 

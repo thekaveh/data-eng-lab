@@ -31,6 +31,7 @@ def test_runbook_names_exact_coverage_and_limitations() -> None:
         "nyc-taxi-etl/pom.xml",
         "nyc-taxi-medallion/pom.xml",
         "tpch-star-schema/pom.xml",
+        "tpch-lock-requirements.txt",
         "CodeQL does not support Scala",
         "Maven test dependencies",
         "infra/",
@@ -40,6 +41,15 @@ def test_runbook_names_exact_coverage_and_limitations() -> None:
     )
     for value in required:
         assert value in text
+
+
+def test_runbook_discloses_and_compensates_for_event_only_scanning() -> None:
+    text = RUNBOOK.read_text(encoding="utf-8")
+
+    assert "does not provide continuous late-disclosure detection" in text
+    assert "manually dispatch the dependency audit at least every seven days" in text
+    assert "Dependabot alerts become the continuous compensating monitor" in text
+    assert "do not proceed past #92 to another backlog item except #93" in text
 
 
 def test_security_runbook_is_a_three_surface_manifest_leaf(tmp_path: Path) -> None:

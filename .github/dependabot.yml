@@ -28,6 +28,20 @@ updates:
         patterns:
           - "*"
 
+  - package-ecosystem: pip
+    directory: /datasets
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: thursday
+      time: "04:25"
+      timezone: UTC
+    open-pull-requests-limit: 3
+    groups:
+      python-lock:
+        patterns:
+          - "*"
+
   - package-ecosystem: maven
     directory: /spark-apps/gh-archive-pipeline
     target-branch: develop
