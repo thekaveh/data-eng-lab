@@ -73,6 +73,7 @@ Every curated table is an Apache Iceberg table accessed through the Atlas Iceber
 | [Atlas enablement](atlas-enablement.md) | Accepted consumer configuration and the A1–A9 infrastructure record |
 | [Go-live runbook](go-live.md) | Reproducible platform, notebook, DAG, and Spark-application acceptance |
 | [Checkpoint retention](checkpoint-retention.md) | Manual-only exact-leaf planning/deletion, writer leases, immutable recovery evidence, and the disabled automatic-scheduling boundary from issue #86 |
+| [Security automation](security-automation.md) | Dependency updates, exact-manifest vulnerability audits, CodeQL scope, private reporting, and remediation workflow |
 
 ## 4. Scenario catalog
 

@@ -10,6 +10,7 @@ from scripts.security.contract import (
     DependencyInventory,
     discover_inventory,
     load_yaml_exact,
+    main,
     validate_codeql,
     validate_dependabot,
     validate_osv_workflow,
@@ -220,3 +221,8 @@ def test_codeql_rejects_mutable_actions_or_excess_permissions(tmp_path: Path) ->
 
     with pytest.raises(ContractFailure, match="codeql_workflow_invalid"):
         validate_codeql(tmp_path)
+
+
+def test_contract_cli_validates_the_committed_repository(capsys: pytest.CaptureFixture[str]) -> None:
+    assert main(["--root", str(REPO_ROOT)]) == 0
+    assert capsys.readouterr() == ("security_contract_ok\n", "")

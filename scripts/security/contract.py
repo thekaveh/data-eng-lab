@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import argparse
 import re
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -325,3 +327,23 @@ def validate_codeql(root: Path) -> None:
     }
     if workflow != expected:
         raise ContractFailure("codeql_workflow_invalid")
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Validate repository security automation")
+    parser.add_argument("--root", type=Path, default=Path.cwd())
+    arguments = parser.parse_args(argv)
+    try:
+        inventory = discover_inventory(arguments.root)
+        validate_dependabot(arguments.root, inventory)
+        validate_osv_workflow(arguments.root, inventory)
+        validate_codeql(arguments.root)
+    except ContractFailure as error:
+        print(str(error), file=sys.stderr)
+        return 2
+    print("security_contract_ok")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
