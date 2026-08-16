@@ -115,7 +115,12 @@ def test_dependabot_and_osv_cover_the_hashed_tpch_requirements() -> None:
     )
 
     workflow = load_yaml_exact(REPO_ROOT / ".github" / "workflows" / "dependency-security.yml")
-    arguments = workflow["jobs"]["pull-request-scan"]["with"]["scan-args"]
+    scanner = next(
+        step
+        for step in workflow["jobs"]["pull-request-scan"]["steps"]
+        if step.get("name") == "Scan exact dependency manifests"
+    )
+    arguments = scanner["with"]["scan-args"]
     assert "--lockfile=requirements.txt:datasets/tpch-lock-requirements.txt" in arguments.splitlines()
 
 
@@ -216,6 +221,19 @@ def test_yaml_loader_uses_github_yaml_boolean_semantics(tmp_path: Path) -> None:
 
 def test_osv_workflow_scans_only_the_discovered_manifests() -> None:
     validate_osv_workflow(REPO_ROOT, discover_inventory(REPO_ROOT))
+
+
+def test_osv_pull_request_scan_does_not_call_a_permission_elevating_workflow() -> None:
+    workflow = load_yaml_exact(REPO_ROOT / ".github" / "workflows" / "dependency-security.yml")
+    job = workflow["jobs"]["pull-request-scan"]
+
+    assert "uses" not in job
+    assert job["permissions"] == {"contents": "read"}
+    assert [step["uses"] for step in job["steps"]] == [
+        "actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8",
+        "google/osv-scanner-action/osv-scanner-action@06b2ab4348248b456ee06c9e953637f55e03504f",
+        "google/osv-scanner-action/osv-reporter-action@06b2ab4348248b456ee06c9e953637f55e03504f",
+    ]
 
 
 @pytest.mark.parametrize(

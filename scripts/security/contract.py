@@ -234,16 +234,46 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
         "google/osv-scanner-action/.github/workflows/osv-scanner-reusable.yml@8deb546fdb875b9996d27d4950be7312dac076a1"
     )
     expected_args = "\n".join(_osv_operands(inventory))
+    scanner_sha = "06b2ab4348248b456ee06c9e953637f55e03504f"
     expected_jobs = {
         "pull-request-scan": {
             "if": "github.event_name == 'pull_request'",
+            "runs-on": "ubuntu-24.04",
+            "timeout-minutes": 15,
             "permissions": {"contents": "read"},
-            "uses": expected_uses,
-            "with": {
-                "scan-args": expected_args,
-                "upload-sarif": False,
-                "fail-on-vuln": True,
-            },
+            "steps": [
+                {
+                    "name": "Checkout",
+                    "uses": "actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8",
+                    "with": {
+                        "fetch-depth": 1,
+                        "persist-credentials": False,
+                        "submodules": False,
+                    },
+                },
+                {
+                    "name": "Scan exact dependency manifests",
+                    "uses": f"google/osv-scanner-action/osv-scanner-action@{scanner_sha}",
+                    "with": {
+                        "scan-args": "\n".join(("--output=results.json", "--format=json", *_osv_operands(inventory)))
+                    },
+                    "continue-on-error": True,
+                },
+                {
+                    "name": "Fail on a known vulnerability",
+                    "uses": f"google/osv-scanner-action/osv-reporter-action@{scanner_sha}",
+                    "with": {
+                        "scan-args": "\n".join(
+                            (
+                                "--output=results.sarif",
+                                "--new=results.json",
+                                "--gh-annotations=true",
+                                "--fail-on-vuln=true",
+                            )
+                        )
+                    },
+                },
+            ],
         },
         "full-scan": {
             "if": "github.event_name != 'pull_request'",

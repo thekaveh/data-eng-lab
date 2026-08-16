@@ -42,11 +42,11 @@ vendored, build, or user-owned surfaces and are not dependency authorities.
 
 ### 3.1. Selected: exact-manifest OSV plus advanced CodeQL
 
-Dependabot maintains the four package ecosystems. A pinned OSV-Scanner
-reusable workflow scans only the eight exact dependency manifests on pull
-requests, merged branches, and manual dispatch. Advanced
-CodeQL analyzes the two supported source classes present here: Python and
-GitHub Actions workflows.
+Dependabot maintains the four package ecosystems. Pinned OSV scanner and
+reporter actions scan the eight exact dependency manifests on pull requests;
+the pinned reusable workflow performs the merged-branch and manual scans.
+Advanced CodeQL analyzes the two supported source classes present here: Python
+and GitHub Actions workflows.
 
 This approach is ecosystem-neutral, supports `uv.lock`, hashed pip requirements,
 and Maven POM resolution,
@@ -87,10 +87,13 @@ silently leave configuration stale.
 
 ## 5. Dependency-vulnerability audit contract
 
-`.github/workflows/dependency-security.yml` calls OSV-Scanner v2.5.0 at immutable
-commit `8deb546fdb875b9996d27d4950be7312dac076a1`. Scan arguments contain only
-eight `--lockfile=` values: the root uv lock, the hashed TPC-H requirements, and
-six POMs. Recursive flags and repository-directory operands are forbidden.
+`.github/workflows/dependency-security.yml` uses OSV-Scanner v2.5.0 at immutable
+commits. The read-only PR job calls the scanner and reporter actions directly,
+because the upstream reusable workflow always requests code-scanning write
+permission. Merged/manual scans call the reusable workflow at
+`8deb546fdb875b9996d27d4950be7312dac076a1`. Scan arguments contain only eight
+`--lockfile=` values: the root uv lock, the hashed TPC-H requirements, and six
+POMs. Recursive flags and repository-directory operands are forbidden.
 
 Pull requests to `develop` or `main` run a fail-on-vulnerability full-manifest
 scan without SARIF upload and with `contents: read` only. Pushes to `develop`
