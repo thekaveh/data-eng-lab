@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := help
 SHELL := /bin/bash
 export NO_MKDOCS_2_WARNING := 1
-.PHONY: help setup up down datasets verify test preflight lint fmt new-scenario build-apps notebooks-reproducibility docs-build docs-check docs-serve docs-wiki
+.PHONY: help setup up down datasets verify release-check test preflight lint fmt new-scenario build-apps notebooks-reproducibility docs-build docs-check docs-serve docs-wiki
 
 help: ## Show this help
 	@grep -E '^[a-zA-Z_-]+:.*?## ' $(MAKEFILE_LIST) | awk 'BEGIN{FS=":.*?## "}{printf "  %-12s %s\n",$$1,$$2}'
@@ -20,6 +20,9 @@ datasets: ## Download datasets into MinIO landing bucket (override tier with SCA
 
 verify: ## Run the repo verifier
 	uv run python scripts/verify_repo.py --root .
+
+release-check: ## Validate the static release policy and unreleased state
+	uv run python -m scripts.release.contract --root .
 
 test: ## offline: no live stack, no network
 	uv run pytest -m "not infra and not network" -q

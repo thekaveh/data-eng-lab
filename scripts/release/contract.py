@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import argparse
 import re
+import sys
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +12,13 @@ from scripts.docs.manifest import ManifestError, iter_leaf_sections, parse_manif
 MAX_RELEASE_FILE_BYTES = 1_048_576
 EXPECTED_VERSION = "0.1.0"
 CANONICAL_CHANGELOG = "docs/CHANGELOG.md"
+FORBIDDEN_RELEASE_AUTOMATION = (
+    "gh release create",
+    "actions/create-release@",
+    "softprops/action-gh-release@",
+    "pypa/gh-action-pypi-publish@",
+    "twine upload",
+)
 SEMVER = re.compile(
     r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
     r"(?:-(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)"
@@ -133,6 +142,22 @@ def _validate_documentation(root: Path, version: str) -> None:
         phrase not in readme for phrase in required_readme
     ):
         raise ReleaseContractFailure("release_documentation_invalid")
+
+
+def validate_no_release_automation(root: Path) -> None:
+    """Reject repository workflows that publish a package or GitHub Release."""
+    workflow_root = root / ".github" / "workflows"
+    if not workflow_root.exists():
+        return
+    try:
+        paths = sorted(path for path in workflow_root.iterdir() if path.suffix in {".yml", ".yaml"})
+    except OSError:
+        raise ReleaseContractFailure("release_file_invalid") from None
+    for path in paths:
+        relative = path.relative_to(root).as_posix()
+        text = _read_owned_text(root, relative).lower()
+        if any(token in text for token in FORBIDDEN_RELEASE_AUTOMATION):
+            raise ReleaseContractFailure("release_automation_forbidden")
     try:
         manifest = parse_manifest(_read_owned_text(root, "docs/manifest.yaml"))
     except ManifestError:
@@ -157,4 +182,22 @@ def validate_repository(root: Path) -> ReleaseState:
     version = load_project_version(root)
     changelog = validate_changelog_state(root, version)
     _validate_documentation(root, version)
+    validate_no_release_automation(root)
     return ReleaseState(version, "intentionally_unreleased", changelog)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Validate the repository release policy")
+    parser.add_argument("--root", type=Path, default=Path("."))
+    args = parser.parse_args(argv)
+    try:
+        validate_repository(args.root)
+    except ReleaseContractFailure as error:
+        print(str(error), file=sys.stderr)
+        return 1
+    print("release_contract_ok")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

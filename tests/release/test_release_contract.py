@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from shutil import copy2
+from subprocess import run
 
 import pytest
 
@@ -9,6 +11,7 @@ from scripts.release.contract import (
     ReleaseContractFailure,
     load_project_version,
     validate_changelog_state,
+    validate_no_release_automation,
 )
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -122,3 +125,46 @@ def test_changelog_state_rejects_root_index_drift(tmp_path: Path, mutation: str)
 
     with pytest.raises(ReleaseContractFailure, match="^root_changelog_invalid$"):
         validate_changelog_state(tmp_path, "0.1.0")
+
+
+def test_repository_has_no_automatic_release_or_publish_workflow() -> None:
+    validate_no_release_automation(ROOT)
+
+
+@pytest.mark.parametrize(
+    "token",
+    [
+        "gh release create",
+        "actions/create-release@",
+        "softprops/action-gh-release@",
+        "pypa/gh-action-pypi-publish@",
+        "twine upload",
+    ],
+)
+def test_release_automation_contract_rejects_publish_tokens(tmp_path: Path, token: str) -> None:
+    workflow = tmp_path / ".github" / "workflows" / "release.yml"
+    workflow.parent.mkdir(parents=True)
+    workflow.write_text(f"name: forbidden\n# {token}\n", encoding="utf-8")
+
+    with pytest.raises(ReleaseContractFailure, match="^release_automation_forbidden$"):
+        validate_no_release_automation(tmp_path)
+
+
+def test_release_contract_cli_emits_one_success_token() -> None:
+    completed = run(
+        [sys.executable, "-m", "scripts.release.contract", "--root", str(ROOT)],
+        cwd=ROOT,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout == "release_contract_ok\n"
+    assert completed.stderr == ""
+
+
+def test_makefile_exposes_exact_release_check_command() -> None:
+    makefile = (ROOT / "Makefile").read_text(encoding="utf-8")
+    assert "release-check:" in makefile
+    assert "uv run python -m scripts.release.contract --root ." in makefile
