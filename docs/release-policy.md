@@ -17,6 +17,11 @@ rather than infer stability or immutability from the planned version.
 is only an index to that canonical history. Git tags and GitHub Releases are
 the publication evidence.
 
+Governance headings and Added/Changed evidence use ordinary rendered Markdown.
+Inline CSS or classes, duplicate HTML attributes, and SVG/MathML HTML-integration
+containers are rejected because their visibility depends on browser or stylesheet
+state. Benign SVG/MathML graphics remain allowed but cannot carry release evidence.
+
 The six Maven Spark applications retain their own artifact versions and stable
 MinIO coordinates. Their current `0.1.0` values do not publish or determine the
 repository version. The Atlas submodule pin is also an independent dependency

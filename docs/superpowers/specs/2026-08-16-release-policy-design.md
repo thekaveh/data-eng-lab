@@ -89,6 +89,9 @@ It reads bounded regular UTF-8 files only, parses `pyproject.toml` with
   released-version H2 while the policy says intentionally unreleased; the same
   Python-Markdown/Pymdown extension set used by the site is the authority for
   ATX, Setext, formatting, nesting, fences, comments, raw HTML, LF, and CRLF;
+  governance evidence itself must be ordinary rendered Markdown: inline CSS or
+  classes, duplicate attributes, and SVG/MathML HTML-integration containers
+  fail closed, while benign foreign graphics remain allowed;
 - the root changelog index, README, policy page, and manifest all identify the
   same authority and state;
 - the owned, non-symlink manifest satisfies the complete canonical three-surface

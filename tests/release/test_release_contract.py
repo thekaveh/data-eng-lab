@@ -230,6 +230,7 @@ def test_changelog_state_ignores_comment_marker_inside_fenced_example(tmp_path: 
     [
         "<template><h3>Added</h3><ul><li>hidden only</li></ul></template>",
         '<div style="display:none"><h3>Added</h3><ul><li>hidden only</li></ul></div>',
+        '<div style="display:none" style="display:block"><h3>Added</h3><ul><li>hidden only</li></ul></div>',
         "<dialog><h3>Added</h3><ul><li>hidden only</li></ul></dialog>",
     ],
 )
@@ -269,13 +270,35 @@ def test_changelog_state_accepts_self_closing_svg_foreign_content(tmp_path: Path
 
 
 @pytest.mark.parametrize(
+    "ambiguous_html",
+    [
+        '<div style="display:none;display:block"><h2>2. [0.1.0]</h2></div>',
+        '<div style="visibility:hidden;visibility:visible"><h2>2. [0.1.0]</h2></div>',
+        '<h2 class="visibility-is-external">2. [0.1.0]</h2>',
+        '<div class="visibility-is-external"><h3>Added</h3><ul><li>entry</li></ul></div>',
+        "<svg><foreignObject><h2>2. [0.1.0]</h2></foreignObject></svg>",
+        '<math><annotation-xml encoding="text/html"><h2>2. [0.1.0]</h2></annotation-xml></math>',
+    ],
+)
+def test_changelog_state_rejects_ambiguous_html_visibility(tmp_path: Path, ambiguous_html: str) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_text(
+        canonical.read_text(encoding="utf-8") + f"\n{ambiguous_html}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReleaseContractFailure, match="^canonical_changelog_invalid$"):
+        validate_changelog_state(tmp_path, "0.1.0")
+
+
+@pytest.mark.parametrize(
     "heading",
     [
         "## 2. **[0.1.0]** - 2026-08-16",
         "## 2. [0.1.0]<br> - 2026-08-16",
         '## 2. [0.1.0]<img alt="release"> - 2026-08-16',
         "## 2. [0.1.0]<span> - 2026-08-16",
-        '<div style="color:red"><h2>2. [0.1.0] - 2026-08-16</h2></div>',
         "> ## 2. [0.1.0] - 2026-08-16",
         "- ## 2. [0.1.0] - 2026-08-16",
         "```lang`invalid\n## 2. [0.1.0] - 2026-08-16\n```",
@@ -366,6 +389,19 @@ def test_release_documentation_closes_manifest_symlink_loops(tmp_path: Path, rel
     target = tmp_path / relative
     target.unlink()
     target.symlink_to(target.name)
+
+    with pytest.raises(ReleaseContractFailure, match="^release_documentation_invalid$"):
+        _validate_documentation(tmp_path, "0.1.0")
+
+
+def test_release_documentation_closes_invalid_manifest_path_value(tmp_path: Path) -> None:
+    copytree(ROOT / "docs", tmp_path / "docs")
+    copy2(ROOT / "README.md", tmp_path / "README.md")
+    manifest = tmp_path / "docs" / "manifest.yaml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace("source: docs/index.md", 'source: "docs/\\0index.md"'),
+        encoding="utf-8",
+    )
 
     with pytest.raises(ReleaseContractFailure, match="^release_documentation_invalid$"):
         _validate_documentation(tmp_path, "0.1.0")

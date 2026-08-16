@@ -87,7 +87,7 @@ _VOID_HTML_ELEMENTS = frozenset(
         "wbr",
     }
 )
-_NON_RENDERED_HTML_ELEMENTS = frozenset({"datalist", "math", "noscript", "script", "style", "svg", "template"})
+_NON_RENDERED_HTML_ELEMENTS = frozenset({"datalist", "noscript", "script", "style", "template"})
 _FOREIGN_CONTENT_ROOTS = frozenset({"math", "svg"})
 
 
@@ -117,7 +117,9 @@ class _RenderedChangelogParser(HTMLParser):
         self.sections: list[_RenderedH2] = []
         self._capture: str | None = None
         self._captured: list[str] = []
+        self._ambiguous_tags: list[str] = []
         self._hidden_tags: list[str] = []
+        self._foreign_tags: list[str] = []
         self.malformed = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
@@ -126,30 +128,39 @@ class _RenderedChangelogParser(HTMLParser):
             if normalized not in _VOID_HTML_ELEMENTS:
                 self._hidden_tags.append(normalized)
             return
-        attributes = {name.casefold(): value for name, value in attrs}
-        style = attributes.get("style")
-        if style is not None and ("\\" in style or "/*" in style):
+        if self._foreign_tags:
+            if normalized in {"annotation-xml", "foreignobject", "h2", "h3", "li"}:
+                self.malformed = True
+            if normalized not in _VOID_HTML_ELEMENTS:
+                self._foreign_tags.append(normalized)
+            return
+        if self._ambiguous_tags:
+            if normalized in {"h2", "h3", "li"}:
+                self.malformed = True
+            if normalized not in _VOID_HTML_ELEMENTS:
+                self._ambiguous_tags.append(normalized)
+            return
+        names = [name.casefold() for name, _value in attrs]
+        if len(names) != len(set(names)):
             self.malformed = True
             return
-        compact_style = re.sub(r"\s+", "", style.casefold()) if style else ""
-        hidden_style = any(
-            declaration.startswith(prefix)
-            for declaration in compact_style.split(";")
-            for prefix in (
-                "content-visibility:hidden",
-                "display:none",
-                "visibility:collapse",
-                "visibility:hidden",
-            )
-        )
+        attributes = {name.casefold(): value for name, value in attrs}
+        if "class" in attributes or "style" in attributes:
+            if self._capture is not None or normalized in {"h2", "h3", "li"}:
+                self.malformed = True
+            if normalized not in _VOID_HTML_ELEMENTS:
+                self._ambiguous_tags.append(normalized)
+            return
         if (
             normalized in _NON_RENDERED_HTML_ELEMENTS
             or "hidden" in attributes
             or (normalized == "dialog" and "open" not in attributes)
-            or hidden_style
         ):
             if normalized not in _VOID_HTML_ELEMENTS:
                 self._hidden_tags.append(normalized)
+            return
+        if normalized in _FOREIGN_CONTENT_ROOTS:
+            self._foreign_tags.append(normalized)
             return
         if normalized == "h2":
             if self._capture in {"h2", "h3"}:
@@ -163,7 +174,7 @@ class _RenderedChangelogParser(HTMLParser):
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         normalized = tag.casefold()
-        if self._hidden_tags or normalized in _FOREIGN_CONTENT_ROOTS:
+        if self._ambiguous_tags or self._hidden_tags or self._foreign_tags or normalized in _FOREIGN_CONTENT_ROOTS:
             return
         if normalized not in _VOID_HTML_ELEMENTS:
             self.malformed = True
@@ -177,6 +188,18 @@ class _RenderedChangelogParser(HTMLParser):
                 self.malformed = True
                 return
             self._hidden_tags.pop()
+            return
+        if self._foreign_tags:
+            if self._foreign_tags[-1] != normalized:
+                self.malformed = True
+                return
+            self._foreign_tags.pop()
+            return
+        if self._ambiguous_tags:
+            if self._ambiguous_tags[-1] != normalized:
+                self.malformed = True
+                return
+            self._ambiguous_tags.pop()
             return
         if self._capture == normalized:
             content = re.sub(r"\s+", " ", "".join(self._captured)).strip()
@@ -255,7 +278,13 @@ def _rendered_changelog_sections(text: str) -> tuple[_RenderedH2, ...]:
         parser = _RenderedChangelogParser()
         parser.feed(rendered)
         parser.close()
-        if parser.malformed or parser._capture is not None or parser._hidden_tags:
+        if (
+            parser.malformed
+            or parser._ambiguous_tags
+            or parser._capture is not None
+            or parser._foreign_tags
+            or parser._hidden_tags
+        ):
             raise ValueError("rendered changelog is malformed")
     except Exception:
         raise ReleaseContractFailure("canonical_changelog_invalid") from None
@@ -323,6 +352,7 @@ def _validate_documentation(root: Path, version: str) -> None:
         RecursionError,
         ReleaseContractFailure,
         RuntimeError,
+        ValueError,
     ):
         raise ReleaseContractFailure("release_documentation_invalid") from None
     leaves = {leaf.id: leaf for leaf in iter_leaf_sections(manifest.sections)}

@@ -114,7 +114,9 @@ Python-Markdown/Pymdown extension set as the documentation site and inspect the
 bounded HTML H2 structure, so formatting, nesting, fences, comments, raw HTML,
 LF, and CRLF follow one authority. Reject duplicate Unreleased headings, a
 released `0.1.0` section, root change bullets, wrong links, and contradictory
-state.
+state. Require governance headings and Added/Changed evidence to remain ordinary
+rendered Markdown; reject CSS/classes, duplicate HTML attributes, and foreign
+HTML-integration containers while allowing benign SVG/MathML graphics.
 
 ```python
 canonical = read("docs/CHANGELOG.md")
