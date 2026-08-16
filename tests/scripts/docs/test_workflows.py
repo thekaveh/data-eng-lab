@@ -137,9 +137,7 @@ def test_publish_workflow_generates_site_before_pages_deploy():
     commands = _executable_lines(build)
     cairo = _step_index(build_steps, "sudo apt-get install -y libcairo2")
     setup_uv = next(
-        index
-        for index, step in enumerate(build_steps)
-        if step.get("uses", "").startswith("astral-sh/setup-uv@")
+        index for index, step in enumerate(build_steps) if step.get("uses", "").startswith("astral-sh/setup-uv@")
     )
     upload = next(
         index
@@ -163,27 +161,42 @@ def test_publish_workflow_generates_site_before_pages_deploy():
 
 def test_publish_workflow_pushes_generated_wiki_after_pages_deploy():
     workflow = _load_workflow("docs-deploy.yml")
+    wiki_build = workflow["jobs"]["wiki-build"]
     wiki = workflow["jobs"]["wiki"]
 
-    assert wiki["needs"] == "deploy"
-    assert wiki["permissions"] == {"contents": "write"}
-    commands = _executable_lines(wiki)
-    required = [
+    assert wiki_build["needs"] == "deploy"
+    assert wiki_build["permissions"] == {"contents": "read"}
+    build_commands = _executable_lines(wiki_build)
+    required_build = [
         "sudo apt-get install -y libcairo2",
         "uv run --group dev python -m scripts.docs.check_docs --root .",
         "uv run --group dev python -m scripts.docs.build_docs --wiki --root .",
-        "uv run --group dev python -m scripts.docs.push_wiki --push --root .",
     ]
-    command_positions = [_command_index(commands, command) for command in required]
-    assert command_positions == sorted(command_positions)
-    assert _step_index(wiki["steps"], required[0]) < _step_index(wiki["steps"], required[1])
-
-    push_step = next(
-        step for step in wiki["steps"] if "scripts.docs.push_wiki" in step.get("run", "")
+    assert [_command_index(build_commands, command) for command in required_build] == sorted(
+        _command_index(build_commands, command) for command in required_build
     )
+    upload = next(step for step in wiki_build["steps"] if step.get("uses", "").startswith("actions/upload-artifact@"))
+    assert upload["uses"] == "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02"
+    assert upload["with"] == {
+        "name": "wiki-${{ github.sha }}",
+        "path": "generated/wiki",
+        "if-no-files-found": "error",
+        "retention-days": "1",
+    }
+
+    assert wiki["needs"] == "wiki-build"
+    assert wiki["permissions"] == {"contents": "write"}
+    download = next(step for step in wiki["steps"] if step.get("uses", "").startswith("actions/download-artifact@"))
+    assert download["uses"] == "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093"
+    assert download["with"] == {
+        "name": "wiki-${{ github.sha }}",
+        "path": "generated/wiki",
+    }
+
+    push_step = next(step for step in wiki["steps"] if step.get("name") == "Push generated wiki")
+    assert push_step["run"] == "/usr/bin/python3 -I scripts/docs/push_wiki.py --push --root ."
     assert push_step["env"]["WIKI_REMOTE"] == (
-        "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/"
-        "${{ github.repository }}.wiki.git"
+        "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git"
     )
     assert "WIKI_SSH_KEY" not in push_step["env"]
     assert not (WORKFLOWS / "docs-sync.yml").exists()
