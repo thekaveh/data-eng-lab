@@ -1,0 +1,118 @@
+{
+  "editable": false,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "fieldConfig": {"defaults": {"min": 0, "max": 1}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 0},
+      "id": 1,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "textMode": "auto"},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "Prometheus"},
+          "expr": "data_eng_lab_iceberg_rest_synthetic_probe_success{job=\"iceberg-rest-synthetic\",target=\"catalog\"}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Current availability",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 0},
+      "id": 2,
+      "options": {"colorMode": "value", "graphMode": "area", "justifyMode": "auto", "textMode": "auto"},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "Prometheus"},
+          "expr": "data_eng_lab_iceberg_rest_synthetic_probe_duration_seconds{job=\"iceberg-rest-synthetic\",target=\"catalog\"}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Current latency",
+      "type": "stat"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "fieldConfig": {"defaults": {"min": 0, "max": 100, "unit": "percent"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 8},
+      "id": 3,
+      "options": {"legend": {"displayMode": "hidden"}, "tooltip": {"mode": "single"}},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "Prometheus"},
+          "expr": "avg_over_time(data_eng_lab_iceberg_rest_synthetic_probe_success{job=\"iceberg-rest-synthetic\",target=\"catalog\"}[30d]) * 100",
+          "refId": "A"
+        }
+      ],
+      "title": "30-day availability SLO",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "fieldConfig": {"defaults": {"min": 0, "unit": "s"}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 8},
+      "id": 4,
+      "options": {"legend": {"displayMode": "hidden"}, "tooltip": {"mode": "single"}},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "Prometheus"},
+          "expr": "quantile_over_time(0.95, data_eng_lab_iceberg_rest_synthetic_probe_duration_seconds{job=\"iceberg-rest-synthetic\",target=\"catalog\"}[30d])",
+          "refId": "A"
+        }
+      ],
+      "title": "30-day p95 latency SLO",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 0, "y": 16},
+      "id": 5,
+      "options": {"showHeader": true},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "Prometheus"},
+          "expr": "data_eng_lab_iceberg_rest_synthetic_probe_result{job=\"iceberg-rest-synthetic\",target=\"catalog\"} == 1",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Current synthetic outcome",
+      "type": "table"
+    },
+    {
+      "datasource": {"type": "prometheus", "uid": "Prometheus"},
+      "fieldConfig": {"defaults": {}, "overrides": []},
+      "gridPos": {"h": 8, "w": 12, "x": 12, "y": 16},
+      "id": 6,
+      "options": {"showHeader": true},
+      "targets": [
+        {
+          "datasource": {"type": "prometheus", "uid": "Prometheus"},
+          "expr": "ALERTS{alertstate=\"firing\",job=\"iceberg-rest-synthetic\",target=\"catalog\"}",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Active Iceberg REST alerts",
+      "type": "table"
+    }
+  ],
+  "refresh": "30s",
+  "schemaVersion": 40,
+  "tags": ["data-eng-lab", "iceberg", "synthetic"],
+  "templating": {"list": []},
+  "time": {"from": "now-30d", "to": "now"},
+  "timezone": "utc",
+  "title": "Iceberg REST Synthetic Observability",
+  "uid": "data-eng-lab-iceberg-rest-synthetic",
+  "version": 1
+}
