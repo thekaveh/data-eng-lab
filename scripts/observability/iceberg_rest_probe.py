@@ -404,8 +404,11 @@ def probe_catalog(
     except urllib.error.URLError as error:
         category = "timeout" if isinstance(error.reason, TimeoutError) or monotonic() >= deadline else "unavailable"
         return ProbeResult(False, max(0.0, monotonic() - started), 0, category)
-    except http.client.HTTPException:
+    except http.client.RemoteDisconnected:
         category = "timeout" if monotonic() >= deadline else "unavailable"
+        return ProbeResult(False, max(0.0, monotonic() - started), 0, category)
+    except http.client.HTTPException:
+        category = "timeout" if monotonic() >= deadline else "malformed"
         return ProbeResult(False, max(0.0, monotonic() - started), 0, category)
     except OSError:
         category = "timeout" if monotonic() >= deadline else "unavailable"

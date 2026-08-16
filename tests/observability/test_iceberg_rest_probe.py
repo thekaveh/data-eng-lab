@@ -286,10 +286,11 @@ def test_probe_enforces_total_deadline_while_dns_resolution_stalls(
     assert elapsed < 0.15
 
 
-def test_probe_closes_nonstandard_http_status_as_malformed_metrics() -> None:
+@pytest.mark.parametrize("status_line", [b"99 Odd", b"700 Odd"])
+def test_probe_closes_nonstandard_http_status_as_malformed_metrics(status_line: bytes) -> None:
     class OddStatusHandler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802
-            self.connection.sendall(b"HTTP/1.1 700 Odd\r\nContent-Length: 0\r\n\r\n")
+            self.connection.sendall(b"HTTP/1.1 " + status_line + b"\r\nContent-Length: 0\r\n\r\n")
 
         def log_message(self, _format: str, *_args: object) -> None:
             return
