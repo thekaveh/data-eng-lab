@@ -26,7 +26,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout target revision
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 1
@@ -47,7 +47,7 @@ jobs:
           test ! -e "${SARIF_FILE}"
           test ! -L "${SARIF_FILE}"
       - name: Scan exact target dependency manifests
-        uses: google/osv-scanner-action/osv-scanner-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
+        uses: google/osv-scanner-action/osv-scanner-action@f4cfcc01edc9c8b756a9b873b7a623ca674da51e # v2.5.0
         with:
           scan-args: |-
             --output=/github/workspace/.osv-old-${{ github.run_id }}-${{ github.run_attempt }}.json
@@ -85,7 +85,7 @@ jobs:
           test "${#digest}" -eq 64
           printf 'sha256=%s\n' "${digest}" >> "${GITHUB_OUTPUT}"
       - name: Checkout proposed revision
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
@@ -114,7 +114,7 @@ jobs:
           test ! -e "${SARIF_FILE}"
           test ! -L "${SARIF_FILE}"
       - name: Scan exact proposed dependency manifests
-        uses: google/osv-scanner-action/osv-scanner-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
+        uses: google/osv-scanner-action/osv-scanner-action@f4cfcc01edc9c8b756a9b873b7a623ca674da51e # v2.5.0
         with:
           scan-args: |-
             --output=/github/workspace/.osv-new-${{ github.run_id }}-${{ github.run_attempt }}.json
@@ -140,7 +140,7 @@ jobs:
           test "${size}" -le 67108864
           python3 -m json.tool "${RESULTS_FILE}" >/dev/null
       - name: Fail on a newly introduced vulnerability
-        uses: google/osv-scanner-action/osv-reporter-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
+        uses: google/osv-scanner-action/osv-reporter-action@f4cfcc01edc9c8b756a9b873b7a623ca674da51e # v2.5.0
         with:
           scan-args: |-
             --output=/github/workspace/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
@@ -159,7 +159,7 @@ jobs:
       security-events: write
     steps:
       - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -176,7 +176,7 @@ jobs:
           test ! -e "${SARIF_FILE}"
           test ! -L "${SARIF_FILE}"
       - name: Scan exact dependency manifests
-        uses: google/osv-scanner-action/osv-scanner-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
+        uses: google/osv-scanner-action/osv-scanner-action@f4cfcc01edc9c8b756a9b873b7a623ca674da51e # v2.5.0
         with:
           scan-args: |-
             --output=/github/workspace/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
@@ -202,7 +202,7 @@ jobs:
           test "${size}" -le 67108864
           python3 -m json.tool "${RESULTS_FILE}" >/dev/null
       - name: Report complete vulnerability baseline
-        uses: google/osv-scanner-action/osv-reporter-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
+        uses: google/osv-scanner-action/osv-reporter-action@f4cfcc01edc9c8b756a9b873b7a623ca674da51e # v2.5.0
         with:
           scan-args: |-
             --output=/github/workspace/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
