@@ -98,6 +98,24 @@ def test_changelog_state_rejects_duplicate_unreleased_heading(tmp_path: Path) ->
         validate_changelog_state(tmp_path, "0.1.0")
 
 
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "## 2. [Unreleased]",
+        "## 2. [0.1.0]",
+        "## 2. [0.1.0] - released",
+    ],
+)
+def test_changelog_state_rejects_any_duplicate_or_current_release_heading(tmp_path: Path, heading: str) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_text(canonical.read_text(encoding="utf-8") + f"\n{heading}\n", encoding="utf-8")
+
+    code = "canonical_changelog_invalid" if "Unreleased" in heading else "release_state_contradictory"
+    with pytest.raises(ReleaseContractFailure, match=f"^{code}$"):
+        validate_changelog_state(tmp_path, "0.1.0")
+
+
 def test_changelog_state_rejects_released_current_version(tmp_path: Path) -> None:
     _copy_changelogs(tmp_path)
     canonical = tmp_path / "docs" / "CHANGELOG.md"
@@ -131,20 +149,50 @@ def test_repository_has_no_automatic_release_or_publish_workflow() -> None:
     validate_no_release_automation(ROOT)
 
 
+def _copy_workflows(root: Path) -> Path:
+    target = root / ".github" / "workflows"
+    target.mkdir(parents=True)
+    for source in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
+        copy2(source, target / source.name)
+    return target
+
+
 @pytest.mark.parametrize(
     "token",
     [
         "gh release create",
+        "gh api --method POST repos/example/project/releases",
+        "git tag v0.1.0",
+        "git push origin refs/tags/v0.1.0",
         "actions/create-release@",
         "softprops/action-gh-release@",
         "pypa/gh-action-pypi-publish@",
         "twine upload",
+        "./scripts/publish.sh",
     ],
 )
 def test_release_automation_contract_rejects_publish_tokens(tmp_path: Path, token: str) -> None:
-    workflow = tmp_path / ".github" / "workflows" / "release.yml"
-    workflow.parent.mkdir(parents=True)
-    workflow.write_text(f"name: forbidden\n# {token}\n", encoding="utf-8")
+    workflow = _copy_workflows(tmp_path) / "ci.yml"
+    workflow.write_text(workflow.read_text(encoding="utf-8") + f"\n# {token}\n", encoding="utf-8")
+
+    with pytest.raises(ReleaseContractFailure, match="^release_automation_forbidden$"):
+        validate_no_release_automation(tmp_path)
+
+
+def test_release_automation_contract_rejects_tag_trigger(tmp_path: Path) -> None:
+    workflow = _copy_workflows(tmp_path) / "ci.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8") + "\n# trigger injection\non:\n  push:\n    tags: ['v*']\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReleaseContractFailure, match="^release_automation_forbidden$"):
+        validate_no_release_automation(tmp_path)
+
+
+def test_release_automation_contract_rejects_new_workflow_even_without_known_token(tmp_path: Path) -> None:
+    workflows = _copy_workflows(tmp_path)
+    (workflows / "publish.yml").write_text("name: opaque\non: workflow_dispatch\njobs: {}\n", encoding="utf-8")
 
     with pytest.raises(ReleaseContractFailure, match="^release_automation_forbidden$"):
         validate_no_release_automation(tmp_path)

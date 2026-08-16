@@ -7,7 +7,7 @@ import tomllib
 from dataclasses import dataclass
 from pathlib import Path
 
-from scripts.docs.manifest import ManifestError, iter_leaf_sections, parse_manifest
+from scripts.security.contract import ContractFailure, load_yaml_exact
 
 MAX_RELEASE_FILE_BYTES = 1_048_576
 EXPECTED_VERSION = "0.1.0"
@@ -18,6 +18,23 @@ FORBIDDEN_RELEASE_AUTOMATION = (
     "softprops/action-gh-release@",
     "pypa/gh-action-pypi-publish@",
     "twine upload",
+)
+EXPECTED_WORKFLOWS = (
+    "ci.yml",
+    "codeql.yml",
+    "dependency-security.yml",
+    "docs-deploy.yml",
+)
+FORBIDDEN_WORKFLOW_PATTERNS = tuple(
+    re.compile(pattern, re.IGNORECASE)
+    for pattern in (
+        r"\bgh\s+release\b",
+        r"\bgh\s+api\b[^\r\n]*(?:/releases|/git/refs(?:/tags)?)",
+        r"\bgit\s+tag\b",
+        r"\bgit\s+push\b[^\r\n]*(?:--tags\b|refs/tags/|\bv[0-9]+\.)",
+        r"(?:^|[\s|;&])\./scripts/[A-Za-z0-9_./-]+",
+        r"(?:^|[\s|;&])(?:ba)?sh\s+scripts/[A-Za-z0-9_./-]+",
+    )
 )
 SEMVER = re.compile(
     r"^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)"
@@ -92,10 +109,11 @@ release notes, and the explicit authorization required to publish.
 def validate_changelog_state(root: Path, version: str) -> str:
     """Validate one detailed changelog and one exact repository index."""
     canonical = _read_owned_text(root, CANONICAL_CHANGELOG)
-    if (
-        canonical.count("## 1. [Unreleased]") != 1
-        or re.search(r"^## [0-9]+\. \[Unreleased\]$", canonical, re.MULTILINE) is None
-    ):
+    headings = re.findall(r"^## [^\r\n]+$", canonical, re.MULTILINE)
+    unreleased_headings = [
+        heading for heading in headings if re.fullmatch(r"## (?:[0-9]+\. )?\[Unreleased\](?: .*)?", heading)
+    ]
+    if unreleased_headings != ["## 1. [Unreleased]"]:
         raise ReleaseContractFailure("canonical_changelog_invalid")
     unreleased = canonical.split("## 1. [Unreleased]", 1)[1].split("\n## ", 1)[0]
     if (
@@ -103,11 +121,8 @@ def validate_changelog_state(root: Path, version: str) -> str:
         or re.search(r"^- \S", unreleased, re.MULTILINE) is None
     ):
         raise ReleaseContractFailure("canonical_changelog_invalid")
-    if re.search(
-        rf"^## [0-9]+\. \[{re.escape(version)}\] - [0-9]{{4}}-[0-9]{{2}}-[0-9]{{2}}$",
-        canonical,
-        re.MULTILINE,
-    ):
+    version_heading = re.compile(rf"## (?:[0-9]+\. )?\[{re.escape(version)}\](?: .*)?")
+    if any(version_heading.fullmatch(heading) for heading in headings):
         raise ReleaseContractFailure("release_state_contradictory")
     if _read_owned_text(root, "CHANGELOG.md") != _root_changelog(version):
         raise ReleaseContractFailure("root_changelog_invalid")
@@ -142,39 +157,68 @@ def _validate_documentation(root: Path, version: str) -> None:
         phrase not in readme for phrase in required_readme
     ):
         raise ReleaseContractFailure("release_documentation_invalid")
+    try:
+        manifest = load_yaml_exact(root / "docs" / "manifest.yaml")
+    except ContractFailure:
+        raise ReleaseContractFailure("release_documentation_invalid") from None
+    sections = manifest.get("sections")
+    if not isinstance(sections, list):
+        raise ReleaseContractFailure("release_documentation_invalid")
+    leaves: dict[str, dict[str, object]] = {}
+    stack = list(sections)
+    while stack:
+        section = stack.pop()
+        if not isinstance(section, dict):
+            raise ReleaseContractFailure("release_documentation_invalid")
+        children = section.get("children")
+        if children is not None:
+            if not isinstance(children, list):
+                raise ReleaseContractFailure("release_documentation_invalid")
+            stack.extend(children)
+            continue
+        identifier = section.get("id")
+        if not isinstance(identifier, str) or identifier in leaves:
+            raise ReleaseContractFailure("release_documentation_invalid")
+        leaves[identifier] = section
+    if leaves.get("release-policy") != {
+        "id": "release-policy",
+        "number": "9.2",
+        "title": "Release Policy",
+        "source": "docs/release-policy.md",
+    } or leaves.get("changelog") != {
+        "id": "changelog",
+        "number": "10",
+        "title": "Changelog",
+        "source": CANONICAL_CHANGELOG,
+    }:
+        raise ReleaseContractFailure("release_documentation_invalid")
 
 
 def validate_no_release_automation(root: Path) -> None:
     """Reject repository workflows that publish a package or GitHub Release."""
     workflow_root = root / ".github" / "workflows"
-    if not workflow_root.exists():
-        return
     try:
         paths = sorted(path for path in workflow_root.iterdir() if path.suffix in {".yml", ".yaml"})
     except OSError:
-        raise ReleaseContractFailure("release_file_invalid") from None
+        raise ReleaseContractFailure("release_automation_forbidden") from None
+    if tuple(path.name for path in paths) != EXPECTED_WORKFLOWS:
+        raise ReleaseContractFailure("release_automation_forbidden")
     for path in paths:
         relative = path.relative_to(root).as_posix()
         text = _read_owned_text(root, relative).lower()
-        if any(token in text for token in FORBIDDEN_RELEASE_AUTOMATION):
+        try:
+            document = load_yaml_exact(path)
+        except ContractFailure:
+            raise ReleaseContractFailure("release_automation_forbidden") from None
+        events = document.get("on")
+        if isinstance(events, dict):
+            push = events.get("push")
+            if "release" in events or (isinstance(push, dict) and any(key in push for key in ("tags", "tags-ignore"))):
+                raise ReleaseContractFailure("release_automation_forbidden")
+        if any(token in text for token in FORBIDDEN_RELEASE_AUTOMATION) or any(
+            pattern.search(text) for pattern in FORBIDDEN_WORKFLOW_PATTERNS
+        ):
             raise ReleaseContractFailure("release_automation_forbidden")
-    try:
-        manifest = parse_manifest(_read_owned_text(root, "docs/manifest.yaml"))
-    except ManifestError:
-        raise ReleaseContractFailure("release_documentation_invalid") from None
-    leaves = {leaf.id: leaf for leaf in iter_leaf_sections(manifest.sections)}
-    release = leaves.get("release-policy")
-    changelog = leaves.get("changelog")
-    if (
-        release is None
-        or release.number != "9.2"
-        or release.title != "Release Policy"
-        or release.source != Path("docs/release-policy.md")
-        or changelog is None
-        or changelog.number != "10"
-        or changelog.source != Path(CANONICAL_CHANGELOG)
-    ):
-        raise ReleaseContractFailure("release_documentation_invalid")
 
 
 def validate_repository(root: Path) -> ReleaseState:

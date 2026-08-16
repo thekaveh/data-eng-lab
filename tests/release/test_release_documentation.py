@@ -83,3 +83,47 @@ def test_repository_validator_rejects_contradictory_policy_state(tmp_path: Path)
 
     with pytest.raises(ReleaseContractFailure, match="^release_documentation_invalid$"):
         validate_repository(tmp_path)
+
+
+def _copy_release_surface(root: Path) -> None:
+    for relative in (
+        "pyproject.toml",
+        "CHANGELOG.md",
+        "README.md",
+        "docs/CHANGELOG.md",
+        "docs/release-policy.md",
+        "docs/manifest.yaml",
+    ):
+        source = ROOT / relative
+        target = root / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+
+
+def test_repository_validator_requires_manifest_even_without_workflow_directory(tmp_path: Path) -> None:
+    _copy_release_surface(tmp_path)
+    (tmp_path / "docs" / "manifest.yaml").unlink()
+
+    with pytest.raises(ReleaseContractFailure, match="^release_documentation_invalid$"):
+        validate_repository(tmp_path)
+
+
+def test_repository_validator_rejects_duplicate_manifest_keys(tmp_path: Path) -> None:
+    _copy_release_surface(tmp_path)
+    manifest = tmp_path / "docs" / "manifest.yaml"
+    manifest.write_text(manifest.read_text(encoding="utf-8") + "\nsurfaces: [repo, site, wiki]\n", encoding="utf-8")
+
+    with pytest.raises(ReleaseContractFailure, match="^release_documentation_invalid$"):
+        validate_repository(tmp_path)
+
+
+def test_repository_validator_rejects_deep_manifest_without_traceback(tmp_path: Path) -> None:
+    _copy_release_surface(tmp_path)
+    manifest = tmp_path / "docs" / "manifest.yaml"
+    nested = "value"
+    for _ in range(40):
+        nested = f"[{nested}]"
+    manifest.write_text(f"surfaces: {nested}\n", encoding="utf-8")
+
+    with pytest.raises(ReleaseContractFailure, match="^release_documentation_invalid$"):
+        validate_repository(tmp_path)
