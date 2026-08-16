@@ -215,6 +215,23 @@ def test_consumer_manifest_declares_runtime_scale_only_in_overlay():
     assert "dataset-resolver" not in manifest
 
 
+def test_assembled_iceberg_rest_observability_is_internal_and_read_only():
+    services = _assembled_compose()["services"]
+    probe = services["iceberg-rest-probe"]
+    assert set(probe["networks"]) == {"backend-network"}
+    assert "ports" not in probe and "expose" not in probe
+    assert probe["read_only"] is True
+    assert probe["cap_drop"] == ["ALL"]
+    assert probe["security_opt"] == ["no-new-privileges:true"]
+    assert "iceberg-rest" not in probe.get("depends_on", {})
+
+    prometheus_mounts = {volume["target"]: volume for volume in services["prometheus"]["volumes"]}
+    assert prometheus_mounts["/etc/prometheus/prometheus.yml"]["read_only"] is True
+    assert prometheus_mounts["/etc/prometheus/rules/iceberg-rest.yml"]["read_only"] is True
+    grafana_mounts = {volume["target"]: volume for volume in services["grafana"]["volumes"]}
+    assert grafana_mounts["/etc/grafana/provisioning/dashboards/iceberg-rest.json"]["read_only"] is True
+
+
 def test_consumer_manifest_env_passes_pinned_atlas_scale_validation(tmp_path: Path):
     script = r"""
 import sys

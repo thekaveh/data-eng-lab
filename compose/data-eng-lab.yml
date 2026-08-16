@@ -4,6 +4,56 @@
 # This overlay adds one consumer-owned internal service and patches existing
 # Atlas consumers; Atlas source remains unchanged.
 services:
+  iceberg-rest-probe:
+    build:
+      context: ..
+      dockerfile: observability/iceberg-rest-probe.Dockerfile
+    platform: linux/amd64
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    environment:
+      ICEBERG_REST_PROBE_ORIGIN: http://iceberg-rest:8181
+      ICEBERG_REST_PROBE_TIMEOUT_SECONDS: "2"
+      ICEBERG_REST_PROBE_SLOW_SECONDS: "1"
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64M
+          pids: 32
+        reservations:
+          cpus: "0.05"
+          memory: 16M
+    networks:
+      - backend-network
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import socket,urllib.request; host=socket.inet_ntoa(bytes((127,0,0,1))); urllib.request.urlopen('http://'+host+':8080/healthz', timeout=2).read()
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  prometheus:
+    volumes:
+      - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/prometheus/rules/iceberg-rest.yml:/etc/prometheus/rules/iceberg-rest.yml:ro
+
+  grafana:
+    volumes:
+      - ../observability/grafana/iceberg-rest.json:/etc/grafana/provisioning/dashboards/iceberg-rest.json:ro
+
   checkpoint-retention-init:
     image: ${MINIO_INIT_IMAGE}
     restart: "no"
