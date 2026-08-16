@@ -1,10 +1,17 @@
 from __future__ import annotations
 
 from pathlib import Path
+from shutil import copy2
 
 import pytest
 
-from scripts.release.contract import ReleaseContractFailure, load_project_version
+from scripts.release.contract import (
+    ReleaseContractFailure,
+    load_project_version,
+    validate_changelog_state,
+)
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _write_project(root: Path, version: object = "0.1.0") -> Path:
@@ -65,3 +72,53 @@ def test_load_project_version_rejects_malformed_metadata(tmp_path: Path, body: b
 
     with pytest.raises(ReleaseContractFailure, match=f"^{code}$"):
         load_project_version(tmp_path)
+
+
+def _copy_changelogs(root: Path) -> None:
+    (root / "docs").mkdir(parents=True)
+    copy2(ROOT / "CHANGELOG.md", root / "CHANGELOG.md")
+    copy2(ROOT / "docs" / "CHANGELOG.md", root / "docs" / "CHANGELOG.md")
+
+
+def test_changelog_state_uses_one_canonical_unreleased_history(tmp_path: Path) -> None:
+    _copy_changelogs(tmp_path)
+
+    assert validate_changelog_state(tmp_path, "0.1.0") == "docs/CHANGELOG.md"
+
+
+def test_changelog_state_rejects_duplicate_unreleased_heading(tmp_path: Path) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_text(canonical.read_text(encoding="utf-8") + "\n## 1. [Unreleased]\n", encoding="utf-8")
+
+    with pytest.raises(ReleaseContractFailure, match="^canonical_changelog_invalid$"):
+        validate_changelog_state(tmp_path, "0.1.0")
+
+
+def test_changelog_state_rejects_released_current_version(tmp_path: Path) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_text(
+        canonical.read_text(encoding="utf-8") + "\n## 2. [0.1.0] - 2026-08-16\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReleaseContractFailure, match="^release_state_contradictory$"):
+        validate_changelog_state(tmp_path, "0.1.0")
+
+
+@pytest.mark.parametrize(
+    "mutation",
+    [
+        "\n- independently maintained entry\n",
+        "\n[canonical changelog](docs/other.md)\n",
+        "\nProject version `0.1.0` is released.\n",
+    ],
+)
+def test_changelog_state_rejects_root_index_drift(tmp_path: Path, mutation: str) -> None:
+    _copy_changelogs(tmp_path)
+    root_changelog = tmp_path / "CHANGELOG.md"
+    root_changelog.write_text(root_changelog.read_text(encoding="utf-8") + mutation, encoding="utf-8")
+
+    with pytest.raises(ReleaseContractFailure, match="^root_changelog_invalid$"):
+        validate_changelog_state(tmp_path, "0.1.0")

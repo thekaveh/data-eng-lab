@@ -4,6 +4,10 @@ All notable changes to this project are documented here (Keep a Changelog format
 
 ## 1. [Unreleased]
 ### Added
+- Release governance now identifies `pyproject.toml` as the version authority,
+  this file as the sole detailed changelog, and `0.1.0` as intentionally
+  unreleased until an explicit owner-authorized release pull request reaches a
+  verified `main` commit.
 - GitHub repository security protections now enable Dependabot alerts and
   security updates, secret scanning, and push protection with authoritative API
   evidence, current CodeQL analyses, and a safe dummy-token rejection probe.
