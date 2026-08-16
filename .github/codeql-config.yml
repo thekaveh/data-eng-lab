@@ -1,0 +1,8 @@
+name: data-eng-lab-codeql
+paths-ignore:
+  - infra/**
+  - site/**
+  - wiki/**
+  - graphify-out/**
+  - "**/target/**"
+  - "**/__pycache__/**"
