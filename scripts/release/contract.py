@@ -89,6 +89,8 @@ _VOID_HTML_ELEMENTS = frozenset(
 )
 _NON_RENDERED_HTML_ELEMENTS = frozenset({"datalist", "noscript", "script", "style", "template"})
 _FOREIGN_CONTENT_ROOTS = frozenset({"math", "svg"})
+_HTML_HEADINGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
+_GOVERNANCE_HTML_ELEMENTS = _HTML_HEADINGS | {"li"}
 
 
 class ReleaseContractFailure(ValueError):
@@ -129,13 +131,13 @@ class _RenderedChangelogParser(HTMLParser):
                 self._hidden_tags.append(normalized)
             return
         if self._foreign_tags:
-            if normalized in {"annotation-xml", "foreignobject", "h2", "h3", "li"}:
+            if normalized in {"annotation-xml", "foreignobject"} | _GOVERNANCE_HTML_ELEMENTS:
                 self.malformed = True
             if normalized not in _VOID_HTML_ELEMENTS:
                 self._foreign_tags.append(normalized)
             return
         if self._ambiguous_tags:
-            if normalized in {"h2", "h3", "li"}:
+            if normalized in _GOVERNANCE_HTML_ELEMENTS:
                 self.malformed = True
             if normalized not in _VOID_HTML_ELEMENTS:
                 self._ambiguous_tags.append(normalized)
@@ -145,8 +147,13 @@ class _RenderedChangelogParser(HTMLParser):
             self.malformed = True
             return
         attributes = {name.casefold(): value for name, value in attrs}
+        if normalized == "details" and "open" not in attributes:
+            if self._capture is not None:
+                self.malformed = True
+            self._ambiguous_tags.append(normalized)
+            return
         if "class" in attributes or "style" in attributes:
-            if self._capture is not None or normalized in {"h2", "h3", "li"}:
+            if self._capture is not None or normalized in _GOVERNANCE_HTML_ELEMENTS:
                 self.malformed = True
             if normalized not in _VOID_HTML_ELEMENTS:
                 self._ambiguous_tags.append(normalized)
@@ -163,6 +170,9 @@ class _RenderedChangelogParser(HTMLParser):
             if self._capture is not None:
                 self.malformed = True
             self._foreign_tags.append(normalized)
+            return
+        if self._capture in {"h2", "h3"} and normalized in _HTML_HEADINGS:
+            self.malformed = True
             return
         if normalized == "h2":
             if self._capture in {"h2", "h3"}:
@@ -183,7 +193,7 @@ class _RenderedChangelogParser(HTMLParser):
         if self._hidden_tags:
             return
         if self._foreign_tags:
-            if normalized in {"annotation-xml", "foreignobject", "h2", "h3", "li"}:
+            if normalized in {"annotation-xml", "foreignobject"} | _GOVERNANCE_HTML_ELEMENTS:
                 self.malformed = True
             return
         if normalized in _FOREIGN_CONTENT_ROOTS:

@@ -232,6 +232,7 @@ def test_changelog_state_ignores_comment_marker_inside_fenced_example(tmp_path: 
         '<div style="display:none"><h3>Added</h3><ul><li>hidden only</li></ul></div>',
         '<div style="display:none" style="display:block"><h3>Added</h3><ul><li>hidden only</li></ul></div>',
         "<dialog><h3>Added</h3><ul><li>hidden only</li></ul></dialog>",
+        "<details><h3>Added</h3><ul><li>hidden only</li></ul></details>",
     ],
 )
 def test_changelog_state_rejects_hidden_only_subsection_evidence(tmp_path: Path, hidden_evidence: str) -> None:
@@ -340,6 +341,19 @@ def test_foreign_html_integration_rejects_when_self_closing(tmp_path: Path, inte
     canonical = tmp_path / "docs" / "CHANGELOG.md"
     canonical.write_text(
         canonical.read_text(encoding="utf-8") + f"\n{integration}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReleaseContractFailure, match="^canonical_changelog_invalid$"):
+        validate_changelog_state(tmp_path, "0.1.0")
+
+
+@pytest.mark.parametrize("nested", ["h1", "h3", "h4", "h5", "h6"])
+def test_changelog_state_rejects_nested_raw_headings(tmp_path: Path, nested: str) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_text(
+        canonical.read_text(encoding="utf-8") + f"\n<h2>2. [0.1.0]<{nested}>nested</{nested}></h2>\n",
         encoding="utf-8",
     )
 
