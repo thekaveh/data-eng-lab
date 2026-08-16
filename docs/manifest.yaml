@@ -78,6 +78,7 @@ sections:
       - {id: atlas-enablement, number: '8.6', title: Atlas Enablement, source: docs/atlas-enablement.md}
       - {id: atlas-pin-bump-runbook, number: '8.7', title: Atlas Pin-Bump Runbook, source: docs/atlas-pin-bump-runbook.md}
       - {id: checkpoint-retention, number: '8.8', title: Streaming Checkpoint Retention, source: docs/checkpoint-retention.md}
+      - {id: iceberg-rest-observability, number: '8.9', title: Iceberg REST Observability, source: docs/iceberg-rest-observability.md}
   - {id: changelog, number: '9', title: Changelog, source: docs/CHANGELOG.md}
 diagrams:
   - {id: data-eng-lab-hero, master: docs/diagrams/data-eng-lab-hero.html}
