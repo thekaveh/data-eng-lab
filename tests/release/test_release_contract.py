@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from shutil import copy2
+from shutil import copy2, copytree
 from subprocess import run
 
 import pytest
@@ -12,6 +12,7 @@ from scripts.docs.manifest import load_manifest
 from scripts.release.contract import (
     RELEASE_MARKDOWN_EXTENSIONS,
     ReleaseContractFailure,
+    _validate_documentation,
     load_project_version,
     validate_changelog_state,
     validate_no_release_automation,
@@ -224,6 +225,30 @@ def test_changelog_state_ignores_comment_marker_inside_fenced_example(tmp_path: 
     assert validate_changelog_state(tmp_path, "0.1.0") == "docs/CHANGELOG.md"
 
 
+def test_changelog_state_rejects_hidden_only_subsection_evidence(tmp_path: Path) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_text(
+        "# Changelog\n\n## 1. [Unreleased]\n<template><h3>Added</h3><ul><li>hidden only</li></ul></template>\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReleaseContractFailure, match="^canonical_changelog_invalid$"):
+        validate_changelog_state(tmp_path, "0.1.0")
+
+
+def test_changelog_state_rejects_nonvoid_self_closing_heading(tmp_path: Path) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_text(
+        canonical.read_text(encoding="utf-8") + "\nx <h2/>[0.1.0]\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReleaseContractFailure, match="^canonical_changelog_invalid$"):
+        validate_changelog_state(tmp_path, "0.1.0")
+
+
 @pytest.mark.parametrize(
     "heading",
     [
@@ -299,6 +324,19 @@ def test_changelog_state_rejects_root_index_drift(tmp_path: Path, mutation: str)
 
 def test_repository_has_no_automatic_release_or_publish_workflow() -> None:
     validate_no_release_automation(ROOT)
+
+
+def test_release_documentation_rejects_missing_manifest_source(tmp_path: Path) -> None:
+    copytree(ROOT / "docs", tmp_path / "docs")
+    copy2(ROOT / "README.md", tmp_path / "README.md")
+    manifest = tmp_path / "docs" / "manifest.yaml"
+    manifest.write_text(
+        manifest.read_text(encoding="utf-8").replace("docs/index.md", "docs/DOES-NOT-EXIST.md"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReleaseContractFailure, match="^release_documentation_invalid$"):
+        _validate_documentation(tmp_path, "0.1.0")
 
 
 def _copy_workflows(root: Path) -> Path:

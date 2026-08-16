@@ -11,7 +11,7 @@ from pathlib import Path
 
 from markdown import Markdown
 
-from scripts.docs.manifest import ManifestError, iter_leaf_sections, parse_manifest
+from scripts.docs.manifest import ManifestError, iter_leaf_sections, load_manifest
 from scripts.security.contract import ContractFailure, load_yaml_exact
 
 MAX_RELEASE_FILE_BYTES = 1_048_576
@@ -69,6 +69,25 @@ SEMVER = re.compile(
     r"(?:\.(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*))*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
+_VOID_HTML_ELEMENTS = frozenset(
+    {
+        "area",
+        "base",
+        "br",
+        "col",
+        "embed",
+        "hr",
+        "img",
+        "input",
+        "link",
+        "meta",
+        "param",
+        "source",
+        "track",
+        "wbr",
+    }
+)
+_NON_RENDERED_HTML_ELEMENTS = frozenset({"noscript", "script", "style", "template"})
 
 
 class ReleaseContractFailure(ValueError):
@@ -97,11 +116,19 @@ class _RenderedChangelogParser(HTMLParser):
         self.sections: list[_RenderedH2] = []
         self._capture: str | None = None
         self._captured: list[str] = []
+        self._hidden_tags: list[str] = []
         self.malformed = False
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        del attrs
         normalized = tag.casefold()
+        if self._hidden_tags:
+            if normalized not in _VOID_HTML_ELEMENTS:
+                self._hidden_tags.append(normalized)
+            return
+        if normalized in _NON_RENDERED_HTML_ELEMENTS or any(name.casefold() == "hidden" for name, _value in attrs):
+            if normalized not in _VOID_HTML_ELEMENTS:
+                self._hidden_tags.append(normalized)
+            return
         if normalized == "h2":
             if self._capture in {"h2", "h3"}:
                 self.malformed = True
@@ -112,8 +139,20 @@ class _RenderedChangelogParser(HTMLParser):
             self._capture = normalized
             self._captured = []
 
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.casefold() not in _VOID_HTML_ELEMENTS:
+            self.malformed = True
+            return
+        self.handle_starttag(tag, attrs)
+
     def handle_endtag(self, tag: str) -> None:
         normalized = tag.casefold()
+        if self._hidden_tags:
+            if self._hidden_tags[-1] != normalized:
+                self.malformed = True
+                return
+            self._hidden_tags.pop()
+            return
         if self._capture == normalized:
             content = re.sub(r"\s+", " ", "".join(self._captured)).strip()
             section = self.sections[-1]
@@ -127,7 +166,7 @@ class _RenderedChangelogParser(HTMLParser):
             self._captured = []
 
     def handle_data(self, data: str) -> None:
-        if self._capture is not None:
+        if self._capture is not None and not self._hidden_tags:
             self._captured.append(data)
 
 
@@ -191,7 +230,7 @@ def _rendered_changelog_sections(text: str) -> tuple[_RenderedH2, ...]:
         parser = _RenderedChangelogParser()
         parser.feed(rendered)
         parser.close()
-        if parser.malformed or parser._capture is not None:
+        if parser.malformed or parser._capture is not None or parser._hidden_tags:
             raise ValueError("rendered changelog is malformed")
     except Exception:
         raise ReleaseContractFailure("canonical_changelog_invalid") from None
@@ -249,9 +288,9 @@ def _validate_documentation(root: Path, version: str) -> None:
     ):
         raise ReleaseContractFailure("release_documentation_invalid")
     try:
-        manifest_text = _read_owned_text(root, "docs/manifest.yaml")
+        _read_owned_text(root, "docs/manifest.yaml")
         load_yaml_exact(root / "docs" / "manifest.yaml")
-        manifest = parse_manifest(manifest_text)
+        manifest = load_manifest(root / "docs" / "manifest.yaml", root)
     except (ContractFailure, ManifestError, ReleaseContractFailure, RecursionError):
         raise ReleaseContractFailure("release_documentation_invalid") from None
     leaves = {leaf.id: leaf for leaf in iter_leaf_sections(manifest.sections)}
