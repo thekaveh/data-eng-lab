@@ -1,0 +1,78 @@
+global:
+  scrape_interval: 30s
+  scrape_timeout: 10s
+  external_labels:
+    stack: atlas
+rule_files:
+- /etc/prometheus/rules/*.yml
+scrape_configs:
+- job_name: prometheus
+  static_configs:
+  - targets:
+    - prometheus:9090
+- job_name: grafana
+  static_configs:
+  - targets:
+    - grafana:3000
+- job_name: node
+  static_configs:
+  - targets:
+    - node-exporter:9100
+- job_name: cadvisor
+  static_configs:
+  - targets:
+    - cadvisor:8080
+- job_name: kong
+  static_configs:
+  - targets:
+    - kong-api-gateway:8100
+- job_name: litellm
+  static_configs:
+  - targets:
+    - litellm:4000
+- job_name: weaviate
+  static_configs:
+  - targets:
+    - weaviate:2112
+- job_name: n8n
+  static_configs:
+  - targets:
+    - n8n:5678
+- job_name: n8n-worker
+  static_configs:
+  - targets:
+    - n8n-worker:5678
+- job_name: minio
+  metrics_path: /minio/v2/metrics/cluster
+  static_configs:
+  - targets:
+    - minio:9000
+- job_name: backend
+  static_configs:
+  - targets:
+    - backend:8000
+- job_name: asset-worker
+  static_configs:
+  - targets:
+    - asset-worker:8095
+- job_name: asset-baker
+  static_configs:
+  - targets:
+    - asset-baker:8096
+- job_name: postgres-exporter
+  static_configs:
+  - targets:
+    - postgres-exporter:9187
+- job_name: redis-exporter
+  static_configs:
+  - targets:
+    - redis-exporter:9121
+- job_name: iceberg-rest-synthetic
+  scrape_interval: 30s
+  scrape_timeout: 5s
+  metrics_path: /metrics
+  static_configs:
+  - targets:
+    - iceberg-rest-probe:8080
+    labels:
+      target: catalog
