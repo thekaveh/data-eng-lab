@@ -87,7 +87,8 @@ _VOID_HTML_ELEMENTS = frozenset(
         "wbr",
     }
 )
-_NON_RENDERED_HTML_ELEMENTS = frozenset({"noscript", "script", "style", "template"})
+_NON_RENDERED_HTML_ELEMENTS = frozenset({"datalist", "math", "noscript", "script", "style", "svg", "template"})
+_FOREIGN_CONTENT_ROOTS = frozenset({"math", "svg"})
 
 
 class ReleaseContractFailure(ValueError):
@@ -125,7 +126,28 @@ class _RenderedChangelogParser(HTMLParser):
             if normalized not in _VOID_HTML_ELEMENTS:
                 self._hidden_tags.append(normalized)
             return
-        if normalized in _NON_RENDERED_HTML_ELEMENTS or any(name.casefold() == "hidden" for name, _value in attrs):
+        attributes = {name.casefold(): value for name, value in attrs}
+        style = attributes.get("style")
+        if style is not None and ("\\" in style or "/*" in style):
+            self.malformed = True
+            return
+        compact_style = re.sub(r"\s+", "", style.casefold()) if style else ""
+        hidden_style = any(
+            declaration.startswith(prefix)
+            for declaration in compact_style.split(";")
+            for prefix in (
+                "content-visibility:hidden",
+                "display:none",
+                "visibility:collapse",
+                "visibility:hidden",
+            )
+        )
+        if (
+            normalized in _NON_RENDERED_HTML_ELEMENTS
+            or "hidden" in attributes
+            or (normalized == "dialog" and "open" not in attributes)
+            or hidden_style
+        ):
             if normalized not in _VOID_HTML_ELEMENTS:
                 self._hidden_tags.append(normalized)
             return
@@ -140,7 +162,10 @@ class _RenderedChangelogParser(HTMLParser):
             self._captured = []
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
-        if tag.casefold() not in _VOID_HTML_ELEMENTS:
+        normalized = tag.casefold()
+        if self._hidden_tags or normalized in _FOREIGN_CONTENT_ROOTS:
+            return
+        if normalized not in _VOID_HTML_ELEMENTS:
             self.malformed = True
             return
         self.handle_starttag(tag, attrs)
@@ -291,7 +316,14 @@ def _validate_documentation(root: Path, version: str) -> None:
         _read_owned_text(root, "docs/manifest.yaml")
         load_yaml_exact(root / "docs" / "manifest.yaml")
         manifest = load_manifest(root / "docs" / "manifest.yaml", root)
-    except (ContractFailure, ManifestError, ReleaseContractFailure, RecursionError):
+    except (
+        ContractFailure,
+        ManifestError,
+        OSError,
+        RecursionError,
+        ReleaseContractFailure,
+        RuntimeError,
+    ):
         raise ReleaseContractFailure("release_documentation_invalid") from None
     leaves = {leaf.id: leaf for leaf in iter_leaf_sections(manifest.sections)}
     release_policy = leaves.get("release-policy")

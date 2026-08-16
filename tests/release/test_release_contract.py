@@ -225,11 +225,19 @@ def test_changelog_state_ignores_comment_marker_inside_fenced_example(tmp_path: 
     assert validate_changelog_state(tmp_path, "0.1.0") == "docs/CHANGELOG.md"
 
 
-def test_changelog_state_rejects_hidden_only_subsection_evidence(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    "hidden_evidence",
+    [
+        "<template><h3>Added</h3><ul><li>hidden only</li></ul></template>",
+        '<div style="display:none"><h3>Added</h3><ul><li>hidden only</li></ul></div>',
+        "<dialog><h3>Added</h3><ul><li>hidden only</li></ul></dialog>",
+    ],
+)
+def test_changelog_state_rejects_hidden_only_subsection_evidence(tmp_path: Path, hidden_evidence: str) -> None:
     _copy_changelogs(tmp_path)
     canonical = tmp_path / "docs" / "CHANGELOG.md"
     canonical.write_text(
-        "# Changelog\n\n## 1. [Unreleased]\n<template><h3>Added</h3><ul><li>hidden only</li></ul></template>\n",
+        f"# Changelog\n\n## 1. [Unreleased]\n{hidden_evidence}\n",
         encoding="utf-8",
     )
 
@@ -249,6 +257,17 @@ def test_changelog_state_rejects_nonvoid_self_closing_heading(tmp_path: Path) ->
         validate_changelog_state(tmp_path, "0.1.0")
 
 
+def test_changelog_state_accepts_self_closing_svg_foreign_content(tmp_path: Path) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_text(
+        canonical.read_text(encoding="utf-8") + '\n<svg viewBox="0 0 1 1"><circle cx=".5" cy=".5" r=".5"/></svg>\n',
+        encoding="utf-8",
+    )
+
+    assert validate_changelog_state(tmp_path, "0.1.0") == "docs/CHANGELOG.md"
+
+
 @pytest.mark.parametrize(
     "heading",
     [
@@ -256,6 +275,7 @@ def test_changelog_state_rejects_nonvoid_self_closing_heading(tmp_path: Path) ->
         "## 2. [0.1.0]<br> - 2026-08-16",
         '## 2. [0.1.0]<img alt="release"> - 2026-08-16',
         "## 2. [0.1.0]<span> - 2026-08-16",
+        '<div style="color:red"><h2>2. [0.1.0] - 2026-08-16</h2></div>',
         "> ## 2. [0.1.0] - 2026-08-16",
         "- ## 2. [0.1.0] - 2026-08-16",
         "```lang`invalid\n## 2. [0.1.0] - 2026-08-16\n```",
@@ -334,6 +354,18 @@ def test_release_documentation_rejects_missing_manifest_source(tmp_path: Path) -
         manifest.read_text(encoding="utf-8").replace("docs/index.md", "docs/DOES-NOT-EXIST.md"),
         encoding="utf-8",
     )
+
+    with pytest.raises(ReleaseContractFailure, match="^release_documentation_invalid$"):
+        _validate_documentation(tmp_path, "0.1.0")
+
+
+@pytest.mark.parametrize("relative", ["docs/index.md", "docs/diagrams/overview.html"])
+def test_release_documentation_closes_manifest_symlink_loops(tmp_path: Path, relative: str) -> None:
+    copytree(ROOT / "docs", tmp_path / "docs")
+    copy2(ROOT / "README.md", tmp_path / "README.md")
+    target = tmp_path / relative
+    target.unlink()
+    target.symlink_to(target.name)
 
     with pytest.raises(ReleaseContractFailure, match="^release_documentation_invalid$"):
         _validate_documentation(tmp_path, "0.1.0")
