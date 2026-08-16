@@ -1,0 +1,21 @@
+apiVersion: 1
+
+providers:
+  - name: atlas
+    orgId: 1
+    folder: Atlas
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/data-eng-lab-grafana/atlas-dashboards
+  - name: data-eng-lab
+    orgId: 1
+    folder: Data Engineering Lab
+    type: file
+    disableDeletion: false
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      path: /etc/data-eng-lab-grafana/issue-dashboards

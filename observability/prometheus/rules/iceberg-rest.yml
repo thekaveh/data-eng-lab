@@ -1,0 +1,30 @@
+groups:
+  - name: data-eng-lab-iceberg-rest-synthetic
+    rules:
+      - alert: IcebergRestSyntheticExporterMissing
+        expr: up{job="iceberg-rest-synthetic",target="catalog"} == 0 or absent(up{job="iceberg-rest-synthetic",target="catalog"})
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Iceberg REST synthetic exporter is absent
+          description: Prometheus cannot observe the fixed catalog probe target.
+          runbook: docs/iceberg-rest-observability.md
+      - alert: IcebergRestSyntheticUnavailable
+        expr: data_eng_lab_iceberg_rest_synthetic_probe_success{job="iceberg-rest-synthetic",target="catalog"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: Iceberg REST synthetic catalog probe is unavailable
+          description: The fixed catalog configuration probe has not succeeded.
+          runbook: docs/iceberg-rest-observability.md
+      - alert: IcebergRestSyntheticSlow
+        expr: quantile_over_time(0.95, data_eng_lab_iceberg_rest_synthetic_probe_duration_seconds{job="iceberg-rest-synthetic",target="catalog"}[10m]) > 1
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: Iceberg REST synthetic catalog probe is slow
+          description: Recent synthetic catalog latency exceeds one second.
+          runbook: docs/iceberg-rest-observability.md

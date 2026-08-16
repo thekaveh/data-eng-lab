@@ -62,7 +62,10 @@ driver-status polling failure or exception was present.
 
 - Add a scheduled cleanup for streaming checkpoint directories.
 - Consider implementing dataset versioning for landing data to support reproducible scenario runs.
-- Add observability metrics for the Iceberg REST catalog (query counts, latency).
+- Synthetic Iceberg REST availability and latency are delivered by #90 through a
+  consumer-owned bounded probe, Prometheus rules, and a Grafana dashboard;
+  authoritative native request totals remain unavailable and were not required
+  by #90. See [Iceberg REST Observability](iceberg-rest-observability.md).
 - Consider adding a data quality monitoring dashboard for Bronze/Silver/Gold tables.
 
 ## 4. Related
