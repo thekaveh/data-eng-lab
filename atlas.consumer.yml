@@ -41,6 +41,9 @@ env:
     JENKINS_SOURCE: container
     TRINO_SOURCE: container
     REDPANDA_SOURCE: container
+    PROMETHEUS_SOURCE: container
+    GRAFANA_SOURCE: container
+    PROMETHEUS_RETENTION_DAYS: "30"
 
 compose_overlays:
   - ./compose/data-eng-lab.yml      # DAG/dataset/probe bind-mounts into Atlas services

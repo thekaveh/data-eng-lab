@@ -4,6 +4,69 @@
 # This overlay adds one consumer-owned internal service and patches existing
 # Atlas consumers; Atlas source remains unchanged.
 services:
+  iceberg-rest-probe:
+    build:
+      context: ..
+      dockerfile: observability/iceberg-rest-probe.Dockerfile
+    platform: linux/amd64
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=16m,mode=1777
+    environment:
+      ICEBERG_REST_PROBE_ORIGIN: http://iceberg-rest:8181
+      ICEBERG_REST_PROBE_TIMEOUT_SECONDS: "2"
+      ICEBERG_REST_PROBE_MAX_BODY_BYTES: "65536"
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 64M
+          pids: 32
+        reservations:
+          cpus: "0.05"
+          memory: 16M
+    networks:
+      - backend-network
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - import socket,urllib.request; host=socket.inet_ntoa(bytes((127,0,0,1))); urllib.request.urlopen('http://'+host+':8080/healthz', timeout=2).read()
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+    restart: unless-stopped
+
+  prometheus:
+    volumes:
+      - ../observability/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ../observability/prometheus/rules/iceberg-rest.yml:/etc/data-eng-lab-prometheus/rules/iceberg-rest.yml:ro
+
+  grafana:
+    environment:
+      GF_PATHS_PROVISIONING: /etc/data-eng-lab-grafana/provisioning
+    volumes:
+      - ./services/grafana/config/provisioning/alerting:/etc/data-eng-lab-grafana/provisioning/alerting:ro
+      - ./services/grafana/config/provisioning/datasources:/etc/data-eng-lab-grafana/provisioning/datasources:ro
+      - ./services/grafana/config/provisioning/plugins:/etc/data-eng-lab-grafana/provisioning/plugins:ro
+      - ./services/grafana/config/provisioning/dashboards/app-tier.json:/etc/data-eng-lab-grafana/atlas-dashboards/app-tier.json:ro
+      - ./services/grafana/config/provisioning/dashboards/containers-and-host.json:/etc/data-eng-lab-grafana/atlas-dashboards/containers-and-host.json:ro
+      - ./services/grafana/config/provisioning/dashboards/kong.json:/etc/data-eng-lab-grafana/atlas-dashboards/kong.json:ro
+      - ./services/grafana/config/provisioning/dashboards/litellm.json:/etc/data-eng-lab-grafana/atlas-dashboards/litellm.json:ro
+      - ./services/grafana/config/provisioning/dashboards/n8n.json:/etc/data-eng-lab-grafana/atlas-dashboards/n8n.json:ro
+      - ./services/grafana/config/provisioning/dashboards/postgres-redis.json:/etc/data-eng-lab-grafana/atlas-dashboards/postgres-redis.json:ro
+      - ./services/grafana/config/provisioning/dashboards/stack-overview.json:/etc/data-eng-lab-grafana/atlas-dashboards/stack-overview.json:ro
+      - ../observability/grafana/provisioning:/etc/data-eng-lab-grafana/provisioning/dashboards:ro
+      - ../observability/grafana/iceberg-rest.json:/etc/data-eng-lab-grafana/issue-dashboards/iceberg-rest.json:ro
+
   checkpoint-retention-init:
     image: ${MINIO_INIT_IMAGE}
     restart: "no"
