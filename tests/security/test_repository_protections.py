@@ -128,6 +128,10 @@ def test_valid_evidence_is_accepted_and_normalized() -> None:
             "push_probe_invalid",
         ),
         (
+            lambda value: value["secret_scanning"].update(push_exit_code=True),
+            "push_probe_invalid",
+        ),
+        (
             lambda value: value["secret_scanning"].update(rejection_markers=["GH013"]),
             "push_probe_invalid",
         ),

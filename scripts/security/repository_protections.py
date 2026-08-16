@@ -225,6 +225,7 @@ def validate_evidence(body: bytes) -> dict[str, object]:
         or secret_scanning["local_probe_worktree"] != "absent"
         or secret_scanning["probe_fixture"] != "github_official_dummy"
         or secret_scanning["probe_remote_ref"] != "absent"
+        or type(secret_scanning["push_exit_code"]) is not int
         or secret_scanning["push_exit_code"] != 1
         or secret_scanning["push_protection_probe"] != "blocked"
         or secret_scanning["rejection_markers"] != ["GH013", "GITHUB PUSH PROTECTION", "Push cannot contain secrets"]
