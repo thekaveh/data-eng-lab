@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import pytest
@@ -9,6 +10,7 @@ from scripts.security.contract import (
     DependencyInventory,
     discover_inventory,
     load_yaml_exact,
+    validate_codeql,
     validate_dependabot,
     validate_osv_workflow,
 )
@@ -186,3 +188,35 @@ jobs:
 
     with pytest.raises(ContractFailure, match="osv_workflow_invalid"):
         validate_osv_workflow(tmp_path, DependencyInventory("/uv.lock", "/", ()))
+
+
+def test_codeql_analyzes_only_supported_parent_source_languages() -> None:
+    validate_codeql(REPO_ROOT)
+
+
+def test_codeql_rejects_scala_claims_and_missing_exclusions(tmp_path: Path) -> None:
+    github = tmp_path / ".github"
+    shutil.copytree(REPO_ROOT / ".github", github)
+    workflow = github / "workflows" / "codeql.yml"
+    workflow.write_text(
+        workflow.read_text(encoding="utf-8").replace("language: python", "language: scala"),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractFailure, match="codeql_workflow_invalid"):
+        validate_codeql(tmp_path)
+
+
+def test_codeql_rejects_mutable_actions_or_excess_permissions(tmp_path: Path) -> None:
+    github = tmp_path / ".github"
+    shutil.copytree(REPO_ROOT / ".github", github)
+    workflow = github / "workflows" / "codeql.yml"
+    body = workflow.read_text(encoding="utf-8")
+    body = body.replace(
+        "github/codeql-action/analyze@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd",
+        "github/codeql-action/analyze@v4",
+    ).replace("contents: read", "contents: write")
+    workflow.write_text(body, encoding="utf-8")
+
+    with pytest.raises(ContractFailure, match="codeql_workflow_invalid"):
+        validate_codeql(tmp_path)

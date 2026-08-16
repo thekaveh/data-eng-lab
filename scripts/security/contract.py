@@ -244,3 +244,84 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
     }
     if jobs != expected_jobs:
         raise ContractFailure("osv_workflow_invalid")
+
+
+def validate_codeql(root: Path) -> None:
+    config = load_yaml_exact(root / ".github" / "codeql-config.yml")
+    if config != {
+        "name": "data-eng-lab-codeql",
+        "paths-ignore": [
+            "infra/**",
+            "site/**",
+            "wiki/**",
+            "graphify-out/**",
+            "**/target/**",
+            "**/__pycache__/**",
+        ],
+    }:
+        raise ContractFailure("codeql_config_invalid")
+    workflow = load_yaml_exact(root / ".github" / "workflows" / "codeql.yml")
+    expected_branches = {"branches": ["develop", "main"]}
+    expected_sha = "ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd"
+    expected = {
+        "name": "CodeQL",
+        "on": {
+            "pull_request": expected_branches,
+            "push": expected_branches,
+            "workflow_dispatch": None,
+        },
+        "permissions": {},
+        "concurrency": {
+            "group": "codeql-${{ github.workflow }}-${{ github.ref }}",
+            "cancel-in-progress": False,
+        },
+        "jobs": {
+            "analyze": {
+                "name": "Analyze ${{ matrix.language }}",
+                "runs-on": "ubuntu-24.04",
+                "timeout-minutes": 30,
+                "permissions": {
+                    "actions": "read",
+                    "contents": "read",
+                    "security-events": "write",
+                },
+                "strategy": {
+                    "fail-fast": False,
+                    "matrix": {
+                        "include": [
+                            {"language": "python", "build-mode": "none"},
+                            {"language": "actions", "build-mode": "none"},
+                        ]
+                    },
+                },
+                "steps": [
+                    {
+                        "name": "Checkout",
+                        "uses": ("actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803"),
+                        "with": {
+                            "fetch-depth": 1,
+                            "persist-credentials": False,
+                            "submodules": False,
+                        },
+                    },
+                    {
+                        "name": "Initialize CodeQL",
+                        "uses": f"github/codeql-action/init@{expected_sha}",
+                        "with": {
+                            "languages": "${{ matrix.language }}",
+                            "build-mode": "${{ matrix.build-mode }}",
+                            "config-file": "./.github/codeql-config.yml",
+                            "queries": "security-extended",
+                        },
+                    },
+                    {
+                        "name": "Analyze",
+                        "uses": f"github/codeql-action/analyze@{expected_sha}",
+                        "with": {"category": "/language:${{ matrix.language }}"},
+                    },
+                ],
+            }
+        },
+    }
+    if workflow != expected:
+        raise ContractFailure("codeql_workflow_invalid")
