@@ -242,14 +242,19 @@ def test_osv_jobs_fail_closed_on_missing_or_malformed_scanner_output() -> None:
         job = workflow["jobs"][name]
         assert "uses" not in job
         steps = job["steps"]
+        prefix = "${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}"
+        prepare = next(step for step in steps if step.get("name") == "Prepare scanner output")
+        assert prepare["env"] == {
+            "RESULTS_FILE": f"{prefix}.json",
+            "SARIF_FILE": f"{prefix}.sarif",
+        }
+        assert "rm -f --" in prepare["run"]
         validator = next(step for step in steps if step.get("name") == "Validate scanner output")
         assert validator["if"] == "always() && !cancelled()"
-        assert validator["env"] == {
-            "RESULTS_FILE": "${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json"
-        }
+        assert validator["env"] == {"RESULTS_FILE": f"{prefix}.json"}
         assert "python3 -m json.tool" in validator["run"]
         scanner = next(step for step in steps if step.get("name") == "Scan exact dependency manifests")
-        assert "${{ runner.temp }}/osv-results-" in scanner["with"]["scan-args"]
+        assert "${{ github.workspace }}/.osv-results-" in scanner["with"]["scan-args"]
 
 
 @pytest.mark.parametrize(

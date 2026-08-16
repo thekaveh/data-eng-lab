@@ -31,11 +31,22 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           submodules: false
+      - name: Prepare scanner output
+        env:
+          RESULTS_FILE: ${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+          SARIF_FILE: ${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
+        run: |-
+          set -eu
+          rm -f -- "${RESULTS_FILE}" "${SARIF_FILE}"
+          test ! -e "${RESULTS_FILE}"
+          test ! -L "${RESULTS_FILE}"
+          test ! -e "${SARIF_FILE}"
+          test ! -L "${SARIF_FILE}"
       - name: Scan exact dependency manifests
         uses: google/osv-scanner-action/osv-scanner-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
         with:
           scan-args: |-
-            --output=${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+            --output=${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
             --format=json
             --lockfile=uv.lock
             --lockfile=requirements.txt:datasets/tpch-lock-requirements.txt
@@ -49,7 +60,7 @@ jobs:
       - name: Validate scanner output
         if: always() && !cancelled()
         env:
-          RESULTS_FILE: ${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+          RESULTS_FILE: ${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
         run: |-
           set -eu
           test -f "${RESULTS_FILE}"
@@ -61,8 +72,8 @@ jobs:
         uses: google/osv-scanner-action/osv-reporter-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
         with:
           scan-args: |-
-            --output=${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
-            --new=${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+            --output=${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
+            --new=${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
             --gh-annotations=true
             --fail-on-vuln=true
 
@@ -81,11 +92,22 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
           submodules: false
+      - name: Prepare scanner output
+        env:
+          RESULTS_FILE: ${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+          SARIF_FILE: ${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
+        run: |-
+          set -eu
+          rm -f -- "${RESULTS_FILE}" "${SARIF_FILE}"
+          test ! -e "${RESULTS_FILE}"
+          test ! -L "${RESULTS_FILE}"
+          test ! -e "${SARIF_FILE}"
+          test ! -L "${SARIF_FILE}"
       - name: Scan exact dependency manifests
         uses: google/osv-scanner-action/osv-scanner-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
         with:
           scan-args: |-
-            --output=${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+            --output=${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
             --format=json
             --lockfile=uv.lock
             --lockfile=requirements.txt:datasets/tpch-lock-requirements.txt
@@ -99,7 +121,7 @@ jobs:
       - name: Validate scanner output
         if: always() && !cancelled()
         env:
-          RESULTS_FILE: ${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+          RESULTS_FILE: ${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
         run: |-
           set -eu
           test -f "${RESULTS_FILE}"
@@ -111,12 +133,12 @@ jobs:
         uses: google/osv-scanner-action/osv-reporter-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
         with:
           scan-args: |-
-            --output=${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
-            --new=${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+            --output=${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
+            --new=${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
             --gh-annotations=false
             --fail-on-vuln=true
       - name: Upload OSV SARIF
         if: always() && !cancelled()
         uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
         with:
-          sarif_file: ${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
+          sarif_file: ${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif

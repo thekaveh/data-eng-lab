@@ -88,7 +88,8 @@ silently leave configuration stale.
 
 `.github/workflows/dependency-security.yml` uses OSV-Scanner v2.5.0 at immutable
 commits. Both jobs call the scanner and reporter actions directly. The scanner's
-JSON output is isolated under `runner.temp`, byte-bounded, and parsed before the
+JSON output uses a run-unique file under the container-shared GitHub workspace,
+is cleared before scanning, byte-bounded, and parsed before the
 reporter runs, so missing or malformed output fails closed. The merged/manual
 job separately uploads the validated SARIF result. Scan arguments contain only
 eight `--lockfile=` values: the root uv lock, the hashed TPC-H requirements, and

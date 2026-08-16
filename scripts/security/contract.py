@@ -231,7 +231,7 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
     }:
         raise ContractFailure("osv_workflow_invalid")
     scanner_sha = "06b2ab4348248b456ee06c9e953637f55e03504f"
-    result_prefix = "${{ runner.temp }}/osv-results-${{ github.run_id }}-${{ github.run_attempt }}"
+    result_prefix = "${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}"
     checkout_step = {
         "name": "Checkout",
         "uses": "actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8",
@@ -240,6 +240,23 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
             "persist-credentials": False,
             "submodules": False,
         },
+    }
+    prepare_step = {
+        "name": "Prepare scanner output",
+        "env": {
+            "RESULTS_FILE": f"{result_prefix}.json",
+            "SARIF_FILE": f"{result_prefix}.sarif",
+        },
+        "run": "\n".join(
+            (
+                "set -eu",
+                'rm -f -- "${RESULTS_FILE}" "${SARIF_FILE}"',
+                'test ! -e "${RESULTS_FILE}"',
+                'test ! -L "${RESULTS_FILE}"',
+                'test ! -e "${SARIF_FILE}"',
+                'test ! -L "${SARIF_FILE}"',
+            )
+        ),
     }
     scanner_step = {
         "name": "Scan exact dependency manifests",
@@ -287,7 +304,7 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
             "runs-on": "ubuntu-24.04",
             "timeout-minutes": 15,
             "permissions": {"contents": "read"},
-            "steps": [checkout_step, scanner_step, validate_step, reporter_step(True)],
+            "steps": [checkout_step, prepare_step, scanner_step, validate_step, reporter_step(True)],
         },
         "full-scan": {
             "if": "github.event_name != 'pull_request'",
@@ -300,6 +317,7 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
             },
             "steps": [
                 checkout_step,
+                prepare_step,
                 scanner_step,
                 validate_step,
                 reporter_step(False),
