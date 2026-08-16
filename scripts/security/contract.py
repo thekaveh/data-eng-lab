@@ -139,9 +139,7 @@ def _valid_schedule(value: object) -> bool:
         or not isinstance(day, str)
         or day not in {"monday", "tuesday", "wednesday", "thursday", "friday"}
         or not isinstance(time, str)
-        or len(time) != 5
-        or time[2] != ":"
-        or not time.replace(":", "").isdigit()
+        or re.fullmatch(r"[0-9]{2}:[0-9]{2}", time) is None
         or value["timezone"] != "UTC"
     ):
         return False

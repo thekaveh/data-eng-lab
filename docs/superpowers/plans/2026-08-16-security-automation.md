@@ -39,9 +39,10 @@
 
 - [ ] **Step 1: Write inventory and strict-YAML RED tests**
 
-Require one root uv lock, one Actions root, six sorted Maven directories, rejection
-of symlinks/out-of-root paths, duplicate YAML keys, non-mapping documents, aliases,
-and oversized configuration files.
+Require one root uv lock, exact hashed requirements authority
+`datasets/tpch-lock-requirements.txt`, one Actions root, six sorted Maven
+directories, rejection of symlinks/out-of-root paths, duplicate YAML keys,
+non-mapping documents, aliases, and oversized configuration files.
 
 ```python
 assert discover_inventory(repo_root).maven_directories == EXPECTED_MAVEN_DIRS
@@ -58,8 +59,10 @@ Expected: collection fails because `scripts.security.contract` does not exist.
 - [ ] **Step 3: Implement minimal discovery and parsing**
 
 Resolve only repository-relative regular files, derive Maven directories from
-parent-owned `spark-apps/*/pom.xml`, use a duplicate-rejecting `SafeLoader`, and
-apply bounded byte/node/depth validation before returning immutable values.
+parent-owned `spark-apps/*/pom.xml`, bind the fixed
+`datasets/tpch-lock-requirements.txt` file, use a duplicate-rejecting
+`SafeLoader`, and apply bounded byte/node/depth validation before returning
+immutable values.
 
 - [ ] **Step 4: Verify GREEN and commit**
 

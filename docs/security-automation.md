@@ -79,8 +79,10 @@ Triage a finding in this order:
 A temporary exception must name one exact vulnerability ID and package, state
 the reachability evidence and compensating control, name an owner, and include a
 UTC expiry. Broad package, ecosystem, directory, or severity ignores are
-forbidden. Expired exceptions fail the repository contract. This issue ships no
-exceptions.
+forbidden. This issue provides no executable exception mechanism and ships no
+exceptions. Adding one requires a separate reviewed change that defines a strict
+record schema, validates expiry, and tests fail-closed enforcement before any
+exception can be accepted.
 
 OSV resolves Maven production dependencies available from each POM. Complete
 Maven test dependencies are not currently guaranteed by OSV's computed Maven

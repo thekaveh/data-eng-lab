@@ -10,6 +10,8 @@ from scripts.docs.manifest import load_manifest
 ROOT = Path(__file__).resolve().parents[2]
 RUNBOOK = ROOT / "docs" / "security-automation.md"
 POLICY = ROOT / ".github" / "SECURITY.md"
+DESIGN = ROOT / "docs" / "superpowers" / "specs" / "2026-08-16-security-automation-design.md"
+PLAN = ROOT / "docs" / "superpowers" / "plans" / "2026-08-16-security-automation.md"
 
 
 def test_security_policy_defines_private_reporting_and_supported_line() -> None:
@@ -50,6 +52,22 @@ def test_runbook_discloses_and_compensates_for_event_only_scanning() -> None:
     assert "manually dispatch the dependency audit at least every seven days" in text
     assert "Dependabot alerts become the continuous compensating monitor" in text
     assert "do not proceed past #92 to another backlog item except #93" in text
+
+
+def test_design_and_plan_bind_the_complete_dependency_inventory() -> None:
+    required = "`datasets/tpch-lock-requirements.txt`"
+    assert DESIGN.read_text(encoding="utf-8").count(required) >= 2
+    assert PLAN.read_text(encoding="utf-8").count(required) >= 3
+
+
+def test_exception_boundary_does_not_claim_unimplemented_enforcement() -> None:
+    runbook = RUNBOOK.read_text(encoding="utf-8")
+    design = DESIGN.read_text(encoding="utf-8")
+
+    assert "provides no executable exception mechanism" in runbook
+    assert "provides no executable exception mechanism" in design
+    assert "Expired exceptions fail the repository contract" not in runbook
+    assert "Malformed or expired exception records fail validation" not in design
 
 
 def test_security_runbook_is_a_three_surface_manifest_leaf(tmp_path: Path) -> None:

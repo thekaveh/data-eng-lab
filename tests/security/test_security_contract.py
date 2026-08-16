@@ -178,6 +178,8 @@ updates:
     [
         "{interval: weekly, day: monday, time: '24:00', timezone: UTC}",
         "{interval: weekly, day: monday, time: '99:99', timezone: UTC}",
+        "{interval: weekly, day: monday, time: '1::23', timezone: UTC}",
+        "{interval: weekly, day: monday, time: '１２:３４', timezone: UTC}",
         "{interval: weekly, day: [monday], time: '04:10', timezone: UTC}",
     ],
 )

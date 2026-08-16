@@ -8,10 +8,11 @@
 
 This design adds parent-repository dependency updates, known-vulnerability
 auditing, CodeQL analysis, and a security-reporting policy. It covers every
-current dependency surface owned by this repository: the root `uv.lock`, GitHub
-Actions workflows, and the six Maven Spark applications. It does not scan or
-modify the pinned Atlas submodule, generated site/wiki output, Maven build
-output, user-owned graph data, or an untracked working copy.
+current dependency surface owned by this repository: the root `uv.lock`,
+`datasets/tpch-lock-requirements.txt`, GitHub Actions workflows, and the six
+Maven Spark applications. It does not scan or modify the pinned Atlas submodule,
+generated site/wiki output, Maven build output, user-owned graph data, or an
+untracked working copy.
 
 The work is offline-safe except for the scanners' ordinary CI downloads and
 vulnerability-database queries. It does not start Atlas, run live acceptance,
@@ -23,6 +24,7 @@ enable repository security settings owned by issue #93.
 The dependency inventory is closed and exact:
 
 - Python: `/uv.lock` (managed by uv through `/pyproject.toml`);
+- hashed Python image requirements: `datasets/tpch-lock-requirements.txt`;
 - GitHub Actions: `/.github/workflows/`;
 - Maven:
   - `/spark-apps/gh-archive-pipeline/pom.xml`;
@@ -102,8 +104,9 @@ Every detected vulnerability is actionable by default, independent of severity,
 because OSV records frequently lack uniform severity metadata. A temporary
 exception must name an exact vulnerability ID and package, explain why the
 repository is not affected or cannot yet upgrade, name an owner, and include a
-UTC expiry. Expired or broad exceptions are forbidden and tested. No exception
-is introduced by this issue.
+UTC expiry. This issue provides no executable exception mechanism and introduces
+no exceptions. A future exception requires a separate reviewed schema, expiry
+validator, and fail-closed tests before the repository can accept it.
 
 OSV Maven resolution covers production dependency graphs available from the
 POMs. OSV does not currently promise complete Maven test-dependency coverage;
@@ -171,8 +174,8 @@ described as broader than it is.
 Strict TDD covers duplicate YAML keys, missing/extra POMs, recursive scan
 arguments, mutable action references, excessive permissions, unsafe triggers,
 wrong target branches, unsupported CodeQL languages, absent exclusions,
-malformed exception records, and stale documentation. The validator also runs
-against the committed files.
+invalid schedules, and stale documentation. The validator also runs against the
+committed files.
 
 Verification includes focused security tests, the full offline suite, Ruff
 lint/format checks, strict documentation/site/wiki gates, `make verify`, YAML
