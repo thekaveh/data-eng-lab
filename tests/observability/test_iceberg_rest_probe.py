@@ -41,6 +41,8 @@ def test_catalog_config_accepts_a_bounded_object() -> None:
         b"\xff",
         b'{"value":NaN}',
         b'{"value":Infinity}',
+        b'{"value":1e9999}',
+        b'{"value":' + (b"9" * 5_000) + b"}",
         b'{"defaults":[]}',
         b'{"overrides":{"warehouse":1}}',
         b'{"endpoints":["GET /v1/config",1]}',
@@ -241,6 +243,7 @@ def test_probe_builds_a_no_proxy_opener_and_uses_only_config_path(
         "http://user:pass@example.com",
         "http://example.com?target=other",
         "ftp://example.com",
+        "http://[",
     ],
 )
 def test_probe_rejects_non_origin_targets_before_io(origin: str) -> None:

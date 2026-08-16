@@ -87,6 +87,8 @@ def _validate_bounds(value: object) -> None:
             if depth > MAX_JSON_DEPTH:
                 _malformed()
             pending.extend((child, depth + 1) for child in item)
+        elif isinstance(item, float) and not math.isfinite(item):
+            _malformed()
 
 
 def _validate_string_mapping(value: object) -> None:
@@ -110,7 +112,7 @@ def decode_catalog_config(body: bytes) -> Mapping[str, object]:
         )
     except ProbeFailure:
         raise
-    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError):
+    except (UnicodeDecodeError, json.JSONDecodeError, RecursionError, ValueError):
         raise ProbeFailure("catalog_response_malformed") from None
     if not isinstance(value, dict):
         _malformed()
@@ -139,10 +141,15 @@ class _RejectRedirects(urllib.request.HTTPRedirectHandler):
 
 
 def _validate_probe_config(config: ProbeConfig) -> str:
-    parsed = urllib.parse.urlsplit(config.origin)
+    try:
+        parsed = urllib.parse.urlsplit(config.origin)
+        hostname = parsed.hostname
+        _ = parsed.port
+    except (TypeError, ValueError):
+        raise ProbeFailure("probe_origin_invalid") from None
     if (
         parsed.scheme not in {"http", "https"}
-        or not parsed.hostname
+        or not hostname
         or parsed.username is not None
         or parsed.password is not None
         or parsed.path
@@ -154,10 +161,6 @@ def _validate_probe_config(config: ProbeConfig) -> str:
         or config.slow_seconds < 0
     ):
         raise ProbeFailure("probe_origin_invalid")
-    try:
-        parsed.port
-    except ValueError:
-        raise ProbeFailure("probe_origin_invalid") from None
     return f"{config.origin}/v1/config"
 
 
