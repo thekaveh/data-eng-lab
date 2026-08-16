@@ -174,7 +174,11 @@ class _RenderedChangelogParser(HTMLParser):
 
     def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         normalized = tag.casefold()
-        if self._ambiguous_tags or self._hidden_tags or self._foreign_tags or normalized in _FOREIGN_CONTENT_ROOTS:
+        if self._ambiguous_tags:
+            if normalized not in _VOID_HTML_ELEMENTS:
+                self.malformed = True
+            return
+        if self._hidden_tags or self._foreign_tags or normalized in _FOREIGN_CONTENT_ROOTS:
             return
         if normalized not in _VOID_HTML_ELEMENTS:
             self.malformed = True
@@ -214,7 +218,7 @@ class _RenderedChangelogParser(HTMLParser):
             self._captured = []
 
     def handle_data(self, data: str) -> None:
-        if self._capture is not None and not self._hidden_tags:
+        if self._capture is not None and not self._ambiguous_tags and not self._foreign_tags and not self._hidden_tags:
             self._captured.append(data)
 
 

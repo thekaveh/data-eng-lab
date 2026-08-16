@@ -275,6 +275,7 @@ def test_changelog_state_accepts_self_closing_svg_foreign_content(tmp_path: Path
         '<div style="display:none;display:block"><h2>2. [0.1.0]</h2></div>',
         '<div style="visibility:hidden;visibility:visible"><h2>2. [0.1.0]</h2></div>',
         '<h2 class="visibility-is-external">2. [0.1.0]</h2>',
+        '<div class="visible"><h2/>[0.1.0]</div>',
         '<div class="visibility-is-external"><h3>Added</h3><ul><li>entry</li></ul></div>',
         "<svg><foreignObject><h2>2. [0.1.0]</h2></foreignObject></svg>",
         '<math><annotation-xml encoding="text/html"><h2>2. [0.1.0]</h2></annotation-xml></math>',
@@ -285,6 +286,34 @@ def test_changelog_state_rejects_ambiguous_html_visibility(tmp_path: Path, ambig
     canonical = tmp_path / "docs" / "CHANGELOG.md"
     canonical.write_text(
         canonical.read_text(encoding="utf-8") + f"\n{ambiguous_html}\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReleaseContractFailure, match="^canonical_changelog_invalid$"):
+        validate_changelog_state(tmp_path, "0.1.0")
+
+
+def test_foreign_graphics_cannot_obscure_visible_release_heading(tmp_path: Path) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_text(
+        canonical.read_text(encoding="utf-8")
+        + '\n<h2>2. [0.1.<svg><title>hidden</title><circle r="1"/></svg>0]</h2>\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReleaseContractFailure, match="^release_state_contradictory$"):
+        validate_changelog_state(tmp_path, "0.1.0")
+
+
+def test_foreign_graphics_cannot_supply_unreleased_heading_text(tmp_path: Path) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_text(
+        canonical.read_text(encoding="utf-8").replace(
+            "## 1. [Unreleased]",
+            "<h2>1. [Unre<svg><text>leased</text></svg>]</h2>",
+        ),
         encoding="utf-8",
     )
 
