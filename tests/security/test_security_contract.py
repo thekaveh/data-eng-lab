@@ -9,6 +9,7 @@ from scripts.security.contract import (
     DependencyInventory,
     discover_inventory,
     load_yaml_exact,
+    validate_dependabot,
 )
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -82,3 +83,61 @@ def test_yaml_loader_rejects_oversized_input(tmp_path: Path) -> None:
 
     with pytest.raises(ContractFailure, match="yaml_too_large"):
         load_yaml_exact(config)
+
+
+def test_dependabot_covers_the_discovered_inventory_exactly() -> None:
+    validate_dependabot(REPO_ROOT, discover_inventory(REPO_ROOT))
+
+
+def test_dependabot_rejects_a_missing_or_extra_maven_directory(tmp_path: Path) -> None:
+    config = tmp_path / ".github" / "dependabot.yml"
+    config.parent.mkdir()
+    config.write_text(
+        """\
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule: {interval: weekly, day: monday, time: '04:10', timezone: UTC}
+    open-pull-requests-limit: 2
+    groups: {actions: {patterns: ['*']}}
+  - package-ecosystem: uv
+    directory: /
+    target-branch: develop
+    schedule: {interval: weekly, day: tuesday, time: '04:20', timezone: UTC}
+    open-pull-requests-limit: 2
+    groups: {python: {patterns: ['*']}}
+  - package-ecosystem: maven
+    directory: /spark-apps/unowned
+    target-branch: develop
+    schedule: {interval: weekly, day: wednesday, time: '04:30', timezone: UTC}
+    open-pull-requests-limit: 2
+    groups: {jvm: {patterns: ['*']}}
+""",
+        encoding="utf-8",
+    )
+    inventory = DependencyInventory("/uv.lock", "/", ("/spark-apps/owned",))
+
+    with pytest.raises(ContractFailure, match="dependabot_maven_inventory_mismatch"):
+        validate_dependabot(tmp_path, inventory)
+
+
+def test_dependabot_rejects_non_develop_or_unbounded_updates(tmp_path: Path) -> None:
+    config = tmp_path / ".github" / "dependabot.yml"
+    config.parent.mkdir()
+    config.write_text(
+        """\
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: main
+    schedule: {interval: daily}
+    open-pull-requests-limit: 99
+""",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ContractFailure, match="dependabot_update_invalid"):
+        validate_dependabot(tmp_path, DependencyInventory("/uv.lock", "/", ()))

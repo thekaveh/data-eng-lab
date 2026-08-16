@@ -101,3 +101,72 @@ def load_yaml_exact(path: Path) -> dict[str, object]:
         raise ContractFailure("yaml_root_invalid")
     _validate_tree(value)
     return value
+
+
+def _valid_schedule(value: object) -> bool:
+    if not isinstance(value, dict) or set(value) != {
+        "interval",
+        "day",
+        "time",
+        "timezone",
+    }:
+        return False
+    return (
+        value["interval"] == "weekly"
+        and value["day"] in {"monday", "tuesday", "wednesday", "thursday", "friday"}
+        and isinstance(value["time"], str)
+        and len(value["time"]) == 5
+        and value["time"][2] == ":"
+        and value["time"].replace(":", "").isdigit()
+        and value["timezone"] == "UTC"
+    )
+
+
+def _valid_groups(value: object) -> bool:
+    if not isinstance(value, dict) or len(value) != 1:
+        return False
+    group = next(iter(value.values()))
+    return isinstance(group, dict) and group == {"patterns": ["*"]}
+
+
+def validate_dependabot(root: Path, inventory: DependencyInventory) -> None:
+    document = load_yaml_exact(root / ".github" / "dependabot.yml")
+    if set(document) != {"version", "updates"} or document["version"] != 2:
+        raise ContractFailure("dependabot_root_invalid")
+    updates = document["updates"]
+    if not isinstance(updates, list) or not updates:
+        raise ContractFailure("dependabot_updates_invalid")
+    allowed_keys = {
+        "package-ecosystem",
+        "directory",
+        "target-branch",
+        "schedule",
+        "open-pull-requests-limit",
+        "groups",
+    }
+    by_ecosystem: dict[str, list[str]] = {}
+    for update in updates:
+        if not isinstance(update, dict) or set(update) != allowed_keys:
+            raise ContractFailure("dependabot_update_invalid")
+        ecosystem = update["package-ecosystem"]
+        directory = update["directory"]
+        limit = update["open-pull-requests-limit"]
+        if (
+            not isinstance(ecosystem, str)
+            or ecosystem not in {"github-actions", "uv", "maven"}
+            or not isinstance(directory, str)
+            or update["target-branch"] != "develop"
+            or not _valid_schedule(update["schedule"])
+            or not isinstance(limit, int)
+            or isinstance(limit, bool)
+            or not 1 <= limit <= 5
+            or not _valid_groups(update["groups"])
+        ):
+            raise ContractFailure("dependabot_update_invalid")
+        by_ecosystem.setdefault(ecosystem, []).append(directory)
+    if by_ecosystem.get("github-actions") != [inventory.action_directory]:
+        raise ContractFailure("dependabot_actions_inventory_mismatch")
+    if by_ecosystem.get("uv") != ["/"]:
+        raise ContractFailure("dependabot_uv_inventory_mismatch")
+    if tuple(sorted(by_ecosystem.get("maven", []))) != inventory.maven_directories:
+        raise ContractFailure("dependabot_maven_inventory_mismatch")

@@ -1,0 +1,113 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: monday
+      time: "04:10"
+      timezone: UTC
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns:
+          - "*"
+
+  - package-ecosystem: uv
+    directory: /
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: tuesday
+      time: "04:20"
+      timezone: UTC
+    open-pull-requests-limit: 3
+    groups:
+      python:
+        patterns:
+          - "*"
+
+  - package-ecosystem: maven
+    directory: /spark-apps/gh-archive-pipeline
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: wednesday
+      time: "04:30"
+      timezone: UTC
+    open-pull-requests-limit: 3
+    groups:
+      jvm:
+        patterns:
+          - "*"
+
+  - package-ecosystem: maven
+    directory: /spark-apps/movielens-feature-pipeline
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: wednesday
+      time: "04:35"
+      timezone: UTC
+    open-pull-requests-limit: 3
+    groups:
+      jvm:
+        patterns:
+          - "*"
+
+  - package-ecosystem: maven
+    directory: /spark-apps/nyc-taxi-data-quality
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: wednesday
+      time: "04:40"
+      timezone: UTC
+    open-pull-requests-limit: 3
+    groups:
+      jvm:
+        patterns:
+          - "*"
+
+  - package-ecosystem: maven
+    directory: /spark-apps/nyc-taxi-etl
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: wednesday
+      time: "04:45"
+      timezone: UTC
+    open-pull-requests-limit: 3
+    groups:
+      jvm:
+        patterns:
+          - "*"
+
+  - package-ecosystem: maven
+    directory: /spark-apps/nyc-taxi-medallion
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: wednesday
+      time: "04:50"
+      timezone: UTC
+    open-pull-requests-limit: 3
+    groups:
+      jvm:
+        patterns:
+          - "*"
+
+  - package-ecosystem: maven
+    directory: /spark-apps/tpch-star-schema
+    target-branch: develop
+    schedule:
+      interval: weekly
+      day: wednesday
+      time: "04:55"
+      timezone: UTC
+    open-pull-requests-limit: 3
+    groups:
+      jvm:
+        patterns:
+          - "*"
