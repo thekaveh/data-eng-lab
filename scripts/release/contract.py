@@ -89,7 +89,9 @@ _VOID_HTML_ELEMENTS = frozenset(
 )
 _NON_RENDERED_HTML_ELEMENTS = frozenset({"datalist", "noscript", "script", "style", "template"})
 _FOREIGN_CONTENT_ROOTS = frozenset({"math", "svg"})
-_AMBIGUOUS_RENDERING_ELEMENTS = frozenset({"canvas", "select", "video"})
+_AMBIGUOUS_RENDERING_ELEMENTS = frozenset(
+    {"audio", "canvas", "meter", "object", "picture", "progress", "select", "video"}
+)
 _HTML_HEADINGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 _GOVERNANCE_HTML_ELEMENTS = _HTML_HEADINGS | {"li"}
 
