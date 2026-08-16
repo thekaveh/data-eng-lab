@@ -8,6 +8,7 @@ from subprocess import run
 import pytest
 
 from scripts.release.contract import (
+    RELEASE_MARKDOWN_EXTENSIONS,
     ReleaseContractFailure,
     load_project_version,
     validate_changelog_state,
@@ -15,6 +16,32 @@ from scripts.release.contract import (
 )
 
 ROOT = Path(__file__).resolve().parents[2]
+
+
+def test_release_changelog_uses_the_site_markdown_extension_set() -> None:
+    expected = (
+        "admonition",
+        "attr_list",
+        "md_in_html",
+        "tables",
+        "toc",
+        "pymdownx.highlight",
+        "pymdownx.inlinehilite",
+        "pymdownx.superfences",
+        "pymdownx.details",
+        "pymdownx.tabbed",
+        "pymdownx.emoji",
+        "pymdownx.critic",
+        "pymdownx.caret",
+        "pymdownx.keys",
+        "pymdownx.mark",
+        "pymdownx.tilde",
+    )
+    mkdocs = (ROOT / "mkdocs.yml").read_text(encoding="utf-8")
+
+    assert RELEASE_MARKDOWN_EXTENSIONS == expected
+    for extension in expected:
+        assert f"  - {extension}" in mkdocs
 
 
 def _write_project(root: Path, version: object = "0.1.0") -> Path:
@@ -122,6 +149,7 @@ def test_changelog_state_rejects_duplicate_unreleased_heading(tmp_path: Path) ->
     [
         "## 2. [Unreleased]\r\n",
         "## 2. [0.1.0] - 2026-08-16\r\n",
+        "2. [Unreleased]\r\n---\r\n",
     ],
 )
 def test_changelog_state_rejects_crlf_release_headings(tmp_path: Path, heading: str) -> None:
@@ -134,12 +162,27 @@ def test_changelog_state_rejects_crlf_release_headings(tmp_path: Path, heading: 
         validate_changelog_state(tmp_path, "0.1.0")
 
 
+@pytest.mark.parametrize("setext", [False, True])
+def test_changelog_state_accepts_wholly_crlf_canonical_document(tmp_path: Path, setext: bool) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    text = canonical.read_text(encoding="utf-8")
+    if setext:
+        text = text.replace("## 1. [Unreleased]", "1. [Unreleased]\n-----------------")
+    canonical.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+
+    assert validate_changelog_state(tmp_path, "0.1.0") == "docs/CHANGELOG.md"
+
+
 @pytest.mark.parametrize(
     "opening,closing",
     [
         ("```markdown\n", "\n```"),
         ("<!--\n", "\n-->"),
         ("<div>\n", "\n</div>"),
+        ("<div>release history\n", "\n</div> trailing"),
+        ("<![CDATA[\n", "\n]]>"),
+        ("<?release-policy\n", "\n?>"),
     ],
 )
 def test_changelog_state_rejects_hidden_only_unreleased_heading(tmp_path: Path, opening: str, closing: str) -> None:
@@ -156,6 +199,8 @@ def test_changelog_state_rejects_hidden_only_unreleased_heading(tmp_path: Path, 
     [
         "```markdown\n## 2. [0.1.0] - example\n```",
         "<!--\n## 2. [0.1.0] - example\n-->",
+        "  ## 2. [Unreleased]",
+        "  ## 2. [0.1.0] - 2026-08-16",
     ],
 )
 def test_changelog_state_ignores_hidden_release_heading_examples(tmp_path: Path, example: str) -> None:
@@ -166,15 +211,43 @@ def test_changelog_state_ignores_hidden_release_heading_examples(tmp_path: Path,
     assert validate_changelog_state(tmp_path, "0.1.0") == "docs/CHANGELOG.md"
 
 
+def test_changelog_state_ignores_comment_marker_inside_fenced_example(tmp_path: Path) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_text(
+        "```markdown\n<!-- literal unclosed comment\n```\n\n" + canonical.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    assert validate_changelog_state(tmp_path, "0.1.0") == "docs/CHANGELOG.md"
+
+
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "## 2. **[0.1.0]** - 2026-08-16",
+        "> ## 2. [0.1.0] - 2026-08-16",
+        "- ## 2. [0.1.0] - 2026-08-16",
+        "```lang`invalid\n## 2. [0.1.0] - 2026-08-16\n```",
+        "2. [0.1.0] - 2026-08-16\r\n---\r\n",
+    ],
+)
+def test_changelog_state_rejects_every_rendered_current_release_h2(tmp_path: Path, heading: str) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_bytes(canonical.read_bytes() + b"\n" + heading.encode("utf-8"))
+
+    with pytest.raises(ReleaseContractFailure, match="^release_state_contradictory$"):
+        validate_changelog_state(tmp_path, "0.1.0")
+
+
 @pytest.mark.parametrize(
     "heading",
     [
         "## 2. [Unreleased]",
-        "  ## 2. [Unreleased]",
         "##  2. [Unreleased]",
         "2. [Unreleased]\n-----------------",
         "## 2. [0.1.0]",
-        "  ## 2. [0.1.0] - 2026-08-16",
         "##  2. [0.1.0]",
         "2. [0.1.0] - 2026-08-16\n----------------------------",
         "## 2. [0.1.0] - released",

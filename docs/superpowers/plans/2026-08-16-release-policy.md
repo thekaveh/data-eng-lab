@@ -6,7 +6,10 @@
 
 **Architecture:** A small offline Python contract reads only bounded repository-owned files and checks one static project version, one canonical detailed changelog, the root index, README state, and three-surface manifest. A canonical release-policy page defines SemVer, `v<version>` tags, notes, and the manual transaction; root and generated documentation identify the same current state.
 
-**Tech Stack:** Python 3.11 standard library (`argparse`, `pathlib`, `re`, `tomllib`), pytest, YAML-backed documentation manifest, MkDocs/wiki projections, GitHub Releases.
+**Tech Stack:** Python 3.11 (`argparse`, `html.parser`, `pathlib`, `re`,
+`tomllib`), Python-Markdown with the repository's Pymdown extension set,
+pytest, YAML-backed documentation manifest, MkDocs/wiki projections, GitHub
+Releases.
 
 **Spec:** `docs/superpowers/specs/2026-08-16-release-policy-design.md`
 
@@ -106,10 +109,12 @@ Commit: `feat(release): define offline state contract (#94)`
 Require one visible numbered `Unreleased` H2 in `docs/CHANGELOG.md`, at least
 one nonempty Added/Changed entry, no dated `0.1.0` release H2, and root
 `CHANGELOG.md` containing only its title, the exact current-state statement,
-and a relative link to `docs/CHANGELOG.md`. Recognize ATX and Setext H2 forms
-with LF or CRLF, exclude fenced examples and HTML comments, and fail closed on
-raw HTML blocks. Reject duplicate Unreleased headings, a released `0.1.0`
-section, root change bullets, wrong links, and contradictory state.
+and a relative link to `docs/CHANGELOG.md`. Render through the same
+Python-Markdown/Pymdown extension set as the documentation site and inspect the
+bounded HTML H2 structure, so formatting, nesting, fences, comments, raw HTML,
+LF, and CRLF follow one authority. Reject duplicate Unreleased headings, a
+released `0.1.0` section, root change bullets, wrong links, and contradictory
+state.
 
 ```python
 canonical = read("docs/CHANGELOG.md")

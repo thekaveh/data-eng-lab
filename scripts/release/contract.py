@@ -5,13 +5,35 @@ import hashlib
 import re
 import sys
 import tomllib
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from html.parser import HTMLParser
 from pathlib import Path
+
+from markdown import Markdown
 
 from scripts.docs.manifest import ManifestError, iter_leaf_sections, parse_manifest
 from scripts.security.contract import ContractFailure, load_yaml_exact
 
 MAX_RELEASE_FILE_BYTES = 1_048_576
+MAX_RENDERED_CHANGELOG_BYTES = 4_194_304
+RELEASE_MARKDOWN_EXTENSIONS = (
+    "admonition",
+    "attr_list",
+    "md_in_html",
+    "tables",
+    "toc",
+    "pymdownx.highlight",
+    "pymdownx.inlinehilite",
+    "pymdownx.superfences",
+    "pymdownx.details",
+    "pymdownx.tabbed",
+    "pymdownx.emoji",
+    "pymdownx.critic",
+    "pymdownx.caret",
+    "pymdownx.keys",
+    "pymdownx.mark",
+    "pymdownx.tilde",
+)
 EXPECTED_VERSION = "0.1.0"
 CANONICAL_CHANGELOG = "docs/CHANGELOG.md"
 FORBIDDEN_RELEASE_AUTOMATION = (
@@ -60,11 +82,54 @@ class ReleaseState:
     changelog: str
 
 
-@dataclass(frozen=True)
-class _MarkdownH2:
-    content: str
-    start: int
-    end: int
+@dataclass
+class _RenderedH2:
+    content: str = ""
+    subheadings: list[str] = field(default_factory=list)
+    has_list_item: bool = False
+
+
+class _RenderedChangelogParser(HTMLParser):
+    """Collect rendered H2 sections and their visible subsection evidence."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=True)
+        self.sections: list[_RenderedH2] = []
+        self._tags: list[str] = []
+        self._capture: tuple[str, int] | None = None
+        self._captured: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        del attrs
+        normalized = tag.casefold()
+        self._tags.append(normalized)
+        if normalized == "h2":
+            self.sections.append(_RenderedH2())
+            self._capture = ("h2", len(self._tags))
+            self._captured = []
+        elif self._capture is None and self.sections and normalized in {"h3", "li"}:
+            self._capture = (normalized, len(self._tags))
+            self._captured = []
+
+    def handle_endtag(self, tag: str) -> None:
+        normalized = tag.casefold()
+        if self._capture == (normalized, len(self._tags)):
+            content = re.sub(r"\s+", " ", "".join(self._captured)).strip()
+            section = self.sections[-1]
+            if normalized == "h2":
+                section.content = content
+            elif normalized == "h3":
+                section.subheadings.append(content)
+            elif content:
+                section.has_list_item = True
+            self._capture = None
+            self._captured = []
+        if self._tags and self._tags[-1] == normalized:
+            self._tags.pop()
+
+    def handle_data(self, data: str) -> None:
+        if self._capture is not None:
+            self._captured.append(data)
 
 
 def _read_owned_text(root: Path, relative: str) -> str:
@@ -118,68 +183,24 @@ release notes, and the explicit authorization required to publish.
 """
 
 
-def _markdown_h2s(text: str) -> tuple[_MarkdownH2, ...]:
-    """Return CommonMark ATX and Setext level-two headings in source order."""
-    headings: list[_MarkdownH2] = []
-    atx = re.compile(r"^[ ]{0,3}##(?!#)[ \t]+(?P<content>[^\r\n]*?)[ \t]*\r?$", re.MULTILINE)
-    for match in atx.finditer(text):
-        content = re.sub(r"[ \t]+#+[ \t]*$", "", match.group("content")).strip()
-        headings.append(_MarkdownH2(content, match.start(), match.end()))
-    setext = re.compile(
-        r"^[ ]{0,3}(?P<content>\S[^\r\n]*?)[ \t]*\r?\n[ ]{0,3}-{1,}[ \t]*$",
-        re.MULTILINE,
-    )
-    for match in setext.finditer(text):
-        headings.append(_MarkdownH2(match.group("content").strip(), match.start(), match.end()))
-    return tuple(sorted(headings, key=lambda heading: heading.start))
-
-
-def _visible_markdown(text: str) -> str:
-    """Mask fenced code and HTML comments while preserving source offsets."""
-    visible = list(text)
-
-    def mask(start: int, end: int) -> None:
-        for index in range(start, end):
-            if visible[index] not in {"\r", "\n"}:
-                visible[index] = " "
-
-    comments = re.compile(r"<!--.*?(?:-->|$)", re.DOTALL)
-    for match in comments.finditer(text):
-        mask(match.start(), match.end())
-
-    comment_masked = "".join(visible)
-    opening = re.compile(r"^[ ]{0,3}(?P<fence>`{3,}|~{3,})[^\r\n]*$")
-    active_fence: tuple[str, int] | None = None
-    offset = 0
-    for line in comment_masked.splitlines(keepends=True):
-        body = line.rstrip("\r\n")
-        if active_fence is None:
-            match = opening.fullmatch(body)
-            if match is not None:
-                fence = match.group("fence")
-                active_fence = (fence[0], len(fence))
-                mask(offset, offset + len(line))
-        else:
-            character, minimum = active_fence
-            closing = re.compile(rf"^[ ]{{0,3}}{re.escape(character)}{{{minimum},}}[ \t]*$")
-            mask(offset, offset + len(line))
-            if closing.fullmatch(body) is not None:
-                active_fence = None
-        offset += len(line)
-    return "".join(visible)
+def _rendered_changelog_sections(text: str) -> tuple[_RenderedH2, ...]:
+    """Render with the repository's heading/fence semantics and collect H2s."""
+    try:
+        rendered = Markdown(extensions=RELEASE_MARKDOWN_EXTENSIONS).convert(text)
+        if len(rendered.encode("utf-8")) > MAX_RENDERED_CHANGELOG_BYTES:
+            raise ValueError("rendered changelog exceeds bound")
+        parser = _RenderedChangelogParser()
+        parser.feed(rendered)
+        parser.close()
+    except Exception:
+        raise ReleaseContractFailure("canonical_changelog_invalid") from None
+    return tuple(parser.sections)
 
 
 def validate_changelog_state(root: Path, version: str) -> str:
     """Validate one detailed changelog and one exact repository index."""
     canonical = _read_owned_text(root, CANONICAL_CHANGELOG)
-    visible = _visible_markdown(canonical)
-    if re.search(
-        r"^[ ]{0,3}</?[A-Za-z][A-Za-z0-9-]*(?:[ \t][^>]*)?/?>[ \t]*\r?$",
-        visible,
-        re.MULTILINE,
-    ):
-        raise ReleaseContractFailure("canonical_changelog_invalid")
-    headings = _markdown_h2s(visible)
+    headings = _rendered_changelog_sections(canonical)
     unreleased_headings = [
         heading
         for heading in headings
@@ -187,16 +208,8 @@ def validate_changelog_state(root: Path, version: str) -> str:
     ]
     if len(unreleased_headings) != 1 or unreleased_headings[0].content != "1. [Unreleased]":
         raise ReleaseContractFailure("canonical_changelog_invalid")
-    unreleased_heading = unreleased_headings[0]
-    next_heading = next(
-        (heading for heading in headings if heading.start > unreleased_heading.start),
-        None,
-    )
-    unreleased = visible[unreleased_heading.end : next_heading.start if next_heading is not None else len(visible)]
-    if (
-        re.search(r"^### (?:Added|Changed)$", unreleased, re.MULTILINE) is None
-        or re.search(r"^- \S", unreleased, re.MULTILINE) is None
-    ):
+    unreleased = unreleased_headings[0]
+    if not any(heading in {"Added", "Changed"} for heading in unreleased.subheadings) or not unreleased.has_list_item:
         raise ReleaseContractFailure("canonical_changelog_invalid")
     version_heading = re.compile(rf"(?:[0-9]+\.[ \t]+)?\[{re.escape(version)}\](?:[ \t].*)?")
     if any(version_heading.fullmatch(heading.content) for heading in headings):
