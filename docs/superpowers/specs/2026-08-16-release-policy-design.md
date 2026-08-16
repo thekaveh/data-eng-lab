@@ -92,9 +92,13 @@ It reads bounded regular UTF-8 files only, parses `pyproject.toml` with
 - the owned, non-symlink manifest satisfies the complete canonical three-surface
   parser, exposes the policy as repository operations `9.2`, and preserves the
   changelog as page `10`; and
-- the exact audited workflow inventory and SHA-256 digests remain unchanged, so
-  any workflow-byte change requires an explicit contract and review update
-  before release/tag automation can enter the repository.
+- the exact audited workflow inventory, workflow SHA-256 digests, and the sole
+  token-bearing local wiki-push script digest remain unchanged; that final step
+  runs in a separate contents-write job after a read-only artifact build, using
+  isolated system Python with no dependency synchronization or preceding local
+  code execution. Any change to the privileged local execution surface requires
+  an explicit contract and review update before release/tag automation can enter
+  the repository.
 
 Success emits only `release_contract_ok`. Failures emit one bounded stable
 error code and never echo file contents. Live tag, release, and branch state is

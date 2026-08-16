@@ -231,7 +231,11 @@ Require a phony `release-check` target invoking only
 audited `.github/workflows/*.yml` inventory and bind every owned workflow byte
 sequence to its reviewed SHA-256 digest. Reject additions, removals, symlinks,
 malformed YAML, or byte drift; a later workflow change must deliberately update
-the closed digest contract under review.
+the closed digest contract under review. Run the sole token-bearing local
+wiki-push script in a dedicated contents-write job after a read-only artifact
+build, using isolated system Python with no dependency synchronization or prior
+local-code execution. Bind that script to its reviewed digest as part of the
+same closed surface.
 
 - [ ] **Step 2: Run and observe RED**
 

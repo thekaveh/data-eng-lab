@@ -89,6 +89,25 @@ def test_changelog_state_uses_one_canonical_unreleased_history(tmp_path: Path) -
     assert validate_changelog_state(tmp_path, "0.1.0") == "docs/CHANGELOG.md"
 
 
+@pytest.mark.parametrize(
+    "heading",
+    [
+        "##  1. [Unreleased]",
+        "##\t1. [Unreleased]",
+        "1. [Unreleased]\n-----------------",
+    ],
+)
+def test_changelog_state_accepts_equivalent_canonical_h2_without_traceback(tmp_path: Path, heading: str) -> None:
+    _copy_changelogs(tmp_path)
+    canonical = tmp_path / "docs" / "CHANGELOG.md"
+    canonical.write_text(
+        canonical.read_text(encoding="utf-8").replace("## 1. [Unreleased]", heading),
+        encoding="utf-8",
+    )
+
+    assert validate_changelog_state(tmp_path, "0.1.0") == "docs/CHANGELOG.md"
+
+
 def test_changelog_state_rejects_duplicate_unreleased_heading(tmp_path: Path) -> None:
     _copy_changelogs(tmp_path)
     canonical = tmp_path / "docs" / "CHANGELOG.md"
@@ -104,9 +123,11 @@ def test_changelog_state_rejects_duplicate_unreleased_heading(tmp_path: Path) ->
         "## 2. [Unreleased]",
         "  ## 2. [Unreleased]",
         "##  2. [Unreleased]",
+        "2. [Unreleased]\n-----------------",
         "## 2. [0.1.0]",
         "  ## 2. [0.1.0] - 2026-08-16",
         "##  2. [0.1.0]",
+        "2. [0.1.0] - 2026-08-16\n----------------------------",
         "## 2. [0.1.0] - released",
     ],
 )
@@ -158,6 +179,9 @@ def _copy_workflows(root: Path) -> Path:
     target.mkdir(parents=True)
     for source in sorted((ROOT / ".github" / "workflows").glob("*.yml")):
         copy2(source, target / source.name)
+    privileged = root / "scripts" / "docs" / "push_wiki.py"
+    privileged.parent.mkdir(parents=True)
+    copy2(ROOT / "scripts" / "docs" / "push_wiki.py", privileged)
     return target
 
 
@@ -213,6 +237,28 @@ def test_release_automation_contract_rejects_any_allowlisted_workflow_byte_chang
 
     with pytest.raises(ReleaseContractFailure, match="^release_automation_forbidden$"):
         validate_no_release_automation(tmp_path)
+
+
+def test_release_automation_contract_rejects_privileged_local_code_drift(tmp_path: Path) -> None:
+    _copy_workflows(tmp_path)
+    privileged = tmp_path / "scripts" / "docs" / "push_wiki.py"
+    privileged.write_text(
+        privileged.read_text(encoding="utf-8") + "\n# release-capable token consumer\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ReleaseContractFailure, match="^release_automation_forbidden$"):
+        validate_no_release_automation(tmp_path)
+
+
+def test_wiki_push_runs_fixed_local_code_without_dependency_sync() -> None:
+    workflow = (ROOT / ".github" / "workflows" / "docs-deploy.yml").read_text(encoding="utf-8")
+
+    assert "wiki-build:" in workflow
+    assert "needs: wiki-build" in workflow
+    assert "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02" in workflow
+    assert "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093" in workflow
+    assert "/usr/bin/python3 -I scripts/docs/push_wiki.py --push --root ." in workflow
 
 
 def test_load_project_version_rejects_deep_toml_recursion(tmp_path: Path) -> None:

@@ -25,7 +25,10 @@ EXPECTED_WORKFLOW_SHA256 = {
     "ci.yml": "ab10e67213663ae00e78950d9058ca5f802f84de96957360da083ebf6dcecb63",
     "codeql.yml": "dd954c7817e6ae3e7731377f8753bc9cae54bfac58cf9c4c62debaf5f54cbc17",
     "dependency-security.yml": "4b9d2f0ac3306d65ec995ef4e6a4c88cbe18c074fa98ca120316ed19da1e4d3b",
-    "docs-deploy.yml": "f0bb96bd0c83d293ba4378344815ac3d43072ca1ed76be4e62e768727c476f0e",
+    "docs-deploy.yml": "514139eb155d45c388efb5b35e1109d76a0b8e5d0ad82246f4f43eef313b335d",
+}
+EXPECTED_PRIVILEGED_LOCAL_SHA256 = {
+    "scripts/docs/push_wiki.py": "eadc538e18f5e13642df306e6e7e589bfa4719a43af44b9f1fc5a5c2bd35421a",
 }
 FORBIDDEN_WORKFLOW_PATTERNS = tuple(
     re.compile(pattern, re.IGNORECASE)
@@ -55,6 +58,13 @@ class ReleaseState:
     version: str
     status: str
     changelog: str
+
+
+@dataclass(frozen=True)
+class _MarkdownH2:
+    content: str
+    start: int
+    end: int
 
 
 def _read_owned_text(root: Path, relative: str) -> str:
@@ -108,23 +118,46 @@ release notes, and the explicit authorization required to publish.
 """
 
 
+def _markdown_h2s(text: str) -> tuple[_MarkdownH2, ...]:
+    """Return CommonMark ATX and Setext level-two headings in source order."""
+    headings: list[_MarkdownH2] = []
+    atx = re.compile(r"^[ ]{0,3}##(?!#)[ \t]+(?P<content>[^\r\n]*?)[ \t]*$", re.MULTILINE)
+    for match in atx.finditer(text):
+        content = re.sub(r"[ \t]+#+[ \t]*$", "", match.group("content")).strip()
+        headings.append(_MarkdownH2(content, match.start(), match.end()))
+    setext = re.compile(
+        r"^[ ]{0,3}(?P<content>\S[^\r\n]*?)[ \t]*\r?\n[ ]{0,3}-{1,}[ \t]*$",
+        re.MULTILINE,
+    )
+    for match in setext.finditer(text):
+        headings.append(_MarkdownH2(match.group("content").strip(), match.start(), match.end()))
+    return tuple(sorted(headings, key=lambda heading: heading.start))
+
+
 def validate_changelog_state(root: Path, version: str) -> str:
     """Validate one detailed changelog and one exact repository index."""
     canonical = _read_owned_text(root, CANONICAL_CHANGELOG)
-    headings = re.findall(r"^[ ]{0,3}##[ \t]+(.+?)(?:[ \t]+#+)?[ \t]*$", canonical, re.MULTILINE)
+    headings = _markdown_h2s(canonical)
     unreleased_headings = [
-        heading for heading in headings if re.fullmatch(r"(?:[0-9]+\.[ \t]+)?\[Unreleased\](?:[ \t].*)?", heading)
+        heading
+        for heading in headings
+        if re.fullmatch(r"(?:[0-9]+\.[ \t]+)?\[Unreleased\](?:[ \t].*)?", heading.content)
     ]
-    if unreleased_headings != ["1. [Unreleased]"]:
+    if len(unreleased_headings) != 1 or unreleased_headings[0].content != "1. [Unreleased]":
         raise ReleaseContractFailure("canonical_changelog_invalid")
-    unreleased = canonical.split("## 1. [Unreleased]", 1)[1].split("\n## ", 1)[0]
+    unreleased_heading = unreleased_headings[0]
+    next_heading = next(
+        (heading for heading in headings if heading.start > unreleased_heading.start),
+        None,
+    )
+    unreleased = canonical[unreleased_heading.end : next_heading.start if next_heading is not None else len(canonical)]
     if (
         re.search(r"^### (?:Added|Changed)$", unreleased, re.MULTILINE) is None
         or re.search(r"^- \S", unreleased, re.MULTILINE) is None
     ):
         raise ReleaseContractFailure("canonical_changelog_invalid")
     version_heading = re.compile(rf"(?:[0-9]+\.[ \t]+)?\[{re.escape(version)}\](?:[ \t].*)?")
-    if any(version_heading.fullmatch(heading) for heading in headings):
+    if any(version_heading.fullmatch(heading.content) for heading in headings):
         raise ReleaseContractFailure("release_state_contradictory")
     if _read_owned_text(root, "CHANGELOG.md") != _root_changelog(version):
         raise ReleaseContractFailure("root_changelog_invalid")
@@ -214,6 +247,13 @@ def validate_no_release_automation(root: Path) -> None:
         if any(token in text for token in FORBIDDEN_RELEASE_AUTOMATION) or any(
             pattern.search(text) for pattern in FORBIDDEN_WORKFLOW_PATTERNS
         ):
+            raise ReleaseContractFailure("release_automation_forbidden")
+    for relative, expected_sha256 in EXPECTED_PRIVILEGED_LOCAL_SHA256.items():
+        try:
+            text = _read_owned_text(root, relative)
+        except ReleaseContractFailure:
+            raise ReleaseContractFailure("release_automation_forbidden") from None
+        if hashlib.sha256(text.encode("utf-8")).hexdigest() != expected_sha256:
             raise ReleaseContractFailure("release_automation_forbidden")
 
 
