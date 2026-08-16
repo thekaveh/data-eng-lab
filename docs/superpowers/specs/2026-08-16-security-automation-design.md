@@ -1,7 +1,7 @@
 # Dependency and code-scanning automation design
 
-**Issue:** #92  
-**Date:** 2026-08-16  
+**Issue:** #92
+**Date:** 2026-08-16
 **Status:** Approved by the controlling autonomous goal directive
 
 ## 1. Purpose and boundary
