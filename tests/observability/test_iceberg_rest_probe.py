@@ -259,6 +259,52 @@ def test_probe_enforces_total_deadline_while_response_headers_drip() -> None:
     assert time.monotonic() - started < 0.5
 
 
+def test_probe_enforces_total_deadline_while_dns_resolution_stalls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    original = socket.getaddrinfo
+    calls = 0
+
+    def delayed(*args: object, **kwargs: object) -> list[tuple[object, ...]]:
+        nonlocal calls
+        calls += 1
+        time.sleep(0.2)
+        return original(*args, **kwargs)  # type: ignore[arg-type,return-value]
+
+    monkeypatch.setattr(socket, "getaddrinfo", delayed)
+    started = time.monotonic()
+    try:
+        result = probe_catalog(ProbeConfig("http://127.0.0.1:9", 0.05, 65_536))
+        elapsed = time.monotonic() - started
+        second = probe_catalog(ProbeConfig("http://127.0.0.1:9", 0.05, 65_536))
+    finally:
+        time.sleep(0.2)
+    assert result.result == "timeout"
+    assert second.result == "timeout"
+    assert calls == 1
+    assert elapsed < 0.15
+
+
+def test_probe_closes_nonstandard_http_status_as_malformed_metrics() -> None:
+    class OddStatusHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:  # noqa: N802
+            self.connection.sendall(b"HTTP/1.1 700 Odd\r\nContent-Length: 0\r\n\r\n")
+
+        def log_message(self, _format: str, *_args: object) -> None:
+            return
+
+    server = HTTPServer(("127.0.0.1", 0), OddStatusHandler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        result = probe_catalog(ProbeConfig(f"http://127.0.0.1:{server.server_port}", 0.2, 65_536))
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=1)
+    assert result == ProbeResult(False, result.duration_seconds, 0, "malformed")
+
+
 def test_probe_classifies_timeout_and_unavailable_without_details() -> None:
     with _server(delay=0.1) as origin:
         timed_out = probe_catalog(ProbeConfig(origin, 0.01, 65_536))

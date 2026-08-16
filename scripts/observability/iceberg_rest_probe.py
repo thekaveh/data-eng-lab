@@ -21,6 +21,7 @@ from typing import Any, NoReturn
 MAX_CATALOG_BODY_BYTES = 65_536
 MAX_JSON_DEPTH = 16
 MAX_JSON_NODES = 4_096
+MAX_RESOLVED_ADDRESSES = 32
 FIXED_CATALOG_ORIGIN = "http://iceberg-rest:8181"
 RESULT_CATEGORIES = (
     "success",
@@ -154,6 +155,68 @@ class _DeadlineHTTPResponse(http.client.HTTPResponse):
         super().close()
 
 
+@dataclass
+class _Resolution:
+    endpoint: tuple[str, int]
+    event: threading.Event
+    addresses: tuple[tuple[int, int, int, str, tuple[Any, ...]], ...] = ()
+    failed: bool = False
+
+
+class _SingleFlightResolver:
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._active: _Resolution | None = None
+
+    def resolve(
+        self,
+        host: str,
+        port: int,
+        *,
+        deadline: float,
+        monotonic: Any,
+    ) -> tuple[tuple[int, int, int, str, tuple[Any, ...]], ...]:
+        endpoint = (host, port)
+        with self._lock:
+            task = self._active
+            if task is None:
+                task = _Resolution(endpoint, threading.Event())
+                self._active = task
+                worker = threading.Thread(target=self._resolve, args=(task,), daemon=True)
+                worker.start()
+            elif task.endpoint != endpoint:
+                raise OSError
+
+        remaining = deadline - monotonic()
+        if remaining <= 0 or not task.event.wait(remaining):
+            raise TimeoutError
+        if task.failed or not task.addresses:
+            raise OSError
+        return task.addresses
+
+    def _resolve(self, task: _Resolution) -> None:
+        try:
+            values = socket.getaddrinfo(
+                task.endpoint[0],
+                task.endpoint[1],
+                type=socket.SOCK_STREAM,
+            )
+            if not values or len(values) > MAX_RESOLVED_ADDRESSES:
+                task.failed = True
+            else:
+                task.addresses = tuple(values)
+        except (OSError, OverflowError, TypeError):
+            task.failed = True
+        finally:
+            task.event.set()
+            with self._lock:
+                if self._active is task:
+                    self._active = None
+
+
+_RESOLVER = _SingleFlightResolver()
+
+
 class _DeadlineConnectionMixin:
     response_class = _DeadlineHTTPResponse
 
@@ -162,25 +225,47 @@ class _DeadlineConnectionMixin:
         *args: Any,
         deadline: float,
         monotonic: Any,
+        addresses: tuple[tuple[int, int, int, str, tuple[Any, ...]], ...],
         **kwargs: Any,
     ) -> None:
         self._absolute_deadline = deadline
         self._monotonic = monotonic
+        self._addresses = addresses
         self._deadline_timer: threading.Timer | None = None
         super().__init__(*args, **kwargs)
 
     def connect(self) -> None:
-        super().connect()  # type: ignore[misc]
-        remaining = self._absolute_deadline - self._monotonic()
-        sock = self.sock  # type: ignore[attr-defined]
-        if remaining <= 0 or sock is None:
-            self.close()  # type: ignore[attr-defined]
+        last_error: OSError | None = None
+        for family, socktype, protocol, _canonical_name, address in self._addresses:
+            remaining = self._absolute_deadline - self._monotonic()
+            if remaining <= 0:
+                raise TimeoutError
+            sock = socket.socket(family, socktype, protocol)
+            timer = threading.Timer(remaining, self._expire, args=(sock,))
+            timer.daemon = True
+            try:
+                source_address = self.source_address  # type: ignore[attr-defined]
+                if source_address:
+                    sock.bind(source_address)
+                sock.settimeout(remaining)
+                timer.start()
+                sock.connect(address)
+            except OSError as error:
+                timer.cancel()
+                sock.close()
+                last_error = error
+                continue
+            self.sock = sock  # type: ignore[attr-defined]
+            self._deadline_timer = timer
+            tunnel_host = self._tunnel_host  # type: ignore[attr-defined]
+            if tunnel_host:
+                self._tunnel()  # type: ignore[attr-defined]
+            return
+        if self._monotonic() >= self._absolute_deadline:
             raise TimeoutError
-        sock.settimeout(remaining)
-        timer = threading.Timer(remaining, self._expire, args=(sock,))
-        timer.daemon = True
-        timer.start()
-        self._deadline_timer = timer
+        if last_error is not None:
+            raise last_error
+        raise OSError
 
     @staticmethod
     def _expire(sock: socket.socket) -> None:
@@ -206,15 +291,17 @@ class _DeadlineHTTPConnection(_DeadlineConnectionMixin, http.client.HTTPConnecti
     pass
 
 
-class _DeadlineHTTPSConnection(_DeadlineConnectionMixin, http.client.HTTPSConnection):
-    pass
-
-
 class _DeadlineHTTPHandler(urllib.request.HTTPHandler):
-    def __init__(self, deadline: float, monotonic: Any) -> None:
+    def __init__(
+        self,
+        deadline: float,
+        monotonic: Any,
+        addresses: tuple[tuple[int, int, int, str, tuple[Any, ...]], ...],
+    ) -> None:
         super().__init__()
         self._deadline = deadline
         self._monotonic = monotonic
+        self._addresses = addresses
 
     def http_open(self, request: urllib.request.Request) -> Any:
         def connection(host: str, **kwargs: Any) -> _DeadlineHTTPConnection:
@@ -222,28 +309,11 @@ class _DeadlineHTTPHandler(urllib.request.HTTPHandler):
                 host,
                 deadline=self._deadline,
                 monotonic=self._monotonic,
+                addresses=self._addresses,
                 **kwargs,
             )
 
         return self.do_open(connection, request)
-
-
-class _DeadlineHTTPSHandler(urllib.request.HTTPSHandler):
-    def __init__(self, deadline: float, monotonic: Any) -> None:
-        super().__init__()
-        self._deadline = deadline
-        self._monotonic = monotonic
-
-    def https_open(self, request: urllib.request.Request) -> Any:
-        def connection(host: str, **kwargs: Any) -> _DeadlineHTTPSConnection:
-            return _DeadlineHTTPSConnection(
-                host,
-                deadline=self._deadline,
-                monotonic=self._monotonic,
-                **kwargs,
-            )
-
-        return self.do_open(connection, request, context=self._context)
 
 
 def _validate_probe_config(config: ProbeConfig) -> str:
@@ -254,7 +324,7 @@ def _validate_probe_config(config: ProbeConfig) -> str:
     except (TypeError, ValueError):
         raise ProbeFailure("probe_origin_invalid") from None
     if (
-        parsed.scheme not in {"http", "https"}
+        parsed.scheme != "http"
         or not hostname
         or parsed.username is not None
         or parsed.password is not None
@@ -281,19 +351,27 @@ def probe_catalog(
     url = _validate_probe_config(config)
     started = monotonic()
     deadline = started + config.timeout_seconds
-    if opener is None:
-        opener = urllib.request.build_opener(
-            urllib.request.ProxyHandler({}),
-            _RejectRedirects(),
-            _DeadlineHTTPHandler(deadline, monotonic),
-            _DeadlineHTTPSHandler(deadline, monotonic),
-        )
     request = urllib.request.Request(
         url,
         method="GET",
         headers={"Accept": "application/json", "User-Agent": "data-eng-lab-probe/1"},
     )
     try:
+        if opener is None:
+            parsed = urllib.parse.urlsplit(config.origin)
+            if parsed.hostname is None or parsed.port is None:
+                raise ProbeFailure("probe_origin_invalid")
+            addresses = _RESOLVER.resolve(
+                parsed.hostname,
+                parsed.port,
+                deadline=deadline,
+                monotonic=monotonic,
+            )
+            opener = urllib.request.build_opener(
+                urllib.request.ProxyHandler({}),
+                _RejectRedirects(),
+                _DeadlineHTTPHandler(deadline, monotonic, addresses),
+            )
         response = opener.open(request, timeout=config.timeout_seconds)
         try:
             status = int(response.status)
@@ -314,6 +392,8 @@ def probe_catalog(
         duration = max(0.0, monotonic() - started)
         if monotonic() >= deadline:
             return ProbeResult(False, duration, 0, "timeout")
+        if not 100 <= status <= 599:
+            return ProbeResult(False, duration, 0, "malformed")
         return ProbeResult(False, duration, status, "http_error")
     except (TimeoutError, socket.timeout):
         return ProbeResult(False, max(0.0, monotonic() - started), 0, "timeout")
@@ -328,6 +408,8 @@ def probe_catalog(
         return ProbeResult(False, max(0.0, monotonic() - started), 0, category)
 
     duration = max(0.0, monotonic() - started)
+    if not 100 <= status <= 599:
+        return ProbeResult(False, duration, 0, "malformed")
     if status < 200 or status >= 300:
         return ProbeResult(False, duration, status, "http_error")
     if content_type.split(";", 1)[0].strip().lower() != "application/json":

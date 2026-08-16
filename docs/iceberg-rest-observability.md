@@ -15,11 +15,14 @@ dashboard must not be interpreted as authoritative catalog traffic volume.
 ## 1. Probe contract
 
 Prometheus scrapes `iceberg-rest-probe:8080/metrics` every 30 seconds with a
-five-second scrape timeout. Each scrape makes exactly one two-second-bounded
-`GET /v1/config` request to `http://iceberg-rest:8181`. The exporter disables
-proxy discovery, rejects redirects, accepts only bounded JSON objects, and
-closes every response. The response body is limited to 65,536 bytes, 16 levels,
-and 4,096 composed nodes.
+five-second scrape timeout. Each scrape makes exactly one `GET /v1/config`
+request to `http://iceberg-rest:8181`, with a two-second end-to-end monotonic
+deadline spanning DNS resolution, TCP connection, response headers, and body.
+DNS uses one single-flight daemon worker, so a stalled resolver cannot create an
+unbounded thread pool or block the exporter response past the deadline. The
+exporter disables proxy discovery, rejects redirects, accepts only bounded JSON
+objects, and closes every response. The response body is limited to 65,536
+bytes, 16 levels, and 4,096 composed nodes.
 
 The exporter has no host port, no selectable target, and no catalog credential.
 It runs as UID/GID 65532 on a read-only root filesystem with all capabilities

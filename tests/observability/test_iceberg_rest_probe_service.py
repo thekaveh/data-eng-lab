@@ -162,6 +162,11 @@ def test_environment_contract_is_fixed_and_bounded() -> None:
         load_config({"ICEBERG_REST_PROBE_MAX_BODY_BYTES": "65537"})
 
 
+def test_probe_origin_rejects_https_even_outside_production_config() -> None:
+    with pytest.raises(ProbeFailure, match="^probe_origin_invalid$"):
+        iceberg_rest_probe.probe_catalog(ProbeConfig("https://iceberg-rest:8181", 2.0, 65_536))
+
+
 @pytest.mark.parametrize(
     ("method", "path", "expected"),
     [

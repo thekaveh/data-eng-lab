@@ -94,9 +94,11 @@ The service accepts only these environment values:
 The origin parser requires plain internal HTTP, host `iceberg-rest`, port 8181,
 no userinfo, path, query, or fragment. The probe always requests `/v1/config`;
 no request parameter can select another target. It disables environment proxies
-and automatic redirects, uses a monotonic deadline, closes every response, reads
-at most 65,537 bytes, and never logs the response body, origin, headers, or raw
-dependency exception.
+and automatic redirects. One single-flight daemon resolver bounds DNS without
+allowing unbounded worker growth; the same monotonic deadline then bounds numeric
+address connection, response headers, and body. Every response is closed, at
+most 65,537 bytes are read, and the probe never logs the response body, origin,
+headers, or raw dependency exception.
 
 Valid success requires HTTP 200, an `application/json` media type, UTF-8 JSON,
 no duplicate object keys, no non-finite number, a top-level object, and bounded
