@@ -84,6 +84,7 @@ sections:
     title: Repository Operations
     children:
       - {id: security-automation, number: '9.1', title: Security Automation, source: docs/security-automation.md}
+      - {id: release-policy, number: '9.2', title: Release Policy, source: docs/release-policy.md}
   - {id: changelog, number: '10', title: Changelog, source: docs/CHANGELOG.md}
 diagrams:
   - {id: data-eng-lab-hero, master: docs/diagrams/data-eng-lab-hero.html}

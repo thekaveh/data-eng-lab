@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import re
 import tomllib
+from dataclasses import dataclass
 from pathlib import Path
+
+from scripts.docs.manifest import ManifestError, iter_leaf_sections, parse_manifest
 
 MAX_RELEASE_FILE_BYTES = 1_048_576
 EXPECTED_VERSION = "0.1.0"
@@ -17,6 +20,13 @@ SEMVER = re.compile(
 
 class ReleaseContractFailure(ValueError):
     """The repository release policy is malformed or contradictory."""
+
+
+@dataclass(frozen=True)
+class ReleaseState:
+    version: str
+    status: str
+    changelog: str
 
 
 def _read_owned_text(root: Path, relative: str) -> str:
@@ -93,3 +103,58 @@ def validate_changelog_state(root: Path, version: str) -> str:
     if _read_owned_text(root, "CHANGELOG.md") != _root_changelog(version):
         raise ReleaseContractFailure("root_changelog_invalid")
     return CANONICAL_CHANGELOG
+
+
+def _validate_documentation(root: Path, version: str) -> None:
+    policy = _read_owned_text(root, "docs/release-policy.md")
+    required_policy = (
+        f"{version} (unreleased)",
+        "`pyproject.toml`",
+        "`docs/CHANGELOG.md`",
+        "Semantic Versioning 2.0.0",
+        "`v<version>`",
+        "annotated tag",
+        "verified `main` commit",
+        "explicit owner authorization",
+        "release notes",
+        "immutable",
+        "Maven",
+        "No tag or GitHub Release",
+    )
+    readme = _read_owned_text(root, "README.md")
+    required_readme = (
+        "## 5. Release state",
+        f"{version} (unreleased)",
+        "[Release policy](docs/release-policy.md)",
+        "[canonical changelog](docs/CHANGELOG.md)",
+        "package metadata does not mean",
+    )
+    if any(phrase not in policy for phrase in required_policy) or any(
+        phrase not in readme for phrase in required_readme
+    ):
+        raise ReleaseContractFailure("release_documentation_invalid")
+    try:
+        manifest = parse_manifest(_read_owned_text(root, "docs/manifest.yaml"))
+    except ManifestError:
+        raise ReleaseContractFailure("release_documentation_invalid") from None
+    leaves = {leaf.id: leaf for leaf in iter_leaf_sections(manifest.sections)}
+    release = leaves.get("release-policy")
+    changelog = leaves.get("changelog")
+    if (
+        release is None
+        or release.number != "9.2"
+        or release.title != "Release Policy"
+        or release.source != Path("docs/release-policy.md")
+        or changelog is None
+        or changelog.number != "10"
+        or changelog.source != Path(CANONICAL_CHANGELOG)
+    ):
+        raise ReleaseContractFailure("release_documentation_invalid")
+
+
+def validate_repository(root: Path) -> ReleaseState:
+    """Validate the complete static intentionally-unreleased repository state."""
+    version = load_project_version(root)
+    changelog = validate_changelog_state(root, version)
+    _validate_documentation(root, version)
+    return ReleaseState(version, "intentionally_unreleased", changelog)

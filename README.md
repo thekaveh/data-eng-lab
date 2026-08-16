@@ -87,3 +87,11 @@ Every curated table is an Apache Iceberg table accessed through the Atlas Iceber
 | Iceberg medallion layers | 3 |
 
 > New here? Run the [Getting started](docs/getting-started.md) walkthrough, then choose a scenario from the [catalog](docs/scenarios/index.md).
+
+## 5. Release state
+
+The project is **0.1.0 (unreleased)**. The value in `pyproject.toml` is the
+planned first version; package metadata does not mean a tag or GitHub Release
+exists. See the [Release policy](docs/release-policy.md) for the explicit
+authorization and verified-main transaction, and the
+[canonical changelog](docs/CHANGELOG.md) for all unreleased changes.
