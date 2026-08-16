@@ -254,7 +254,11 @@ def test_osv_jobs_fail_closed_on_missing_or_malformed_scanner_output() -> None:
         assert validator["env"] == {"RESULTS_FILE": f"{prefix}.json"}
         assert "python3 -m json.tool" in validator["run"]
         scanner = next(step for step in steps if step.get("name") == "Scan exact dependency manifests")
-        assert "${{ github.workspace }}/.osv-results-" in scanner["with"]["scan-args"]
+        assert "/github/workspace/.osv-results-" in scanner["with"]["scan-args"]
+        assert "${{ github.workspace }}" not in scanner["with"]["scan-args"]
+        reporter = next(step for step in steps if step.get("name") == "Fail on a known vulnerability")
+        assert "/github/workspace/.osv-results-" in reporter["with"]["scan-args"]
+        assert "${{ github.workspace }}" not in reporter["with"]["scan-args"]
 
 
 @pytest.mark.parametrize(

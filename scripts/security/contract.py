@@ -231,7 +231,8 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
     }:
         raise ContractFailure("osv_workflow_invalid")
     scanner_sha = "06b2ab4348248b456ee06c9e953637f55e03504f"
-    result_prefix = "${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}"
+    host_result_prefix = "${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}"
+    container_result_prefix = "/github/workspace/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}"
     checkout_step = {
         "name": "Checkout",
         "uses": "actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8",
@@ -244,8 +245,8 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
     prepare_step = {
         "name": "Prepare scanner output",
         "env": {
-            "RESULTS_FILE": f"{result_prefix}.json",
-            "SARIF_FILE": f"{result_prefix}.sarif",
+            "RESULTS_FILE": f"{host_result_prefix}.json",
+            "SARIF_FILE": f"{host_result_prefix}.sarif",
         },
         "run": "\n".join(
             (
@@ -262,14 +263,16 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
         "name": "Scan exact dependency manifests",
         "uses": f"google/osv-scanner-action/osv-scanner-action@{scanner_sha}",
         "with": {
-            "scan-args": "\n".join((f"--output={result_prefix}.json", "--format=json", *_osv_operands(inventory)))
+            "scan-args": "\n".join(
+                (f"--output={container_result_prefix}.json", "--format=json", *_osv_operands(inventory))
+            )
         },
         "continue-on-error": True,
     }
     validate_step = {
         "name": "Validate scanner output",
         "if": "always() && !cancelled()",
-        "env": {"RESULTS_FILE": f"{result_prefix}.json"},
+        "env": {"RESULTS_FILE": f"{host_result_prefix}.json"},
         "run": "\n".join(
             (
                 "set -eu",
@@ -289,8 +292,8 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
             "with": {
                 "scan-args": "\n".join(
                     (
-                        f"--output={result_prefix}.sarif",
-                        f"--new={result_prefix}.json",
+                        f"--output={container_result_prefix}.sarif",
+                        f"--new={container_result_prefix}.json",
                         f"--gh-annotations={'true' if annotations else 'false'}",
                         "--fail-on-vuln=true",
                     )
@@ -325,7 +328,7 @@ def validate_osv_workflow(root: Path, inventory: DependencyInventory) -> None:
                     "name": "Upload OSV SARIF",
                     "if": "always() && !cancelled()",
                     "uses": "github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd",
-                    "with": {"sarif_file": f"{result_prefix}.sarif"},
+                    "with": {"sarif_file": f"{host_result_prefix}.sarif"},
                 },
             ],
         },

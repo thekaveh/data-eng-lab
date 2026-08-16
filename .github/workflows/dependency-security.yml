@@ -46,7 +46,7 @@ jobs:
         uses: google/osv-scanner-action/osv-scanner-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
         with:
           scan-args: |-
-            --output=${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+            --output=/github/workspace/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
             --format=json
             --lockfile=uv.lock
             --lockfile=requirements.txt:datasets/tpch-lock-requirements.txt
@@ -72,8 +72,8 @@ jobs:
         uses: google/osv-scanner-action/osv-reporter-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
         with:
           scan-args: |-
-            --output=${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
-            --new=${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+            --output=/github/workspace/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
+            --new=/github/workspace/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
             --gh-annotations=true
             --fail-on-vuln=true
 
@@ -107,7 +107,7 @@ jobs:
         uses: google/osv-scanner-action/osv-scanner-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
         with:
           scan-args: |-
-            --output=${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+            --output=/github/workspace/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
             --format=json
             --lockfile=uv.lock
             --lockfile=requirements.txt:datasets/tpch-lock-requirements.txt
@@ -133,8 +133,8 @@ jobs:
         uses: google/osv-scanner-action/osv-reporter-action@06b2ab4348248b456ee06c9e953637f55e03504f # v2.5.0
         with:
           scan-args: |-
-            --output=${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
-            --new=${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
+            --output=/github/workspace/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
+            --new=/github/workspace/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.json
             --gh-annotations=false
             --fail-on-vuln=true
       - name: Upload OSV SARIF
