@@ -16,6 +16,16 @@ from scripts.docs.render_diagrams import (
 )
 
 
+def test_overview_diagram_includes_observability_and_no_authoring_metadata():
+    root = Path(__file__).resolve().parents[3]
+    svg = extract_svg((root / "docs/diagrams/overview.html").read_text(encoding="utf-8"))
+
+    for label in ("iceberg-rest-probe", "Prometheus", "Grafana", "metrics", "dashboard"):
+        assert label in svg
+    for leaked in ("Orbital theme", "landscape"):
+        assert leaked not in svg
+
+
 def test_lakehouse_hero_is_wide_text_free_and_accessible():
     root = Path(__file__).resolve().parents[3]
     master = root / "docs/diagrams/data-eng-lab-hero.html"

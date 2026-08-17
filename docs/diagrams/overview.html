@@ -2,10 +2,10 @@
 <html lang="en">
 <head><meta charset="utf-8"><title>data-eng-lab — overview</title></head>
 <body>
-  <!-- Verified against atlas.consumer.yml, compose/data-eng-lab.yml, checkpoints/retention-policy.yaml, scenarios/execution-modes.yaml, and current DAG inventory on 2026-08-13. -->
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="700" viewBox="0 0 1200 700" font-family="'JetBrains Mono', 'Courier New', monospace" role="img" aria-labelledby="diagram-title diagram-description">
+  <!-- Verified against atlas.consumer.yml, compose/data-eng-lab.yml, checkpoints/retention-policy.yaml, docs/iceberg-rest-observability.md, scenarios/execution-modes.yaml, and current DAG inventory on 2026-08-16. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="700" viewBox="0 0 1440 700" font-family="'JetBrains Mono', 'Courier New', monospace" role="img" aria-labelledby="diagram-title diagram-description">
   <title id="diagram-title">data-eng-lab overview architecture</title>
-  <desc id="diagram-description">End-to-end view of source systems, Atlas infrastructure, processing, storage, and analytics in data-eng-lab.</desc>
+  <desc id="diagram-description">End-to-end view of source systems, Atlas infrastructure, processing, storage, analytics, checkpoint retention, and Iceberg REST observability in data-eng-lab.</desc>
   <defs>
     <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
       <polygon points="0 0, 10 3.5, 0 7" fill="#64748b"/>
@@ -22,23 +22,30 @@
     <marker id="ah-orange" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
       <polygon points="0 0, 10 3.5, 0 7" fill="#fb923c"/>
     </marker>
+    <marker id="ah-cyan" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+      <polygon points="0 0, 10 3.5, 0 7" fill="#22d3ee"/>
+    </marker>
     <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
       <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1e293b" stroke-width="0.5"/>
     </pattern>
   </defs>
 
   <!-- Background -->
-  <rect width="1200" height="700" fill="#0a0f1f"/>
-  <rect width="1200" height="700" fill="url(#grid)" opacity="0.6"/>
+  <rect width="1440" height="700" fill="#0a0f1f"/>
+  <rect width="1440" height="700" fill="url(#grid)" opacity="0.6"/>
 
   <!-- Title -->
   <circle cx="24" cy="30" r="6" fill="#22d3ee"/>
   <text x="40" y="35" fill="white" font-size="16" font-weight="700">data-eng-lab — Full-stack Lakehouse</text>
-  <text x="40" y="55" fill="#94a3b8" font-size="11">Iceberg lakehouse on MinIO, orchestrated by Airflow, queried by Trino</text>
+  <text x="40" y="55" fill="#94a3b8" font-size="11">Iceberg lakehouse on MinIO, orchestrated by Airflow, queried by Trino, monitored by Prometheus and Grafana</text>
 
   <!-- Region boundary (the data-eng-lab platform) -->
-  <rect x="15" y="80" width="920" height="545" rx="12" fill="rgba(251,191,36,0.04)" stroke="#fbbf24" stroke-width="1" stroke-dasharray="8,4"/>
+  <rect x="15" y="80" width="1165" height="545" rx="12" fill="rgba(251,191,36,0.04)" stroke="#fbbf24" stroke-width="1" stroke-dasharray="8,4"/>
   <text x="27" y="98" fill="#fbbf24" font-size="10" font-weight="600">data-eng-lab platform</text>
+
+  <!-- Observability boundary -->
+  <rect x="945" y="115" width="220" height="370" rx="10" fill="rgba(8,51,68,0.12)" stroke="#22d3ee" stroke-width="1" stroke-dasharray="6,4"/>
+  <text x="957" y="135" fill="#22d3ee" font-size="10" font-weight="600">Observability</text>
 
   <!-- =========== ARROWS (drawn before boxes for z-order) =========== -->
 
@@ -84,6 +91,18 @@
 
   <!-- Checkpoint retention → exact checkpoint leaf -->
   <path d="M 715 438 Q 738 420 753 385" fill="none" stroke="#fb7185" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#arrowhead)"/>
+
+  <!-- Iceberg REST → bounded health probe -->
+  <path d="M 715 185 Q 740 105 940 105 L 940 185 L 963 185" fill="none" stroke="#22d3ee" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#ah-cyan)"/>
+  <text x="830" y="101" fill="#22d3ee" font-size="8" text-anchor="middle">bounded health probe</text>
+
+  <!-- Probe → Prometheus metrics -->
+  <line x1="1055" y1="220" x2="1055" y2="268" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#ah-cyan)"/>
+  <text x="1065" y="249" fill="#22d3ee" font-size="8">metrics</text>
+
+  <!-- Prometheus → Grafana dashboard -->
+  <line x1="1055" y1="340" x2="1055" y2="388" stroke="#22d3ee" stroke-width="1.5" marker-end="url(#ah-cyan)"/>
+  <text x="1065" y="369" fill="#22d3ee" font-size="8">dashboard</text>
 
   <!-- Spark → bronze (writes) -->
   <path d="M 375 270 Q 365 400 350 518" fill="none" stroke="#34d399" stroke-width="1.5" marker-end="url(#ah-emerald)"/>
@@ -195,6 +214,25 @@
 
   <text x="840" y="455" fill="#fbbf24" font-size="8" text-anchor="middle">s3a:// scheme</text>
 
+  <!-- Observability services (cyan, monitoring) -->
+  <rect x="965" y="150" width="180" height="70" rx="6" fill="#0f172a"/>
+  <rect x="965" y="150" width="180" height="70" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+  <text x="1055" y="176" fill="white" font-size="11" font-weight="600" text-anchor="middle">iceberg-rest-probe</text>
+  <text x="1055" y="194" fill="#94a3b8" font-size="8" text-anchor="middle">bounded catalog probe</text>
+  <text x="1055" y="209" fill="#22d3ee" font-size="8" text-anchor="middle">/metrics :9108</text>
+
+  <rect x="965" y="270" width="180" height="70" rx="6" fill="#0f172a"/>
+  <rect x="965" y="270" width="180" height="70" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+  <text x="1055" y="296" fill="white" font-size="11" font-weight="600" text-anchor="middle">Prometheus</text>
+  <text x="1055" y="314" fill="#94a3b8" font-size="8" text-anchor="middle">30s scrape · alert rules</text>
+  <text x="1055" y="329" fill="#22d3ee" font-size="8" text-anchor="middle">time-series authority</text>
+
+  <rect x="965" y="390" width="180" height="70" rx="6" fill="#0f172a"/>
+  <rect x="965" y="390" width="180" height="70" rx="6" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1.5"/>
+  <text x="1055" y="416" fill="white" font-size="11" font-weight="600" text-anchor="middle">Grafana</text>
+  <text x="1055" y="434" fill="#94a3b8" font-size="8" text-anchor="middle">dashboard · alert view</text>
+  <text x="1055" y="449" fill="#22d3ee" font-size="8" text-anchor="middle">provisioned datasource</text>
+
   <!-- Medallion pipeline header -->
   <text x="460" y="510" fill="#fbbf24" font-size="10" font-weight="600" text-anchor="middle">Medallion pipeline</text>
 
@@ -222,43 +260,38 @@
   <text x="790" y="562" fill="#94a3b8" font-size="9" text-anchor="middle">business marts</text>
   <text x="790" y="578" fill="#94a3b8" font-size="8" text-anchor="middle">BI / ML ready</text>
 
-  <!-- Footer note -->
-  <text x="475" y="645" fill="#475569" font-size="9" text-anchor="middle">data-eng-lab • Orbital theme • landscape</text>
-
   <!-- =========== LEGEND (outside region, top right) =========== -->
-  <rect x="950" y="90" width="235" height="245" rx="8" fill="rgba(15,23,42,0.5)" stroke="#1e293b" stroke-width="1"/>
-  <text x="962" y="110" fill="white" font-size="11" font-weight="600">Legend</text>
+  <rect x="1190" y="90" width="235" height="245" rx="8" fill="rgba(15,23,42,0.5)" stroke="#1e293b" stroke-width="1"/>
+  <text x="1202" y="110" fill="white" font-size="11" font-weight="600">Legend</text>
 
-  <rect x="962" y="122" width="16" height="10" rx="2" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1"/>
-  <text x="984" y="131" fill="#94a3b8" font-size="8">Frontend / UI (notebooks, CI)</text>
+  <rect x="1202" y="122" width="16" height="10" rx="2" fill="rgba(8,51,68,0.4)" stroke="#22d3ee" stroke-width="1"/>
+  <text x="1224" y="131" fill="#94a3b8" font-size="8">UI / observability</text>
 
-  <rect x="962" y="140" width="16" height="10" rx="2" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1"/>
-  <text x="984" y="149" fill="#94a3b8" font-size="8">Backend (Spark, Trino)</text>
+  <rect x="1202" y="140" width="16" height="10" rx="2" fill="rgba(6,78,59,0.4)" stroke="#34d399" stroke-width="1"/>
+  <text x="1224" y="149" fill="#94a3b8" font-size="8">Backend (Spark, Trino)</text>
 
-  <rect x="962" y="158" width="16" height="10" rx="2" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1"/>
-  <text x="984" y="167" fill="#94a3b8" font-size="8">Database / Catalog</text>
+  <rect x="1202" y="158" width="16" height="10" rx="2" fill="rgba(76,29,149,0.4)" stroke="#a78bfa" stroke-width="1"/>
+  <text x="1224" y="167" fill="#94a3b8" font-size="8">Database / Catalog</text>
 
-  <rect x="962" y="176" width="16" height="10" rx="2" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1"/>
-  <text x="984" y="185" fill="#94a3b8" font-size="8">Cloud / Storage (MinIO)</text>
+  <rect x="1202" y="176" width="16" height="10" rx="2" fill="rgba(120,53,15,0.3)" stroke="#fbbf24" stroke-width="1"/>
+  <text x="1224" y="185" fill="#94a3b8" font-size="8">Cloud / Storage (MinIO)</text>
 
-  <rect x="962" y="194" width="16" height="10" rx="2" fill="rgba(251,146,60,0.3)" stroke="#fb923c" stroke-width="1"/>
-  <text x="984" y="203" fill="#94a3b8" font-size="8">Message bus (Redpanda)</text>
+  <rect x="1202" y="194" width="16" height="10" rx="2" fill="rgba(251,146,60,0.3)" stroke="#fb923c" stroke-width="1"/>
+  <text x="1224" y="203" fill="#94a3b8" font-size="8">Message bus (Redpanda)</text>
 
-  <rect x="962" y="212" width="16" height="10" rx="2" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1"/>
-  <text x="984" y="221" fill="#94a3b8" font-size="8">External / raw (landing)</text>
+  <rect x="1202" y="212" width="16" height="10" rx="2" fill="rgba(30,41,59,0.5)" stroke="#94a3b8" stroke-width="1"/>
+  <text x="1224" y="221" fill="#94a3b8" font-size="8">External / raw (landing)</text>
 
-  <line x1="962" y1="240" x2="1175" y2="240" stroke="#1e293b" stroke-width="0.5"/>
+  <line x1="1202" y1="240" x2="1415" y2="240" stroke="#1e293b" stroke-width="0.5"/>
 
-  <line x1="962" y1="258" x2="982" y2="258" stroke="#34d399" stroke-width="1.5" marker-end="url(#ah-emerald)"/>
-  <text x="990" y="261" fill="#94a3b8" font-size="8">data flow</text>
+  <line x1="1202" y1="258" x2="1222" y2="258" stroke="#34d399" stroke-width="1.5" marker-end="url(#ah-emerald)"/>
+  <text x="1230" y="261" fill="#94a3b8" font-size="8">data flow</text>
 
-  <line x1="962" y1="278" x2="982" y2="278" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#ah-violet)"/>
-  <text x="990" y="281" fill="#94a3b8" font-size="8">metadata / control</text>
+  <line x1="1202" y1="278" x2="1222" y2="278" stroke="#a78bfa" stroke-width="1.5" stroke-dasharray="4,3" marker-end="url(#ah-violet)"/>
+  <text x="1230" y="281" fill="#94a3b8" font-size="8">metadata / control</text>
 
-  <line x1="962" y1="298" x2="982" y2="298" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ah-amber)"/>
-  <text x="990" y="301" fill="#94a3b8" font-size="8">artifact publish</text>
-
-  <text x="962" y="322" fill="#475569" font-size="7">data-eng-lab • Orbital theme</text>
+  <line x1="1202" y1="298" x2="1222" y2="298" stroke="#fbbf24" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#ah-amber)"/>
+  <text x="1230" y="301" fill="#94a3b8" font-size="8">artifact publish</text>
 </svg>
 </body>
 </html>
