@@ -47,12 +47,15 @@ def test_plain_dict_source_map_rewrites_legacy_and_canonical_diagrams(manifest, 
     mapping = dict(build_source_map(manifest, "site"))
     assert mapping[Path("docs/architectures/overview.svg")] == Path("assets/img/overview.svg")
     assert mapping[Path("docs/diagrams/img/overview.png")] == Path("assets/img/overview.svg")
-    assert rewrite_for_surface(
-        f"![Flow]({target})",
-        "site",
-        source,
-        mapping,
-    ) == "![Flow](../assets/img/overview.svg)"
+    assert (
+        rewrite_for_surface(
+            f"![Flow]({target})",
+            "site",
+            source,
+            mapping,
+        )
+        == "![Flow](../assets/img/overview.svg)"
+    )
 
 
 def test_rewrite_for_site_preserves_subdirectory_image_prefix(manifest):
@@ -77,10 +80,7 @@ def test_rewrite_for_site_preserves_subdirectory_image_prefix(manifest):
 def test_rewrite_maps_local_html_image_sources(manifest, surface, expected):
     source = Path("docs/notebooks/example.md")
     mapping = build_source_map(manifest, surface)
-    markdown = (
-        '<img src="../diagrams/img/data-eng-lab-hero.png" '
-        'alt="Lakehouse hero">'
-    )
+    markdown = '<img src="../diagrams/img/data-eng-lab-hero.png" alt="Lakehouse hero">'
 
     assert rewrite_for_surface(markdown, surface, source, mapping) == expected
 
@@ -88,10 +88,7 @@ def test_rewrite_maps_local_html_image_sources(manifest, surface, expected):
 def test_rewrite_maps_html_image_with_whitespace_around_src_equals(manifest):
     source = Path("docs/notebooks/example.md")
     mapping = build_source_map(manifest, "site")
-    markdown = (
-        '<img alt="Lakehouse hero" '
-        'src  =  "../diagrams/img/data-eng-lab-hero.png">'
-    )
+    markdown = '<img alt="Lakehouse hero" src  =  "../diagrams/img/data-eng-lab-hero.png">'
 
     assert rewrite_for_surface(markdown, "site", source, mapping) == (
         '<img alt="Lakehouse hero" src  =  "../assets/img/data-eng-lab-hero.svg">'
@@ -104,14 +101,14 @@ def test_rewrite_changes_only_the_real_html_src_attribute(manifest):
     markdown = (
         '<img data-src="../diagrams/img/data-eng-lab-hero.png" '
         'srcset="small.png 1x" '
-        'alt="literal src=\'../diagrams/img/data-eng-lab-hero.png\'" '
+        "alt=\"literal src='../diagrams/img/data-eng-lab-hero.png'\" "
         'src = "../diagrams/img/data-eng-lab-hero.png">'
     )
 
     assert rewrite_for_surface(markdown, "site", source, mapping) == (
         '<img data-src="../diagrams/img/data-eng-lab-hero.png" '
         'srcset="small.png 1x" '
-        'alt="literal src=\'../diagrams/img/data-eng-lab-hero.png\'" '
+        "alt=\"literal src='../diagrams/img/data-eng-lab-hero.png'\" "
         'src = "../assets/img/data-eng-lab-hero.svg">'
     )
 
@@ -150,12 +147,15 @@ def test_rewrite_drops_forbidden_and_non_manifest_targets(manifest):
 def test_rewrite_drops_every_unmapped_local_target(manifest, target):
     mapping = build_source_map(manifest, "site")
 
-    assert rewrite_for_surface(
-        f"[Unpublished]({target})",
-        "site",
-        Path("docs/notebooks/example.md"),
-        mapping,
-    ) == "Unpublished"
+    assert (
+        rewrite_for_surface(
+            f"[Unpublished]({target})",
+            "site",
+            Path("docs/notebooks/example.md"),
+            mapping,
+        )
+        == "Unpublished"
+    )
 
 
 def test_rewrite_changes_only_the_target_when_it_matches_the_label(manifest):

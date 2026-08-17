@@ -9,9 +9,7 @@ REPOSITORY_ORIGIN = "https://github.com/thekaveh/data-eng-lab"
 WIKI_ORIGIN = "https://github.com/thekaveh/data-eng-lab/wiki"
 PAGES_ORIGIN = "https://thekaveh.github.io/data-eng-lab/"
 
-MARKDOWN_LINK_RE = re.compile(
-    r"!?\[(?P<label>[^\]]*)\]\((?P<target>[^)\s]+)(?:\s+[^)]*)?\)"
-)
+MARKDOWN_LINK_RE = re.compile(r"!?\[(?P<label>[^\]]*)\]\((?P<target>[^)\s]+)(?:\s+[^)]*)?\)")
 _HTML_IMAGE_OPEN_RE = re.compile(r"<img(?=[\s/>])", re.IGNORECASE)
 
 
@@ -76,11 +74,7 @@ def _html_src_attribute(markup: str, start: int, end: int) -> tuple[int, int] | 
         while position < end and (markup[position].isspace() or markup[position] == "/"):
             position += 1
         name_start = position
-        while (
-            position < end
-            and not markup[position].isspace()
-            and markup[position] not in {"=", "/", ">"}
-        ):
+        while position < end and not markup[position].isspace() and markup[position] not in {"=", "/", ">"}:
             position += 1
         if position == name_start:
             position += 1

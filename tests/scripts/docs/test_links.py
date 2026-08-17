@@ -52,7 +52,7 @@ def test_find_links_reads_real_html_src_and_preserves_source_offsets():
     [
         '<img data-src="lazy.png">',
         '<img srcset="small.png 1x, large.png 2x">',
-        '<img alt="literal src=\'trap.png\'">',
+        "<img alt=\"literal src='trap.png'\">",
     ],
 )
 def test_find_links_ignores_html_src_attribute_decoys(image):
