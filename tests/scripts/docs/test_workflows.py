@@ -197,8 +197,7 @@ def test_publish_workflow_pushes_generated_wiki_after_pages_deploy():
     assert push_step["run"] == "/usr/bin/python3 -I scripts/docs/push_wiki.py --push --root ."
     assert push_step["env"] == {
         "WIKI_REMOTE": (
-            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/"
-            "${{ github.repository }}.wiki.git"
+            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git"
         )
     }
     workflow_text = (WORKFLOWS / "docs-deploy.yml").read_text(encoding="utf-8")

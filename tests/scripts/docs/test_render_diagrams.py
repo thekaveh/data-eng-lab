@@ -54,9 +54,7 @@ def test_lakehouse_hero_output_arrow_points_right():
 
 def test_extract_svg_sanitizes_html_named_entities_and_preserves_numeric_entities():
     master = (
-        '<html><svg xmlns="http://www.w3.org/2000/svg">'
-        "<text>&Sigma; &middot; &amp; &#931; &#x3A3;</text>"
-        "</svg></html>"
+        '<html><svg xmlns="http://www.w3.org/2000/svg"><text>&Sigma; &middot; &amp; &#931; &#x3A3;</text></svg></html>'
     )
 
     assert extract_svg(master) == (
@@ -116,10 +114,7 @@ def test_import_svg_master_preserves_the_complete_svg():
     assert 'role="img"' in master
     assert 'aria-labelledby="diagram-title diagram-description"' in master
     assert '<title id="diagram-title">Overview</title>' in master
-    assert (
-        '<desc id="diagram-description">Verified against atlas.consumer.yml on 2026-07-31.</desc>'
-        in master
-    )
+    assert '<desc id="diagram-description">Verified against atlas.consumer.yml on 2026-07-31.</desc>' in master
 
 
 def test_import_svg_master_rejects_non_standalone_input():
@@ -168,9 +163,7 @@ def test_render_all_writes_site_svg_and_committed_png(tmp_path):
     assert first_svg.endswith(b"\n")
     assert first_png.startswith(b"\x89PNG")
     fingerprint_path = projection_fingerprint_path(png_path)
-    assert fingerprint_path.read_text(encoding="utf-8") == (
-        f"sha256:{diagram_fingerprint(extract_svg(master))}\n"
-    )
+    assert fingerprint_path.read_text(encoding="utf-8") == (f"sha256:{diagram_fingerprint(extract_svg(master))}\n")
 
     render_all(
         manifest,

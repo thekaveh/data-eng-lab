@@ -69,14 +69,10 @@ def _validate_surface_destination(destination: Path, surface: str) -> None:
     surface_root = Path("/__docs_surface__")
     resolved = (surface_root / destination).resolve()
     if destination.is_absolute() or not resolved.is_relative_to(surface_root):
-        raise ManifestError(
-            f"{surface} destination escapes its surface root: {destination}"
-        )
+        raise ManifestError(f"{surface} destination escapes its surface root: {destination}")
     canonical = resolved.relative_to(surface_root)
     if destination != canonical:
-        raise ManifestError(
-            f"{surface} destination must be canonical: {destination} (use {canonical})"
-        )
+        raise ManifestError(f"{surface} destination must be canonical: {destination} (use {canonical})")
 
 
 def _register_destination(
@@ -88,9 +84,7 @@ def _register_destination(
     key = destination.as_posix().casefold()
     existing = owners.get(key)
     if existing is not None and existing != owner:
-        raise ManifestError(
-            f"{surface} destination collision at {destination}: {existing} and {owner}"
-        )
+        raise ManifestError(f"{surface} destination collision at {destination}: {existing} and {owner}")
     owners[key] = owner
 
 

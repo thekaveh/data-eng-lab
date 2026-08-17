@@ -124,9 +124,7 @@ def _local_name(name: str) -> str:
 
 def _contains_executable_value(value: str) -> bool:
     normalized = "".join(
-        character
-        for character in html.unescape(value).lower()
-        if not character.isspace() and ord(character) >= 0x20
+        character for character in html.unescape(value).lower() if not character.isspace() and ord(character) >= 0x20
     )
     return any(fragment in normalized for fragment in _FORBIDDEN_VALUE_FRAGMENTS)
 
