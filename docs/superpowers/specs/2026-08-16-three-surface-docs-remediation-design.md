@@ -1,7 +1,7 @@
 # Three-Surface Documentation Remediation Design
 
 **Date:** 2026-08-16  
-**Status:** Design approved; implementation pending written-spec review  
+**Status:** Implemented
 **Scope:** Resolve the 2026-08-16 three-surface documentation audit findings and any additional evidence-backed findings discovered during the implementation audit.
 
 ## 1. Objective
@@ -100,3 +100,9 @@ The separate 19-scenario notebook reproducibility suite remains a live-stack gat
 - No edits to the pinned Atlas submodule.
 - No scenario, DAG, Spark application, dataset, checkpoint-retention, observability-runtime, or release-policy behavior changes.
 - No publication or GitHub repository-setting mutation during local implementation.
+
+## 10. Implementation result
+
+The named metadata, opener, diagram, authoring-label, and publisher-contract findings are closed. The post-change audit also found and corrected three additional evidence-backed defects: Ruff formatting drift in the documentation tooling, an incorrect Iceberg probe port in the first diagram revision, and a pre-existing release-contract parser omission for raw `iframe` governance evidence. The intentional workflow comment changed a privileged workflow digest, so the release-policy allowlist was updated to bind the reviewed bytes.
+
+Final local evidence includes 209 documentation/content tests, 24 complete diagram projections on each generated surface, strict MkDocs and wiki generation, zero repository-verifier findings, and the full offline repository suite with 3,635 passing tests, two expected opt-in MinIO skips, and 72 live/infra deselections. The separate 19-scenario live notebook reproducibility suite was not run because this remediation does not change notebook execution or generated notebook content.

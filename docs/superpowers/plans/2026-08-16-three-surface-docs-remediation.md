@@ -42,7 +42,7 @@
 - Consumes: `render_mkdocs_yml(manifest) -> str` and repository `spark-apps/*/pom.xml` inventory.
 - Produces: rendered `site_description` containing the exact six-app public claim.
 
-- [ ] **Step 1: Write the failing source-backed metadata test**
+- [x] **Step 1: Write the failing source-backed metadata test**
 
 Add to `tests/scripts/docs/test_build_docs.py`:
 
@@ -56,7 +56,7 @@ def test_repository_mkdocs_description_matches_maven_app_inventory():
     assert f"{app_count} CI-built Maven apps" in render_mkdocs_yml(manifest)
 ```
 
-- [ ] **Step 2: Run the focused RED**
+- [x] **Step 2: Run the focused RED**
 
 Run:
 
@@ -66,7 +66,7 @@ uv run --group dev pytest tests/scripts/docs/test_build_docs.py::test_repository
 
 Expected: FAIL because the description contains `5 CI-built Maven apps`.
 
-- [ ] **Step 3: Correct the canonical template**
+- [x] **Step 3: Correct the canonical template**
 
 Change the description fragment in `scripts/docs/build_docs.py` to:
 
@@ -74,7 +74,7 @@ Change the description fragment in `scripts/docs/build_docs.py` to:
   19 paired scenarios, 17 Scala/PySpark parity pairs, 6 CI-built Maven apps,
 ```
 
-- [ ] **Step 4: Run focused and module tests**
+- [x] **Step 4: Run focused and module tests**
 
 Run:
 
@@ -84,7 +84,7 @@ uv run --group dev pytest tests/scripts/docs/test_build_docs.py -q
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit the metadata correction**
+- [x] **Step 5: Commit the metadata correction**
 
 ```bash
 git add scripts/docs/build_docs.py tests/scripts/docs/test_build_docs.py
@@ -102,7 +102,7 @@ git commit -m "docs: bind site metadata to app inventory"
 - Consumes: `_opener_block`, `_executive_summary`, `HERO_EXECUTIVE_SUMMARY`, `atlas.consumer.yml`, and six `spark-apps/*/pom.xml` roots.
 - Produces: one exact 100–150-word summary present on both hand-authored surfaces.
 
-- [ ] **Step 1: Add failing opener depth and inventory assertions**
+- [x] **Step 1: Add failing opener depth and inventory assertions**
 
 Extend `test_opener_is_centered_badged_and_identical_across_canonical_surfaces`:
 
@@ -116,7 +116,7 @@ Extend `test_opener_is_centered_badged_and_identical_across_canonical_surfaces`:
 
 Extend the required-term tuple with `"six CI-built Maven applications"`, `"Prometheus"`, and `"Grafana"`.
 
-- [ ] **Step 2: Run the focused RED**
+- [x] **Step 2: Run the focused RED**
 
 Run:
 
@@ -126,7 +126,7 @@ uv run --group dev pytest tests/test_docs_content_contract.py::test_opener_is_ce
 
 Expected: FAIL because the existing summary is 53 words and omits the new grounded terms.
 
-- [ ] **Step 3: Define the expanded canonical summary**
+- [x] **Step 3: Define the expanded canonical summary**
 
 Replace `HERO_EXECUTIVE_SUMMARY` and the identical paragraph in both public sources with this exact copy:
 
@@ -134,7 +134,7 @@ Replace `HERO_EXECUTIVE_SUMMARY` and the identical paragraph in both public sour
 `data-eng-lab` consumes Atlas as its pinned `infra/` git submodule through `atlas.consumer.yml`, so `make up` launches the default development profile as the **Data Engineering** workspace. The lab integrates storage, compute, orchestration, delivery, and observability instead of leaving users to wire independent services together: Iceberg tables live on MinIO, Spark runs batch and streaming workloads, Airflow coordinates production DAGs, Jenkins publishes six CI-built Maven applications, Trino serves analytical SQL, and Prometheus and Grafana monitor the Iceberg REST boundary. Nineteen paired Zeppelin and Jupyter scenarios provide 17 Scala/PySpark implementations plus two Trino client pairs, while Redpanda supplies three broker-backed streams. The same locked datasets and catalog contracts support notebook exploration and deployable application paths.
 ```
 
-- [ ] **Step 4: Run opener and complete content-contract tests**
+- [x] **Step 4: Run opener and complete content-contract tests**
 
 Run:
 
@@ -144,7 +144,7 @@ uv run --group dev pytest tests/test_docs_content_contract.py -q
 
 Expected: all tests pass and exact opener parity remains intact.
 
-- [ ] **Step 5: Commit the opener correction**
+- [x] **Step 5: Commit the opener correction**
 
 ```bash
 git add README.md docs/index.md tests/test_docs_content_contract.py
@@ -163,7 +163,7 @@ git commit -m "docs: strengthen the shared project opener"
 - Consumes: `extract_svg(html) -> str`, `scripts.docs.render_diagrams`, the fixed labels `iceberg-rest-probe`, `Prometheus`, and `Grafana`.
 - Produces: accessible overview SVG/PNG showing probe→metrics→dashboard flow with no authoring metadata.
 
-- [ ] **Step 1: Write the failing diagram-content test**
+- [x] **Step 1: Write the failing diagram-content test**
 
 Add to `tests/scripts/docs/test_render_diagrams.py`:
 
@@ -178,7 +178,7 @@ def test_overview_diagram_includes_observability_and_no_authoring_metadata():
         assert leaked not in svg
 ```
 
-- [ ] **Step 2: Run the focused RED**
+- [x] **Step 2: Run the focused RED**
 
 Run:
 
@@ -188,7 +188,7 @@ uv run --group dev pytest tests/scripts/docs/test_render_diagrams.py::test_overv
 
 Expected: FAIL because observability labels are absent and authoring labels are present.
 
-- [ ] **Step 3: Update the canonical SVG master**
+- [x] **Step 3: Update the canonical SVG master**
 
 Revise `docs/diagrams/overview.html` while preserving its accessible `<title>`/`<desc>` and existing flows. Use the right-side area for an observability group with these semantic elements:
 
@@ -211,7 +211,7 @@ Revise `docs/diagrams/overview.html` while preserving its accessible `<title>`/`
 
 Add a dashed probe edge from Iceberg REST to `iceberg-rest-probe`, a metrics edge to Prometheus, and a datasource/dashboard edge to Grafana. Update the verification comment to 2026-08-16 and include `docs/iceberg-rest-observability.md`. Remove both `Orbital theme`/`landscape` text nodes.
 
-- [ ] **Step 4: Run the focused GREEN**
+- [x] **Step 4: Run the focused GREEN**
 
 Run:
 
@@ -221,7 +221,7 @@ uv run --group dev pytest tests/scripts/docs/test_render_diagrams.py -q
 
 Expected: all diagram tests pass.
 
-- [ ] **Step 5: Regenerate the committed projection**
+- [x] **Step 5: Regenerate the committed projection**
 
 Run:
 
@@ -231,11 +231,11 @@ uv run --group dev python -m scripts.docs.render_diagrams --root . --force-png
 
 Expected: `overview.png` and `overview.sha256` change; unrelated PNG bytes remain unchanged.
 
-- [ ] **Step 6: Visually inspect the regenerated overview**
+- [x] **Step 6: Visually inspect the regenerated overview**
 
 Open `docs/diagrams/img/overview.png` and verify labels do not overlap, every arrow has an unambiguous direction, and the existing data/metadata/retention flows remain legible.
 
-- [ ] **Step 7: Commit the diagram correction**
+- [x] **Step 7: Commit the diagram correction**
 
 ```bash
 git add docs/diagrams/overview.html docs/diagrams/img/overview.png docs/diagrams/img/overview.sha256 tests/scripts/docs/test_render_diagrams.py
@@ -253,7 +253,7 @@ git commit -m "docs: add observability to the full-stack diagram"
 - Consumes: parsed `docs-deploy.yml` and exact privileged `wiki` job.
 - Produces: one explicit repository-specific publisher contract with no SSH/deploy-key fallback.
 
-- [ ] **Step 1: Add a failing exact authentication-boundary assertion**
+- [x] **Step 1: Add a failing exact authentication-boundary assertion**
 
 Extend `test_publish_workflow_pushes_generated_wiki_after_pages_deploy`:
 
@@ -271,7 +271,7 @@ Extend `test_publish_workflow_pushes_generated_wiki_after_pages_deploy`:
     assert "WIKI_SSH_KEY" not in workflow_text
 ```
 
-- [ ] **Step 2: Run the focused RED**
+- [x] **Step 2: Run the focused RED**
 
 Run:
 
@@ -281,7 +281,7 @@ uv run --group dev pytest tests/scripts/docs/test_workflows.py::test_publish_wor
 
 Expected: FAIL because the approved publisher rationale is not recorded in the workflow.
 
-- [ ] **Step 3: Document the isolated publisher at the enforcement point**
+- [x] **Step 3: Document the isolated publisher at the enforcement point**
 
 Add immediately above the `wiki` job:
 
@@ -293,7 +293,7 @@ Add immediately above the `wiki` job:
 
 Update the design status to `Implemented` only after all verification passes; until then retain the review status.
 
-- [ ] **Step 4: Run workflow and push-wiki tests**
+- [x] **Step 4: Run workflow and push-wiki tests**
 
 Run:
 
@@ -303,7 +303,7 @@ uv run --group dev pytest tests/scripts/docs/test_workflows.py tests/scripts/doc
 
 Expected: all tests pass.
 
-- [ ] **Step 5: Commit the publisher contract**
+- [x] **Step 5: Commit the publisher contract**
 
 ```bash
 git add .github/workflows/docs-deploy.yml tests/scripts/docs/test_workflows.py docs/superpowers/specs/2026-08-16-three-surface-docs-remediation-design.md
@@ -321,7 +321,7 @@ git commit -m "docs: codify the ephemeral wiki publisher"
 - Consumes: final canonical sources and all repository docs gates.
 - Produces: clean generated site/wiki trees and an evidence-backed final audit.
 
-- [ ] **Step 1: Run focused documentation suites**
+- [x] **Step 1: Run focused documentation suites**
 
 ```bash
 uv run --group dev pytest tests/scripts/docs tests/test_docs_content_contract.py -q
@@ -329,7 +329,7 @@ uv run --group dev pytest tests/scripts/docs tests/test_docs_content_contract.py
 
 Expected: all tests pass.
 
-- [ ] **Step 2: Run canonical generation and strict builds**
+- [x] **Step 2: Run canonical generation and strict builds**
 
 ```bash
 make docs-check
@@ -339,7 +339,7 @@ make docs-wiki
 
 Expected: all commands exit 0; MkDocs emits zero warnings.
 
-- [ ] **Step 3: Run repository hygiene gates**
+- [x] **Step 3: Run repository hygiene gates**
 
 ```bash
 make verify
@@ -350,23 +350,23 @@ git diff --check
 
 Expected: zero findings and no formatting drift.
 
-- [ ] **Step 4: Run structural A–H and K–L scans**
+- [x] **Step 4: Run structural A–H and K–L scans**
 
 Verify all generated roots are ignored; root `mkdocs.yml` is untracked; no cross-surface origins, placeholders, empty files/directories, flat notebook subsections, adjacent duplicate headings, empty fences, authoring prose, or missing diagram projections exist. Confirm all 24 masters have repo PNG, site SVG, and wiki PNG files.
 
-- [ ] **Step 5: Audit all changed claims and diagram elements against source**
+- [x] **Step 5: Audit all changed claims and diagram elements against source**
 
 Confirm six POM roots, 19 paired scenario roots, `atlas.consumer.yml`'s Data Engineering/dev/Prometheus/Grafana values, the Iceberg probe Compose service, Prometheus scrape interval, rule loading, Grafana datasource/dashboard provisioning, and every changed diagram edge.
 
-- [ ] **Step 6: Address additional findings through microscopic TDD**
+- [x] **Step 6: Address additional findings through microscopic TDD**
 
 For each newly reproduced defect, add one focused failing regression, run it to RED, apply the smallest canonical-source correction, rerun to GREEN, and include the changed file in the final verification. Do not alter behavior based on a speculative or ungrounded concern.
 
-- [ ] **Step 7: Mark the design implemented and run final verification again**
+- [x] **Step 7: Mark the design implemented and run final verification again**
 
 Change the design status to `Implemented`, then repeat Tasks 5.1–5.3. Expected: all green on the final bytes.
 
-- [ ] **Step 8: Commit final evidence/hygiene changes**
+- [x] **Step 8: Commit final evidence/hygiene changes**
 
 ```bash
 git add docs/superpowers/specs/2026-08-16-three-surface-docs-remediation-design.md \
@@ -374,6 +374,6 @@ git add docs/superpowers/specs/2026-08-16-three-surface-docs-remediation-design.
 git commit -m "docs: complete three-surface remediation"
 ```
 
-- [ ] **Step 9: Prepare completion evidence**
+- [x] **Step 9: Prepare completion evidence**
 
 Record exact HEAD, clean status, test counts, strict-build result, diagram projection counts, and the post-change audit result. Explicitly state that the live 19-scenario notebook reproducibility suite was not run because notebook execution/content was unchanged and it requires a prepared live stack.
