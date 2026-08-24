@@ -29,7 +29,7 @@ site_name: data-eng-lab
 site_url: https://thekaveh.github.io/data-eng-lab/
 site_description: >-
   An Apache Iceberg lakehouse data engineering lab —
-  19 paired scenarios, 17 Scala/PySpark parity pairs, 5 CI-built Maven apps,
+  19 paired scenarios, 17 Scala/PySpark parity pairs, 6 CI-built Maven apps,
   Trino BI, Redpanda streaming,
   medallion architecture on Docker Compose.
 docs_dir: generated/site
@@ -117,9 +117,7 @@ def render_site(manifest: Manifest, repo_root: Path, output: Path) -> None:
     image_dir.mkdir(parents=True, exist_ok=True)
     for diagram in manifest.diagrams:
         master = (repo_root / diagram.master).read_text(encoding="utf-8")
-        destination = _surface_destination(
-            output, Path("assets/img") / f"{diagram.id}.svg", "site"
-        )
+        destination = _surface_destination(output, Path("assets/img") / f"{diagram.id}.svg", "site")
         destination.write_text(f"{extract_svg(master)}\n", encoding="utf-8")
 
     _copy_file(
@@ -137,9 +135,7 @@ def render_wiki(manifest: Manifest, repo_root: Path, output: Path) -> None:
     _reset(output)
     source_map = build_source_map(manifest, "wiki")
     _render_pages(manifest, repo_root, output, "wiki", source_map)
-    _surface_destination(output, Path("_Sidebar.md"), "wiki").write_text(
-        _render_sidebar(manifest), encoding="utf-8"
-    )
+    _surface_destination(output, Path("_Sidebar.md"), "wiki").write_text(_render_sidebar(manifest), encoding="utf-8")
     _surface_destination(output, Path("_Footer.md"), "wiki").write_text(
         "data-eng-lab documentation · Generated from the canonical documentation manifest.\n",
         encoding="utf-8",
@@ -156,10 +152,7 @@ def hash_tree(root: Path) -> dict[Path, str]:
         (path for path in root.rglob("*") if path.is_file()),
         key=lambda path: path.relative_to(root).as_posix(),
     )
-    return {
-        path.relative_to(root): hashlib.sha256(path.read_bytes()).hexdigest()
-        for path in files
-    }
+    return {path.relative_to(root): hashlib.sha256(path.read_bytes()).hexdigest() for path in files}
 
 
 def assert_dirs_equal(actual: Path, expected: Path) -> None:
@@ -173,9 +166,7 @@ def assert_dirs_equal(actual: Path, expected: Path) -> None:
     expected_paths = set(expected_hashes)
     missing = sorted(expected_paths - actual_paths)
     unexpected = sorted(actual_paths - expected_paths)
-    changed = sorted(
-        path for path in actual_paths & expected_paths if actual_hashes[path] != expected_hashes[path]
-    )
+    changed = sorted(path for path in actual_paths & expected_paths if actual_hashes[path] != expected_hashes[path])
     details = []
     details.extend(f"missing {path.as_posix()}" for path in missing)
     details.extend(f"unexpected {path.as_posix()}" for path in unexpected)
@@ -236,9 +227,7 @@ def _render_pages(
     for section in iter_leaf_sections(manifest.sections):
         assert section.source is not None
         source = repo_root / section.source
-        destination = _surface_destination(
-            output, source_map[section.source], surface
-        )
+        destination = _surface_destination(output, source_map[section.source], surface)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_text(
             rewrite_for_surface(source.read_text(encoding="utf-8"), surface, section.source, source_map),
@@ -250,9 +239,7 @@ def _surface_destination(output: Path, relative: Path, surface: str) -> Path:
     output_root = output.resolve()
     destination = (output_root / relative).resolve()
     if relative.is_absolute() or not destination.is_relative_to(output_root):
-        raise ManifestError(
-            f"{surface} destination escapes its surface root: {relative}"
-        )
+        raise ManifestError(f"{surface} destination escapes its surface root: {relative}")
     return destination
 
 

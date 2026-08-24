@@ -102,10 +102,7 @@ def load_manifest(path: Path, repo_root: Path) -> Manifest:
                 raise ManifestError(f"manifest path outside repository: {manifest_path}")
             canonical = resolved.relative_to(root)
             if manifest_path != canonical:
-                raise ManifestError(
-                    f"{label} must be canonical repo-relative path: "
-                    f"{manifest_path} (use {canonical})"
-                )
+                raise ManifestError(f"{label} must be canonical repo-relative path: {manifest_path} (use {canonical})")
             if manifest_path in seen:
                 duplicate = "published source" if label == "section source" else label
                 raise ManifestError(f"duplicate {duplicate}: {manifest_path}")
@@ -121,13 +118,10 @@ def load_manifest(path: Path, repo_root: Path) -> Manifest:
         canonical = resolved.relative_to(root)
         if internal_root != canonical:
             raise ManifestError(
-                f"internal root must be canonical repo-relative path: "
-                f"{internal_root} (use {canonical})"
+                f"internal root must be canonical repo-relative path: {internal_root} (use {canonical})"
             )
         if resolved == docs_root or not resolved.is_relative_to(docs_root):
-            raise ManifestError(
-                f"internal root must be a proper docs subtree: {internal_root}"
-            )
+            raise ManifestError(f"internal root must be a proper docs subtree: {internal_root}")
         if not resolved.exists():
             raise ManifestError(f"missing manifest path: {internal_root}")
         if not resolved.is_dir():
@@ -139,16 +133,12 @@ def load_manifest(path: Path, repo_root: Path) -> Manifest:
         resolved = (root / source).resolve()
         for internal_root, internal_resolved in resolved_internal_roots:
             if resolved == internal_resolved or resolved.is_relative_to(internal_resolved):
-                raise ManifestError(
-                    f"published source is inside internal root: {source} ({internal_root})"
-                )
+                raise ManifestError(f"published source is inside internal root: {source} ({internal_root})")
     for master in masters:
         resolved = (root / master).resolve()
         for internal_root, internal_resolved in resolved_internal_roots:
             if resolved == internal_resolved or resolved.is_relative_to(internal_resolved):
-                raise ManifestError(
-                    f"diagram master is inside internal root: {master} ({internal_root})"
-                )
+                raise ManifestError(f"diagram master is inside internal root: {master} ({internal_root})")
     for internal_root, internal_resolved in resolved_internal_roots:
         for auxiliary in _AUXILIARY_PUBLIC_INPUTS:
             auxiliary_resolved = (root / auxiliary).resolve()
@@ -157,10 +147,7 @@ def load_manifest(path: Path, repo_root: Path) -> Manifest:
                 or auxiliary_resolved.is_relative_to(internal_resolved)
                 or internal_resolved.is_relative_to(auxiliary_resolved)
             ):
-                raise ManifestError(
-                    "internal root overlaps published auxiliary input: "
-                    f"{internal_root} ({auxiliary})"
-                )
+                raise ManifestError(f"internal root overlaps published auxiliary input: {internal_root} ({auxiliary})")
     return manifest
 
 

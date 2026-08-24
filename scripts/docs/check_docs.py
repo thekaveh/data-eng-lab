@@ -45,9 +45,7 @@ _NON_PORTABLE_MARKERS = (
     "!!! ",
     "=== ",
 )
-_BRACKETED_INLINE_MARKDOWN_PATH = re.compile(
-    r"(?<!!)\[`(?P<path>[^`\r\n]+\.md(?:#[^`\r\n]+)?)`\](?!\s*(?:\(|\[|:))"
-)
+_BRACKETED_INLINE_MARKDOWN_PATH = re.compile(r"(?<!!)\[`(?P<path>[^`\r\n]+\.md(?:#[^`\r\n]+)?)`\](?!\s*(?:\(|\[|:))")
 
 
 @dataclass(frozen=True)
@@ -64,11 +62,7 @@ def check_completeness(repo_root: Path) -> tuple[Finding, ...]:
     manifest, findings = _load(root)
     if manifest is None:
         return findings
-    declared = {
-        section.source
-        for section in iter_leaf_sections(manifest.sections)
-        if section.source is not None
-    }
+    declared = {section.source for section in iter_leaf_sections(manifest.sections) if section.source is not None}
     for path in sorted((root / "docs").rglob("*.md")):
         relative = path.relative_to(root)
         if _is_internal(relative, manifest.internal_roots):
@@ -78,8 +72,7 @@ def check_completeness(repo_root: Path) -> tuple[Finding, ...]:
     for path in sorted((root / "scenarios").glob("*/notebooks.md")):
         findings += (
             _error(
-                "legacy scenario notebook documentation is not manifest-owned: "
-                f"{path.relative_to(root).as_posix()}"
+                f"legacy scenario notebook documentation is not manifest-owned: {path.relative_to(root).as_posix()}"
             ),
         )
 
@@ -95,25 +88,13 @@ def check_completeness(repo_root: Path) -> tuple[Finding, ...]:
         if scenarios_root.is_dir()
         else set()
     )
-    notebook_sources = {
-        path
-        for path in declared
-        if path.parent == Path("docs/notebooks") and path.name != "index.md"
-    }
+    notebook_sources = {path for path in declared if path.parent == Path("docs/notebooks") and path.name != "index.md"}
     documented_ids = {path.stem for path in notebook_sources}
     for identifier in sorted(scenario_ids - documented_ids):
-        findings += (
-            _error(
-                "scenario notebook documentation absent from manifest: "
-                f"docs/notebooks/{identifier}.md"
-            ),
-        )
+        findings += (_error(f"scenario notebook documentation absent from manifest: docs/notebooks/{identifier}.md"),)
     for identifier in sorted(documented_ids - scenario_ids):
         findings += (
-            _error(
-                "manifest notebook documentation has no paired scenario notebooks: "
-                f"docs/notebooks/{identifier}.md"
-            ),
+            _error(f"manifest notebook documentation has no paired scenario notebooks: docs/notebooks/{identifier}.md"),
         )
     return _sorted(findings)
 
@@ -150,14 +131,8 @@ def check_numbering(repo_root: Path) -> tuple[Finding, ...]:
             html_heading = _HTML_H1.search(text)
             candidates = tuple(match for match in (heading, html_heading) if match is not None)
             first = min(candidates, key=lambda match: match.start()) if candidates else None
-            valid = (
-                first is html_heading
-                and html_heading.group("heading") == _CANONICAL_OVERVIEW_H1
-            )
-            message = (
-                f"{section.source.as_posix()} first heading must be exactly "
-                f"{_CANONICAL_OVERVIEW_H1!r}"
-            )
+            valid = first is html_heading and html_heading.group("heading") == _CANONICAL_OVERVIEW_H1
+            message = f"{section.source.as_posix()} first heading must be exactly {_CANONICAL_OVERVIEW_H1!r}"
         else:
             expected = f"# {section.number}. {section.title}"
             actual = heading.group(1) if heading is not None else None
@@ -179,9 +154,7 @@ def check_placeholders(repo_root: Path) -> tuple[Finding, ...]:
         relative = path.relative_to(root).as_posix()
         for marker in _UNFINISHED_MARKERS:
             if re.search(rf"\b{re.escape(marker)}\b", text):
-                findings += (
-                    _error(f"unfinished marker {marker} in public documentation: {relative}"),
-                )
+                findings += (_error(f"unfinished marker {marker} in public documentation: {relative}"),)
     return _sorted(findings)
 
 
@@ -198,9 +171,7 @@ def check_portability(repo_root: Path) -> tuple[Finding, ...]:
         visible = _without_fenced_code(text)
         for marker in _NON_PORTABLE_MARKERS:
             if marker in visible:
-                findings += (
-                    _error(f"{relative}: non-portable Markdown marker {marker!r}"),
-                )
+                findings += (_error(f"{relative}: non-portable Markdown marker {marker!r}"),)
         for line in _unlabeled_opening_fences(text):
             findings += (_error(f"{relative}:{line}: unlabeled code fence"),)
 
@@ -213,10 +184,7 @@ def check_portability(repo_root: Path) -> tuple[Finding, ...]:
         expected = [str(index) for index in range(1, len(headings) + 1)]
         if len(headings) != len(all_h2) or headings != expected:
             findings += (
-                _error(
-                    f"{section.source.as_posix()}: H2 headings must use "
-                    "document-local sequential numbering"
-                ),
+                _error(f"{section.source.as_posix()}: H2 headings must use document-local sequential numbering"),
             )
     return _sorted(findings)
 
@@ -235,13 +203,9 @@ def check_empty_artifacts(repo_root: Path) -> tuple[Finding, ...]:
         if _is_internal(relative, manifest.internal_roots):
             continue
         if path.is_file() and path.stat().st_size == 0:
-            findings += (
-                _error(f"empty public documentation file: {relative.as_posix()}"),
-            )
+            findings += (_error(f"empty public documentation file: {relative.as_posix()}"),)
         elif path.is_dir() and not any(path.iterdir()):
-            findings += (
-                _error(f"empty public documentation directory: {relative.as_posix()}"),
-            )
+            findings += (_error(f"empty public documentation directory: {relative.as_posix()}"),)
     return _sorted(findings)
 
 
@@ -260,12 +224,7 @@ def check_self_containment(repo_root: Path) -> tuple[Finding, ...]:
         if path.suffix != ".md":
             continue
         for malformed in _malformed_inline_path_links(text):
-            findings += (
-                _error(
-                    f"{relative}: malformed Markdown link around inline path "
-                    f"{malformed}"
-                ),
-            )
+            findings += (_error(f"{relative}: malformed Markdown link around inline path {malformed}"),)
         for link in find_links(_without_fenced_code(text)):
             target = link.target
             # Exercise the shared classifier as the authoritative origin matrix.
@@ -284,18 +243,13 @@ def check_self_containment(repo_root: Path) -> tuple[Finding, ...]:
             if _escapes_root(surface_root, path, clean) or not resolved.is_relative_to(surface_root):
                 label = "repository" if surface == "repo" else surface
                 kind = "image" if is_image else "target"
-                findings += (
-                    _error(f"{relative}: local {kind} escapes {label} surface: {target}"),
-                )
+                findings += (_error(f"{relative}: local {kind} escapes {label} surface: {target}"),)
                 continue
             if surface == "repo":
                 target_relative = resolved.relative_to(root)
                 if _is_internal(target_relative, manifest.internal_roots):
                     findings += (
-                        _error(
-                            f"{relative}: local target enters internal documentation: "
-                            f"{target_relative.as_posix()}"
-                        ),
+                        _error(f"{relative}: local target enters internal documentation: {target_relative.as_posix()}"),
                     )
                     continue
             if not resolved.is_file():
@@ -306,11 +260,7 @@ def check_self_containment(repo_root: Path) -> tuple[Finding, ...]:
                 anchors = _markdown_anchors(resolved.read_text(encoding="utf-8"))
                 if fragment not in anchors and fragment.removeprefix("user-content-") not in anchors:
                     target_name = resolved.relative_to(surface_root).as_posix()
-                    findings += (
-                        _error(
-                            f"{relative}: missing local fragment #{fragment} in {target_name}"
-                        ),
-                    )
+                    findings += (_error(f"{relative}: missing local fragment #{fragment} in {target_name}"),)
     return _sorted(findings)
 
 
@@ -354,11 +304,7 @@ def check_diagrams(repo_root: Path) -> tuple[Finding, ...]:
         if identifier in png_ids:
             findings += _check_png(png_dir / f"{identifier}.png", identifier)
         if entry.master != expected_master:
-            findings += (
-                _error(
-                    f"{identifier}: manifest master must be {expected_master}, got {entry.master}"
-                ),
-            )
+            findings += (_error(f"{identifier}: manifest master must be {expected_master}, got {entry.master}"),)
         if identifier in master_ids:
             master_path = root / expected_master
             master_findings = _check_master(master_path, identifier)
@@ -366,22 +312,15 @@ def check_diagrams(repo_root: Path) -> tuple[Finding, ...]:
             if not master_findings and identifier in fingerprint_ids:
                 svg = extract_svg(master_path.read_text(encoding="utf-8"))
                 expected_fingerprint = f"sha256:{diagram_fingerprint(svg)}\n"
-                fingerprint_path = projection_fingerprint_path(
-                    png_dir / f"{identifier}.png"
-                )
+                fingerprint_path = projection_fingerprint_path(png_dir / f"{identifier}.png")
                 try:
                     actual_fingerprint = fingerprint_path.read_text(encoding="utf-8")
                 except OSError as error:
-                    findings += (
-                        _error(f"{identifier}: unable to read PNG source fingerprint: {error}"),
-                    )
+                    findings += (_error(f"{identifier}: unable to read PNG source fingerprint: {error}"),)
                 else:
                     if actual_fingerprint != expected_fingerprint:
                         findings += (
-                            _error(
-                                f"{identifier}: PNG source fingerprint differs from "
-                                "master/render contract"
-                            ),
+                            _error(f"{identifier}: PNG source fingerprint differs from master/render contract"),
                         )
         if identifier in svg_ids:
             svg_path = svg_dir / f"{identifier}.svg"
@@ -436,9 +375,7 @@ def _canonical_markdown(root: Path, internal_roots: tuple[Path, ...]) -> tuple[P
     docs = root / "docs"
     if docs.exists():
         candidates.update(
-            path
-            for path in docs.rglob("*.md")
-            if not _is_internal(path.relative_to(root), internal_roots)
+            path for path in docs.rglob("*.md") if not _is_internal(path.relative_to(root), internal_roots)
         )
     for directory in (root / "scenarios", root / "spark-apps"):
         if directory.exists():
@@ -457,9 +394,7 @@ def _placeholder_files(root: Path, internal_roots: tuple[Path, ...]) -> tuple[Pa
     return tuple(sorted(candidates))
 
 
-def _surface_files(
-    root: Path, internal_roots: tuple[Path, ...]
-) -> tuple[tuple[str, Path], ...]:
+def _surface_files(root: Path, internal_roots: tuple[Path, ...]) -> tuple[tuple[str, Path], ...]:
     values: list[tuple[str, Path]] = []
     for path in _canonical_markdown(root, internal_roots):
         values.append(("repo", path))
@@ -536,11 +471,7 @@ def _unlabeled_opening_fences(markdown: str) -> tuple[int, ...]:
         if marker is None:
             continue
         if fence_character:
-            if (
-                marker[0] == fence_character
-                and marker[1] >= fence_length
-                and not marker[2].strip()
-            ):
+            if marker[0] == fence_character and marker[1] >= fence_length and not marker[2].strip():
                 fence_character = ""
                 fence_length = 0
             continue
@@ -626,8 +557,7 @@ def _github_slug(heading: str) -> str:
     value = "".join(
         character
         for character in value
-        if character in {"-", "_", " "}
-        or not unicodedata.category(character).startswith(("P", "S"))
+        if character in {"-", "_", " "} or not unicodedata.category(character).startswith(("P", "S"))
     )
     return re.sub(r"\s", "-", value)
 
@@ -687,9 +617,7 @@ def _check_master(path: Path, identifier: str) -> tuple[Finding, ...]:
         return (_error(f'{identifier}: SVG must have role="img"'),)
     labelled_by = root.attrib.get("aria-labelledby", "").split()
     children = {
-        child.tag.rsplit("}", 1)[-1]: child
-        for child in root
-        if child.tag.rsplit("}", 1)[-1] in {"title", "desc"}
+        child.tag.rsplit("}", 1)[-1]: child for child in root if child.tag.rsplit("}", 1)[-1] in {"title", "desc"}
     }
     title = children.get("title")
     description = children.get("desc")
@@ -703,11 +631,7 @@ def _check_master(path: Path, identifier: str) -> tuple[Finding, ...]:
         or not (title.text or "").strip()
         or not (description.text or "").strip()
     ):
-        return (
-            _error(
-                f"{identifier}: SVG must label non-empty title and desc elements with aria-labelledby"
-            ),
-        )
+        return (_error(f"{identifier}: SVG must label non-empty title and desc elements with aria-labelledby"),)
     return ()
 
 

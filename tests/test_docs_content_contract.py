@@ -84,9 +84,14 @@ HERO_BADGE_ROWS = (
 HERO_EXECUTIVE_SUMMARY = (
     "`data-eng-lab` consumes Atlas as its pinned `infra/` git submodule through "
     "`atlas.consumer.yml`, so `make up` launches the default development profile as the "
-    "**Data Engineering** workspace. It pairs 19 Zeppelin and Jupyter scenario notebooks—17 "
-    "Scala/PySpark implementations plus two Trino client pairs—with Iceberg on MinIO, Airflow, "
-    "Jenkins-built Spark apps, Trino, and Redpanda for three broker-backed streams."
+    "**Data Engineering** workspace. The lab integrates storage, compute, orchestration, delivery, "
+    "and observability instead of leaving users to wire independent services together: Iceberg "
+    "tables live on MinIO, Spark runs batch and streaming workloads, Airflow coordinates production "
+    "DAGs, Jenkins publishes six CI-built Maven applications, Trino serves analytical SQL, and "
+    "Prometheus and Grafana monitor the Iceberg REST boundary. Nineteen paired Zeppelin and Jupyter "
+    "scenarios provide 17 Scala/PySpark implementations plus two Trino client pairs, while Redpanda "
+    "supplies three broker-backed streams. The same locked datasets and catalog contracts support "
+    "notebook exploration and deployable application paths."
 )
 ARCHITECTURE_LEAD = (
     "## 2. Architecture\n\n"
@@ -263,6 +268,11 @@ def test_opener_is_centered_badged_and_identical_across_canonical_surfaces():
 
     executive_summary = _executive_summary(readme_opener)
     assert executive_summary == _executive_summary(index_opener) == HERO_EXECUTIVE_SUMMARY
+    words = executive_summary.split()
+    assert 100 <= len(words) <= 150
+    assert "six CI-built Maven applications" in executive_summary
+    assert "Prometheus and Grafana" in executive_summary
+    assert len(tuple((ROOT / "spark-apps").glob("*/pom.xml"))) == 6
     for required in (
         "atlas.consumer.yml",
         "make up",
@@ -274,6 +284,9 @@ def test_opener_is_centered_badged_and_identical_across_canonical_surfaces():
         "two Trino client pairs",
         "Airflow",
         "Jenkins",
+        "six CI-built Maven applications",
+        "Prometheus",
+        "Grafana",
         "Trino",
         "Redpanda",
     ):

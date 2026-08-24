@@ -47,7 +47,7 @@ EXPECTED_WORKFLOW_SHA256 = {
     "ci.yml": "ab10e67213663ae00e78950d9058ca5f802f84de96957360da083ebf6dcecb63",
     "codeql.yml": "dd954c7817e6ae3e7731377f8753bc9cae54bfac58cf9c4c62debaf5f54cbc17",
     "dependency-security.yml": "4b9d2f0ac3306d65ec995ef4e6a4c88cbe18c074fa98ca120316ed19da1e4d3b",
-    "docs-deploy.yml": "514139eb155d45c388efb5b35e1109d76a0b8e5d0ad82246f4f43eef313b335d",
+    "docs-deploy.yml": "fb2fc69c19b2e8339fa134fc5252b4355276bf921693a0c140334634f9224de5",
 }
 EXPECTED_PRIVILEGED_LOCAL_SHA256 = {
     "scripts/docs/push_wiki.py": "eadc538e18f5e13642df306e6e7e589bfa4719a43af44b9f1fc5a5c2bd35421a",
@@ -90,7 +90,7 @@ _VOID_HTML_ELEMENTS = frozenset(
 _NON_RENDERED_HTML_ELEMENTS = frozenset({"datalist", "noscript", "script", "style", "template"})
 _FOREIGN_CONTENT_ROOTS = frozenset({"math", "svg"})
 _AMBIGUOUS_RENDERING_ELEMENTS = frozenset(
-    {"audio", "canvas", "meter", "object", "picture", "progress", "select", "video"}
+    {"audio", "canvas", "iframe", "meter", "object", "picture", "progress", "select", "video"}
 )
 _HTML_HEADINGS = frozenset({"h1", "h2", "h3", "h4", "h5", "h6"})
 _GOVERNANCE_HTML_ELEMENTS = _HTML_HEADINGS | {"li"}

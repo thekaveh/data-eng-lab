@@ -101,6 +101,9 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
+  # Ephemeral repository-scoped publisher: this isolated job receives only
+  # contents:write, verifies the privileged script digest, and intentionally
+  # uses GITHUB_TOKEN instead of a persistent deploy key or fallback path.
   wiki:
     if: github.ref == 'refs/heads/main'
     needs: wiki-build

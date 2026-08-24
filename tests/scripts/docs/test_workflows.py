@@ -195,10 +195,15 @@ def test_publish_workflow_pushes_generated_wiki_after_pages_deploy():
 
     push_step = next(step for step in wiki["steps"] if step.get("name") == "Push generated wiki")
     assert push_step["run"] == "/usr/bin/python3 -I scripts/docs/push_wiki.py --push --root ."
-    assert push_step["env"]["WIKI_REMOTE"] == (
-        "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git"
-    )
-    assert "WIKI_SSH_KEY" not in push_step["env"]
+    assert push_step["env"] == {
+        "WIKI_REMOTE": (
+            "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git"
+        )
+    }
+    workflow_text = (WORKFLOWS / "docs-deploy.yml").read_text(encoding="utf-8")
+    assert "Ephemeral repository-scoped publisher" in workflow_text
+    assert "WIKI_DEPLOY_KEY" not in workflow_text
+    assert "WIKI_SSH_KEY" not in workflow_text
     assert not (WORKFLOWS / "docs-sync.yml").exists()
 
 
