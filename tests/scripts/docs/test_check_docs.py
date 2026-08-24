@@ -24,15 +24,10 @@ from scripts.docs.render_diagrams import (
 )
 from scripts.scenario_execution import render_markdown
 
-OVERVIEW_H1_ERROR = (
-    "docs/index.md first heading must be exactly "
-    "'<h1 align=\"center\">data-eng-lab</h1>'"
-)
+OVERVIEW_H1_ERROR = "docs/index.md first heading must be exactly '<h1 align=\"center\">data-eng-lab</h1>'"
 
 
-def _master(
-    *, width: int = 800, height: int = 400, svg_count: int = 1, accessible: bool = True
-) -> str:
+def _master(*, width: int = 800, height: int = 400, svg_count: int = 1, accessible: bool = True) -> str:
     metadata = (
         ' role="img" aria-labelledby="diagram-title diagram-description">'
         '<title id="diagram-title">Overview</title>'
@@ -40,20 +35,12 @@ def _master(
         if accessible
         else ">"
     )
-    svg = (
-        f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}"'
-        f"{metadata}</svg>"
-    )
+    svg = f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {width} {height}"{metadata}</svg>'
     return f"<html><body>{svg * svg_count}</body></html>"
 
 
 def _png(*, width: int = 800, height: int = 400) -> bytes:
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + b"\x00\x00\x00\rIHDR"
-        + width.to_bytes(4, "big")
-        + height.to_bytes(4, "big")
-    )
+    return b"\x89PNG\r\n\x1a\n" + b"\x00\x00\x00\rIHDR" + width.to_bytes(4, "big") + height.to_bytes(4, "big")
 
 
 @pytest.fixture
@@ -68,20 +55,14 @@ def repo_fixture(tmp_path: Path) -> Path:
         '<h1 align="center">data-eng-lab</h1>\n',
         encoding="utf-8",
     )
-    (repo / "scenarios/execution-modes.yaml").write_text(
-        "version: 1\nscenarios: []\n", encoding="utf-8"
-    )
+    (repo / "scenarios/execution-modes.yaml").write_text("version: 1\nscenarios: []\n", encoding="utf-8")
     (repo / "docs/scenarios").mkdir(parents=True)
-    (repo / "docs/scenarios/execution-modes.md").write_text(
-        render_markdown(()), encoding="utf-8"
-    )
+    (repo / "docs/scenarios/execution-modes.md").write_text(render_markdown(()), encoding="utf-8")
     (repo / "docs/diagrams/overview.html").write_text(_master(), encoding="utf-8")
     svg = extract_svg((repo / "docs/diagrams/overview.html").read_text(encoding="utf-8"))
     png = repo / "docs/diagrams/img/overview.png"
     svg_to_png(svg, png)
-    projection_fingerprint_path(png).write_text(
-        f"sha256:{diagram_fingerprint(svg)}\n", encoding="utf-8"
-    )
+    projection_fingerprint_path(png).write_text(f"sha256:{diagram_fingerprint(svg)}\n", encoding="utf-8")
     (repo / "docs/stylesheets/extra.css").write_text("body { color: cyan; }\n", encoding="utf-8")
     (repo / "docs/overrides/main.html").write_text('{% extends "base.html" %}\n', encoding="utf-8")
     (repo / "docs/manifest.yaml").write_text(
@@ -121,15 +102,11 @@ def test_execution_mode_docs_check_fails_closed_when_both_files_are_absent(repo_
 def test_execution_mode_docs_check_reports_each_missing_surface_independently(repo_fixture):
     matrix = repo_fixture / "scenarios/execution-modes.yaml"
     (repo_fixture / "docs/scenarios/execution-modes.md").unlink()
-    assert "scenario execution-mode public projection is missing" in messages(
-        check_execution_modes(repo_fixture)
-    )
+    assert "scenario execution-mode public projection is missing" in messages(check_execution_modes(repo_fixture))
     matrix.unlink()
     projection = repo_fixture / "docs/scenarios/execution-modes.md"
     projection.write_text("# Projection\n", encoding="utf-8")
-    assert messages(check_execution_modes(repo_fixture)) == [
-        "scenario execution-mode canonical matrix is missing"
-    ]
+    assert messages(check_execution_modes(repo_fixture)) == ["scenario execution-mode canonical matrix is missing"]
 
 
 def test_atlas_acceptance_record_is_consistent(repo_root):
@@ -203,13 +180,13 @@ def test_current_atlas_live_acceptance_closeout_is_explicit_and_not_stale(repo_r
         "Layer 2 at 6/6",
     )
     go_live = (repo_root / "docs/go-live.md").read_text(encoding="utf-8")
-    go_live_current = go_live.split(
-        "**Current accepted baseline (2026-08-10, atlas", maxsplit=1
-    )[1].split("**Historical accepted baseline", maxsplit=1)[0]
+    go_live_current = go_live.split("**Current accepted baseline (2026-08-10, atlas", maxsplit=1)[1].split(
+        "**Historical accepted baseline", maxsplit=1
+    )[0]
     feedback = (repo_root / "docs/atlas-feedback-go-live.md").read_text(encoding="utf-8")
-    feedback_current = feedback.split(
-        "Current contract update (2026-08-10, atlas", maxsplit=1
-    )[1].split("## 2. Key Observations", maxsplit=1)[0]
+    feedback_current = feedback.split("Current contract update (2026-08-10, atlas", maxsplit=1)[1].split(
+        "## 2. Key Observations", maxsplit=1
+    )[0]
     changelog = (repo_root / "docs/CHANGELOG.md").read_text(encoding="utf-8")
     changelog_current = changelog.split("- Atlas is now pinned at", maxsplit=1)[1].split(
         "- The repository, site, and wiki", maxsplit=1
@@ -222,9 +199,7 @@ def test_current_atlas_live_acceptance_closeout_is_explicit_and_not_stale(repo_r
     ):
         normalized = " ".join(current_section.split())
         for phrase in current_evidence:
-            assert phrase in normalized, (
-                f"{relative} is missing current live evidence {phrase!r}"
-            )
+            assert phrase in normalized, f"{relative} is missing current live evidence {phrase!r}"
         assert "SparkSubmitOperator" in current_section
         assert "`RestConfirmingSparkHook`" in current_section
     assert "operator-owned" in go_live_current
@@ -245,9 +220,9 @@ def test_current_atlas_live_acceptance_closeout_is_explicit_and_not_stale(repo_r
     ):
         assert stale_phrase not in unwind
 
-    historical_findings = feedback.split(
-        "## 6. 2026-07-21 live verification findings", maxsplit=1
-    )[1].split("## 7. Reviewed-pin update", maxsplit=1)[0]
+    historical_findings = feedback.split("## 6. 2026-07-21 live verification findings", maxsplit=1)[1].split(
+        "## 7. Reviewed-pin update", maxsplit=1
+    )[0]
     assert "historical record" in historical_findings
     assert "resolved at the current pin" in historical_findings
     for active_caveat in (
@@ -260,9 +235,7 @@ def test_current_atlas_live_acceptance_closeout_is_explicit_and_not_stale(repo_r
     ):
         assert active_caveat not in historical_findings
 
-    pin_runbook = (repo_root / "docs/atlas-pin-bump-runbook.md").read_text(
-        encoding="utf-8"
-    )
+    pin_runbook = (repo_root / "docs/atlas-pin-bump-runbook.md").read_text(encoding="utf-8")
     assert "Atlas automatically adds --build" in pin_runbook
     assert ".atlas-build-state" in pin_runbook
 
@@ -283,29 +256,19 @@ def test_completeness_rejects_legacy_scenario_notebook_mirror(repo_fixture: Path
     legacy.write_text("# Duplicate notebook docs\n", encoding="utf-8")
 
     assert messages(check_completeness(repo_fixture)) == [
-        "legacy scenario notebook documentation is not manifest-owned: "
-        "scenarios/example/notebooks.md"
+        "legacy scenario notebook documentation is not manifest-owned: scenarios/example/notebooks.md"
     ]
 
 
 def test_repository_notebook_docs_are_manifest_owned_without_legacy_mirrors(repo_root):
     manifest = load_manifest(repo_root / "docs/manifest.yaml", repo_root)
-    declared = {
-        section.source
-        for section in iter_leaf_sections(manifest.sections)
-        if section.source is not None
-    }
+    declared = {section.source for section in iter_leaf_sections(manifest.sections) if section.source is not None}
     scenario_ids = {
         path.name
         for path in (repo_root / "scenarios").iterdir()
-        if (path / "jupyter/notebook.ipynb").is_file()
-        and (path / "zeppelin/notebook.zpln").is_file()
+        if (path / "jupyter/notebook.ipynb").is_file() and (path / "zeppelin/notebook.zpln").is_file()
     }
-    notebook_sources = {
-        path
-        for path in declared
-        if path.parent == Path("docs/notebooks") and path.name != "index.md"
-    }
+    notebook_sources = {path for path in declared if path.parent == Path("docs/notebooks") and path.name != "index.md"}
 
     assert scenario_ids == {path.stem for path in notebook_sources}
     assert len(scenario_ids) == 19
@@ -315,9 +278,7 @@ def test_repository_notebook_docs_are_manifest_owned_without_legacy_mirrors(repo
 
     readme = (repo_root / "README.md").read_text(encoding="utf-8")
     index = (repo_root / "docs/notebooks/index.md").read_text(encoding="utf-8")
-    assert "scenarios/" not in "\n".join(
-        line for line in readme.splitlines() if "[notebooks]" in line
-    )
+    assert "scenarios/" not in "\n".join(line for line in readme.splitlines() if "[notebooks]" in line)
     assert "scripts/docslib/notebooks.py" not in index
     assert "scripts/build_docs.py" not in index
     assert "make docs-check" in index
@@ -367,8 +328,7 @@ def test_numbering_ignores_correct_h1_inside_fenced_code(repo_fixture: Path):
 
 def test_numbering_uses_canonical_real_h1_after_fenced_example(repo_fixture: Path):
     (repo_fixture / "docs/index.md").write_text(
-        "~~~markdown\n# Wrong fenced heading\n~~~\n\n"
-        '<h1 align="center">data-eng-lab</h1>\n',
+        '~~~markdown\n# Wrong fenced heading\n~~~\n\n<h1 align="center">data-eng-lab</h1>\n',
         encoding="utf-8",
     )
 
@@ -414,8 +374,7 @@ def test_numbering_preserves_markdown_h1_behavior_for_non_overview_pages(repo_fi
     manifest.write_text(
         manifest.read_text(encoding="utf-8").replace(
             "diagrams:\n",
-            "  - {id: guide, number: '2', title: Guide, source: docs/guide.md}\n"
-            "diagrams:\n",
+            "  - {id: guide, number: '2', title: Guide, source: docs/guide.md}\ndiagrams:\n",
         ),
         encoding="utf-8",
     )
@@ -457,8 +416,7 @@ def test_numbering_rejects_multiline_html_h1_before_canonical_overview_h1(
     repo_fixture: Path,
 ):
     (repo_fixture / "docs/index.md").write_text(
-        '<h1\n class="wrong">\nWrong heading\n</h1>\n\n'
-        '<h1 align="center">data-eng-lab</h1>\n',
+        '<h1\n class="wrong">\nWrong heading\n</h1>\n\n<h1 align="center">data-eng-lab</h1>\n',
         encoding="utf-8",
     )
 
@@ -469,17 +427,13 @@ def test_empty_public_artifacts_are_errors_but_generated_dirs_are_not(repo_fixtu
     (repo_fixture / "docs/empty.md").touch()
     (repo_fixture / "generated/empty").mkdir(parents=True)
 
-    assert messages(check_empty_artifacts(repo_fixture)) == [
-        "empty public documentation file: docs/empty.md"
-    ]
+    assert messages(check_empty_artifacts(repo_fixture)) == ["empty public documentation file: docs/empty.md"]
 
 
 def test_empty_public_directories_are_errors(repo_fixture: Path):
     (repo_fixture / "docs/empty-dir").mkdir()
 
-    assert messages(check_empty_artifacts(repo_fixture)) == [
-        "empty public documentation directory: docs/empty-dir"
-    ]
+    assert messages(check_empty_artifacts(repo_fixture)) == ["empty public documentation directory: docs/empty-dir"]
 
 
 def test_placeholders_ignore_only_internal_documentation(repo_fixture: Path):
@@ -537,13 +491,9 @@ def test_portability_requires_document_local_h2_numbering(repo_fixture: Path):
 
 
 def test_repository_cross_surface_link_fails(repo_fixture: Path):
-    (repo_fixture / "README.md").write_text(
-        "see https://thekaveh.github.io/data-eng-lab/\n", encoding="utf-8"
-    )
+    (repo_fixture / "README.md").write_text("see https://thekaveh.github.io/data-eng-lab/\n", encoding="utf-8")
 
-    assert messages(check_self_containment(repo_fixture)) == [
-        "README.md: repository surface links to the site surface"
-    ]
+    assert messages(check_self_containment(repo_fixture)) == ["README.md: repository surface links to the site surface"]
 
 
 def test_bare_generated_url_fails_but_fenced_clone_command_is_ignored(repo_fixture: Path):
@@ -561,9 +511,7 @@ def test_bare_generated_url_fails_but_fenced_clone_command_is_ignored(repo_fixtu
     ]
 
     page.write_text(
-        "```bash\n"
-        "git clone https://github.com/thekaveh/data-eng-lab.git\n"
-        "```\n",
+        "```bash\ngit clone https://github.com/thekaveh/data-eng-lab.git\n```\n",
         encoding="utf-8",
     )
     assert check_self_containment(repo_fixture) == ()
@@ -584,9 +532,7 @@ def test_repository_diagram_links_are_validated_like_other_local_assets(repo_fix
     assert check_self_containment(repo_fixture) == ()
 
     (repo_fixture / "docs/diagrams/img/overview.svg").write_text("<svg/>", encoding="utf-8")
-    (repo_fixture / "README.md").write_text(
-        "![diagram](docs/diagrams/img/overview.svg?raw=1)\n", encoding="utf-8"
-    )
+    (repo_fixture / "README.md").write_text("![diagram](docs/diagrams/img/overview.svg?raw=1)\n", encoding="utf-8")
     assert check_self_containment(repo_fixture) == ()
 
 
@@ -641,15 +587,14 @@ def test_generated_html_image_cannot_escape_surface(repo_fixture: Path):
     )
 
     assert messages(check_self_containment(repo_fixture)) == [
-        "generated/site/index.md: local image escapes site surface: "
-        "../../docs/diagrams/img/overview.png"
+        "generated/site/index.md: local image escapes site surface: ../../docs/diagrams/img/overview.png"
     ]
 
 
 def test_valid_local_and_remote_html_images_pass(repo_fixture: Path):
     (repo_fixture / "README.md").write_text(
         '<img data-src="lazy.png" srcset="small.png 1x" '
-        'alt="literal src=\'trap.png\'" '
+        "alt=\"literal src='trap.png'\" "
         'src = "docs/diagrams/img/overview.png">\n'
         '<img alt="Apache Spark" '
         'src = "https://img.shields.io/badge/Apache%20Spark-compute-E25A1C">\n',
@@ -661,8 +606,7 @@ def test_valid_local_and_remote_html_images_pass(repo_fixture: Path):
 
 def test_html_image_source_decoys_without_real_src_are_ignored(repo_fixture: Path):
     (repo_fixture / "README.md").write_text(
-        '<img data-src="missing-lazy.png" srcset="missing-small.png 1x" '
-        'alt="literal src=\'missing-trap.png\'">\n',
+        '<img data-src="missing-lazy.png" srcset="missing-small.png 1x" alt="literal src=\'missing-trap.png\'">\n',
         encoding="utf-8",
     )
 
@@ -689,9 +633,7 @@ def test_existing_image_outside_surface_fails(repo_fixture: Path):
 
 
 def test_missing_committed_diagram_png_fails(repo_fixture: Path):
-    (repo_fixture / "README.md").write_text(
-        "![diagram](docs/diagrams/img/missing.png)\n", encoding="utf-8"
-    )
+    (repo_fixture / "README.md").write_text("![diagram](docs/diagrams/img/missing.png)\n", encoding="utf-8")
 
     assert messages(check_self_containment(repo_fixture)) == [
         "README.md: missing local image docs/diagrams/img/missing.png",
@@ -744,21 +686,15 @@ def test_generated_existing_local_link_passes(repo_fixture: Path):
 
 
 def test_repository_missing_local_link_fails(repo_fixture: Path):
-    (repo_fixture / "README.md").write_text(
-        "[Missing](docs/missing.md)\n", encoding="utf-8"
-    )
+    (repo_fixture / "README.md").write_text("[Missing](docs/missing.md)\n", encoding="utf-8")
 
-    assert messages(check_self_containment(repo_fixture)) == [
-        "README.md: missing local target docs/missing.md"
-    ]
+    assert messages(check_self_containment(repo_fixture)) == ["README.md: missing local target docs/missing.md"]
 
 
 def test_bracketed_markdown_path_in_inline_code_is_rejected_as_malformed_link(
     repo_fixture: Path,
 ):
-    (repo_fixture / "README.md").write_text(
-        "See [`docs/index.md`] for details.\n", encoding="utf-8"
-    )
+    (repo_fixture / "README.md").write_text("See [`docs/index.md`] for details.\n", encoding="utf-8")
 
     assert messages(check_self_containment(repo_fixture)) == [
         "README.md: malformed Markdown link around inline path docs/index.md"
@@ -767,8 +703,7 @@ def test_bracketed_markdown_path_in_inline_code_is_rejected_as_malformed_link(
 
 def test_inline_markdown_paths_and_bracketed_non_path_code_remain_valid(repo_fixture: Path):
     (repo_fixture / "README.md").write_text(
-        "Open `docs/index.md`; accepted values are [`fast`, `safe`].\n\n"
-        "```markdown\n[`docs/missing.md`]\n```\n",
+        "Open `docs/index.md`; accepted values are [`fast`, `safe`].\n\n```markdown\n[`docs/missing.md`]\n```\n",
         encoding="utf-8",
     )
 
@@ -776,9 +711,7 @@ def test_inline_markdown_paths_and_bracketed_non_path_code_remain_valid(repo_fix
 
 
 def test_repository_missing_markdown_fragment_fails(repo_fixture: Path):
-    (repo_fixture / "README.md").write_text(
-        "[Setup](docs/index.md#missing-setup)\n", encoding="utf-8"
-    )
+    (repo_fixture / "README.md").write_text("[Setup](docs/index.md#missing-setup)\n", encoding="utf-8")
 
     assert messages(check_self_containment(repo_fixture)) == [
         "README.md: missing local fragment #missing-setup in docs/index.md"
@@ -788,9 +721,7 @@ def test_repository_missing_markdown_fragment_fails(repo_fixture: Path):
 def test_repository_github_heading_fragments_and_external_protocols_pass(
     repo_fixture: Path,
 ):
-    (repo_fixture / "docs/index.md").write_text(
-        "# 1. Overview\n\n## Setup & Run\n\n## Setup & Run\n", encoding="utf-8"
-    )
+    (repo_fixture / "docs/index.md").write_text("# 1. Overview\n\n## Setup & Run\n\n## Setup & Run\n", encoding="utf-8")
     (repo_fixture / "README.md").write_text(
         "[First](docs/index.md#setup--run) "
         "[Second](docs/index.md#setup--run-1) "
@@ -805,12 +736,9 @@ def test_repository_github_heading_fragments_and_external_protocols_pass(
 def test_repository_github_heading_suffixes_avoid_existing_slug_collisions(
     repo_fixture: Path,
 ):
-    (repo_fixture / "docs/index.md").write_text(
-        "# 1. Overview\n\n## Foo\n\n## Foo-1\n\n## Foo\n", encoding="utf-8"
-    )
+    (repo_fixture / "docs/index.md").write_text("# 1. Overview\n\n## Foo\n\n## Foo-1\n\n## Foo\n", encoding="utf-8")
     (repo_fixture / "README.md").write_text(
-        "[First](docs/index.md#foo) [Named](docs/index.md#foo-1) "
-        "[Duplicate](docs/index.md#foo-2)\n",
+        "[First](docs/index.md#foo) [Named](docs/index.md#foo-1) [Duplicate](docs/index.md#foo-2)\n",
         encoding="utf-8",
     )
 
@@ -820,13 +748,10 @@ def test_repository_github_heading_suffixes_avoid_existing_slug_collisions(
 def test_public_repository_page_cannot_link_into_internal_archive(repo_fixture: Path):
     internal = repo_fixture / "docs/superpowers/internal.md"
     internal.write_text("# Internal\n", encoding="utf-8")
-    (repo_fixture / "README.md").write_text(
-        "[Internal](docs/superpowers/internal.md)\n", encoding="utf-8"
-    )
+    (repo_fixture / "README.md").write_text("[Internal](docs/superpowers/internal.md)\n", encoding="utf-8")
 
     assert messages(check_self_containment(repo_fixture)) == [
-        "README.md: local target enters internal documentation: "
-        "docs/superpowers/internal.md"
+        "README.md: local target enters internal documentation: docs/superpowers/internal.md"
     ]
 
 
@@ -850,12 +775,8 @@ def test_diagram_inventory_and_file_validation(repo_fixture: Path):
 def test_diagram_gate_rejects_stale_master_fingerprint(repo_fixture: Path):
     site_images = repo_fixture / "generated/site/assets/img"
     site_images.mkdir(parents=True)
-    (site_images / "overview.svg").write_text(
-        "<svg xmlns=\"http://www.w3.org/2000/svg\"/>", encoding="utf-8"
-    )
-    (repo_fixture / "docs/diagrams/overview.html").write_text(
-        _master(width=900), encoding="utf-8"
-    )
+    (site_images / "overview.svg").write_text('<svg xmlns="http://www.w3.org/2000/svg"/>', encoding="utf-8")
+    (repo_fixture / "docs/diagrams/overview.html").write_text(_master(width=900), encoding="utf-8")
 
     assert "overview: PNG source fingerprint differs from master/render contract" in messages(
         check_diagrams(repo_fixture)
@@ -867,9 +788,7 @@ def test_aggregate_gate_reports_stale_fingerprint_without_rewriting_png(repo_fix
     before = png.read_bytes()
     projection_fingerprint_path(png).write_text("sha256:" + "0" * 64 + "\n", encoding="utf-8")
 
-    assert "overview: PNG source fingerprint differs from master/render contract" in messages(
-        check(repo_fixture)
-    )
+    assert "overview: PNG source fingerprint differs from master/render contract" in messages(check(repo_fixture))
     assert png.read_bytes() == before
 
 
@@ -890,11 +809,9 @@ def test_diagram_gate_requires_accessible_svg_metadata(repo_fixture: Path):
     site_images = repo_fixture / "generated/site/assets/img"
     site_images.mkdir(parents=True)
     (site_images / "overview.svg").write_text("<svg/>", encoding="utf-8")
-    (repo_fixture / "docs/diagrams/overview.html").write_text(
-        _master(accessible=False), encoding="utf-8"
-    )
+    (repo_fixture / "docs/diagrams/overview.html").write_text(_master(accessible=False), encoding="utf-8")
 
-    assert "overview: SVG must have role=\"img\"" in messages(check_diagrams(repo_fixture))
+    assert 'overview: SVG must have role="img"' in messages(check_diagrams(repo_fixture))
 
 
 def test_empty_diagram_manifest_cannot_make_gate_vacuous(repo_fixture: Path):
@@ -910,9 +827,7 @@ diagrams: []
         encoding="utf-8",
     )
 
-    assert messages(check_diagrams(repo_fixture)) == [
-        "docs/manifest.yaml must declare at least one diagram"
-    ]
+    assert messages(check_diagrams(repo_fixture)) == ["docs/manifest.yaml must declare at least one diagram"]
 
 
 @pytest.mark.parametrize(
@@ -922,9 +837,7 @@ diagrams: []
         (_png(width=0), "PNG projection overview dimensions must be nonzero"),
     ],
 )
-def test_invalid_or_zero_dimension_png_fails(
-    repo_fixture: Path, payload: bytes, message: str
-):
+def test_invalid_or_zero_dimension_png_fails(repo_fixture: Path, payload: bytes, message: str):
     site_image = repo_fixture / "generated/site/assets/img/overview.svg"
     site_image.parent.mkdir(parents=True)
     site_image.write_text("<svg/>", encoding="utf-8")
@@ -939,14 +852,10 @@ def test_non_landscape_and_multiple_svg_master_fail(repo_fixture: Path):
     site_image.write_text("<svg/>", encoding="utf-8")
     master = repo_fixture / "docs/diagrams/overview.html"
     master.write_text(_master(width=400, height=800), encoding="utf-8")
-    assert messages(check_diagrams(repo_fixture)) == [
-        "overview: SVG is not landscape (400.0x800.0)"
-    ]
+    assert messages(check_diagrams(repo_fixture)) == ["overview: SVG is not landscape (400.0x800.0)"]
 
     master.write_text(_master(svg_count=2), encoding="utf-8")
-    assert messages(check_diagrams(repo_fixture)) == [
-        "overview: master must contain exactly one inline SVG"
-    ]
+    assert messages(check_diagrams(repo_fixture)) == ["overview: master must contain exactly one inline SVG"]
 
 
 def test_aggregate_gate_renders_both_surfaces_and_checks_determinism(repo_fixture: Path):

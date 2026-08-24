@@ -16,6 +16,20 @@ from scripts.docs.render_diagrams import (
 )
 
 
+def test_overview_diagram_includes_observability_and_no_authoring_metadata():
+    root = Path(__file__).resolve().parents[3]
+    svg = extract_svg((root / "docs/diagrams/overview.html").read_text(encoding="utf-8"))
+    prometheus = (root / "observability/prometheus/prometheus.yml").read_text(encoding="utf-8")
+
+    for label in ("iceberg-rest-probe", "Prometheus", "Grafana", "metrics", "dashboard"):
+        assert label in svg
+    assert "iceberg-rest-probe:8080" in prometheus
+    assert "/metrics :8080" in svg
+    assert ":9108" not in svg
+    for leaked in ("Orbital theme", "landscape"):
+        assert leaked not in svg
+
+
 def test_lakehouse_hero_is_wide_text_free_and_accessible():
     root = Path(__file__).resolve().parents[3]
     master = root / "docs/diagrams/data-eng-lab-hero.html"
@@ -44,9 +58,7 @@ def test_lakehouse_hero_output_arrow_points_right():
 
 def test_extract_svg_sanitizes_html_named_entities_and_preserves_numeric_entities():
     master = (
-        '<html><svg xmlns="http://www.w3.org/2000/svg">'
-        "<text>&Sigma; &middot; &amp; &#931; &#x3A3;</text>"
-        "</svg></html>"
+        '<html><svg xmlns="http://www.w3.org/2000/svg"><text>&Sigma; &middot; &amp; &#931; &#x3A3;</text></svg></html>'
     )
 
     assert extract_svg(master) == (
@@ -106,10 +118,7 @@ def test_import_svg_master_preserves_the_complete_svg():
     assert 'role="img"' in master
     assert 'aria-labelledby="diagram-title diagram-description"' in master
     assert '<title id="diagram-title">Overview</title>' in master
-    assert (
-        '<desc id="diagram-description">Verified against atlas.consumer.yml on 2026-07-31.</desc>'
-        in master
-    )
+    assert '<desc id="diagram-description">Verified against atlas.consumer.yml on 2026-07-31.</desc>' in master
 
 
 def test_import_svg_master_rejects_non_standalone_input():
@@ -158,9 +167,7 @@ def test_render_all_writes_site_svg_and_committed_png(tmp_path):
     assert first_svg.endswith(b"\n")
     assert first_png.startswith(b"\x89PNG")
     fingerprint_path = projection_fingerprint_path(png_path)
-    assert fingerprint_path.read_text(encoding="utf-8") == (
-        f"sha256:{diagram_fingerprint(extract_svg(master))}\n"
-    )
+    assert fingerprint_path.read_text(encoding="utf-8") == (f"sha256:{diagram_fingerprint(extract_svg(master))}\n")
 
     render_all(
         manifest,

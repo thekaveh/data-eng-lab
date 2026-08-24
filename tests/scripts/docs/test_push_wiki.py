@@ -71,9 +71,7 @@ def test_push_command_targets_master_and_supplies_default_identity(
     assert env["GIT_SSH_COMMAND"].startswith("ssh -i ")
 
 
-def test_https_remote_does_not_require_an_ssh_key(
-    monkeypatch: pytest.MonkeyPatch, source: Path
-):
+def test_https_remote_does_not_require_an_ssh_key(monkeypatch: pytest.MonkeyPatch, source: Path):
     fake_git = FakeGit()
     monkeypatch.setattr(subprocess, "run", fake_git)
 
@@ -89,9 +87,7 @@ def test_https_remote_does_not_require_an_ssh_key(
     assert "GIT_SSH_COMMAND" not in env
 
 
-def test_https_remote_removes_inherited_ssh_command(
-    monkeypatch: pytest.MonkeyPatch, source: Path
-):
+def test_https_remote_removes_inherited_ssh_command(monkeypatch: pytest.MonkeyPatch, source: Path):
     fake_git = FakeGit()
     monkeypatch.setenv("GIT_SSH_COMMAND", "ssh inherited")
     monkeypatch.setattr(subprocess, "run", fake_git)
@@ -106,9 +102,7 @@ def test_https_remote_removes_inherited_ssh_command(
     assert "GIT_SSH_COMMAND" not in fake_git.push_call[2]
 
 
-def test_scp_style_ssh_remote_uses_supplied_key(
-    monkeypatch: pytest.MonkeyPatch, source: Path, tmp_path: Path
-):
+def test_scp_style_ssh_remote_uses_supplied_key(monkeypatch: pytest.MonkeyPatch, source: Path, tmp_path: Path):
     fake_git = FakeGit()
     monkeypatch.setattr(subprocess, "run", fake_git)
 
@@ -165,9 +159,7 @@ def test_noop_index_skips_commit_and_push(monkeypatch: pytest.MonkeyPatch, sourc
     assert "push" not in commands
 
 
-def test_check_mode_validates_without_running_git(
-    monkeypatch: pytest.MonkeyPatch, source: Path
-):
+def test_check_mode_validates_without_running_git(monkeypatch: pytest.MonkeyPatch, source: Path):
     def fail(*_args, **_kwargs):
         raise AssertionError("check mode must not invoke git")
 
@@ -183,9 +175,7 @@ def test_empty_wiki_source_is_rejected(tmp_path: Path):
         push_wiki(source, "", None, push=False)
 
 
-def test_local_remote_receives_master_commit_and_second_push_is_noop(
-    source: Path, tmp_path: Path
-):
+def test_local_remote_receives_master_commit_and_second_push_is_noop(source: Path, tmp_path: Path):
     remote = tmp_path / "wiki.git"
     subprocess.run(
         ["git", "init", "--bare", "--initial-branch=master", str(remote)],

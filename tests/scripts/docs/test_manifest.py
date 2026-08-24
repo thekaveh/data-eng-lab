@@ -123,9 +123,7 @@ def test_load_manifest_requires_internal_roots_to_be_directories(tmp_path):
         ("docs/private/..", "internal root must be canonical"),
     ],
 )
-def test_load_manifest_requires_internal_roots_to_be_proper_docs_subtrees(
-    tmp_path, internal_root, message
-):
+def test_load_manifest_requires_internal_roots_to_be_proper_docs_subtrees(tmp_path, internal_root, message):
     _write_valid_manifest_tree(tmp_path)
     (tmp_path / "docs/private").mkdir()
     path = tmp_path / "docs/manifest.yaml"
@@ -142,9 +140,7 @@ def test_load_manifest_requires_internal_roots_to_be_proper_docs_subtrees(
         ("docs/diagrams", "diagram master is inside internal root"),
     ],
 )
-def test_load_manifest_rejects_internal_roots_that_overlap_public_inputs(
-    tmp_path, internal_root, message
-):
+def test_load_manifest_rejects_internal_roots_that_overlap_public_inputs(tmp_path, internal_root, message):
     _write_valid_manifest_tree(tmp_path)
     path = tmp_path / "docs/manifest.yaml"
     path.write_text(VALID.replace("docs/superpowers", internal_root), encoding="utf-8")
@@ -197,9 +193,7 @@ def test_load_manifest_rejects_duplicate_published_sources(tmp_path):
     path.write_text(
         VALID.replace(
             "diagrams:",
-            "  - {id: duplicate, number: '5.2', title: Duplicate, "
-            "source: docs/index.md}\n"
-            "diagrams:",
+            "  - {id: duplicate, number: '5.2', title: Duplicate, source: docs/index.md}\ndiagrams:",
         ),
         encoding="utf-8",
     )
@@ -212,9 +206,7 @@ def test_load_manifest_rejects_duplicate_published_sources(tmp_path):
     "internal_root",
     ["docs/stylesheets", "docs/overrides", "docs/diagrams/img"],
 )
-def test_load_manifest_rejects_internal_roots_that_overlap_auxiliary_public_inputs(
-    tmp_path, internal_root
-):
+def test_load_manifest_rejects_internal_roots_that_overlap_auxiliary_public_inputs(tmp_path, internal_root):
     _write_valid_manifest_tree(tmp_path)
     path = tmp_path / "docs/manifest.yaml"
     path.write_text(VALID.replace("docs/superpowers", internal_root), encoding="utf-8")
