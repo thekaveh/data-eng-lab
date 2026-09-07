@@ -120,6 +120,19 @@ def render_site(manifest: Manifest, repo_root: Path, output: Path) -> None:
         destination = _surface_destination(output, Path("assets/img") / f"{diagram.id}.svg", "site")
         destination.write_text(f"{extract_svg(master)}\n", encoding="utf-8")
 
+    from scripts.docs.transforms import BRAND_IMAGES
+
+    for brand in BRAND_IMAGES:
+        source = repo_root / brand
+        if not source.is_file():
+            # Fixture repositories in the framework's own tests carry no
+            # brand art; the real repository always does.
+            continue
+        _copy_file(
+            source,
+            _surface_destination(output, Path("assets/img") / brand.name, "site"),
+        )
+
     _copy_file(
         repo_root / "docs/stylesheets/extra.css",
         _surface_destination(output, Path("stylesheets/extra.css"), "site"),
