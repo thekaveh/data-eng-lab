@@ -29,7 +29,10 @@ HERO_VALUE_PROPOSITION = (
     "from paired notebooks and deployable Spark applications."
 )
 HERO_BANNER_PATH = "diagrams/img/data-eng-lab-poster.png"
-HERO_BANNER_ALT = "A crystalline iceberg on a gridded night sea, most of its faceted mass below the waterline; a smooth stream and a pulsed stream flow toward it beneath the DATA-ENG-LAB wordmark."
+HERO_BANNER_ALT = (
+    "A crystalline iceberg on a gridded night sea, most of its faceted mass below the waterline; "
+    "a smooth stream and a pulsed stream flow toward it beneath the DATA-ENG-LAB wordmark."
+)
 REDPANDA_BADGE_URL = "https://img.shields.io/badge/Redpanda-streaming-FF4D5B?logo=apachekafka&logoColor=white"
 HERO_BADGE_ROWS = (
     (

@@ -13,8 +13,8 @@ from scripts.docs.build_docs import (
     render_site,
     render_wiki,
 )
-from scripts.docs.transforms import BRAND_IMAGES
 from scripts.docs.manifest import ManifestError, iter_leaf_sections, load_manifest, parse_manifest
+from scripts.docs.transforms import BRAND_IMAGES
 
 
 @pytest.fixture
