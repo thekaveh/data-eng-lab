@@ -28,8 +28,8 @@ HERO_VALUE_PROPOSITION = (
     "Build, orchestrate, stream, and query production-shaped lakehouse pipelines "
     "from paired notebooks and deployable Spark applications."
 )
-HERO_BANNER_PATH = "diagrams/img/data-eng-lab-hero.png"
-HERO_BANNER_ALT = "Abstract data-eng-lab lakehouse with Iceberg crystal, medallion layers, and flowing data"
+HERO_BANNER_PATH = "diagrams/img/data-eng-lab-poster.png"
+HERO_BANNER_ALT = "A crystalline iceberg on a gridded night sea, most of its faceted mass below the waterline; a smooth stream and a pulsed stream flow toward it beneath the DATA-ENG-LAB wordmark."
 REDPANDA_BADGE_URL = "https://img.shields.io/badge/Redpanda-streaming-FF4D5B?logo=apachekafka&logoColor=white"
 HERO_BADGE_ROWS = (
     (
@@ -218,9 +218,9 @@ def test_opener_is_centered_badged_and_identical_across_canonical_surfaces():
     readme_parts = _opener_parts(readme)
     index_parts = _opener_parts(index)
 
-    assert readme_opener.count("docs/diagrams/img/data-eng-lab-hero.png") == 1
+    assert readme_opener.count("docs/diagrams/img/data-eng-lab-poster.png") == 1
     assert index_opener.count(HERO_BANNER_PATH) == 1
-    normalized_readme_opener = readme_opener.replace("docs/diagrams/img/data-eng-lab-hero.png", HERO_BANNER_PATH)
+    normalized_readme_opener = readme_opener.replace("docs/diagrams/img/data-eng-lab-poster.png", HERO_BANNER_PATH)
     assert normalized_readme_opener == index_opener == _expected_opener()
     assert (
         readme_parts
@@ -251,7 +251,7 @@ def test_opener_is_centered_badged_and_identical_across_canonical_surfaces():
         assert badge_rows == tuple(_badge_row(row) for row in HERO_BADGE_ROWS)
 
         ordered_parts = (
-            opener.index("data-eng-lab-hero.png"),
+            opener.index("data-eng-lab-poster.png"),
             opener.index(HERO_H1),
             opener.index("<strong>"),
             opener.index(HERO_VALUE_PROPOSITION),

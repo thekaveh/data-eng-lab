@@ -20,6 +20,7 @@ from scripts.docs.links import (
     is_forbidden,
 )
 from scripts.docs.manifest import Manifest, ManifestError, iter_leaf_sections, load_manifest
+from scripts.docs.transforms import BRAND_IMAGES
 from scripts.docs.render_diagrams import (
     DiagramError,
     diagram_fingerprint,
@@ -291,7 +292,10 @@ def check_diagrams(repo_root: Path) -> tuple[Finding, ...]:
     png_dir = masters_dir / "img"
     svg_dir = root / "generated/site/assets/img"
     master_ids = {path.stem for path in masters_dir.glob("*.html")}
-    png_ids = {path.stem for path in png_dir.glob("*.png")}
+    brand_names = {brand.name for brand in BRAND_IMAGES}
+    png_ids = {
+        path.stem for path in png_dir.glob("*.png") if path.name not in brand_names
+    }
     fingerprint_ids = {path.stem for path in png_dir.glob("*.sha256")}
     svg_ids = {path.stem for path in svg_dir.glob("*.svg")}
     findings += _set_findings("HTML masters", expected, master_ids)
