@@ -13,6 +13,7 @@ from scripts.docs.build_docs import (
     render_site,
     render_wiki,
 )
+from scripts.docs.transforms import BRAND_IMAGES
 from scripts.docs.manifest import ManifestError, iter_leaf_sections, load_manifest, parse_manifest
 
 
@@ -134,7 +135,7 @@ def test_repository_manifest_projects_all_public_pages_and_assets(tmp_path):
     assert {path.relative_to(site) for path in site.rglob("*.md")} == public_sources
     assert len(tuple(wiki.glob("*.md"))) == 66
     assert len(tuple((site / "assets/img").glob("*.svg"))) == len(manifest.diagrams)
-    assert len(tuple((wiki / "img").glob("*.png"))) == len(manifest.diagrams)
+    assert len(tuple((wiki / "img").glob("*.png"))) == len(manifest.diagrams) + len(BRAND_IMAGES)
     assert "data-eng-lab-hero" in {diagram.id for diagram in manifest.diagrams}
     assert (site / "assets/img/data-eng-lab-hero.svg").is_file()
     assert (wiki / "img/data-eng-lab-hero.png").is_file()

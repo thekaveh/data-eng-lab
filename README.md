@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/diagrams/img/data-eng-lab-hero.png" alt="Abstract data-eng-lab lakehouse with Iceberg crystal, medallion layers, and flowing data" width="100%">
+  <img src="docs/diagrams/img/data-eng-lab-poster.png" alt="A crystalline iceberg on a gridded night sea, most of its faceted mass below the waterline; a smooth stream and a pulsed stream flow toward it beneath the DATA-ENG-LAB wordmark." width="100%">
 </p>
 
 <h1 align="center">data-eng-lab</h1>

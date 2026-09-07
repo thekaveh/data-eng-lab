@@ -17,6 +17,11 @@ from scripts.docs.manifest import (
 )
 
 _WIKI_HOME = Path("Home.md")
+# Brand raster art (the project poster) rides the projection alongside the
+# vector diagram assets: same per-surface asset directories, PNG on both
+# surfaces (rasters have no SVG master).
+BRAND_IMAGES = (Path("docs/diagrams/img/data-eng-lab-poster.png"),)
+
 _WIKI_HOME_OWNER = ("overview", Path("docs/index.md"))
 _WIKI_STRUCTURAL_DESTINATIONS = {
     "_sidebar": Path("_Sidebar.md"),
@@ -60,6 +65,16 @@ def build_source_map(manifest: Manifest, surface: str) -> dict[Path, Path]:
         )
         mapping[Path("docs/architectures") / f"{diagram.id}.svg"] = destination
         mapping[Path("docs/diagrams/img") / f"{diagram.id}.png"] = destination
+    for brand in BRAND_IMAGES:
+        destination = asset_dir / brand.name
+        _validate_surface_destination(destination, surface)
+        _register_destination(
+            surface,
+            destination,
+            f"brand image ({brand})",
+            destination_owners,
+        )
+        mapping[brand] = destination
     return mapping
 
 
