@@ -26,7 +26,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout target revision
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           fetch-depth: 1
@@ -85,7 +85,7 @@ jobs:
           test "${#digest}" -eq 64
           printf 'sha256=%s\n' "${digest}" >> "${GITHUB_OUTPUT}"
       - name: Checkout proposed revision
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
@@ -159,7 +159,7 @@ jobs:
       security-events: write
     steps:
       - name: Checkout
-        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
@@ -211,6 +211,6 @@ jobs:
             --fail-on-vuln=false
       - name: Upload OSV SARIF
         if: always() && !cancelled()
-        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4
+        uses: github/codeql-action/upload-sarif@b96794f015dfd88f77b49b1c93e0fa7110f94c63 # v4
         with:
           sarif_file: ${{ github.workspace }}/.osv-results-${{ github.run_id }}-${{ github.run_attempt }}.sarif
