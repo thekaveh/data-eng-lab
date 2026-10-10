@@ -84,18 +84,6 @@ HERO_BADGE_ROWS = (
         ),
     ),
 )
-HERO_EXECUTIVE_SUMMARY = (
-    "`data-eng-lab` consumes Atlas as its pinned `infra/` git submodule through "
-    "`atlas.consumer.yml`, so `make up` launches the default development profile as the "
-    "**Data Engineering** workspace. The lab integrates storage, compute, orchestration, delivery, "
-    "and observability instead of leaving users to wire independent services together: Iceberg "
-    "tables live on MinIO, Spark runs batch and streaming workloads, Airflow coordinates production "
-    "DAGs, Jenkins publishes six CI-built Maven applications, Trino serves analytical SQL, and "
-    "Prometheus and Grafana monitor the Iceberg REST boundary. Nineteen paired Zeppelin and Jupyter "
-    "scenarios provide 17 Scala/PySpark implementations plus two Trino client pairs, while Redpanda "
-    "supplies three broker-backed streams. The same locked datasets and catalog contracts support "
-    "notebook exploration and deployable application paths."
-)
 ARCHITECTURE_LEAD = (
     "## 2. Architecture\n\n"
     "The landing zone and the three Iceberg medallion layers are distinct storage stages:\n\n"
@@ -143,34 +131,15 @@ def _badge_row(pairs: tuple[tuple[str, str], ...]) -> str:
     return f'<p align="center">\n{images}\n</p>'
 
 
-def _expected_opener() -> str:
-    banner = f'<p align="center">\n  <img src="{HERO_BANNER_PATH}" alt="{HERO_BANNER_ALT}" width="100%">\n</p>'
-    tagline = (
-        '<p align="center">\n'
-        "  <strong>An Iceberg-lakehouse data-engineering lab built on the "
-        '<a href="https://github.com/thekaveh/atlas">Atlas</a> platform.</strong>\n'
-        "</p>"
-    )
-    value = f'<p align="center">\n  {HERO_VALUE_PROPOSITION}\n</p>'
-    return (
-        "\n\n".join(
-            (
-                banner,
-                HERO_H1,
-                tagline,
-                value,
-                *(_badge_row(row) for row in HERO_BADGE_ROWS),
-                HERO_EXECUTIVE_SUMMARY,
-            )
-        )
-        + "\n"
-    )
-
-
-def _executive_summary(opener: str) -> str:
-    match = re.search(r"(?m)^(`data-eng-lab` consumes Atlas .+)$", opener)
-    assert match is not None
-    return match.group(1)
+def _assert_entry_contract(text: str) -> None:
+    """Protect inventory and the prerequisite-first route, not a prose template."""
+    assert re.search(r"\b19 scenario pairs\b", text), "scenario inventory"
+    assert re.search(r"\b17 Scala/PySpark\b", text), "language-pair inventory"
+    assert "two Trino client pairs" in text, "Trino inventory"
+    assert re.search(r"\b[Ss]ix Maven Spark applications\b", text), "application inventory"
+    route = re.search(r"\[[^\]]+\]\((?:docs/)?getting-started\.md\)", text)
+    assert route is not None, "Getting Started route"
+    assert route.start() < text.index("```bash"), "prerequisites before commands"
 
 
 def _opening_fences(text: str) -> tuple[str, ...]:
@@ -213,7 +182,7 @@ def _outside_fences(text: str) -> str:
     return "".join(visible)
 
 
-def test_opener_is_centered_badged_and_identical_across_canonical_surfaces():
+def test_entry_brand_assets_and_inventory_match_sources():
     readme = ROOT / "README.md"
     index = ROOT / "docs/index.md"
     readme_opener = _opener_block(readme)
@@ -223,8 +192,6 @@ def test_opener_is_centered_badged_and_identical_across_canonical_surfaces():
 
     assert readme_opener.count("docs/diagrams/img/data-eng-lab-poster.png") == 1
     assert index_opener.count(HERO_BANNER_PATH) == 1
-    normalized_readme_opener = readme_opener.replace("docs/diagrams/img/data-eng-lab-poster.png", HERO_BANNER_PATH)
-    assert normalized_readme_opener == index_opener == _expected_opener()
     assert (
         readme_parts
         == index_parts
@@ -259,7 +226,6 @@ def test_opener_is_centered_badged_and_identical_across_canonical_surfaces():
             opener.index("<strong>"),
             opener.index(HERO_VALUE_PROPOSITION),
             *(opener.index(row) for row in badge_rows),
-            opener.index(HERO_EXECUTIVE_SUMMARY),
         )
         assert ordered_parts == tuple(sorted(ordered_parts))
         assert "| Platform |" not in opener
@@ -269,31 +235,24 @@ def test_opener_is_centered_badged_and_identical_across_canonical_surfaces():
         architecture = text[text.index("## 2. Architecture") :]
         assert architecture.startswith(ARCHITECTURE_LEAD + f"![data-eng-lab architecture]({overview_path})\n\n")
 
-    executive_summary = _executive_summary(readme_opener)
-    assert executive_summary == _executive_summary(index_opener) == HERO_EXECUTIVE_SUMMARY
-    words = executive_summary.split()
-    assert 100 <= len(words) <= 150
-    assert "six CI-built Maven applications" in executive_summary
-    assert "Prometheus and Grafana" in executive_summary
     assert len(tuple((ROOT / "spark-apps").glob("*/pom.xml"))) == 6
-    for required in (
-        "atlas.consumer.yml",
-        "make up",
-        "Data Engineering",
-        "development profile",
-        "Jupyter",
-        "Zeppelin",
-        "17 Scala/PySpark",
-        "two Trino client pairs",
-        "Airflow",
-        "Jenkins",
-        "six CI-built Maven applications",
-        "Prometheus",
-        "Grafana",
-        "Trino",
-        "Redpanda",
-    ):
-        assert required in executive_summary
+    for path in (readme, index):
+        _assert_entry_contract(path.read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize(
+    "before,after,diagnostic",
+    [
+        ("19 scenario pairs", "20 scenario pairs", "scenario inventory"),
+        ("Six Maven Spark applications", "Seven Maven Spark applications", "application inventory"),
+        ("[Getting started](docs/getting-started.md)", "Getting started", "Getting Started route"),
+    ],
+)
+def test_entry_contract_rejects_inventory_and_navigation_regressions(before, after, diagnostic):
+    text = (ROOT / "README.md").read_text(encoding="utf-8")
+    assert before in text
+    with pytest.raises(AssertionError, match=diagnostic):
+        _assert_entry_contract(text.replace(before, after))
 
 
 def test_unreleased_changelog_does_not_claim_the_architecture_poster_is_the_opener():

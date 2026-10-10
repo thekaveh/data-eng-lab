@@ -98,6 +98,9 @@ def test_render_site_and_wiki_are_complete(tmp_repo, manifest):
     assert (tmp_repo / "generated/wiki/Home.md").is_file()
     assert (tmp_repo / "generated/wiki/Scenarios.md").is_file()
     assert (tmp_repo / "generated/wiki/_Sidebar.md").is_file()
+    sidebar = (tmp_repo / "generated/wiki/_Sidebar.md").read_text()
+    assert "](Home)" in sidebar
+    assert "](Home.md)" not in sidebar
     assert (tmp_repo / "generated/wiki/_Footer.md").is_file()
     assert (tmp_repo / "generated/wiki/img/overview.png").read_bytes() == b"\x89PNG fixture"
     assert "assets/img/overview.svg" in (tmp_repo / "generated/site/index.md").read_text(encoding="utf-8")

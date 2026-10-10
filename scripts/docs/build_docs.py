@@ -265,7 +265,7 @@ def _render_sidebar(manifest: Manifest) -> str:
             label = f"{section.number}. {section.title}"
             prefix = "  " * depth
             if section.source is not None:
-                lines.append(f"{prefix}- [{label}]({source_map[section.source].as_posix()})\n")
+                lines.append(f"{prefix}- [{label}]({source_map[section.source].with_suffix('').as_posix()})\n")
             else:
                 lines.append(f"{prefix}- **{label}**\n")
                 append(section.children, depth + 1)

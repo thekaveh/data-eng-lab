@@ -675,11 +675,12 @@ def test_generated_missing_local_link_fails(repo_fixture: Path, surface: str):
     ]
 
 
-def test_generated_existing_local_link_passes(repo_fixture: Path):
+@pytest.mark.parametrize("route", ["Runbook.md", "Runbook"])
+def test_generated_existing_local_link_passes(repo_fixture: Path, route: str):
     page = repo_fixture / "generated/wiki/Home.md"
     target = repo_fixture / "generated/wiki/Runbook.md"
     page.parent.mkdir(parents=True)
-    page.write_text("[Runbook](Runbook.md#setup)\n", encoding="utf-8")
+    page.write_text(f"[Runbook]({route}#setup)\n", encoding="utf-8")
     target.write_text("# Setup\n", encoding="utf-8")
 
     assert check_self_containment(repo_fixture) == ()
@@ -871,3 +872,13 @@ def test_findings_are_sorted_by_message(repo_fixture: Path):
 
     result = check(repo_fixture)
     assert list(result) == sorted(result, key=lambda finding: finding.message)
+
+
+def test_extensionless_wiki_route_rejects_missing_fragment(repo_fixture: Path):
+    page = repo_fixture / "generated/wiki/Home.md"
+    page.parent.mkdir(parents=True)
+    page.write_text("[Runbook](Runbook#missing)\n", encoding="utf-8")
+    (page.parent / "Runbook.md").write_text("# Setup\n", encoding="utf-8")
+    assert messages(check_self_containment(repo_fixture)) == [
+        "generated/wiki/Home.md: missing local fragment #missing in Runbook.md"
+    ]
