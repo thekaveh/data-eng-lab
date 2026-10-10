@@ -166,7 +166,7 @@ def test_rewrite_changes_only_the_target_when_it_matches_the_label(manifest):
         Path("docs/notebooks/example.md"),
         mapping,
     )
-    assert result == "[../scenarios/index.md](Scenarios.md)"
+    assert result == "[../scenarios/index.md](Scenarios)"
 
 
 def test_wiki_source_map_rejects_normalized_destination_collisions():
@@ -268,3 +268,15 @@ diagrams: []
 
     assert "overview (docs/index.md)" in str(error.value)
     assert "duplicate (index.md)" in str(error.value)
+
+
+def test_wiki_navigation_uses_rendered_page_routes_and_retains_anchor(manifest):
+    mapping = build_source_map(manifest, "wiki")
+    result = rewrite_for_surface(
+        "[Catalog](../scenarios/index.md#examples) [Start](../index.md)",
+        "wiki",
+        Path("docs/notebooks/example.md"),
+        mapping,
+    )
+    assert result == "[Catalog](Scenarios#examples) [Start](Home)"
+    assert mapping[Path("docs/index.md")] == Path("Home.md")

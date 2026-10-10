@@ -196,7 +196,10 @@ def _rewrite_target(
     path_text, suffix = _path_and_suffix(target)
     resolved = _resolve(source.parent, path_text)
     if resolved in source_map:
-        return _relative_target(source_destination, source_map[resolved]) + suffix
+        destination = source_map[resolved]
+        if surface == "wiki" and destination.suffix == ".md":
+            destination = destination.with_suffix("")
+        return _relative_target(source_destination, destination) + suffix
     return None
 
 

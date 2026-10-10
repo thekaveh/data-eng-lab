@@ -236,6 +236,8 @@ def check_self_containment(repo_root: Path) -> tuple[Finding, ...]:
                 continue
             clean, fragment, resolved = local
             is_image = link.is_image
+            if surface == "wiki" and not is_image and not resolved.suffix:
+                resolved = resolved.with_suffix(".md")
             surface_root = {
                 "repo": root,
                 "site": root / "generated/site",
