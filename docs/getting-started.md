@@ -7,6 +7,7 @@ Get the full `data-eng-lab` stack running in order from a fresh clone.
 | Requirement | Notes |
 |---|---|
 | Docker + Docker Compose | Runs the Atlas platform services |
+| Make and Bash | Runs the repository launch scripts in a Unix-compatible shell |
 | Git with submodule support | Initializes the pinned Atlas submodule under `infra/` |
 | Python 3.11+ and [uv](https://docs.astral.sh/uv/) | Runs repository tooling and tests |
 | Java 17 | Builds the Maven Spark apps with `make build-apps` |
@@ -82,6 +83,12 @@ make test
 A passing preflight confirms Spark ↔ MinIO ↔ Iceberg, Jupyter ↔ PyIceberg, Airflow ↔ MinIO/Spark, and Zeppelin ↔ Spark connectivity. `make test` remains offline and does not require the running stack.
 
 ## 7. Run notebooks
+
+For a first result, use [NYC Taxi batch ingestion](notebooks/batch_ingest-nyc_taxi-spark-iceberg.md).
+Choose either notebook below, then execute its cells in order through the Verify section.
+The notebook creates or replaces `lakehouse.bronze.nyc_taxi_trips`; use a disposable lab table.
+The Verify section reports the number of rows in the table.
+
 
 ### Zeppelin (Scala Spark)
 

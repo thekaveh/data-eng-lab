@@ -33,11 +33,25 @@
   <img alt="Zeppelin" src="https://img.shields.io/badge/Zeppelin-notebooks-FBBF24?logo=apache&logoColor=white">
 </p>
 
-`data-eng-lab` consumes Atlas as its pinned `infra/` git submodule through `atlas.consumer.yml`, so `make up` launches the default development profile as the **Data Engineering** workspace. The lab integrates storage, compute, orchestration, delivery, and observability instead of leaving users to wire independent services together: Iceberg tables live on MinIO, Spark runs batch and streaming workloads, Airflow coordinates production DAGs, Jenkins publishes six CI-built Maven applications, Trino serves analytical SQL, and Prometheus and Grafana monitor the Iceberg REST boundary. Nineteen paired Zeppelin and Jupyter scenarios provide 17 Scala/PySpark implementations plus two Trino client pairs, while Redpanda supplies three broker-backed streams. The same locked datasets and catalog contracts support notebook exploration and deployable application paths.
+`data-eng-lab` is a hands-on lab for building and querying Iceberg lakehouse pipelines.
+Use paired Zeppelin and Jupyter notebooks to explore data, then run deployable Spark applications.
+
+The lab has 19 scenario pairs: 17 Scala/PySpark implementations and two Trino client pairs.
+Six Maven Spark applications provide the deployable application paths.
 
 ## 1. Quick start
 
+Start with [Getting started](docs/getting-started.md) for prerequisites, checkout steps and the complete walkthrough.
+You need Git, Python 3.11+, uv, Make, Bash and a running Docker Compose environment.
+
+Atlas supplies the runtime through the pinned `infra/` submodule and `atlas.consumer.yml`.
+The default development profile opens the **Data Engineering** workspace.
+
+From a fresh checkout:
+
 ```bash
+git clone https://github.com/thekaveh/data-eng-lab.git
+cd data-eng-lab
 git submodule update --init --recursive infra
 uv sync --all-groups
 make up
@@ -45,7 +59,10 @@ make datasets
 make verify
 ```
 
-The launcher validates `atlas.consumer.yml`, materializes the Atlas environment, starts the data-engineering track, registers the Iceberg namespaces, and runs the repository preflight. `make datasets` is a separate step that verifies or publishes locked datasets as verified immutable generations; stack startup does not download them. See [Getting started](docs/getting-started.md) for prerequisites, endpoints, and the complete walkthrough.
+`make up` starts the platform and checks its connections.
+`make datasets` separately verifies or publishes locked datasets as verified immutable generations.
+Startup does not download them.
+After `make verify` succeeds, follow Getting Started to open and run your first notebook.
 
 ## 2. Architecture
 
